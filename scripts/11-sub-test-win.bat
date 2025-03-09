@@ -37,7 +37,7 @@
 %TEXE% filter testfiles\Formats\07-filter-src.txt ++delete ++something >res-09.txt
 %TEXE% test %TCMD% T02.7.filter res-09.txt
 
-%TEXE% addhead <testfiles\Formats\08-head-tail.txt >res-10.txt test1 test2 test3
+%TEXE% addhead -blank <testfiles\Formats\08-head-tail.txt >res-10.txt test1 test2 test3
 %TEXE% test %TCMD% T02.8.addhead res-10.txt
 
 %TEXE% addtail -noblank <testfiles\Formats\08-head-tail.txt >res-11.txt test1 test2 test3

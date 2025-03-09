@@ -106,7 +106,7 @@ public:
    // ===== data I/O functions =====
    void  setBlocking (bool bYesNo);
 
-   int  read     (uchar *pblock, uint nlen);
+   int  read     (uchar *pblock, uint nlen, bool bReturnAny=0);
    // read raw block of bytes. this will block
    // until nlen bytes are read, or connection is closed.
    // returns <= 0 on connection close, else nlen.
@@ -140,11 +140,14 @@ public:
    SOCKET       clSock;
    TCPConData  *pClUserData;  // optional
    char        *pClIOBuf;     // alloc'ed on demand
-   static int  nClIOBufSize; // if it is alloc'ed
+   static int  nClIOBufSize;  // if it is alloc'ed
 
    int   nClTraceLine;
    num   nClStartTime;
    int   iClMaxWait;
+   int   iClPort;
+
+   struct sockaddr_in clFromAddr;
 
 friend class TCPCore;
 };
@@ -171,7 +174,7 @@ public:
    // windows only: if bSysCleanup is set, runs also
    // WSACleanup() to cleanup the windows TCP stack.
 
-   int makeServerSocket (int nport, TCPCon **ppout);
+   int makeServerSocket (int nport, TCPCon **ppout, bool bquiet=0);
    // returned object is managed by TPCCore.
    // returned server socket is added to readfds set.
 
@@ -191,7 +194,7 @@ public:
    // system errno of last operation. depends on call if it's set.
 
    // for a centralized read and processing thread:
-   int  selectInput (TCPCon **pNextActiveCon, TCPCon *pToQuery=0);
+   int  selectInput (TCPCon **pNextActiveCon, TCPCon *pToQuery=0, int iMaxWaitMSec=0);
    // from all sockets pending input, returns the first one
    // that received an accept/connect or read event.
    // if pToQuery is given, returns that pointer and rc0

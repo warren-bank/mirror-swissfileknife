@@ -7,6 +7,72 @@
    The whole source code was created with Depeche View Professional,
    the world's fastest source code browser and editor.
 
+   1.8.7
+   Revision 2:
+   -  rel: 15.07.2017, Minor Update
+   -  sum: further improvements of http and udp message sending
+           for easier scripting and convenience.
+   -  chg: web: option -cweb renamed to -chainweb to avoid
+           ambiguities with new commands. old -cweb is kept 
+           for compatibility, but no longer documented.
+   -  fix: sfk update: always told there was a newer version
+           if new version info contained a trailing dot.
+   -  add: cweb, an alias for web -nodump -quiet to call
+           web url's quick without any output.
+   -  add: udp, an alias for udpsend, but does not use
+           any chain input data.
+   -  add: cudp, call udp quickly without any output.
+           same as udp -quiet.
+   -  chg: wget: improved error message when trying https.
+   -  chg: ftp server: SIZE command on non existing file
+           now returns code 550 instead of 213.
+   Initial Release:
+   -  rel: 06.07.2017, Major Update
+   -  sum: syntax corrections with sfk web, addhead and addtail.
+           easier web automation in sfk scripts.
+   -  CHG: SYNTAX CHANGE: command +web no longer uses chain input
+           text by default, so commands like
+              sfk filter ... +web ...
+           will no longer work. use instead +tweb like
+              sfk filter ... +tweb ...
+           to explicitely read chain text, or set global option 
+           -chainweb for the old behaviour. if you need your 
+           old scripts to run without any changes, set environment 
+           variable:
+              SET SFK_CONFIG=chainweb
+           reason: in sfk scripts +web is used most of the time 
+           with an URL given as a parameter, but not read from
+           chain text input, so permanent writing of +then web 
+           was required. the new default makes web automation 
+           scripts much easier.
+   -  CHG: OUTPUT CHANGE: sfk addhead, addtail no longer
+           add blanks between added words by default.
+           use option -blank for the old behaviour.
+   -  add: sfk addhead, addtail: command chaining support.
+   -  add: sfk load: load text or data for further processing
+           in a command chain. just like xex or filter,
+           but more intuitive in scripts if you do not
+           want to apply any filtering.
+   -  add: web: -delay option to wait per request
+   -  add: tweb, an alias of web that reads url's
+           from chain text of previous command.
+   -  add: global options -chainweb and -nochainweb to change
+           +web chain input default.
+   -  add: sort: -skiphead to keep table headers
+   -  add: echo: option -joinline to reformat quoted multi line
+           parameters with full trim. includes option -noblank
+           which is now deprecated but kept for compatibility.
+   -  add: sfk data: now supports multi line template in scripts.
+   -  add: sfk data: support for $minute, $second
+   -  add: doc: sfk help chain, script: reference to load.
+   internal:
+   -  fix: update: wrong curl syntax in case of download failure
+   -  add: web -enc[ode] to encode blanks in urls
+   -  add: mweb to run many commands quietly.
+   -  add: copy: experimental move option.
+   -  add: sort: option -tabcol 3,2,1
+   -  add: setGeneralOption sim support
+
    1.8.6
    Revision 3:
    -  rel: 09.06.2017, Minor Update
@@ -55,6 +121,7 @@
            documented but still supported. padding by
            the new C-style notation is easier.
    internal:
+   Initial Release:
    -  web: url encoding of blanks
 
    1.8.5
@@ -642,8 +709,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.8.6" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "3"
+#define SFK_VERSION  "1.8.7" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -816,6 +883,7 @@ void *pGlblStartStack = 0;
 
 extern struct CommandStats gs;
 extern struct CommandStats cs;
+extern struct CommandStats dummyCommandStats;
 
 void initWildCards()
 {
@@ -2143,6 +2211,7 @@ int nGlblShellRC = 0;
 
 struct CommandStats gs; // global settings accross whole chain
 struct CommandStats cs; // command local statistics or settings
+struct CommandStats dummyCommandStats;
 
 bool vname() { return cs.vname; }
 
@@ -2489,6 +2558,8 @@ void CommandStats::reset()
    // sfk180: label -qtrim is default.
    mlquotes    = 'f';
    cs.curcmd[0] = '\0';
+
+   cs.cweb     = 1;
 }
 
 bool CommandStats::stopTree(int nrc, bool *psilent)
@@ -13604,9 +13675,12 @@ void setMemoryLimit(int nMBytes)
 #define SFKMATCH_IMPORTED
 #include "sfkmatch.hpp"
 
-bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
+bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJustCheck=0)
 {
    struct CommandStats *pcs = (bGlobal ? &gs : &cs);
+   if (bJustCheck)      pcs = &dummyCommandStats;
+
+   bool bsim = bJustCheck;
 
    char *psz1 = argv[iOpt];
  
@@ -13638,8 +13712,8 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (strBegins(psz1, "-hid"))     { pcs->hidden = 1; return true; }
    if (strBegins(psz1, "-nohid"))   { pcs->hidden = 0; return true; }
    if (!strcmp(psz1, "-yes"))       { pcs->yes = 1; return true; }
-   if (!strcmp(psz1, "-clog"))      { gs.logcmd = cs.logcmd = 1; return true; }
-   if (!strcmp(psz1, "-yes+"))      { pcs->yes = 1; gs.logcmd = cs.logcmd = 1; return true; }
+   if (!strcmp(psz1, "-clog"))      { if (bsim) return 1; gs.logcmd = cs.logcmd = 1; return true; }
+   if (!strcmp(psz1, "-yes+"))      { if (bsim) return 1; pcs->yes = 1; gs.logcmd = cs.logcmd = 1; return true; }
    if (!strcmp(psz1, "-umlauts"))   { nGlblBinTextBinRange = 0xC0; return true; }
    if (!strcmp(psz1, "-noumlauts") || strBegins(psz1, "-noacc")) {
       nGlblBinTextBinRange = 0xFF;
@@ -13672,6 +13746,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    #ifndef USE_SFK_BASE // sfk180
    if (!strncmp(psz1, "-xpat", 5))  { pcs->xpat = 1; return true; }
    if (strBegins(psz1, "-xmaxlen=")) {
+      if (bsim) return 1;
       SFKMatchDefaultMaxLen = (int)numFromSizeStr(psz1+9, psz1);
       if (SFKMatchDefaultMaxLen < 1)
          { perr("invalid -xmaxlen"); exit(9); }
@@ -13681,8 +13756,8 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-bright"))    { nGlblDarkColBase = 1; return true; }
    if (!strcmp(psz1, "-dark"))      { nGlblDarkColBase = 0; return true; }
    if (!strcmp(psz1, "-nochain"))   { pcs->nochain = 1; return true; }
-   if (!strcmp(psz1, "-showrc"))    { gs.showrc = 1; return true; }
-   if (!strcmp(psz1, "-exectime"))  { gs.tellExecTime = 1; return true; }
+   if (!strcmp(psz1, "-showrc"))    { if (bsim) return 1; gs.showrc = 1; return true; }
+   if (!strcmp(psz1, "-exectime"))  { if (bsim) return 1; gs.tellExecTime = 1; return true; }
    if (!strncmp(psz1, "-nowarn", 7)) { pcs->nowarn = 1; return true; }
    if (!strncmp(psz1, "-noerr",  6)) { pcs->noerr = 1; return true; }
    if (!strncmp(psz1, "-errtotext", 6)) { pcs->errtotext = 1; return true; }
@@ -13768,7 +13843,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-extdom"))    { pcs->extdomref = 1; return true; }
    if (!strcmp(psz1, "-xd"))        { pcs->xelike    = 1; return true; }
    if (!strcmp(psz1, "-cacheall"))  { pcs->cacheall  = 1; return true; }
-   if (!strcmp(psz1, "-cachestat")) { gs.cachestat   = 1; return true; }
+   if (!strcmp(psz1, "-cachestat")) { if (bsim) return 1; gs.cachestat = 1; return true; }
    if (!strcmp(psz1, "-nocache"))   { setDiskCacheActive(0); return true; }
    #endif // VFILEBASE
 
@@ -13862,6 +13937,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       char *psz2 = argv[iOpt];
       if (*psz2 == '-') { perr("need directory name, no option allowed after %s\n", psz1); exit(9); }
@@ -13881,10 +13957,6 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       return true;
    }
    if (!strncmp(psz1, "-ignoretime", 11)) {
-      // if (!(nGlblSinceMode & 2)) {
-      //    perr("-ignoretime can be used only after -sincedir/dif/ch.\n");
-      //    exit(9);
-      // }
       bGlblIgnoreTime = 1;
       return true;
    }
@@ -13920,6 +13992,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-proxy")) {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       char szBuf[200];
       char *pproxy = argv[iOpt];
@@ -13946,6 +14019,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-since")) {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       char *psz2 = argv[iOpt];
       if (tryGetRelTime(psz2, pcs->sincetime))
@@ -13960,6 +14034,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-before")) {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       char *psz2 = argv[iOpt];
       if (tryGetRelTime(psz2, pcs->untiltime))
@@ -13974,6 +14049,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-to")) {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       cs.tomask = argv[iOpt];
       cs.tomaskfile = 0;
@@ -13982,6 +14058,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-tofile")) {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       cs.tomask = argv[iOpt];
       cs.tomaskfile = 1;
@@ -13990,6 +14067,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-tomake")) {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       bGlblGotToMake = 1;
       char *pszMask = argv[iOpt];
@@ -14009,6 +14087,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-tmpdir")) {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       SFTmpFile::setTmpDir(argv[iOpt]);
       return true;
@@ -14029,6 +14108,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       char *pszFile = argv[iOpt];
 
@@ -14080,8 +14160,8 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       return true;
    }
    #endif
-   if (!strcmp(psz1,"-broad"))      {  cs.incFNameInPath = 1; return true; }
-   if (!strcmp(psz1,"-firsthit"))   {  cs.useFirstHitOnly = 1; return true; }
+   if (!strcmp(psz1,"-broad"))      {  pcs->incFNameInPath = 1; return true; }   // sfk187 global support
+   if (!strcmp(psz1,"-firsthit"))   {  pcs->useFirstHitOnly = 1; return true; }  // sfk187 global support
    if (!strcmp(psz1,"-xchars"))     {  pcs->xchars = 1; return true; }
    if (!strcmp(psz1,"-perf"))       {  pcs->perf = 1; return true; }
    if (!strcmp(psz1,"-crlf"))       {  strcpy(pcs->szeol, "\r\n"); return true; }
@@ -14115,23 +14195,25 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       return true;
    }
    if (strBegins(psz1, "-user=")) {
-      cs.puser = psz1+strlen("-user=");
+      pcs->puser = psz1+strlen("-user="); // sfk187 allow global scope
       return true;
    }
    if (!strcmp(psz1, "-user")) {
       ++iOpt;
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
-      cs.puser = argv[iOpt];
+      pcs->puser = argv[iOpt];
       return true;
    }
    if (strBegins(psz1, "-pw=")) {
-      cs.ppass = psz1+strlen("-pw=");
+      pcs->ppass = psz1+strlen("-pw="); // sfk187 allow global scope
       return true;
    }
    if (!strcmp(psz1, "-pw")) {
       ++iOpt;
+      if (bsim) return 1; 
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
-      cs.ppass = argv[iOpt];
+      pcs->ppass = argv[iOpt];
       return true;
    }
    if (!strcmp(psz1, "-qraw"))    { pcs->mlquotes = 'r'; return true; }
@@ -14143,6 +14225,13 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-var"))     { pcs->usevars  = 1; return true; }
    if (!strcmp(psz1, "-strict"))    { pcs->strict = 1; return true; }
    if (!strcmp(psz1, "-nostrict"))  { pcs->strict = 0; return true; }
+
+   // sfk187
+   if (!strcmp(psz1, "-chainweb") || !strcmp(psz1, "-cweb"))    
+      { if (bsim) return 1; gs.cweb = 1; return true; }
+   if (!strcmp(psz1, "-nochainweb") || !strcmp(psz1, "-nocweb"))  
+      { if (bsim) return 1; gs.cweb = 0; return true; }
+
    return false;
 }
 
@@ -14354,7 +14443,10 @@ cchar *aGlblChainCmds[] =
    "2strlen",       // receive TEXT
    "2linelen",      // receive TEXT
    "2webreq",       // receive TEXT
-   "2web",          // receive TEXT
+   "01web",         // receive TEXT, use option chainweb
+   "2tweb",         // receive TEXT sfk187
+   "2mweb",         // receive TEXT sfk187 internal
+   "0cweb",         // receive nothing sfk1872
    "8call",         // receive nothing, force flush sfk181
    "6tcall",        // receive text and binary  sfk181
    "1fcall",        // receive filenames        sfk181
@@ -14390,11 +14482,15 @@ cchar *aGlblChainCmds[] =
    "6encode",       // receive text and binary
    "6decode",       // receive text and binary
    "6udpsend",      // sfk1833 text and binary
+   "0udp",          // sfk1872
+   "0cudp",         // sfk1872
    "2spell",        // sfk1833 text
    "6setbytes",     // sfk1840
    "6chars",        // sfk1840
-   "0for",          // internal
-   "0endfor",       // internal
+   "0for",          // receive nothing
+   "0endfor",       // receive nothing
+   "2addhead",      // sfk187
+   "2addtail",      // sfk187
    // sfk1833:
    "8fromnet", "8color", "8make-random-file",
    "8time", "8data", "8home", "8ruler",
@@ -14482,9 +14578,17 @@ int getChainCode(char *pszin, int &rtype, int &rbinary)
          int bbinary = (aflags & 4) ? 1 : 0;
              aflags &= (3+8);
          psz++;
+         int aflags2 = 0;
+         if (isdigit(*psz)) {
+             aflags2 = *psz - '0';
+             psz++;
+         }
+         // sfk187: +web chain input default option
+         if (aflags2 == 1)
+            aflags = gs.cweb ? 2 : 8;
          if (!strncmp(psz, pszin, strlen(psz)))
          {
-            rtype = aflags;
+            rtype   = aflags;
             rbinary = bbinary;
             return i;
          }
@@ -14495,6 +14599,7 @@ int getChainCode(char *pszin, int &rtype, int &rbinary)
    return 0;
 }
 
+// .
 // find next chain command clearly defining a type like FILES or TEXT
 // rc: 1==files, 2==text, 0==none
 // rforce: type is defined by +text etc. and MUST be used,
@@ -14518,7 +14623,6 @@ int findNextChainType(int iDir, char *argv[], int argc, char **pszNext, bool &rf
 
       int ntype = 0, bbinary = 0;
       int ncode = getChainCode(psz, ntype, bbinary);
-      mtklog(("chain: gcc: %d = getChainCode(%s)",ncode,psz));
 
       // fix: 1763: everything after +then must be ignored.
       if (strcmp(psz, "+then") == 0 || ntype != 0)
@@ -14543,7 +14647,6 @@ bool isChainStartInt(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNe
    int nplus1=0, nplus2=0;
    int ntype = 0, bbin1 = 0;
    int ncode = getChainCode(argv[iDir], ntype, bbin1);
-   mtklog(("chain: ics: %d = getChainCode(%s)",ncode,argv[iDir]));
 
    switch (ncode)
    {
@@ -14632,6 +14735,14 @@ bool isChainStartInt(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNe
          int bbin2  = (aflags & 4) ? 1 : 0;
              aflags &= (3+8);
          psz++;
+         int aflags2 = 0;
+         if (isdigit(*psz)) {
+             aflags2 = *psz - '0';
+             psz++;
+         }
+         // sfk187: +web chain input default option
+         if (aflags2 == 1)
+            aflags = gs.cweb ? 2 : 8;
          if (!strncmp(psz, pszParm, strlen(psz)))
          {
             // standing on the first following chain command.
@@ -14690,7 +14801,8 @@ bool isChainStartInt(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNe
             }
  
             // if no mode yet set, use command default, if any
-            if (!bForceFlush && !chain.coldata && !chain.colfiles) {
+            if (!bForceFlush && !chain.coldata && !chain.colfiles) 
+            {
                if (aflags==1)
                   chain.colfiles = 1;
                else
@@ -29333,6 +29445,200 @@ int tcpAnyServ(uint nPort, char *pszForward, int nForward)
    return 0;
 }
 
+int changeLine(int nRead, cchar *pszPat, cchar *pszNew)
+{
+   bool bwithlf = (pszNew[0] ? 0 : 1);
+
+   char *pszLine=mystrstri((char*)abBuf, pszPat);
+   if (!pszLine) return 0;
+
+   char *psz=pszLine;
+   while (*psz!=0 && *psz!='\n') psz++;
+   if (*psz!='\n') return 0;
+
+   if (bwithlf)
+      psz++;
+
+   int isrclen=psz-pszLine;
+   int idstlen=(int)strlen(pszNew);
+   int idelta=idstlen-isrclen;
+   int itailpos=psz-(char*)abBuf;
+   int itaillen=nRead-itailpos;
+
+   // Connection: keep
+   // Connection: close
+   memmove(pszLine+idstlen, pszLine+isrclen, itaillen+1);
+
+   memcpy(pszLine, pszNew, idstlen);
+
+   return idelta;
+}
+
+int execHttpLog(uint nPort, char *pszForward, int nForward)
+{__
+   prepareTCP();
+
+   struct sockaddr_in ServerAdr;
+   struct sockaddr_in ClientAdr;
+   struct sockaddr_in FrontAdr;
+   socklen_t nSoLen = sizeof(sockaddr_in);
+   SOCKET hServer   = INVALID_SOCKET;
+   SOCKET hBack     = INVALID_SOCKET;
+   SOCKET hFront    = INVALID_SOCKET;
+   if (makeServerSocket(nPort, ServerAdr, hServer, "server main port")) return 9;
+
+   if (pszForward)
+      printf("[waiting on port %d, forward to %s port %d]\n", nPort, pszForward, nForward);
+   else
+      printf("[waiting on port %d]\n", nPort);
+
+   int lRC = 0;
+   while (!userInterrupt())
+   {
+      hBack = accept(hServer, (struct sockaddr *)&ClientAdr, &nSoLen);
+      if (hBack == INVALID_SOCKET) {
+         int nerr = netErrno();
+         if (nerr == WSAEWOULDBLOCK) { doSleep(50); continue; }
+         perr("accept on server main port failed\n");
+         lRC = 9;
+         break;
+      }
+      setBlocking(hBack, 0);
+
+      if (pszForward) 
+      {
+         hFront = socket(AF_INET, SOCK_STREAM, 0);
+         if (hFront == INVALID_SOCKET) return 9+perr("cannot create forward socket\n");
+
+         FrontAdr.sin_family = AF_INET;
+         FrontAdr.sin_port = htons((unsigned short)nForward);
+         if (setaddr(&FrontAdr,pszForward))
+            return 9;
+
+         if ((connect(hFront, (struct sockaddr *)&FrontAdr, sizeof(FrontAdr))) == -1) {
+            perr("cannot connect to %s:%u, %s\n", pszForward, nForward, netErrStr());
+            return 9;
+         }
+         setBlocking(hFront, 0);
+      }
+
+      num nLastTime = getCurrentTime();
+
+      int iReplyBlock = 0;
+      int iReplyBytes = 0;
+      int iContentLength = 0;
+      int iHeadLen = 0;
+      int iRemain = 0;
+
+      char *pbuf=(char*)abBuf;
+
+      // outer loop: try to repeat data forwarding for 30 secs
+      while (!userInterrupt())
+      {
+         // any data from back?
+         int nRead = recv(hBack, (char*)abBuf, sizeof(abBuf)-10, 0);
+         if (nRead > 0)
+         {
+            nLastTime = getCurrentTime();
+
+            abBuf[nRead] = '\0';
+            strcopy(szLineBuf, (char*)abBuf);
+
+            char *pszCall = szLineBuf;
+            if (strBegins(pszCall, "GET "))
+               pszCall += 4;
+            else if (strBegins(pszCall, "POST "))
+               pszCall += 5;
+
+            char *pszTail = strstr(szLineBuf, " HTTP/");
+            if (pszTail) *pszTail = '\0';
+
+            nRead += changeLine(nRead, "connection:", "Connection: close");
+            nRead += changeLine(nRead, "Upgrade-Insecure-Requests:", "");
+            nRead += changeLine(nRead, "Accept-Encoding:","");
+
+            snprintf(szLineBuf2, MAX_LINE_LEN, "Host: %s",pszForward);
+            nRead += changeLine(nRead, "Host:",szLineBuf2);
+
+            if (cs.verbose)
+               printf("%s\n", (char*)abBuf);
+            else
+               printf("%s\n", szLineBuf);
+
+            if (pszForward) {
+               int nSend = send(hFront, (char*)abBuf, nRead, 0);
+               if (nSend < nRead && cs.verbose > 0)
+                  pwarn("[forwarded %d bytes of %d - incomplete]\n", nSend, nRead);
+            }
+         }
+
+         // any data from front?
+         if (pszForward)
+         {
+            int nRead = recv(hFront, (char*)abBuf, sizeof(abBuf)-10, 0);
+            // if (cs.verbose)
+            //   printf("[%d recv %d]\n", nRead, netErrno());
+            if (nRead > 0) {
+               abBuf[nRead] = '\0';
+               nLastTime = getCurrentTime();
+               int nSend = send(hBack, (char*)abBuf, nRead, 0);
+               if (nSend < nRead && cs.verbose > 0)
+                  pwarn("[backwarded %d bytes of %d - incomplete]\n", nSend, nRead);
+               if (iReplyBlock == 0) {
+                  // parse reply header
+                  char *psz = mystrstri((char*)abBuf, "content-length:");
+                  if (psz) {
+                     psz += strlen("content-length:");
+                     while (*psz==' ') psz++;
+                     iContentLength = atoi(psz);
+                     iRemain = iContentLength;
+                     printf("clen: %d\n",iContentLength);
+                  }
+                  psz = strstr((char*)abBuf, "\r\n\r\n");
+                  if (psz) {
+                     if (cs.verbose)
+                        printf("---\n%.*s\n",psz-(char*)abBuf,(char*)abBuf);
+                     psz += 4;
+                     iHeadLen = (int)(psz-(char*)abBuf);
+                     int iRest = nRead - iHeadLen;
+                     iRemain -= iRest;
+                  }
+               } else {
+                  iRemain -= nRead;
+               }
+               if (iContentLength > 0) {
+                  printf("[%d/%d]   \r",iRemain,iContentLength);
+                  fflush(stdout);
+               }
+            }
+         }
+
+         if (iContentLength > 0 && iRemain <= 0) {
+            if (cs.verbose)
+               printf("[close by clen]\n");
+            break;
+         }
+
+         // no data at all over timeout?
+         if (getCurrentTime() > nLastTime + cs.timeOutMSec) {
+            if (cs.verbose)
+               printf("[timeout, no data over %d msec]\n", cs.timeOutMSec);
+            break;
+         }
+
+      } // end outer loop
+
+      if (pszForward)
+         closesocket(hFront);
+
+      closesocket(hBack);
+   }
+
+   closesocket(hServer);
+
+   return 0;
+}
+
 cchar *pUploadForm =
    "<p>"
    "<form method=\"POST\" enctype=\"multipart/form-data\" action=\"/\">\n"
@@ -31207,7 +31513,10 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                default:
                   nFileSize = getFileSize(sysPath());
             }
-            reply("213 %s", numtoa(nFileSize));
+            if (nFileSize < 0)
+               reply("550 no such file"); // sfk1872
+            else
+               reply("213 %s", numtoa(nFileSize));
             continue;
          }
          if (stribeg(szLineBuf, "MDTM ")) { nbail=0;
@@ -36005,26 +36314,104 @@ SFKMainStat::~SFKMainStat( ) {
    }
 }
 
+char *tabform(char *pszSrc, const char *pszMask)
+{
+   int iSrcLen = (int)(mymin(MAX_LINE_LEN,strlen(pszSrc)));
+
+   memset(szLineBuf2, 1, iSrcLen);
+
+   char *pDstCur=szLineBuf;
+   char *pDstMax=pDstCur+MAX_LINE_LEN;
+
+   // copy selected cols
+   while (*pszMask)
+   {
+      // get next mask col
+      int icol = atoi(pszMask);
+      if (icol<1) break;
+
+      // seek to col
+      int ipos=0;
+      icol--;
+      for (; icol>0; icol--) {
+         while (pszSrc[ipos]!=0 && pszSrc[ipos]!='\t') ipos++;
+         if (pszSrc[ipos]=='\t') ipos++;
+      }
+
+      // copy col, mark as done
+      for (; pszSrc[ipos]!=0 && pszSrc[ipos]!='\t'; ipos++) {
+         if (pDstCur >= pDstMax) break;
+         *pDstCur++ = pszSrc[ipos];
+         szLineBuf2[ipos]=0;
+      }
+      // if followed by tab mark that as done
+      if (pszSrc[ipos]=='\t')
+         szLineBuf2[ipos]=0;
+      // but always add a tab
+      if (pDstCur<pDstMax)
+         *pDstCur++ = '\t';
+
+      // to next mask col
+      while (*pszMask!=0 && *pszMask!=',') pszMask++;
+      if (*pszMask==',') pszMask++;
+   }
+
+   // copy rest
+   for (int ipos=0; ipos<iSrcLen; ipos++) {
+      if (pDstCur >= pDstMax) break;
+      if (szLineBuf2[ipos])
+         *pDstCur++ = pszSrc[ipos];
+   }
+   // correct trailing tab, if any
+   if (pDstCur>szLineBuf && pDstCur[-1]=='\t')
+      pDstCur--;
+
+   *pDstCur = '\0';
+
+   if (cs.debug) {
+      printf("row.from \"%s\"\n",pszSrc);
+      printf("row.to   \"%s\"\n",szLineBuf);
+   }
+
+   return szLineBuf;
+}
+
+// .
 // sort and count
-int groupChainText(char *pcmd, bool brev, bool bcnt, int ndig)
+int groupChainText(char *pcmd, bool brev, bool bcnt, int ndig,
+   int ihead=0, cchar *ptabcol=0)
 {__
    // use a KeyMap of Index-Based StringMaps:
    KeyMap omap;
    omap.setcase(cs.usecase);
    omap.setreverse(brev);
 
-   // collect text lines into groups
-   for (int i=0; i<chain.indata->numberOfEntries(); i++) {
+   // pass-thru table headlines
+   for (int i=0; i<ihead && i<chain.indata->numberOfEntries(); i++)
+   {
       char *pattr = str("");
       char *ptext = chain.indata->getEntry(i, __LINE__, &pattr);
+      if (chain.colany())
+         chain.addLine(ptext, pattr);
+      else
+         printColorText(ptext, pattr, 1); // with lf
+   }
+
+   // collect text lines into groups
+   for (int i=ihead; i<chain.indata->numberOfEntries(); i++)
+   {
+      char *pattr = str("");
+      char *ptext = chain.indata->getEntry(i, __LINE__, &pattr);
+      char *pkey  = ptext;
+      if (ptabcol)
+            pkey  = tabform(ptext, ptabcol);
       num   nidx  = 0;
-      AttribStringMap *pgrp = (AttribStringMap*)omap.get(ptext);
+      AttribStringMap *pgrp = (AttribStringMap*)omap.get(pkey);
       if (!pgrp) {
          // create new string group under search key
          pgrp = new AttribStringMap();
          if (!pgrp) return 9+perr("out of memory");
-         mtklog(("pgrp-put %p under \"%s\"", pgrp, ptext));
-         if (omap.put(ptext, pgrp))
+         if (omap.put(pkey, pgrp))
             return 9+perr("failed to sort, probably out of memory");
       } else {
          // add to existing group, at next index
@@ -36066,11 +36453,6 @@ int groupChainText(char *pcmd, bool brev, bool bcnt, int ndig)
          szAttrBuf[MAX_LINE_LEN-10] = '\0';
 
          oout.put(szLineBuf, szAttrBuf);
-
-         // if (chain.colany())
-         //    chain.addLine(szLineBuf, szAttrBuf);
-         // else
-         //    printColorText(szLineBuf, szAttrBuf, 1); // with lf
       }
       else
       for (int k=0; k<pgrp->size(); k++) {
@@ -37429,6 +37811,16 @@ int main(int argc, char *argv[], char *penv[])
          if (strBegins(pszCfg, "usesft") || strstr(pszCfg, ",usesft")) {
             gs.allowsft = cs.allowsft = 1;
          }
+         // documented
+         if (strBegins(pszCfg, "chainweb") || strstr(pszCfg, ",chainweb"))
+            gs.cweb = 1;
+         if (strBegins(pszCfg, "nochainweb") || strstr(pszCfg, ",nochainweb"))
+            gs.cweb = 0;
+         // undocumented, kept for compat
+         if (strBegins(pszCfg, "cweb") || strstr(pszCfg, ",cweb"))
+            gs.cweb = 1;
+         if (strBegins(pszCfg, "nocweb") || strstr(pszCfg, ",nocweb"))
+            gs.cweb = 0;
       }
    }
 
@@ -42344,6 +42736,136 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
+   // .
+   ifcmd (!strcmp(pszCmd, "addhead") || !strcmp(pszCmd, "addtail")) // sfk187
+   {
+      ifhelp (nparm < 1)
+      printx("$sfk addhead <in >out [-blank] string1 string2 ...\n"
+             "$sfk filter in.txt +addtail string1 string2 ...\n"
+             "\n"
+             "   insert string(s) at the start or end of text lines.\n"
+             "\n"
+             "   $options\n"
+             "      -blank    add blank chars between added strings.\n"
+             "                not default since sfk 1.8.7.\n"
+             "\n"
+             "   $chaining support\n"
+             "      supports input and output chaining.\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk filter infile.txt -form \"string1<run>col1\"\n"
+             "         does the same and is more flexible.\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk echo bar +addhead foo\n"
+             "         prints \"foobar\".\n"
+            );
+      ehelp;
+
+      sfkarg;
+
+      bool bhead = (strcmp(pszCmd, "addhead") ? 0 : 1);
+      bool btail = bhead ? 0 : 1;
+
+      bool bblank = 0;  // sfk187 new default
+      int  iFirst = 0;
+      int  iLast  = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strcmp(pszArg, "-blank")) {
+            bblank = 1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-noblank")) {
+            bblank = 0;
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (iFirst == 0) {
+            iFirst = iLast = iDir;
+            continue;
+         }
+         iLast = iDir;
+      }
+
+      int iCurLine = 0;
+
+      while (1)
+      {
+         char *pattr = 0;
+         char *ptext = 0;
+
+         // get next line
+         if (chain.usedata) {
+            if (iCurLine >= chain.indata->numberOfEntries())
+               break;
+            ptext = chain.indata->getEntry(iCurLine++, __LINE__, &pattr);
+            if (!ptext)
+               break;
+         } else {
+            if (fgets(szLineBuf, MAX_LINE_LEN, stdin) <= 0)
+               break;
+            removeCRLF(szLineBuf);
+            ptext = szLineBuf;
+         }
+
+         // add text
+         szLineBuf2[0] = '\0';
+         if (btail==1 && strlen(szLineBuf2)+strlen(ptext)<MAX_LINE_LEN)
+            strcat(szLineBuf2, ptext);
+         if (btail==1 && bblank==1)
+            strcat(szLineBuf2, " ");
+         for (int i1=iFirst; i1<=iLast; i1++) 
+         {
+            if (strlen(szLineBuf2)+strlen(argx[i1]) >= MAX_LINE_LEN)
+               break;
+            strcat(szLineBuf2, argx[i1]);
+            if (bhead) {
+               if (bblank==1) {
+                  strcat(szLineBuf2, " ");
+               }
+            } else {
+               if (bblank==1 && i1+1<=iLast) {
+                  strcat(szLineBuf2, " ");
+               }
+            }
+         }
+         if (bhead==1 && strlen(szLineBuf2)+strlen(ptext)<MAX_LINE_LEN)
+            strcat(szLineBuf2, ptext);
+
+         // write output
+         if (chain.colany()) {
+            chain.addLine(szLineBuf2, pattr ? pattr : str(""));
+         } else {
+            printf("%s\n", szLineBuf2);
+         }
+      }
+
+      if (iChainNext) {
+         if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+
+   /*
    ifcmd (!strcmp(pszCmd, "addhead"))
    {
       if (!bhelp && blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
@@ -42430,6 +42952,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       fflush(stdout);
       bDone = 1;
    }
+   */
 
    #ifndef NO_ZIP_LIST
    // internal, to test zip/jar listing via central dir
@@ -44483,8 +45006,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -spat     activates slash patterns: \\t=TAB \\q=\" \\r=CR \\n=LF\n"
              "                \\xnn = any code with hex value nn. can be given\n"
              "                after -lit to use slash patterns without colors.\n"
-             "      -noblank  if multiple strings are given, do not insert blanks\n"
-             "                between them.\n"
+             "      -join[line]  join all into one line. line ends are stripped\n"
+             "                from quoted multi line parms (full trim). multiple\n"
+             "                string parameters are joined without blanks.\n"
              "      -lines    print every given string as a single line.\n"
              "\n");
       printx("   $command chaining support\n"
@@ -44505,6 +45029,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n");
       printx("   $quoted multi line parameters are supported in scripts\n" // echo
              "      using auto indent. type \"sfk script\" for details.\n"
+             "      use option -joinline to apply full trim.\n"
              "\n");
       printx("   $see also:<def> sfk help colors\n"
              "\n");
@@ -44559,6 +45084,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       int  iIndent  = 0;
       int  iLinesArgMin = 0;
       int  iLinesArgMax = 0;
+      char ctrimparm = 'i';
 
       for (; iDir<argc; iDir++)
       {
@@ -44590,8 +45116,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             bAsLines = 1;
             continue;
          }
-         if (!strcmp(pszArg, "-noblank")) {
+         if (strBegins(pszArg, "-join")) {  // sfk187
+            ctrimparm = 't';
             bNoBlank = 1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-noblank")) {  // deprecated by -join,
+            bNoBlank = 1;                    // kept for compat
+            continue;
+         }
+         if (!strcmp(pszArg, "-ftrim")) { // internal
+            ctrimparm = 't';
             continue;
          }
          if (!strncmp(pszArg, "-", 1))
@@ -44628,7 +45163,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          // append another echo string, converting \t etc.
 
          if (iGlblInScript) // then pszArg is writeable
-            fixMultiLineParm(pszArg, 'i', iIndent); // echo
+            fixMultiLineParm(pszArg, ctrimparm, iIndent); // 'i' echo
 
          char *pszsrc = pszArg;
          int  nsrclen = strlen(pszsrc);
@@ -44791,7 +45326,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -from n   print unix timestamp n as human readable time.\n"
              "\n");
       printx("   $chaining support\n"
-             "      cannot not use chain input data.\n"   // sfk1833
+             "      cannot use chain input data.\n"   // sfk1833
              "\n"
              "   $see also\n"
              "      #sfk unixtime<def>   prints the unix timestamp\n"
@@ -44950,7 +45485,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                to use a time based seed.\n"
              "\n");
       printx("   $chaining support\n"
-             "      cannot not use chain input data.\n"   // sfk1833
+             "      cannot use chain input data.\n"   // sfk1833
              "\n"
              "   $example\n"
              "      #sfk make-random-file tmp1.dat 1m -seed=1234\n"
@@ -45949,7 +46484,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
  
       if (!pSrcName && !bchained)
-         return 9+perr("missing URL\n");
+         return 9+perr("missing URL.\n");
 
       uint nmode = bpath2name ? 1 : 0;
       if (bpath2path) nmode |= 2;
@@ -46229,7 +46764,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (pfreq) pfreq += strlen("<check_frequency>");
 
          char *pend = pver; while (*pend!=0 && *pend!='<') pend++; if (*pend) *pend='\0';
-               pend = pchg; while (*pend!=0 && *pend!='<') pend++; if (*pend) *pend='\0';
+
+         // fix sfk1872: auto correct version "1.8.7." to "1.8.7"
+         while (pend>pver && isdigit(pend[-1])==0)
+            { pend[-1] = '\0'; pend--; }
+
+         if (pchg)
+            {  pend = pchg; while (*pend!=0 && *pend!='<') pend++; if (*pend) *pend='\0'; }
 
          if (pfreq)
             {  pend = pfreq; while (*pend!=0 && *pend!='<') pend++; if (*pend) *pend='\0'; }
@@ -46357,7 +46898,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      $freespace<def>  tell only free space\n"
              "\n");
       printx("   $chaining support\n"
-             "      cannot not use chain input data.\n"   // sfk1833
+             "      cannot use chain input data.\n"   // sfk1833
              "\n");
       webref(pszCmd);
       printx("   $examples\n"
@@ -47161,111 +47702,88 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             nBufMB = atol(pszParm);
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-nov", 4)) {
             cs.verifyEarly = 0;
             cs.verifyLate  = 0;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-ver", 4)) {
             cs.verifyEarly = 0;
             cs.verifyLate  = 1;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-mir", 4)) {
             cs.syncOlder = 1;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-noca", 5)) {
             bGlblUseCopyCache = 0;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-del", 4)) {
             cs.syncFiles = 1;
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-wipe")) {
             cs.delStaleFiles = 1;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-nodel", 6)) {
             cs.syncFiles = 0;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-noco", 5)) {
             bCopy = 0;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-dif", 4)) {
             bGlblShowSyncDiff = 1;
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-cache")) {
             bGlblUseCopyCache = 1;
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-deep")) {
             bGlblIgnoreTime = 1;
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-style")) {
             nGlblCopyStyle = 0;
             continue;
          }
-         else
          if (strBegins(argx[iDir], "-link")) {
             cs.copyLinks = 1; // windows only, untested.
             continue;
          }
-         else
          if (strBegins(argx[iDir], "-nobuf")) {
             cs.copyNoBuf = 1; // windows only, untested.
             continue;
          }
-         else
          if (strBegins(argx[iDir], "-decrypt")) {
             cs.copyDecrypt = 1; // windows only, untested.
             continue;
          }
-         else
-         if (!strcmp(argx[iDir], "-stat"))  { cs.dostat=1; continue; }
-         else
-         if (!strncmp(argx[iDir], "-save", 5))   { nDoSave=2; continue; }
-         else
-         if (!strncmp(argx[iDir], "-sign", 5))   { nDoSave=1; continue; }
-         else
-         if (!strncmp(argx[iDir], "-load", 5))   { bDoLoad=1; continue; }
-         else
+         if (!strcmp(argx[iDir], "-stat"))      { cs.dostat=1; continue; }
+         if (!strncmp(argx[iDir], "-save", 5))  { nDoSave=2; continue; }
+         if (!strncmp(argx[iDir], "-sign", 5))  { nDoSave=1; continue; }
+         if (!strncmp(argx[iDir], "-load", 5))  { bDoLoad=1; continue; }
          if (!strcmp(argx[iDir], "-shadow")) {
             nGlblCopyShadows = 1;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-shadow=", 8)) {
             nGlblCopyShadows = 1;
             nGlblShadowSizeLimit = atol(argx[iDir]+8) * 1000000;
             continue;
          }
          /*
-         else
          if (haveParmOption(argx, argc, iDir, "-signto", &pszParm)) {
             if (!pszParm) return 9;
             pszSignTo = pszParm;
             continue;
          }
          */
-         else
          if (haveParmOption(argx, argc, iDir, "-check", &pszParm)) {
             if (!pszParm) return 9;
             if (filedb.openRead(pszParm, 1)) return 9;
@@ -47273,19 +47791,20 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             cs.skipOwnMetaDir = 1;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-checksigns", &pszParm)) {
             if (!pszParm) return 9;
             if (filedb.openRead(pszParm, 1)) return 9;
             // -> filedb.canRead() is set
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-nodirtime")) {
             cs.nodirtime = 1;
             continue;
          }
-         else
+         if (!strcmp(argx[iDir], "-move")) {
+            cs.movefiles = 1;
+            continue;
+         }
          if (!strncmp(argx[iDir], "-", 1)) {
             if (isDirParm(argx[iDir]))
                break; // fall through
@@ -47294,7 +47813,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             else
                return 9+perr("unknown option: %s\n", argx[iDir]);
          }
-         else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
          // process non-option keywords:
@@ -50805,7 +51323,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "            <zone><id>3</id></zone><zone><id>1</id></zone>\n"
              "            <zone><id>8</id></zone><zone><id>2</id></zone>\n"
              "         get the 3rd id and create an http URL using echo.\n"
-             "         add +web to execute the web request. [9]\n"
+             "         add +tweb to execute the web request. [9]\n"
              );
       if (bIsXed)
       printx("      #sfk xed in.txt \"/[eol]/, /\" +xed \"/[60 chars]*, /[all]\\n/\"\n"
@@ -51504,6 +52022,88 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
  
+   // .
+   ifcmd (!strcmp(pszCmd, "load"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk load in.txt +...\n"
+             "\n"
+             "   load text or binary data for further processing\n"
+             "   within a command chain.\n"
+             "\n"
+             "   - when sending to a command that expects\n"
+             "     text lines like\n"
+             "\n"
+             "        $sfk load in.txt +filter ...\n"
+             "\n"
+             "     then long lines or stream text will be\n"
+             "     hard wrapped at %d characters.\n"
+             , (int)MAX_LINE_LEN);
+      printx("\n"
+             "   - when sending to binary capable commands\n"
+             "     like xed and xex data is not wrapped.\n"
+             "\n");
+      printx("   $see also\n"
+             "      #sfk xex<def>     load and extract any data\n"
+             "      #sfk filter<def>  load and filter text lines\n"
+             "\n");
+      printx("   $examples\n"
+             "      #sfk load in.txt +sort\n"
+             "         sort the text lines of in.txt\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool   bstdin = 0;
+      char *pszFile = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strcmp(argx[iDir], "-i")) {
+            bstdin = 1;
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pszFile) {
+            pszFile = pszArg;
+            continue;
+         }
+         return 9+perr("unexpected: %s\n",pszArg);
+      }
+
+      uchar *pData = 0;
+      num    nSize = 0;
+
+      if (loadInput(&pData, 0, &nSize, bstdin, pszFile, 0))
+         return 9;
+
+      dumpOutput(pData, 0, nSize, 0);
+
+      delete [] pData;
+
+      if (iChainNext) {
+         if (chain.colany()) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+
    if (!strcmp(pszCmd, "testrep"))
    {
       int iTestCases = 1;
@@ -53976,8 +54576,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "     #person<def>     person address record\n"
              "     #company<def>    company address record\n"
              "     #date<def>       $$year$$month$$day\n"
-             "     #time<def>       $$hour$$minsec$$minsec\n"
-             "     #timemin<def>    $$hour$$minsec\n"
+             "     #time<def>       $$hour$$minute$$second\n"
+             "     #timemin<def>    $$hour$$minute\n"
              "     #dig<def>        single digit\n"
              "\n"
              "   $options\n"
@@ -53985,8 +54585,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "     -from   db.txt  load phrase database from db.txt\n"
              "     -seed   n       set random seed to a fixed value\n"
              "\n");
+      printx("   $quoted multi line parameters are supported in scripts\n" // data
+             "      using full trim. type \"sfk script\" for details.\n"
+             "\n");
       printx("   $chaining support\n"
-             "      cannot not use chain input data.\n"   // sfk1833
+             "      cannot use chain input data.\n"   // sfk1833
              "\n");
       webref(pszCmd);
       printx("   $examples\n"
@@ -54035,7 +54638,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                return 9;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-makedb", &pszParm)) {
             if (!pszParm) return 9;
             delete [] pszSrc;
@@ -54044,13 +54646,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             printf("saved to: %s\n", pszParm);
             return 0;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-seed", &pszParm)) {
             if (!pszParm) return 9;
             nseed = atoi(pszParm);
             continue;
          }
-         else
          if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(pszArg))
                break; // fall through
@@ -54059,7 +54659,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             else
                return 9+perr("unknown option: %s\n", pszArg);
          }
-         else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
          // process non-option keywords:
@@ -54071,6 +54670,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             return 9+perr("invalid command: %s", pszArg);
          }
          if (!pszAll) {
+            if (iGlblInScript) // then pszArg is writeable
+               fixMultiLineParm(pszArg, 't'); // sfk187
             pszAll = pszArg;
             continue;
          }
@@ -55570,6 +56171,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "       #sfk help chain<def>  command chaining overview\n"
              "       #sfk help var<def>    about script parameters and variables\n"
              "       #sfk label<def>       further options given after label\n"
+             "       #sfk load<def>        load text or data for chaining\n"
              "\n"
              "   $setting global options for all commands within a script:\n"
              "      supply them directly after \"sfk\" of the calling command:\n"
@@ -57462,6 +58064,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   $options\n"
              "      -case        case sensitive text comparison\n"
              "      -rev[erse]   reverse sorting order\n"
+             "      -skiphead    first line is a table header,\n"
+             "                   exclude this from sorting\n"
+             "      -head=n      keep first n lines unsorted\n"
              "\n");
       webref(pszCmd);
       printx("   $examples\n"
@@ -57483,15 +58088,35 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
 
       bool brev = 0;
+      int ihead = 0;
+      cchar *ptabcol = 0;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
-         if (strBegins(argx[iDir], "-rev")) {
+         char *pszArg = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-tabcol", &pszParm)) {
+            if (!pszParm) return 9;
+            ptabcol = pszParm;
+            continue;
+         }
+         if (strBegins(pszArg, "-rev")) {
             brev = 1;
             continue;
          }
-         else
+         if (   !strcmp(pszArg, "-head")
+             || !strcmp(pszArg, "-header")
+             || !strcmp(pszArg, "-skiphead")
+            )
+         {
+            ihead=1;
+            continue;
+         }
+         if (strBegins(pszArg, "-head=")) {
+            ihead=atoi(pszArg+6);
+            continue;
+         }
          if (!strncmp(argx[iDir], "-", 1)) {
             if (isDirParm(argx[iDir]))
                break; // fall through
@@ -57507,7 +58132,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          return 9+perr("unexpected: %s\n", argx[iDir]);
       }
 
-      if (groupChainText(pszCmd, brev, 0, 0)) return 9;
+      if (groupChainText(pszCmd, brev, 0, 0, ihead, ptabcol)) return 9;
 
       STEP_CHAIN(iChainNext, 1);
 

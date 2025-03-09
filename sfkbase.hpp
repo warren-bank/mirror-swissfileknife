@@ -1769,6 +1769,8 @@ public:
    bool allowsft;          // allow sft protocol
    bool showprotocol;
    bool brackets;
+   bool cweb;              // +web expects chain input
+   bool movefiles;
 };
 
 // extern struct CommandStats gs;

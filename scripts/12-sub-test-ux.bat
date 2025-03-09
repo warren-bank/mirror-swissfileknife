@@ -37,7 +37,7 @@ $TEXE -nocol test $TCMD T02.6.filter res-08.txt
 $TEXE -nocol filter testfiles/Formats/07-filter-src.txt ++delete ++something >res-09.txt
 $TEXE -nocol test $TCMD T02.7.filter res-09.txt
 
-$TEXE -nocol addhead <testfiles/Formats/08-head-tail.txt >res-10.txt test1 test2 test3
+$TEXE -nocol addhead -blank <testfiles/Formats/08-head-tail.txt >res-10.txt test1 test2 test3
 $TEXE -nocol test $TCMD T02.8.addhead res-10.txt
 
 $TEXE -nocol addtail -noblank <testfiles/Formats/08-head-tail.txt >res-11.txt test1 test2 test3

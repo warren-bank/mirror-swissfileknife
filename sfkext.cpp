@@ -98,6 +98,7 @@ uchar mapchar(char ch);
 bool validFromIPMask(char *pszmask);
 int encodeHex(uchar *pszSrc, int iSrcLen, char *pszDst, int iMaxDest, char cPrefix, char *abToEncode);
 bool encodeURL(char *pszRaw);
+int execHttpLog(uint nPort, char *pszForward, int nForward);
 
 extern bool bGlblEscape;
 extern num  nGlblMemLimit;
@@ -1463,6 +1464,7 @@ TCPCon::TCPCon(SOCKET hsock, TCPCore *pcorein, int nTraceIn)
    nClTraceLine = nTraceIn;
    nClStartTime = getCurrentTime();
    iClMaxWait   = pClCore->iClMaxWait;
+   iClPort      = 0;
 }
 
 TCPCon::~TCPCon( ) 
@@ -1512,7 +1514,7 @@ void  TCPCon::setBlocking (bool bYesNo)
    localSetBlocking(clSock, bYesNo); // 169
 }
 
-int TCPCon::read(uchar *pBlock, uint nLen) 
+int TCPCon::read(uchar *pBlock, uint nLen, bool bReturnAny) 
 {
    // if a foreground thread detects the escape key:
    if (bGlblEscape)
@@ -1549,7 +1551,7 @@ int TCPCon::read(uchar *pBlock, uint nLen)
 
       nRead = recv(clSock, (char*)pBlock+nCursor, nRemain, 0);
 
-      // mtklog(("%d = tcp.recv(%d,%d) err %d",nRead,clSock,nRemain,netErrno()));
+      // printf("%d = tcp.recv(%d,%d) err %d\n",nRead,clSock,nRemain,netErrno());
 
       if (nRead <= 0)
       {
@@ -1573,6 +1575,9 @@ int TCPCon::read(uchar *pBlock, uint nLen)
       nTotal  += nRead;
       nRemain -= nRead;
       nCursor += nRead;
+
+      if (bReturnAny)
+         break;
    }
    if (nDelays > 0) {
       mtklog(("read using %d delays",nDelays));
@@ -1870,7 +1875,8 @@ void TCPCore::shutdown( )
    memset(aClCon, 0, sizeof(aClCon));
 }
 
-int TCPCore::makeServerSocket (int nportin, TCPCon **ppout)
+// rc 5: port is in use
+int TCPCore::makeServerSocket(int nportin, TCPCon **ppout, bool bquiet)
 {__
    if (checksys()) return 9;
 
@@ -1890,34 +1896,31 @@ int TCPCore::makeServerSocket (int nportin, TCPCon **ppout)
    if (hServSock == INVALID_SOCKET)
       return 9+perr("cannot create socket on port %u", nPort);
 
-   if (bind(hServSock, (struct sockaddr *)&ServerAdr, sizeof(sockaddr_in)) == SOCKET_ERROR)
-      return 9+perr("cannot bind socket on port %u", nPort);
+   if (bind(hServSock, (struct sockaddr *)&ServerAdr, sizeof(sockaddr_in)) == SOCKET_ERROR) {
+      if (!bquiet) perr("cannot bind socket on port %u", nPort);
+      return 5;
+   }
 
    int nerr = getsockname(hServSock, (struct sockaddr *)&ServerAdr, &nSockAdrSize);
    if (nerr == SOCKET_ERROR)
       return 9+perr("getsockname failed, %d\n", lastError());
 
-   /*
-   bool bTell = (nPort == 0);
-   nPort    = (uint)ntohs(ServerAdr.sin_port);
-   nNewPort = nPort;
-   if (bTell)
-      printf("< local port %u (%u, %u)\n", nPort, (nPort>>8), nPort&0xFF);
-   */
-
    // make later accepts non-blocking:
-   // unsigned long ulParm = 1;
-   // ioctlsocket(hServSock, FIONBIO, &ulParm);
    localSetBlocking(hServSock, 0); // 169
 
-   if (listen(hServSock, 4) == SOCKET_ERROR)
-      return 9+perr("cannot listen on port %u", nPort);
+   if (listen(hServSock, 4) == SOCKET_ERROR) {
+      if (!bquiet) perr("cannot listen on port %u", nPort);
+      return 5;
+   }
 
    // finally, create and remember the TCPCon
    TCPCon *pcon = new TCPCon(hServSock, this, __LINE__);
    // unblock was done above
+   pcon->iClPort = nPort;
    addCon(pcon);
-   *ppout = pcon;
+
+   if (ppout)
+      *ppout = pcon;
 
    return 0;
 }
@@ -1977,7 +1980,9 @@ int TCPCore::accept(TCPCon *pServerCon, TCPCon **ppout)
 
    TCPCon *pcon = new TCPCon(hClient, this, __LINE__);
    pcon->setBlocking(0);
+   memcpy(&pcon->clFromAddr, &ClientAdr, sizeof(pcon->clFromAddr));
    addCon(pcon);
+
    *ppout = pcon;
 
    return 0;
@@ -2127,11 +2132,18 @@ int TCPCore::close(TCPCon *pcon)
    return 0;
 }
 
-int  TCPCore::selectInput (TCPCon **ppNextActiveCon, TCPCon *pToQuery) 
+int  TCPCore::selectInput(TCPCon **ppNextActiveCon, TCPCon *pToQuery, int iMaxWaitMSec)
 {__
-   mtklog(("tcp-core select on %d connections",nClCon));
+   // printf("tcp-core select on %d connections\n",nClCon);
+
+   if (nClCon < 1)
+      return 1;
 
    IOStatusPhase ophase("tcp select");
+
+   struct timeval tv;
+   tv.tv_sec  = iMaxWaitMSec/1000;
+   tv.tv_usec = (iMaxWaitMSec < 1000) ? iMaxWaitMSec * 1000 : 0;
 
    // fd_set is modified on select, therefore:
    memcpy(&clSetCopy, &clReadSet, sizeof(fd_set));
@@ -2139,10 +2151,13 @@ int  TCPCore::selectInput (TCPCon **ppNextActiveCon, TCPCon *pToQuery)
       &clSetCopy,
       NULL, 
       NULL, 
-      NULL  // blocking (no timeout)
+      (iMaxWaitMSec > 0) ? &tv : NULL
       );
-   if (nrc <= 0)
+   if (nrc <= 0) {
+      if (iMaxWaitMSec > 0)
+         return 1; // timeout
       return 9+perr("select() failed, %d",lastError());
+   }
    // identify connection with input
    mtklog(("tcp-core select rc %d",nrc));
    for (int i=0; i<nClCon; i++)
@@ -2333,8 +2348,6 @@ char *HTTPClient::curjoin( ) {
 
 int HTTPClient::splitURL(char *purl)
 {__
-   mtklog(("spliturl %s",purl));
-
    // isolate hostname from url
    aClURLBuf[0] = '\0';
 
@@ -2343,19 +2356,34 @@ int HTTPClient::splitURL(char *purl)
    bClSSL  = 0;
    nClPort = 80;
 
-   #ifdef WITH_SSL
    if (!strncmp(purl, "https://", 8)) {
+      #ifdef WITH_SSL
       psz1 = purl + 8;
       bClSSL = 1;
       nClPort = 443;
+      #else
+      perr("SFK does not support SSL encryption (HTTPS).");
+      static bool bfirst=1;
+      if (bfirst) {
+         bfirst=0;
+         #ifdef _WIN32
+         pinf("if you need https support, download curl, then:\n");
+         #else
+         pinf("if you need https support, install curl, then:\n");
+         #endif
+         pinf("curl -k -o outfile.dat https://website/in.dat\n");
+      }
+      return 9;
+      #endif
    }
    else
-   #endif
    if (!strncmp(purl, "http://", 7)) {
       psz1 = purl + 7;
    }
-   else
+   else {
+      perr("http: wrong url format: %s",purl);
       return 9;
+   }
 
    // copy from thehost.com
    strcopy(aClURLBuf, psz1);
@@ -2549,7 +2577,7 @@ int HTTPClient::getFileHead(char *purl, Coi *pcoi, cchar *pinfo)
    }
 
    if (splitURL(purl))
-      return 9+perr("http: wrong url format: %s",purl);
+      return 9; // error was told
 
    char *phost = curhost();
    char *pfile = curpath();
@@ -2661,7 +2689,7 @@ int HTTPClient::getFileHead(char *purl, Coi *pcoi, cchar *pinfo)
 
       // have to split this again
       if (splitURL(purl))
-         return 9+perr("http: wrong url format: %s",purl);
+         return 9; // error was told
    
       // take redirected target
       phost = curhost();
@@ -2981,7 +3009,7 @@ int HTTPClient::connectHttp(char *phostorip, int nport, TCPCon **ppout)
 int HTTPClient::open(char *purl, cchar *pmode, Coi *pcoi)
 {__
    if (splitURL(purl))
-      return 9+perr("http: wrong url format: %s",purl);
+      return 9; // error was told
 
    if (bClNoCon) {
       mtklog(("http::open: nocon set, blocked: %s", purl));
@@ -3095,9 +3123,8 @@ int HTTPClient::open(char *purl, cchar *pmode, Coi *pcoi)
       pcoi->nClSize = 0;
 
       // have to split this again
-      if (splitURL(purl)) {
-         return 9+perr("http: wrong url format: %s",purl);
-      }
+      if (splitURL(purl))
+         return 9; // error was told
 
       // take redirected target
       phost = curhost();
@@ -3411,7 +3438,11 @@ int FTPClient::splitURL(char *purl)
    aClURLBuf[0] = '\0';
 
    // ftp://thehost.com/thedir/thefile.txt
-   if (strncmp(purl, "ftp://", 6)) return 9;
+   if (strncmp(purl, "ftp://", 6)) {
+      perr("ftp: wrong url format: %s", purl);
+      return 9;
+   }
+
    char *psz1 = purl + 6;
 
    // copy from thehost.com
@@ -4859,10 +4890,9 @@ int Coi::rawOpenFtpSubFile(cchar *pmode)
    FTPClient *pftp = data().pClFtp;
 
    // isolate hostname from url
-   if (pftp->splitURL(name())) {
-      perr("ftp: wrong url format: %s", name());
-      return 9;
-   }
+   if (pftp->splitURL(name()))
+      return 9; // error was told
+
    // nRelIndex is now the relative path start index.
    char *phost    = pftp->curhost();
    char *prelfile = pftp->curpath();
@@ -5349,9 +5379,8 @@ int Coi::rawLoadFtpDir( )
    // use supplied client, release after dir download
    FTPClient *pftp = data().pClFtp;
    if (pftp->splitURL(name())) {
-      perr("ftp: wrong url format: %s", name());
       data().releaseFtp();
-      return 9;
+      return 9; // error was told
    }
    // nRelIndex is now the relative path start index.
    char *phost = pftp->curhost();
@@ -11299,6 +11328,9 @@ int UDPCore::makeSocket(int iMode, char *pszHost, int nportin)
 
 int UDPCore::selectInput(int *pIndex, int iMaxWaitMSec)
 {
+   if (nClCon < 1)
+      return 1; // nothing received
+
    struct timeval tv;
    tv.tv_sec  = iMaxWaitMSec/1000;
    tv.tv_usec = (iMaxWaitMSec < 1000) ? iMaxWaitMSec * 1000 : 0;
@@ -15203,6 +15235,29 @@ int copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nB
    return lRC;
 }
 
+int moveFile(char *pszSrc, char *pszDst)
+{__
+   char *pszTell = chain.usefiles ? pszDst : pszSrc;
+   if (cs.listTargets) pszTell = pszDst;
+
+   if (cs.sim) {
+      info.setStatus("", pszTell, "-----", eNoCycle);
+      if (!cs.dostat)
+         info.printLine(nGlblCopyStyle);
+      cs.files++;
+      return 0;
+   }
+
+   if (rename(pszSrc, pszDst))
+      return 9+perr("cannot move file %s   \n", pszSrc);
+
+   cs.files++;
+
+   printCopyCompleted(pszTell, 0);
+
+   return 0;
+}
+
 int execDirCopy(char *pszSrc, FileList &oDirFiles)
 {__
    // copy metadata of directory
@@ -15455,9 +15510,10 @@ int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
    //    sfk copy foo bar
    //       the pszSrc provided in here REALLY is the SOURCE.
 
-   bool  bJustCopyTime = 0;
-   bool  bSrcIsOlder = 0;
+   bool bJustCopyTime = 0;
+   bool bSrcIsOlder = 0;
    uint nflags = 0;
+   bool bmove = cs.movefiles;
 
    FileStat ofsSrc;
    FileStat ofsDst;
@@ -15597,6 +15653,12 @@ int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
       if (!bDone)
       {
          int iSubRC = 0;
+         if (bmove) {
+            // . sfk187: move file
+            if (iSubRC = moveFile(pszSrc, pszDst))
+               return iSubRC;
+         }
+         else
          #ifdef _WIN32
          if (!nGlblCopyShadows) {
             if (iSubRC = copyFileWin(pszSrc, pszDst, pszShDst, pGlblWorkBuf, nGlblWorkBufSize, nflags))
@@ -15848,6 +15910,8 @@ const char *szGlblPhraseData =
 "$date: $year$month$day\n"
 "$time: $hour$minsec$minsec\n"
 "$timemin: $hour$minsec\n"
+"$minute: $minsec\n" // sfk187
+"$second: $minsec\n" // sfk187
 "$hour: 01,02,03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18,19,20,21,22,23\n"
 "$minsec: 01,02,03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18,19,20,\n"
 "         21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,\n"
@@ -18414,6 +18478,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      #sfk if<def>        conditional execution\n"
          "      #sfk goto<def>      jump to a local label\n"
          "      #sfk for<def>       repeat commands n times\n"
+         "      #sfk load<def>      load text or data for chaining\n"
          );
    }
 
@@ -19018,7 +19083,7 @@ char *SFKMapArgs::eval(char *pszExp)
 
 bool haveParmOption(char *argv[], int argc, int &iDir, cchar *pszOptBase, char **pszOutParm);
 bool isDirParm(char *psz);
-bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0);
+bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJustCheck=0);
 bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext, bool bAllowVerbose=0);
 bool alldigits(char *psz);
 int pbad(char *pszCmd, char *pszParm);
@@ -22402,6 +22467,296 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   // .
+   if (!strcmp(pszCmd, "httplog"))
+   {
+      ifhelp (nparm < 1)
+      ehelp;
+
+      sfkarg;
+
+      char  szForwardBuf[100];
+
+      int   nPort       = -1;
+      char *pszForward  = 0;
+      int   nForward    = 0;
+
+      cs.timeOutAutoSelect = 0;
+      cs.timeOutMSec = 2000;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-timeout", &pszParm)) { // tcpdump
+            if (!pszParm) return 9;
+            cs.timeOutMSec = atol(pszParm);
+            cs.timeOutAutoSelect = 0;
+            if (cs.timeOutMSec < 200) {
+               printx("<warn>note: timeout set to %d milliseconds (%u.%03u seconds).<def>\n", cs.timeOutMSec, cs.timeOutMSec/1000, cs.timeOutMSec%1000);
+            }
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (nPort == -1) {
+            nPort = atol(argx[iDir]);
+            continue;
+         }
+         if (!pszForward) {
+            strcopy(szForwardBuf, pszArg);
+            pszForward = szForwardBuf;
+            char *psz = strrchr(pszForward, ':');
+            if (!psz) return 9+perr("missing port, specify host:port\n");
+            *psz++ = '\0';
+            nForward = atol(psz);
+            continue;
+         }
+         return 9+perr("unexpected: %s\n",pszArg);
+      }
+      if (nPort == -1)
+         return 9+perr("missing server port\n");
+
+      execHttpLog(nPort, pszForward, nForward);
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "portmon")) // internal
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk portmon [opts] [udp] port1 port2 [tcp] port 3 ...\n"
+             "\n"
+             "   listen on multiple tcp or udp ports\n"
+             "   and print or forward (start of) on incoming traffic.\n"
+             "\n"
+             "   $options\n"
+             "      -forward host:port    forward received traffic as is\n"
+             "      -fwinfo  host:port    forward received traffic info\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk udpmon 5000 5001 -forward 192.168.1.100:3000\n"
+             "         listen on ports 5000 and 5001.\n"
+             "\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      TCPCore::sysInit();
+
+      UDPCore *pudp = new UDPCore(500);
+      TCPCore *ptcp = new TCPCore(str("portmon"),'h');
+      ptcp->iClMaxWait = 500;
+
+      struct sockaddr_in oOwnAddr; mclear(oOwnAddr);
+      int iudp=0,itcp=0,isubrc=0;
+      char  szForwardBuf[100]; mclear(szForwardBuf);
+      char *pszForward = 0;
+      int nForward = 0,bfwinfo=0;
+      UDPIO oForward;
+      int istate=-1;
+
+      // important default ports used by windows
+      ushort audpdef[] = 
+         { 53,88,135,139,161,162,445,464,1433,1434,1701,1801,3527,0 };
+      ushort atcpdef[] = 
+         { 23,25,42,53,81,110,135,137,139,143,389,443,445,464,
+           515,531,543,544,636,993,995,1433,1500,1723,1801,2101,2103,2105,3389,0 };
+
+      oOwnAddr.sin_family      = AF_INET;
+      oOwnAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-forward", &pszParm)) {
+            if (!pszParm) return 9;
+            strcopy(szForwardBuf, pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-fwinfo", &pszParm)) {
+            if (!pszParm) return 9;
+            strcopy(szForwardBuf, pszParm);
+            bfwinfo=1;
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (isdigit(*pszArg))
+         {
+            int iport = atoi(pszArg);
+            oOwnAddr.sin_port = htons(iport);
+            if (istate==0) { // udp
+               if (pudp->makeSocket(1, str("127.0.0.1"), iport))
+                  return 9+perr("cannot create socket");
+               if (bind(pudp->aClCon[iudp].sock, (struct sockaddr *)&oOwnAddr, sizeof(oOwnAddr)))
+                  return 9+perr("cannot bind udp port %u\n",iport);
+               iudp++;
+            } else if (istate==1) { // tcp
+               if (ptcp->makeServerSocket(iport, 0))
+                  return 9+perr("cannot create socket");
+               itcp++;
+            } else {
+               return 9+perr("supply tcp or udp before first port number\n");
+            }
+            continue;
+         }
+         if (!strcmp(pszArg,"tcp"))
+            { istate=1; continue; }
+         if (!strcmp(pszArg,"udp"))
+            { istate=0; continue; }
+         if (!strcmp(pszArg,"default")) {
+            for (int i=0;atcpdef[i];i++) {
+               int iport=atcpdef[i];
+               if ((isubrc = ptcp->makeServerSocket(iport, 0, 1))) {
+                  if (isubrc==5)
+                     pinf("[nopre] tcp port %u is in use, skipping.\n",iport);
+                  continue;
+               }
+               itcp++;
+            }
+            for (int i=0;audpdef[i];i++) {
+               int iport=audpdef[i];
+               oOwnAddr.sin_port = htons(iport);
+               if (pudp->makeSocket(1, str("127.0.0.1"), iport))
+                  return 9+perr("cannot create udp socket for port %u\n",iport);
+               if (bind(pudp->aClCon[iudp].sock, (struct sockaddr *)&oOwnAddr, sizeof(oOwnAddr))) {
+                  pinf("[nopre] udp port %u is in use, skipping.\n",iport);
+                  continue;
+               }
+               iudp++;
+            }
+            continue;
+         }
+         return 9+perr("unexpected: %s",pszArg);
+      }
+      if (iudp<1 && itcp<1)
+         return 9+perr("missing port number(s)");
+      if (szForwardBuf[0]) {
+         pszForward = szForwardBuf;
+         char *psz = strrchr(pszForward, ':');
+         if (!psz)
+            return 9+perr("missing port, specify -forward host:port\n");
+         *psz++ = '\0';
+         nForward = atoi(psz);
+         if (nForward<1)
+            return 9+perr("missing port, specify -forward host:port\n");
+         if (oForward.initSendReceive("udpmon",-1,nForward,pszForward,0))
+            return 9+perr("cannot setup forward");
+      }
+
+      uchar packet[512];
+      uchar packet2[512+100]; mclear(packet2);
+      int   packlen = 500;
+      char  szIP[200];
+
+      struct sockaddr_in from;
+      int fromlen = sizeof(sockaddr_in);
+
+      int   ihowmany = 1; // force first ip
+      char *pszOwnIP = ownIPList(ihowmany);
+
+      printf("[%s listens on %u tcp and %u udp ports]\n",
+         pszOwnIP, ptcp->nClCon, pudp->nClCon);
+      if (nForward>=0)
+         printf("[forward to %s port %u]\n",pszForward,nForward);
+
+      while (!userInterrupt())
+      {
+         int icon=0,ilen=0,bany=0;
+         TCPCon *pcon=0,*pcln=0;
+
+         if (!pudp->selectInput(&icon, 50))
+         if ((ilen = recvfrom(pudp->aClCon[icon].sock, (char *)packet, packlen, 0,(struct sockaddr *)&from, (socklen_t*)&fromlen)) > 0)
+         {
+            bany=1;
+            printf("u %u: %03u %s %s\n",
+               pudp->aClCon[icon].port,
+               ilen,
+               ipAsString(&from,szIP,sizeof(szIP)-10,0),
+               dataAsTrace(packet,mymin(ilen,64)));
+            if (nForward > 0) {
+               sprintf((char*)packet2,":portmon %s U%04u %s %03u: ",
+                  pszOwnIP, pudp->aClCon[icon].port,
+                  ipAsString(&from,szIP,sizeof(szIP)-10,0), ilen
+                  );
+               int ihead=strlen((char*)packet2);
+               if (bfwinfo) {
+                  snprintf((char*)packet2+ihead,500-ihead,"%s\n",dataAsTrace(packet,mymin(ilen,128)));
+                  oForward.sendData(packet2,ihead+(int)strlen((char*)packet2+ihead));
+               } else {
+                  memcpy(packet2+ihead,packet,ilen);
+                  oForward.sendData(packet2,ihead+ilen);
+               }
+            }
+         }
+
+         if (!ptcp->selectInput(&pcon,0,50))
+         {
+            bany=1;
+            ptcp->accept(pcon,&pcln);
+            if (pcln)
+            {
+               if ((ilen = pcln->read(packet, packlen, 1)) > 0)
+                  printf("t %u: %03u %s %s\n",
+                     pcon->iClPort,
+                     ilen,
+                     ipAsString(&pcln->clFromAddr,szIP,sizeof(szIP)-10,0),
+                     dataAsTrace(packet,mymin(ilen,64)));
+               else
+                  printf("t %u: 000 %s [no data]\n",
+                     pcon->iClPort,
+                     ipAsString(&pcln->clFromAddr,szIP,sizeof(szIP)-10,0));
+               if (nForward > 0) {
+                  sprintf((char*)packet2,":portmon %s T%04u %s %03u: ",
+                     pszOwnIP, pcon->iClPort,
+                     ipAsString(&pcln->clFromAddr,szIP,sizeof(szIP)-10,0), ilen
+                     );
+                  int ihead=strlen((char*)packet2);
+                  if (bfwinfo) {
+                     snprintf((char*)packet2+ihead,500-ihead,"%s\n",dataAsTrace(packet,mymin(ilen,128)));
+                     oForward.sendData(packet2,ihead+(int)strlen((char*)packet2+ihead));
+                  } else {
+                     memcpy(packet2+ihead,packet,ilen);
+                     oForward.sendData(packet2,ihead+ilen);
+                  }
+               }
+               ptcp->close(pcln);
+            }
+            else
+            {
+                  printf("t %u: accept failed\n",pcon->iClPort);
+            }
+         }
+
+         if (!bany)
+            doSleep(10);
+      }
+
+      bDone = 1;
+   }
+
    bool btcpdump = 0;
    bool budpdump = 0;
    bool bnetdump = 0;
@@ -23991,6 +24346,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
           || !strcmp(pszCmd, "tcpsend")
           || !strcmp(pszCmd, "sendtcp")
           || !strcmp(pszCmd, "knxsend")
+          || !strcmp(pszCmd, "udp")       // sfk1872
+          || !strcmp(pszCmd, "cudp")      // sfk1872
          )
    {
       bool bknx = !strcmp(pszCmd, "knxsend");
@@ -24034,6 +24391,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      small chain input data can be sent.\n"  // sfk1833
              "      to send continuous text over 1k do not use udpsend\n"
              "      but tonetlog. type \"sfk netlog\" for more.\n"
+             "\n"
+             "   $aliases\n"
+             "      $sfk udp<def>   like udpsend, but does not use chain input.\n"
+             "      $sfk cudp<def>  call udp quickly without any output,\n"
+             "                same as sfk udp -quiet.\n"
              "\n");
       if (bknx)
       printx("   $see also\n"
@@ -24072,6 +24434,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bool  bTCP = strcmp(pszCmd, "tcpsend") ? 0 : 1;
       bool  bknx = strcmp(pszCmd, "knxsend") ? 0 : 1;
       bool  bRaw = 0;
+
+      if (!strcmp(pszCmd, "cudp")) {
+         cs.quiet = 1;
+      }
 
       mclear(szDstIP);
       mclear(abMsg);
@@ -25239,13 +25605,20 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
-   ifcmd (!strcmp(pszCmd, "web")) // +var
+   ifcmd (   !strcmp(pszCmd, "web") || !strcmp(pszCmd, "tweb")
+          || !strcmp(pszCmd, "mweb")
+          || !strcmp(pszCmd, "cweb")   // sfk1872
+         )
    {
       ifhelp (chain.useany() == 0 && nparm < 1)
       printx("<help>$sfk web [options] url [options]\n"
+             "$sfk filter ... +tweb [options]\n"
              "\n"
              "   call an http:// URL and print output to terminal,\n"
              "   or pass output to further commands for processing.\n"
+             "\n"
+             "   sfk ... +web requires an url parameter.\n"
+             "   sfk ... +tweb gets the url(s) from a previous command.\n"
              "\n"
              "   $options\n"
              "      -nodump      do not print reply data.\n"
@@ -25262,6 +25635,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "                     and data read may block endless.\n"
              "      -webtimeout=n  same, but can be given as global option\n" // wto.web
              "                     for a multi command chain.\n"
+             "      -delay=n     wait n msec after each request.\n"
              "      -weblimit=n  set download size limit to n mb\n"
              , cs.maxwebwait);
       printx("      -status[=s]  add a status line after reply data, optionally\n"
@@ -25286,15 +25660,24 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "        use -weblimit=n to change this to n mbytes.\n"
              "      - if binary data is found, binary codes are stripped\n"
              "        on output to terminal.\n"
-             "\n"
-             "   $chaining support\n"
+             "\n");
+      printx("   $aliases\n"
+             "      $cweb<def>  call the web quickly without any output,\n"
+             "            same as web -nodump -quiet.\n"
+             "      $tweb<def>  same as web but tells explicitely\n"
+             "            that it expects chain text input.\n"
+             "\n");
+      printx("   $chaining support\n"
+             "      since sfk 1.8.7 +web does not use chain text input.\n"
+             "      use +tweb to read url's from chain text, or set\n"
+             "      global option -chainweb to use chain input by default.\n"
              "      output data chaining is supported.\n"
              "\n"
              "   $see also\n"
              "      #sfk wfilt<def>    download web text and filter it directly\n"
              "      #sfk wget<def>     download file from http URL\n"
              "      #sfk view<def>     GUI tool to search and filter text from\n"
-             "                         an http URL interactively\n"
+             "                   an http URL interactively\n"
              #ifndef _WIN32
              "      #wget<def>         native linux command for file download\n"
              #endif
@@ -25320,7 +25703,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "         gets main page from .100 and extracts html head tag.\n"
              "\n"
              "      #sfk filter ips.txt -form \"<run>col1/xml/status.xml\"\n"
-             "       #+web -nodump\n"
+             "       #+tweb -nodump\n"
              "         calls many different urls based on a table of ips.\n"
              "         option -nodump does not print the full result data\n"
              "         but only a single status line.\n"
@@ -25349,10 +25732,36 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       CommandScope oscope("web");
 
+      bool  bNeedChain = 0;
+      bool  bNeedURL   = 0;
+
       char *pSrcName = 0;
+      char *pPrefix  = 0;
       bool  bchained = chain.useany();
       bool  bnodump  = 0;
       bool  bstatus  = 0;
+      bool  bmweb    = 0;
+      bool  bencode  = 0;
+      int   idelay   = 0;
+
+      if (strcmp(pszCmd, "web")==0 && gs.cweb==0)
+         bNeedURL = 1;
+
+      if (strcmp(pszCmd, "tweb")==0)
+         bNeedChain = 1;
+
+      if (strcmp(pszCmd, "mweb")==0) {
+         bNeedChain = 1;
+         bnodump = 1;
+         bstatus = 1;
+         bmweb   = 1;
+      }
+
+      if (strcmp(pszCmd, "cweb")==0) {
+         bnodump = 1;
+         bstatus = 0;
+         cs.quiet = 1;
+      }
 
       cs.execweb = 1; // web
 
@@ -25371,9 +25780,21 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.maxwebwait = atol(pszArg+9);
             continue;
          }
+         if (!strncmp(pszArg,"-delay=",7)) { // wto.web compat
+            idelay = atol(pszArg+7);
+            continue;
+         }
          if (!strcmp(pszArg, "-nodump")) {
             bnodump = 1;
             bstatus = 1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-dump")) {
+            bnodump = 0;
+            continue;
+         }
+         if (strBegins(pszArg, "-enc")) {
+            bencode = 1;
             continue;
          }
          if (!strncmp(pszArg, "-status=", 8)) {
@@ -25403,6 +25824,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
          // process non-option keywords:
+         if (bmweb==1 && pPrefix==0) {
+            pPrefix = pszArg;
+            continue;
+         }
          if (!pSrcName) {
             if (bchained)
                return 9+pcon(pszCmd, pszArg);
@@ -25414,8 +25839,14 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          return 9+pbad(pszCmd, pszArg);
       }
 
-      if (!pSrcName && !bchained)
-         return 9+perr("missing URL\n");
+      if (bNeedURL) {
+         if (!pSrcName)
+            return 9+perr("missing URL. (use +tweb to read chain text)\n");
+      }
+      if (bNeedChain) {
+         if (!bchained)
+            return 9+perr("missing chain text input.\n");
+      }
 
       int isubrc = 0; // used only with single url
 
@@ -25446,16 +25877,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              && !striBegins(pszRec, "ftp:")
             )
          {
-            snprintf(szURL, SFK_MAX_PATH, "http://%s", pszRec);
+            snprintf(szURL, SFK_MAX_PATH, "http://%s%s", pPrefix?pPrefix:"", pszRec);
             pszRec = szURL;
          }
 
-         // .
-         #ifdef SFKINT
-         // sfk1860 url blank encoding
-         if (encodeURL(pszRec))
+         // url blank encoding, sfk187 internal
+         if (bencode && encodeURL(pszRec))
             pszRec = szTopURLBuf;
-         #endif
 
          Coi *psrc = new Coi(pszRec, 0);
          if (!psrc) return 9+perr("out of memory");
@@ -25557,6 +25985,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             }
 
             psrc->close();
+
+            if (idelay > 0)
+               doSleep(idelay);
 
          } while (0);
       }
@@ -26387,6 +26818,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
+
+
+
 
 
 
