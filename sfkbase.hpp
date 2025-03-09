@@ -145,9 +145,17 @@
 #define ushort unsigned short
 #define uint  unsigned int
 #define ulong unsigned long
-#define bool  unsigned char
 #define cchar const char
 #define str(x) (char*)x
+
+#ifdef __GNUC__
+   #if __GNUC__ < 8
+      #define bool unsigned char
+   #endif
+   // else use predefined type
+#else
+   #define bool unsigned char
+#endif
 
 #define mclear(x) memset(&x, 0, sizeof(x))
 
@@ -1878,6 +1886,7 @@ public:
    int  iexp;              // xrename
    num  totalinbytes;
    num  totaloutbytes;
+   num  totalbytes;        // sfk1934
    int  icomp;
    bool fastcomp;
    int  numBadFiles;
@@ -2423,6 +2432,7 @@ public:
    char *absPath     (char *pszFilePath=0);
    char *sysPath     (char *pszFilePath=0, int *piVDir=0);
    int   mapPath     (char *pszRelPath, bool bAllowRoot=0, bool bCheckDiskSpace=0);
+   int   mapPathInt  (char *pszRelPath, bool bAllowRoot, bool bCheckDiskSpace);
    int   reply       (cchar *pszMask, ...);
    int   replyFromRC (int iSubRC);
    int   readLine    ( );

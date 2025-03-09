@@ -145,7 +145,6 @@ extern CoiTable glblFileListCache;
 extern bool bGlblHaveInteractiveConsole;
 extern bool bGlblEscape;
 extern num  nGlblMemLimit;
-extern num  nGlblBytes;
 extern int nGlblActiveFileAgeLimit;
 extern bool bGlblGrepLineNum    ;
 extern bool bGlblHtml           ;
@@ -234,10 +233,15 @@ bool isvarnamechar(char c, bool bforset)
 }
 
 // sfk1922 addtovar support
-int sfksetvar(char *pname, uchar *pDataIn, int iDataIn, int badd)
+//   nadd bit 0: append
+//   nadd bit 1: without lf
+int sfksetvar(char *pname, uchar *pDataIn, int iDataIn, int nadd)
 {
    if (pDataIn == 0) return 9+perr("int. #2171132");
    if (iDataIn <  0) return 9+perr("int. #2171133");
+
+   bool badd    = (nadd & 1) ? 1 : 0;
+   bool bwithlf = (nadd & 2) ? 0 : 1; // sfk1934
 
    for (char *psz=pname; *psz; psz++)
    {
@@ -299,16 +303,18 @@ int sfksetvar(char *pname, uchar *pDataIn, int iDataIn, int badd)
       // add to existing, by simple copy into free space
 
       // force lf on old if non empty
-      if (iOldUsed > 0 && pOldDataNet[iOldUsed-1] != '\n')
-         pOldDataNet[iOldUsed++] = '\n';
+      if (bwithlf)
+         if (iOldUsed > 0 && pOldDataNet[iOldUsed-1] != '\n')
+            pOldDataNet[iOldUsed++] = '\n';
 
       // append new to old
       memcpy(pOldDataNet+iOldUsed, pDataIn, iDataIn);
       iOldUsed += iDataIn;
 
       // force lf on new. also force lf if new is empty.
-      if (iOldUsed < 1 || iDataIn < 1 || pOldDataNet[iOldUsed-1] != '\n')
-         pOldDataNet[iOldUsed++] = '\n';
+      if (bwithlf)
+         if (iOldUsed < 1 || iDataIn < 1 || pOldDataNet[iOldUsed-1] != '\n')
+            pOldDataNet[iOldUsed++] = '\n';
 
       pOldDataNet[iOldUsed] = '\0';
 
@@ -349,7 +355,8 @@ int sfksetvar(char *pname, uchar *pDataIn, int iDataIn, int badd)
          iNewUsed = iOldUsed;
       }
       // force lf on old if non empty
-      if (badd==1 && (iNewUsed > 0 && pNewDataNet[iNewUsed-1] != '\n'))
+      if (badd==1 && bwithlf==1
+          && (iNewUsed > 0 && pNewDataNet[iNewUsed-1] != '\n'))
          pNewDataNet[iNewUsed++] = '\n';
 
       // append new payload
@@ -357,7 +364,7 @@ int sfksetvar(char *pname, uchar *pDataIn, int iDataIn, int badd)
       iNewUsed += iDataIn;
 
       // on add, force lf on new. also force lf if new is empty.
-      if (    badd==1 
+      if (badd==1 && bwithlf==1
           && (iNewUsed < 1 || iDataIn < 1 || pNewDataNet[iNewUsed-1]!='\n')
          )
          pNewDataNet[iNewUsed++] = '\n';
@@ -18214,9 +18221,9 @@ int FileMetaDB::verifyFile(int nind, bool bCleanup)
    int nVerOK     = filedb.numberOfVerifies();
    int nVerFailed = filedb.numberOfVerFailed();
    if (nVerFailed > 0)
-      sprintf(szAddInfo, "%u files ok, %d failed, %u mb %u kbs", nVerOK, nVerFailed, (uint)(nGlblBytes/1000000UL), currentKBPerSec());
+      sprintf(szAddInfo, "%u files ok, %d failed, %u mb %u kbs", nVerOK, nVerFailed, (uint)(cs.totalbytes/1000000UL), currentKBPerSec());
    else
-      sprintf(szAddInfo, "%u files %u mb %u kbs", nVerOK, (uint)(nGlblBytes/1000000UL), currentKBPerSec());
+      sprintf(szAddInfo, "%u files %u mb %u kbs", nVerOK, (uint)(cs.totalbytes/1000000UL), currentKBPerSec());
    info.setProgress(numberOfFiles(), nind, "files");
    info.setStatus("verfy", pszName, szAddInfo, eKeepProg);
 
@@ -19631,7 +19638,7 @@ int execFileCopy(Coi *pcoi)
    printf("copy.usefiles    %d\n", chain.usefiles);
    printf("copy.rootrelname %d\n", cs.rootrelname);
    printf("copy.rootabsname %d\n", cs.rootabsname);
-   printf("copy.optroot     %s\n", pszOptRoot ? pszOptRoot : "");
+   printf("copy.optroot     \"%s\"\n", pszOptRoot ? pszOptRoot : "<null>");
    #endif
 
    // with input chaining, glblCopySrc will not be set.
@@ -19937,14 +19944,14 @@ int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
       }
 
       // count direct file size
-      nGlblBytes += nFileSize;
+      cs.totalbytes += nFileSize;
 
       // count shadow size, if any
       if (   nGlblCopyShadows
           && (!nGlblShadowSizeLimit || (nFileSize < nGlblShadowSizeLimit))
          )
       {
-         nGlblBytes += nFileSize;
+         cs.totalbytes += nFileSize;
          cs.shadowsWritten++;
       }
    }
@@ -21781,6 +21788,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              #ifdef _WIN32
              "                 and tell if hidden files or dirs were skipped.\n"
              #endif
+             "      -juststat  show no filenames, just statistics.\n"
              #if (!defined(SFK_LIB5))
              "      -nofollow  or -nofo does not follow symbolic directory links.\n"
              "                 use this if list runs in an endless recursion.\n"
@@ -22386,6 +22394,11 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "      #sfk select mydir .txt +ffilter -head=10 -+mypat\n"
              "         search first 10 lines of every .txt file of mydir for pattern mypat.\n"
              "         notice the ffilter to read file contents, not just filenames.\n"
+             "      #sfk filt mydir -+foo +copy out\n"
+             "         copy all files from mydir containing a pattern to out\n"
+             "      #sfk filt -noname mydir -+foo +texttofilenames +copy out\n"
+             "         copy from filenames found in text files. needs option\n"
+             "         -noname to avoid filename headers and indention.\n"
              );
       }
    }
@@ -27028,7 +27041,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "                 e.g. -minspace=200m requires 200 megabytes.\n"
          "     -noclone    do not try to replicate time stamps on a file\n"
          "                 transmission from an sfk ftp client.\n"
-         "     -verbose    list the transmitted ftp commands.\n"
+         "     -verbose[=2]  list the transmitted ftp commands.\n"
          "                 helpful to get more infos in case of errors.\n"
          "     -showerr[or]  print all sent 5xx replies to terminal,\n"
          "                 except for 550 no such file. default is to\n"
@@ -29291,8 +29304,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      -maxwait ns     wait up to n seconds\n"          // ping
              "      -list           send just one ping and show result\n"
              "                      as a flat list without graph\n"
-             "      -stop           stop on first reply from any ip,\n"
-             "                      implies -single\n"
+             "      -stop           stop on first reply from any ip\n"
              "      -range s e      with \"net\": ping from s to e\n"
              "                      instead of 1 to 254\n"
              "      -pure           print just replying ip's\n"
@@ -30259,7 +30271,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              #ifdef _WIN32
              "   download SFKTray Free Edition now, which can\n"
-             "   display two independent lights, by:\n"
+             "   display four independent lights, by:\n"
              " \n"
              "      #sfk gettray\n"
              "\n"
@@ -30304,7 +30316,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              "   $limitations\n"
              "      only one instance of SFKTray can be used per machine.\n"
-             "      SFKTray Free supports 2 slots, i.e. slot=1 or slot=2.\n"
+             "      SFKTray Free supports 4 slots, i.e. slot=1 to slot=4.\n"
              "      SFKTray Full supports 9 status slots and is available from:\n"
              "\n"
              "        #http://stahlworks.com/sfktray\n"
@@ -36125,6 +36137,10 @@ int makeDeskIcon(HWND hwnd, char *pszTarget, char *pszShortCutName,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
+
+
+
 
 
 
