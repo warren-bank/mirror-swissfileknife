@@ -1515,7 +1515,7 @@ public:
    char *tomask;     // output filename mask
    bool  tomaskfile; // -to mask is a single filename
    char tomake[200]; // option -tomake
-   char *curcmd;     // current command
+   char curcmd[50+10]; // current command. sfk1834 no pointer
    bool rootrelname; // use filenames relative to root dir
    bool rootabsname;  // copy
    bool forceabsname; // list
@@ -1713,6 +1713,7 @@ public:
    bool nostat;            // xhexfind: no no. of hits statistics
    char litattr;           // literal highlight attribute, or 0 for none
    char leattr;            // line end attribute, or 0 for none
+   bool leauto;            // auto detect text file then set leattr
    bool forcele;           // force line endings with addcr/remcr
    int  fastopt;           // fast option, function specific
    // csvtotab, tabtocsv
@@ -1760,6 +1761,7 @@ public:
    int  strict;            // run, -to, perline mask
    bool relaxedvar;        // for filter
    bool fullheader;        // (x)hexfind, (x)rep etc.
+   bool winver;
 };
 
 // extern struct CommandStats gs;
@@ -2265,7 +2267,6 @@ private:
    void  stripTrailSlash   (char *pszPath, char cSlash);
    char *notslash          (char *pszPath);
    int   setLocalWalkDir   (char *pszPath);
-   bool  pathTraversal     (char *pszPath, bool bDeep);
    int   checkPath         (char *pszPath, bool bDeep);
    int   copyNormalized    (char *pdst, int imaxdst, char *psrc);
 
@@ -2436,6 +2437,9 @@ public:
 };
 
 extern void sfkmem_checklist(const char *pszCheckPoint);
+
+extern int prepareTCP();
+extern void shutdownTCP();
 
 #endif // _SFKBASE_HPP_
 

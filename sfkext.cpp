@@ -38,9 +38,7 @@
  #define SO_REUSEPORT 15
 #endif
 
-#ifdef SFKINT2
- #define SFKNEWDUMP
-#endif
+#define SFKNEWDUMP
 
 extern struct CommandStats gs;
 extern struct CommandStats cs;
@@ -62,7 +60,6 @@ extern cchar *arcExtList[];
 void tellMemLimitInfo();
 int quietMode();
 char *getHTTPUserAgent();
-int createOutDirTree(char *pszOutFile);
 size_t myfwrite(uchar *pBuf, size_t nBytes, FILE *fout, num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
 int getTwoDigitHex(char *psz);
 int sfkmemcmp2(uchar *psrc1, uchar *psrc2, num nlen, bool bGlobalCase, uchar *pFlags);
@@ -85,6 +82,7 @@ int setWriteEnabled(char *pszFile);
 num getFileAge(char *pszName);
 int getFileMD5(char *pszFile, SFKMD5 &md5, bool bSilent=0, bool bInfoCycle=0);
 int getFileMD5(char *pszFile, uchar *abOut16);
+int getFileMD5(Coi  *pcoi, SFKMD5 &md5, bool bSilent=0, bool bInfoCycle=0);
 void oprintf(cchar *pszFormat, ...);
 void oprintf(StringPipe *pOutData, cchar *pszFormat, ...);
 int copyFromFormText(char *pSrc, int iMaxSrc, char *pDstIn, int iMaxDst, uint nflags=0);
@@ -92,6 +90,11 @@ bool iseol(char c);
 int loadInput(uchar **ppInText, char **ppInAttr, num *pInSize, bool bstdin, char *pszInFile, bool bColor);
 int execHexdump(Coi  *pcoi, uchar *pBuf, uint nBufSize, int iHighOff=-1, int iHighLen=0, FILE *fout=0, num nListOffset=0);
 int pferr(const char *pszFile, const char *pszFormat, ...);
+void encodeSub64(uchar in[3], uchar out[4], int nlen);
+void decodeSub64(uchar in[4], uchar out[3]);
+bool isPathTraversal(char *pszFileIn, bool bDeep);
+void fixPathChars(char *pszBuf);
+uchar mapchar(char ch);
 
 extern bool bGlblEscape;
 extern num  nGlblMemLimit;
@@ -1781,13 +1784,9 @@ int TCPCore::lastError( )
 int TCPCore::sysInit( ) 
 {__
    #ifdef _WIN32
-   if (!bSysInitDone) {
-      // done once per process
-      WORD wVersionRequested = MAKEWORD(1,1);
-      WSADATA wsaData;
-      if (WSAStartup(wVersionRequested, &wsaData)!=0)
-         return 9+perr("WSAStartup failed");
-   }
+   // sfk1840: must use central init
+   if (prepareTCP())
+      return 9;
    #endif
 
    // it is possible that the proxy was set
@@ -1821,8 +1820,8 @@ int TCPCore::sysInit( )
 void TCPCore::sysCleanup( ) 
 {__
    #ifdef _WIN32
-   if (bSysInitDone)
-      WSACleanup();
+   // if (bSysInitDone)
+   //    WSACleanup(); // sfk1840 only on process exit
    #endif
    bSysInitDone = 0;
 }
@@ -2058,7 +2057,7 @@ int TCPCore::connect(char *pszHost, int nportin, TCPCon **ppout)
 
    SOCKET hSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hSock == INVALID_SOCKET)
-      return 9+perr("cannot create socket");
+      return 9+perr("cannot create socket (4)");
 
    mtklog(("tcp.connect: new socket %u",hSock));
 
@@ -3547,7 +3546,7 @@ int FTPClient::setPassive(TCPCon **ppout)
    // if (connectSocket(szIP, nPort, SoAdr, hData, "pasv data")) return 9;
    SOCKET hSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hSock == INVALID_SOCKET)
-      return 9+perr("set passive failed: cannot create socket");
+      return 9+perr("set passive failed: cannot create socket (5)");
 
    struct sockaddr_in ClntAdr;
    ClntAdr.sin_family = AF_INET;
@@ -16764,6 +16763,8 @@ printx("      #sfk xrep mydir \"/foo*bar/\"\n"
        "         the changed output text (totext), with everything between\n"
        "         \"foo\" and \"bar\" being changed to \"goo\". add option\n"
        "         -dumpfrom to display the original found text instead.\n"
+       "      #sfk sel mydir .txt +xrep \"/foo*bar/[part1]goo[part3]/\"\n"
+       "         similar to above, replace in all .txt files of mydir.\n"
        "      #sfk xrep -text \"/class* CFoo/[part1][part3]/\" -dir mydir -file .hpp\n"
        "         search only .hpp files within mydir, and replace for example\n"
        "         \"class IMPORT CFoo\" by \"class CFoo\".\n"
@@ -16801,15 +16802,21 @@ printx("      #sfk xfind -text \"/class [bytes]{[bytes]}/[all]\\n\\n/\"\n"
 printx("      #sfk %s in.txt -text \"/foo*bar/\"\n"
        "         search in.txt for patterns starting with foo and ending\n"
        "         with bar, in the same line, with up to 4000 characters inbetween.\n"
-       "      #sfk xhex -text \"/foo[0.100000 bytes]bar/\" -dir mydir\n"
+       , pszCmd);
+#ifdef _WIN32
+printx("      #sfk %s in.txt -text \"/foo*bar/\" +view\n"
+       "         same as above, but show the result in the depeche view\n"
+       "         text browser tool for easy reading.\n"
+       , pszCmd);
+#endif
+printx("      #sfk xhex -text \"/foo[0.100000 bytes]bar/\" -dir mydir\n"
        "         search all text and binary files of mydir for patterns of\n"
        "         foo and bar with 0 to 100000 bytes (including NULL, CR\n"
        "         and LF) inbetween and print output as hex dump.\n"
        "      #sfk %s -text \"/printf(**);/\" -dir mydir -file .cpp\n"
        "         find all printf statements in source code, including statements\n"
        "         across multiple lines.\n"
-       , pszCmd, pszCmd
-       );
+       , pszCmd);
 }
 }
 
@@ -17056,6 +17063,8 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "      #sfk late<def>         same as \"sfk list -late\".\n"
              "      #sfk today<def>        same as \"sfk list -today\".\n"
              "      #sfk big<def>          same as \"sfk list -big\".\n"
+             "      #sfk old<def>          same as \"sfk list -old\".\n"
+             "      #sfk small<def>        same as \"sfk list -small\".\n"
              );
       printx("\n"
              "   $see also\n"
@@ -18377,7 +18386,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
 "list, find largest, biggest, smallest dir files: \"sfk list\" with -big, -small\n"
 "list, find files changed today, since a date: \"sfk list\" with -since\n"
 "sort dir contents by date, time, size: \"sfk list\" with -late, -big\n"
-"symbolic links: no option under windows. under linux (not lib5) see \"sfk help opt\"\n"
+"symbolic links: see \"sfk help opt\" option -nofollow\n"
 "regular expressions: not supported, but see \"sfk help patterns\"\n"
 "list, show files, directory tree size, largest dirtree: see \"sfk stat\"\n"
 "split text lines, column data by characters: \"sfk filter\" with -sep, -form\n"
@@ -18705,7 +18714,6 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0);
 bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext, bool bAllowVerbose=0);
 bool alldigits(char *psz);
 int pbad(char *pszCmd, char *pszParm);
-int prepareTCP();
 void utf8ToIso(char *psz, int *pChg=0);
 void resetStats();
 bool isHelpOpt(char *psz);
@@ -19970,10 +19978,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "                to the end of the output file.\n"
              "\n"
              "   $see also\n"
-             "      $sfk media<def>     keep or cut multiple parts of a file\n"
-             "      $sfk hexdump<def>   show binary file contents as hexdump\n"
-             "      $sfk hexfind<def>   search data in binary files\n"
-             "      $sfk hextobin<def>  convert hexdump to binary\n"
+             "      #sfk media<def>     keep or cut multiple parts of a file\n"
+             "      #sfk setbytes<def>  write a byte sequence into a file\n"
+             "      #sfk hexdump<def>   show binary file contents as hexdump\n"
+             "      #sfk hexfind<def>   search data in binary files\n"
+             "      #sfk hextobin<def>  convert hexdump to binary\n"
              "\n");
       webref("partcopy");
       printx("   $examples\n"
@@ -20257,11 +20266,52 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
-   // . internal
-   if (!strcmp(pszCmd, "setbytes"))
+   ifcmd (!strcmp(pszCmd, "setbytes"))
    {
       // ... +setbytes out.dat 100
       // sfk setbytes out.dat 100 0x1234
+
+      ifhelp (nparm < 1)
+      printx("<help>$sfk setbytes filename offset [data] [data2] [...]\n"
+             "$sfk ... +setbytes filename offset\n"
+             "\n"
+             "   write binary or text data into a target file at an offset.\n"
+             "\n"
+             "   data can be given as a series of byte blocks each\n"
+             "   starting with 0x or as plain text. all data parameters\n"
+             "   are joined into one long byte block.\n"
+             "\n"
+             "   $options\n"
+             "      -dump  create a hexdump of the changed output.\n"
+             "             by default only the input is shown.\n"
+             "      -spat  support slash patterns like foo\\tbar.\n"
+             "             type \"sfk help pat\" for details.\n"
+             "\n"
+             "   $command chaining\n"
+             "      accepts binary chain input.\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk hexdump<def>    show binary file contents\n"
+             "      #sfk partcopy<def>   copy part of a file\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk setbytes out.dat 20 0xf1f2f3f4 \"foo bar\"\n"
+             "         write 4 bytes with codes f1, f2, f3, f4 into\n"
+             "         out.dat at offset 20 followed by the words\n"
+             "         \"foo\", a space, and \"bar\".\n"
+             "      #sfk setbytes out.dat 20 -spat \"foo\\tbar\" 0x00\n"
+             "         write \"foo\" then a TAB character then \"bar\"\n"
+             "         followed by a binary zero. note that a slash\n"
+             "         pattern does not support \\x00 zero bytes.\n"
+             "      #sfk echo 0xf1f2f3f4 +hextobin +setbytes out.dat 20\n"
+             "         write 4 bytes prepared by previous commands.\n"
+             "      #sfk echo -pure \"c:\\foo.dat\" +setbytes out.dat 20\n"
+             "         write a filename string as pure as possible,\n"
+             "         without pattern interpretation or (CR)LF,\n"
+             "         into out.dat at offset 20.\n"
+             );
+      ehelp;
+
       sfkarg;
 
       char  *pszDst     = 0;
@@ -20272,6 +20322,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bool   bHaveDstOff= 0;
       bool   bDstAppend = 0;
       bool   bNoExt     = 0;
+      bool   bDump      = 0;
       int    nMsg       = 0;
       int    nMsgMax    = sizeof(abBuf)-100;
 
@@ -20290,12 +20341,14 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bAbsolute = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-noext")) {
             bNoExt = 1;
             continue;
          }
-         else
+         if (!strcmp(pszArg, "-dump")) {
+            bDump = 1;
+            continue;
+         }
          if (strBegins(pszArg, "-append")) {
             pszArg = str("-0");
             // fall through
@@ -20325,7 +20378,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          }
 
          // join data parts
-         char *ppart = argx[iDir];
+         char *ppart = pszArg;
          if (strBegins(ppart, "0x")) {
             char *pszHex = ppart+2;
             int iLen = strlen(pszHex);
@@ -20344,6 +20397,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                if (nMsg > nMsgMax) return 9+perr("data too long");
             }
          } else {
+            if (cs.spat)
+               copyFormStr(szLineBuf, MAX_LINE_LEN, ppart, strlen(ppart));
+            else
+               strcopy(szLineBuf, ppart);
+            ppart = szLineBuf;
             int nlen = strlen(ppart);
             if (nMsg+nlen > nMsgMax) return 9+perr("data too long");
             memcpy(abBuf+nMsg, ppart, nlen);
@@ -20416,11 +20474,25 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          return 9+perr("unable to seek within target file\n");
       }
 
-      // verbose info during simulation
-      if (cs.sim || cs.verbose) {
-         printf("writing %s bytes, ",numtoa(nCopyLen));
-         printf("to target file %s, ", pszDst);
-         printf("at target offset %s\n",numtoa(nDstOff));
+      // . verbose info during simulation
+      int iPre  = (nDstOff >= 16) ? 16 : nDstOff;
+      int iPost = 16;
+      cs.nonames = 1;
+
+      if (cs.sim || cs.verbose)
+      {
+         printf("will overwrite the following %s bytes at offset 0x%s:\n",
+            numtoa(nCopyLen,1,szLineBuf), numtohex(nDstOff,1,szLineBuf2));
+
+         nGlblHexDumpOff = nDstOff - iPre;
+         nGlblHexDumpLen = nCopyLen + iPre + iPost;
+         Coi ocoi(pszDst, 0);
+         execHexdump(&ocoi, 0,0, nDstOff,nCopyLen, 0,0);
+
+         nGlblHexDumpOff = 0;
+         nGlblHexDumpLen = 0;
+         printf("with data:\n");
+         execHexdump(0, pMsg,nMsg, 0,nCopyLen, 0,0);
       }
 
       // copy binary part
@@ -20440,11 +20512,21 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       }
 
       if (!lRC && !cs.quiet) {
-         if (cs.sim)
+         if (cs.sim) {
             printx("$[add -yes to really write data.]\n");
-         else
+         } else {
             printf("%s bytes written.\n", numtoa(nTotal));
+            if (bDump) {
+               nGlblHexDumpOff = nDstOff - iPre;
+               nGlblHexDumpLen = nCopyLen + iPre + iPost;
+               Coi ocoi(pszDst, 0);
+               execHexdump(&ocoi, 0,0, nDstOff,nCopyLen, 0,0);
+            }
+         }
       }
+
+      nGlblHexDumpOff = 0;
+      nGlblHexDumpLen = 0;
 
       bDone = 1;
    }
@@ -22709,20 +22791,22 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
    #ifdef SFKNEWDUMP
    ifcmd (   strBegins(pszCmd, "hexdump") // +wref
+          || strBegins(pszCmd, "fhexdump")
           || strBegins(pszCmd, "hexfile")
           || strBegins(pszCmd, "postdump")
          )
    {
       ifhelp (argc <= 2)
-      printx("<help>$sfk hexdump [-showle] [-wide] [...] dir .ext1 .ext2 .ext3\n"
+      printx("<help>$sfk hexdump [options] dir .ext1 .ext2 .ext3\n"
              "$sfk ... +hexfile\n"
              "\n"
-             "   create human-readable hexdump of binary file(s)\n"
-             "   or of chain data produced by previous commands.\n"
+             "   create human-readable hexdump of binary data.\n"
              "\n"
              "   $options\n"
-             "      -showle  highlights line ending characters CR and LF.\n"
+             "      -showle  highlights line end characters CR and LF.\n"
+             "               this is default with pure text data.\n"
              "               you may also add \"le\" to the command name.\n"
+             "      -nole    do not highlight line end characters.\n"
              "      -wide    dumps 32 input bytes per line.\n"
              "      -lean    dumps 16 input bytes per line.\n"
              "      -post    reduced format e.g. for forum posts\n"
@@ -22749,13 +22833,21 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      -flat        no hexdump, print characters as they come.\n"
              "\n");
       printx("  $command chaining support\n"
-             "    #sfk select mydir .dat +hexfile\n"
-             "       dumps contents of $file(names)<def> selected by a command\n"
              "\n"
-             "    #sfk xed in.dat +hexdump\n"
-             "       dumps $chain data<def> produced by a previous command\n"
+             "    since sfk 1.8.4 $+hexdump<def> uses text or binary input data\n"
+             "    from previous commands, but no filename lists:\n"
+             "      #sfk xed in.dat +hexdump\n"
+             "        dumps chain data produced by xed\n"
+             "      #sfk select mydir +hexdump\n"
+             "        dumps filename chracters, but not file contents\n"
+             "\n"
+             "    to read file contents use $+hexfile<def> instead:\n"
+             "      #sfk select mydir .dat +hexfile\n"
+             "        dumps contents of $files<def> selected by a command\n"
              "\n");
       printx("  $aliases\n"
+             "    #sfk fhexdump<def>  - same as hexfile\n"
+             "    #sfk hexdumpb<def>  - same as \"sfk hexdump -nole\" for binary\n"
              "    #sfk hexdumple<def> - same as \"sfk hexdump -showle\" for text\n"
              "    #sfk postdump<def>  - same as \"sfk hexdump -post\" for forums\n"
              "\n"
@@ -22764,16 +22856,30 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n");
       webref(pszCmd);
       printx("  $examples\n"
+             "    #sfk hexdump in.dat\n"
+             "        dump contents of in.dat\n"
+             "    #sfk hexdumple mydir .txt\n"
+             "        dump contents of all .txt files in mydir\n"
+             "        with highlight of (CR)LF line endings\n"
+             "    #sfk sel mydir .txt +hexfilele -maxdump=128\n"
+             "        similar to above, first selecting files\n"
+             "        then dumping only first 128 bytes per file.\n"
              "    #sfk hexdump -offlen 4221566976 96 part1.avi\n"
              "        dumps 96 bytes from offset 4221566976 within part1.avi\n"
-             "\n"
              "    #sfk hexdump -offlen 0xFBA00000 0x60 part1.avi\n"
              "        the same as above, but using hexadecimal numbers\n"
              #ifdef _WIN32
-             "\n"
              "    #sfk postdump test.dat +toclip\n"
              "        put test.dat contents into clipboard for posting\n"
+             "    #sfk hexdump in.dat +view\n"
+             "        show hexdump in the depeche view text browser.\n"
+             "        works with files up to 4 mb with dview lite.\n"
              #endif
+             );
+      printx("    #sfk hexfind in.dat -bin \"/a1a2a3a4/\"\n"
+             "        search byte sequence 0xa1a2a3a4 within in.dat\n"
+             "    #sfk xhexfind in.dat \"/\\xa1\\xa2\\xa3\\xa4/\"\n"
+             "        same as above using xhexfind and simple expressions\n"
              );
       ehelp;
 
@@ -22782,6 +22888,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       uchar abMsg[2000+100];
       char  szListenBuf[100];
       char  szForwardBuf[100];
+      bool  bautole=1;
 
       int   nMsg = 0;
       int   nMsgMax = sizeof(abMsg)-100;
@@ -22794,13 +22901,22 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          nGlblHexDumpForm=6; cs.bytesperline=16;
       }
 
-      // hexdumple as alias for hexdump -showle
-      if (strstr(pszCmd, "le"))
-         cs.leattr = 'e';
+      int iCmdLen = strlen(pszCmd);
+      if (iCmdLen>1 && strcmp(pszCmd+iCmdLen-1,"b")==0)
+         { bautole=0; cs.leattr = '\0'; }
+      if (iCmdLen>3 && strcmp(pszCmd+iCmdLen-3,"bin")==0)
+         { bautole=0; cs.leattr = '\0'; }
+      if (iCmdLen>6 && !strcmp(pszCmd+iCmdLen-6,"dumple"))
+         { bautole=0; cs.leattr = 'e'; }
+      if (iCmdLen>6 && !strcmp(pszCmd+iCmdLen-6,"filele"))
+         { bautole=0; cs.leattr = 'e'; }
 
       // autoselect hex dump width by console width
       if (bGlblConsColumnsSet && (nGlblConsColumns >= 120))
          bGlblHexDumpWide = 1;
+
+      nGlblHexDumpLen = 0;
+      nGlblHexDumpOff = 0;
 
       int   iChainNext  = 0;
       int   iMinSize    =-1;
@@ -22814,32 +22930,36 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       {
          char *pszArg  = argx[iDir];
          char *pszParm = 0;
-         if (   !strcmp(argx[iDir], "-show-line-endings")
-             || !strcmp(argx[iDir], "-showle")
+         if (   !strcmp(pszArg, "-show-line-endings")
+             || !strcmp(pszArg, "-showle")
             )
          {
-            cs.leattr = 'e';
+            bautole=0; cs.leattr = 'e';
             continue;
          }
-         if (!strcmp(argx[iDir], "-wide")) {
+         if (!strcmp(pszArg, "-nole")) {
+            bautole=0; cs.leattr = '\0';
+            continue;
+         }
+         if (!strcmp(pszArg, "-wide")) {
             bGlblHexDumpWide = 1;
             continue;
          }
-         if (!strcmp(argx[iDir], "-lean") || !strcmp(argx[iDir], "-narrow")) {
+         if (!strcmp(pszArg, "-lean") || !strcmp(pszArg, "-narrow")) {
             bGlblHexDumpWide = 0;
             continue;
          }
-         if (!strcmp(argx[iDir], "-pure"))   { nGlblHexDumpForm=1; continue; }
-         if (!strcmp(argx[iDir], "-hexsrc")) { nGlblHexDumpForm=2; continue; }
-         if (!strcmp(argx[iDir], "-decsrc")) { nGlblHexDumpForm=3; continue; }
-         if (strBegins(argx[iDir], "-notrail")) { cs.dumptrail=1; continue; }
-         if (strBegins(argx[iDir], "-norectrail")) { cs.dumptrail=2; continue; }
-         if (!strcmp(argx[iDir], "-flat")) { nGlblHexDumpForm=4; continue; }
-         if (!strcmp(argx[iDir], "-post")) { nGlblHexDumpForm=5; cs.bytesperline=16; continue; }
-         if (!strcmp(argx[iDir], "-min"))  { nGlblHexDumpForm=6; cs.bytesperline=16; continue; }
-         if (strBegins(argx[iDir], "-sep")) { cs.separator=1; continue; }
-         if (strBegins(argx[iDir], "-nosep")) { cs.separator=0; continue; }
-         if (!strcmp(argx[iDir], "-nolf")) { cs.nolf=1; continue; }
+         if (!strcmp(pszArg, "-pure"))   { nGlblHexDumpForm=1; continue; }
+         if (!strcmp(pszArg, "-hexsrc")) { nGlblHexDumpForm=2; continue; }
+         if (!strcmp(pszArg, "-decsrc")) { nGlblHexDumpForm=3; continue; }
+         if (strBegins(pszArg, "-notrail")) { cs.dumptrail=1; continue; }
+         if (strBegins(pszArg, "-norectrail")) { cs.dumptrail=2; continue; }
+         if (!strcmp(pszArg, "-flat")) { nGlblHexDumpForm=4; continue; }
+         if (!strcmp(pszArg, "-post")) { nGlblHexDumpForm=5; cs.bytesperline=16; continue; }
+         if (!strcmp(pszArg, "-min"))  { nGlblHexDumpForm=6; cs.bytesperline=16; continue; }
+         if (strBegins(pszArg, "-sep")) { cs.separator=1; continue; }
+         if (strBegins(pszArg, "-nosep")) { cs.separator=0; continue; }
+         if (!strcmp(pszArg, "-nolf")) { cs.nolf=1; continue; }
          if (haveParmOption(argx, argc, iDir, "-recsize", &pszParm)) {
             if (!pszParm) return 9;
             cs.bytesperline = atoi(pszParm);
@@ -22894,34 +23014,33 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
             continue;
          }
-         if (!strcmp(argx[iDir], "-rawname")) {
+         if (!strcmp(pszArg, "-rawname")) {
             cs.rawfilename = 1;
             continue;
          }
          if (haveParmOption(argx, argc, iDir, "-maxdump", &pszParm)) {
             if (!pszParm) return 9;
-            cs.maxdump = atoi(pszParm);
+            // cs.maxdump = atoi(pszParm);
+            nGlblHexDumpLen = atoi(pszParm);
             continue;
          }
          if (haveParmOption(argx, argc, iDir, "-stop", &pszParm)) {
             cs.stopcnt = pszParm ? atoi(pszParm) : 1;
             continue;
          }
-         if (!strncmp(argx[iDir], "-", 1)) {
-            if (isDirParm(argx[iDir]))
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
+               return 9+perr("unknown option: %s\n", pszArg);
          }
          else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
-
-         bGotNoOpt = 1;
-
-         break; // fall through to non-option processing
+         // process non-option keywords:
+         break;
       }
  
       if (cs.bytesperline && !nGlblHexDumpForm) {
@@ -22930,9 +23049,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          return 9;
       }
 
-      if (bGotNoOpt)
-         if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iChainNext)))
-            return lRC;
+      // sfk1840: ,1 i/o ,3
+      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1, &iChainNext))) return lRC;
       if (btest) return 0;
 
       if (chain.usedata) {
@@ -22940,9 +23058,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          num    nInSize = 0;
          if (loadInput(&pInText, 0, &nInSize, 0, 0, 0))
             return 9;
+         if (bautole && !memchr(pInText,'\0',nInSize))
+            cs.leattr = 'e';
          execHexdump(0, pInText, nInSize);
          if (pInText)  delete [] pInText;
       } else {
+         cs.leauto = bautole;
          lRC = walkAllTrees(eFunc_Hexdump, lFiles, lDirs, nBytes);
       }
 
@@ -23819,7 +23940,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          oAddr.sin_addr.s_addr = inet_addr(szDstIP);
  
          if ((iNetSock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-            return 9+perr("cannot create socket");
+            return 9+perr("cannot create socket (6)");
  
          sendto(iNetSock, (char*)abMsg, nMsg, 0, (struct sockaddr *)&oAddr, iAddrLen);
  
@@ -24578,7 +24699,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
  
          SOCKET hSock = socket(AF_INET, SOCK_STREAM, 0);
          if (hSock == INVALID_SOCKET)
-            return 9+perr("cannot create socket\n");
+            return 9+perr("cannot create socket (7)");
  
          struct sockaddr_in oaddr;
          oaddr.sin_family = AF_INET;
@@ -25182,7 +25303,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       SOCKET hSock = socket(AF_INET, SOCK_STREAM, 0);
       if (hSock == INVALID_SOCKET)
-         return 9+perr("cannot create socket\n");
+         return 9+perr("cannot create socket (8)");
 
       struct sockaddr_in oaddr;
       oaddr.sin_family = AF_INET;
@@ -25687,6 +25808,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
+
 
 
 // --- xfind ose begin ---
