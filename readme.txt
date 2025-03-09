@@ -63,7 +63,7 @@ How to get SFK up and running anywhere
       Alternatively, a self compile under Mac is done by
       getting the sources as described below, then type
 
-         g++ -DMAC_OS_X sfk.cpp patch.cpp inst.cpp -o sfk
+         g++ -DMAC_OS_X sfk.cpp sfknet.cpp patch.cpp inst.cpp -o sfk
 
    OR
 
@@ -82,7 +82,7 @@ How to get SFK up and running anywhere
 
          Linux 64-bit compile:
 
-            g++ sfk.cpp patch.cpp inst.cpp -o sfk
+            g++ sfk.cpp sfknet.cpp patch.cpp inst.cpp -o sfk
 
    OR
 

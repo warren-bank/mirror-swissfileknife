@@ -252,7 +252,7 @@ void *sfkmem_debnew(size_t size, char *pszSource, int line)
    if (!ppre) 
    {
       #ifdef VERBOSE_MEM
-      mtklog("%p = ALLOC %ld (%s, %ld)", ppre, size, pszSource, line);
+      mtklog(("%p = ALLOC %ld (%s, %ld)", ppre, size, pszSource, line));
       #endif
 
       return 0;
@@ -261,7 +261,7 @@ void *sfkmem_debnew(size_t size, char *pszSource, int line)
    char *pUserMemory = ppre + npre;
    
    #ifdef VERBOSE_MEM
-   mtklog("%p = ALLOC %ld (%s, %ld) raw %p", pUserMemory, size, pszSource, line, ppre);
+   mtklog(("%p = ALLOC %ld (%s, %ld) raw %p", pUserMemory, size, pszSource, line, ppre));
    #endif
 
    SFKMemoryBlock *pBlock = (SFKMemoryBlock *)ppre;
@@ -287,7 +287,7 @@ void sfkmem_debdel(void *pUserMemory)
       return;
   
    #ifdef VERBOSE_MEM
-   mtklog("%p   DELETE (%s, %ld)", pUserMemory, sfkmem_file, sfkmem_line);
+   mtklog(("%p   DELETE (%s, %ld)", pUserMemory, sfkmem_file, sfkmem_line));
    #endif
 
    long npre  = sizeof(SFKMemoryBlock);

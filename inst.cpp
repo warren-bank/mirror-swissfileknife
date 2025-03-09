@@ -5,7 +5,7 @@
 #include "sfkbase.hpp"
 
 #ifndef USE_SFK_BASE
- #ifdef WINFULL
+ #if defined(WINFULL) && defined(_MSC_VER)
   #define SFK_MEMTRACE
  #endif
 #endif
@@ -32,8 +32,8 @@ static char szBupDir[4096];
 static char szBupFile[4096];
 static char szCopyCmd[4096];
 
-static char *pszGlblInclude = "";
-static char *pszGlblMacro   = "";
+static cchar *pszGlblInclude = "";
+static cchar *pszGlblMacro   = "";
 
 static bool  bdebug   = 0;
 static bool  binsteol = 0;
@@ -46,7 +46,7 @@ class SrcParse
 {
 public:
    SrcParse ( );
-   ulong processFile (char *pText, bool bSimulate, FILE *foutOptional);
+   uint processFile (char *pText, bool bSimulate, FILE *foutOptional);
    void  processLine (char *pBuf, bool bSimulate);
 
 protected:
@@ -60,24 +60,24 @@ protected:
    void addCKet   ( );
    void addSemi   ( );
    void addRemark ( );
-   bool hasFunctionStart (ulong &rn1stline);
-   char pretok    (ulong &itok2, ulong &nstepdowncnt, ulong &rnline);
+   bool hasFunctionStart (uint &rn1stline);
+   char pretok    (uint &itok2, uint &nstepdowncnt, uint &rnline);
    void addDetectKeyword   (char **rpsz);
    void reduceSignature    (char *pszIn, char *pszOut);
 
 private:
    uchar atok[TRB_SIZE+10];
-   ulong itok;
+   uint itok;
    uchar altok[TRB_SIZE+10]; // just for the current line
-   ulong iltok;
-   ulong atokline[TRB_SIZE+10]; // line number of token
-   ulong nline;
+   uint iltok;
+   uint atokline[TRB_SIZE+10]; // line number of token
+   uint nline;
    char  abline[BLINE_MAX][BLINE_SIZE+2];
-   ulong ibline;
-   ulong ibackscope;
+   uint ibline;
+   uint ibackscope;
    bool  bbackscope;
    FILE *clOut;
-   ulong nClHits;
+   uint nClHits;
 };
 
 SrcParse::SrcParse() {
@@ -94,7 +94,7 @@ SrcParse::SrcParse() {
    nClHits = 0;
 }
 
-ulong SrcParse::processFile(char *pText, bool bSimulate, FILE *fout)
+uint SrcParse::processFile(char *pText, bool bSimulate, FILE *fout)
 {
    if (!bSimulate) {
       clOut = fout;
@@ -102,7 +102,7 @@ ulong SrcParse::processFile(char *pText, bool bSimulate, FILE *fout)
    }
 
    // char *pCopy = strdup(pText);
-   ulong nTextLen = strlen(pText);
+   uint nTextLen = strlen(pText);
    char *pCopy = new char[nTextLen+10];
    if (!pCopy) { fprintf(stderr, "error  : out of memory at %d\n", __LINE__); return 0; }
    memcpy(pCopy, pText, nTextLen+1);
@@ -111,7 +111,7 @@ ulong SrcParse::processFile(char *pText, bool bSimulate, FILE *fout)
 
    // NO RETURNS FROM HERE
 
-   ulong nMaxLineLen = sizeof(szLineBuf)-10;
+   uint nMaxLineLen = sizeof(szLineBuf)-10;
    char *psz1 = pCopy;
    char *pszContinue = 0;
    while (psz1)
@@ -121,7 +121,7 @@ ulong SrcParse::processFile(char *pText, bool bSimulate, FILE *fout)
       {
          pszContinue = psz2+1;
          int nLineLen = psz2 - psz1;
-         if (nLineLen > (long)nMaxLineLen) nLineLen = nMaxLineLen;
+         if (nLineLen > (int)nMaxLineLen) nLineLen = nMaxLineLen;
          strncpy(szLineBuf, psz1, nLineLen);
          szLineBuf[nLineLen] = '\0';
          char *pszCR = strchr(szLineBuf, '\r');
@@ -160,7 +160,7 @@ void SrcParse::reduceSignature(char *psz1, char *psz2)
 {
    // reduce [type] class::method([parms])
    //     to class::method
-   ulong nlen = strlen(psz1);
+
    // goto last scope (in case there are many)
    //     cls1::type1 & cls2::type2::method3(
    char *pszs = strstr(psz1, "::");
@@ -208,8 +208,8 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
    nline++;
 
    char *pszx;
-   if (pszx = strchr(pszLine, '\n')) *pszx = '\0';
-   if (pszx = strchr(pszLine, '\r')) *pszx = '\0';
+   if ((pszx = strchr(pszLine, '\n'))) *pszx = '\0';
+   if ((pszx = strchr(pszLine, '\r'))) *pszx = '\0';
 
    // store in backline buffer
    strncpy(abline[ibline], pszLine, BLINE_SIZE-10);
@@ -233,7 +233,7 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
    {
       c1 = *psz1; // incl. null at eol
 
-		mtklog("inst: %c %d",c1,nstate);
+		mtklog(("inst: %c %d",c1,nstate));
 
       if (isatoz(c1)) {
          switch (nstate) {
@@ -319,16 +319,14 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
    {
       char *pszMethodStartLine = abline[ibackscope];
 
-		mtklog("inst:   msline \"%.20s\"", pszMethodStartLine);
+		mtklog(("inst:   msline \"%.20s\"", pszMethodStartLine));
 
      if (bdebug)
      {
       printf("FN BODY at %d: %s\n", nline, (char*)atok);
-      ulong ibline2 = ibline;
-      ulong nblcnt  = 3; // BLINE_MAX;
       char *psz1;
-      ulong i2 = ibackscope;
-      while (psz1 = abline[i2]) {
+      uint i2 = ibackscope;
+      while ((psz1 = abline[i2])) {
          if (strlen(psz1))
             printf("] %s\n", psz1);
          if (i2 == ibline)
@@ -340,7 +338,7 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
 
       // the current line contains the relevant "{" somewhere.
       // for now, we instrument only simple lines:
-		mtklog("inst:   lbuf2  \"%s\"", szLineBuf2);
+		mtklog(("inst:   lbuf2  \"%s\"", szLineBuf2));
 		// accept "{" but also "[anywhitespace]{"
 		char *pszs = szLineBuf2;
 		while (*pszs && (*pszs==' ' || *pszs=='\t')) pszs++;
@@ -400,7 +398,7 @@ void SrcParse::addRemark() { addtok('r'); }
 
 void SrcParse::addtok(char c)
 {
-	mtklog("inst:  addtok %c", c);
+	mtklog(("inst:  addtok %c", c));
 
    atok[itok] = c;
    atokline[itok] = ibline;
@@ -415,7 +413,7 @@ void SrcParse::addtok(char c)
    // printf("%c", c);
 }
 
-char SrcParse::pretok(ulong &itok2, ulong &nstepcnt, ulong &rnline)
+char SrcParse::pretok(uint &itok2, uint &nstepcnt, uint &rnline)
 {
    if (nstepcnt == 0)
       return 0;
@@ -431,28 +429,28 @@ char SrcParse::pretok(ulong &itok2, ulong &nstepcnt, ulong &rnline)
    return atok[itok2];
 }
 
-bool SrcParse::hasFunctionStart(ulong &rnline)
+bool SrcParse::hasFunctionStart(uint &rnline)
 {
-   ulong itok2 = itok;
-   ulong ncnt  = TRB_SIZE;
+   uint itok2 = itok;
+   uint ncnt  = TRB_SIZE;
 
    // W* S W B W* K ** {
 
-   ulong ntline = 0;
+   uint ntline = 0;
    char c1 = pretok(itok2, ncnt, ntline);
    if (!c1) return false;
    if (c1 != '{') {
-		mtklog("inst:   hasfs %c, false", c1);
+		mtklog(("inst:   hasfs %c, false", c1));
 		return false;
 	}
 
    // have a curly braket:
 
-   ulong nBra = 0;
-   ulong nKet = 0;
-   ulong nrc  = 0;
-   ulong nScope = 0;
-   ulong nBraDist = 0; // word distance from last bra
+   uint nBra = 0;
+   uint nKet = 0;
+   uint nrc  = 0;
+   uint nScope = 0;
+   uint nBraDist = 0; // word distance from last bra
    
    while (!nrc && (c1 = pretok(itok2, ncnt, ntline))) {
       switch (c1) {
@@ -483,17 +481,15 @@ bool SrcParse::hasFunctionStart(ulong &rnline)
    }
 
    if (nrc == 1) {
-		mtklog("inst:   hasfs true");
+		mtklog(("inst:   hasfs true"));
       return true;
 	}
 
    if (bdebug) {
       printf("MISS.%d: %s %d %d\n", nrc, (char*)atok,nBra,nKet);
-      ulong ibline2 = ibline;
-      ulong nblcnt  = 3; // BLINE_MAX;
       char *psz1;
-      ulong i2=ibackscope;
-      while (psz1 = abline[i2]) {
+      uint i2=ibackscope;
+      while ((psz1 = abline[i2])) {
          if (strlen(psz1))
             printf("] %s\n", psz1);
          if (i2 == ibline)
@@ -506,7 +502,7 @@ bool SrcParse::hasFunctionStart(ulong &rnline)
    return false;
 }
 
-static long fileSize(char *pszFile) 
+static int fileSize(char *pszFile) 
 {
    struct stat sinfo;
    #ifdef WINCE
@@ -522,14 +518,14 @@ static long fileSize(char *pszFile)
 // NOTE: DO NOT FORGET TO DELETE RESULT
 static char *loadFile(char *pszFile, int nLine)
 {
-   long lFileSize = fileSize(pszFile);
+   int lFileSize = fileSize(pszFile);
    if (lFileSize < 0)
       return 0;
    char *pOut = new char[lFileSize+10];
    // printf("loadFile %p %d\n", pOut, nLine);
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) { fprintf(stderr, "error  : cannot read: %s\n", pszFile); return 0; }
-   long nRead = fread(pOut, 1, lFileSize, fin);
+   int nRead = fread(pOut, 1, lFileSize, fin);
    fclose(fin);
    if (nRead != lFileSize) {
       fprintf(stderr, "error  : cannot read: %s (%d %d)\n", pszFile, nRead, lFileSize);
@@ -540,7 +536,7 @@ static char *loadFile(char *pszFile, int nLine)
    return pOut;
 }
 
-int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke, int nmode)
+int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke, int nmode)
 {
    // printf("INST %s %u %s %s\n",pszFile,bRevoke,pszInc,pszMac);
 
@@ -640,7 +636,7 @@ int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool 
             #endif
             system(szCopyCmd);
             if (!bRedo) {
-               printf("revoked: %s, %lu bytes\n",pszTargFileName,(unsigned long)ntotal);
+               printf("revoked: %s, %u bytes\n",pszTargFileName,(unsigned int)ntotal);
                return 0;
             }  // else fall through
          }
@@ -673,7 +669,7 @@ int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool 
 
    // instrument the target file
 
-   long nsize = fileSize(pszFile);
+   int nsize = fileSize(pszFile);
    if (nsize <= 0) { fprintf(stderr, "skipped: %s - empty file\n", pszFile); return 5; }
    if (nsize > 50 * 1048576) { fprintf(stderr, "warning: too large, skipping: %s\n", pszFile); return 5; }
 
@@ -737,7 +733,7 @@ int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool 
    }
 
    SrcParse *pparse2 = new SrcParse();
-   ulong nHits = pparse2->processFile(pFile, 0, fout);
+   uint nHits = pparse2->processFile(pFile, 0, fout);
 
    // cleanup
    delete pparse2;

@@ -36,7 +36,6 @@
   #ifdef WINCE
     #include "winsock2.h"
   #endif
-  #include <eh.h>
   #include <sys/timeb.h>
   #include <time.h>
   #include <process.h>
@@ -117,8 +116,11 @@
 #endif // MAC_OS_X
 
 #define uchar unsigned char
+#define uint  unsigned int
 #define ulong unsigned long
 #define bool  unsigned char
+#define cchar const char
+#define str(x) (char*)x
 
 #define mclear(x) memset(&x, 0, sizeof(x))
 
@@ -135,52 +137,45 @@
   #ifdef MTKTRACE_CODE
    #include "mtk/mtktrace.cpp"
   #endif
-  #define _  mtklog("[sfk %d]",__LINE__);
+  #define _  mtklog(("[sfk %d]",__LINE__));
   #define __ MTKBlock tmp983452(__FILE__,__LINE__,"");tmp983452.dummy();
  #else
-  #define mtklog
-  #define mtkerr
-  #define mtkwarn
+  #define mtklog(x)
+  #define mtkerr(x)
+  #define mtkwarn(x)
   #define mtkdump
   #define _
   #define __
  #endif
 #endif
 
+extern const char  glblPathChar    ;
+extern const char  glblWrongPChar  ;
+extern const char *glblPathStr     ;
+extern const char *glblAddWildCard ;
+extern const char *glblDotSlash    ;
+extern       char  glblNotChar     ;
+extern       char  glblRunChar     ;
+extern const char *glblLineEnd     ;
+
 #ifdef _WIN32
-static const char  glblPathChar    = '\\';
-static const char  glblWrongPChar  = '/';
-static const char *glblPathStr     = "\\";
-static const char *glblAddWildCard = "*";
-static const char *glblDotSlash    = ".\\";
-static       char  glblNotChar     = '!';
-static       char  glblRunChar     = '$';
-static const char *glblWildStr     = "*";
-static const char  glblWildChar    = '*';
-static const char *glblWildInfoStr = "*";
-static const char *glblLineEnd     = "\r\n";
-#define SFK_FILT_NOT1 "-!"
-#define SFK_FILT_NOT2 "-ls!"
-#define SFK_FILT_NOT3 "-le!"
-#define EXE_EXT ".exe"
-#define SFK_SETENV_CMD "set"
+ #define SFK_FILT_NOT1 "-!"
+ #define SFK_FILT_NOT2 "-ls!"
+ #define SFK_FILT_NOT3 "-le!"
+ #define EXE_EXT ".exe"
+ #define SFK_SETENV_CMD "set"
+extern const char *glblWildStr     ;
+extern const char  glblWildChar    ;
+extern const char *glblWildInfoStr ;
 #else
-static const char  glblPathChar    = '/';
-static const char  glblWrongPChar  = '\\';
-static const char *glblPathStr     = "/";
-static const char *glblAddWildCard = "";    // not used w/ linux
-static const char *glblDotSlash    = "./";
-static       char  glblNotChar     = ':';
-static       char  glblRunChar     = '#';
-static       char  glblWildStr[10];       // "+";
-static       char  glblWildChar;          // '+';
-static       char  glblWildInfoStr[20];   // "+ or \\*";
-static const char *glblLineEnd     = "\n";
-#define SFK_FILT_NOT1 "-:"
-#define SFK_FILT_NOT2 "-ls:"
-#define SFK_FILT_NOT3 "-le:"
-#define EXE_EXT ""
-#define SFK_SETENV_CMD "export"
+ #define SFK_FILT_NOT1 "-:"
+ #define SFK_FILT_NOT2 "-ls:"
+ #define SFK_FILT_NOT3 "-le:"
+ #define EXE_EXT ""
+ #define SFK_SETENV_CMD "export"
+extern char  glblWildStr[10];       // "+";
+extern char  glblWildChar;          // '+';
+extern char  glblWildInfoStr[20];   // "+ or \\*";
 #endif
 
 // - - - - - 64 bit abstractions - - - - -
@@ -242,30 +237,31 @@ extern mytime_t getSystemTime();
  #define VFILENET
 #endif // SFKNOVFILE
 
-long isDir(char *pszName);
-char *sfkLastError();
+int isDir(char *pszName);
+cchar *sfkLastError();
 
 #define MAX_ABBUF_SIZE 100000
 #define MAX_LINE_LEN     4096
 
-extern long (*pGlblJamFileCallBack)(char *pszFilename, num &rLines, num &rBytes);
-extern long (*pGlblJamLineCallBack)(char *pszLine, long nLineLen, bool bAddLF);
-extern long (*pGlblJamStatCallBack)(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes, ulong nSkipped, char *pszSkipInfo);
+extern int (*pGlblJamCheckCallBack)(char *pszFilename);
+extern int (*pGlblJamFileCallBack)(char *pszFilename, num &rLines, num &rBytes);
+extern int (*pGlblJamLineCallBack)(char *pszLine, int nLineLen, bool bAddLF);
+extern int (*pGlblJamStatCallBack)(char *pszInfo, uint nFiles, uint nLines, uint nMBytes, uint nSkipped, char *pszSkipInfo);
 
-char *findPathLocation(char *pszCmd, bool bExcludeWorkDir=0);
-extern long fileExists(char *pszFileName, bool bOrDir=0);
+char *findPathLocation(cchar *pszCmd, bool bExcludeWorkDir=0);
+extern int fileExists(char *pszFileName, bool bOrDir=0);
 
 #define strcopy(dst,src) mystrcopy(dst,src,sizeof(dst)-10)
-void  mystrcopy      (char *pszDst, char *pszSrc, long nMaxDst);
-long  mystrstri      (char *pszHayStack, char *pszNeedle, long *lpAtPosition = 0);
-char *mystrrstr      (char *psrc, char *ppat);
-char *mystrristr     (char *psrc, char *ppat);
-long  mystrncmp      (char *psz1, char *psz2, long nLen, bool bCase=0);
-long  mystricmp      (char *psz1, char *psz2);
-long  mystrnicmp     (char *psz1, char *psz2, long nLen);
-bool  strBegins      (char *pszStr, char *pszPat);
-bool  striBegins     (char *pszStr, char *pszPat);
-bool  strEnds        (char *pszStr, char *pszPat);
+void  mystrcopy      (char *pszDst, cchar *pszSrc, int nMaxDst);
+int  mystrstri      (char *pszHayStack, cchar *pszNeedle, int *lpAtPosition = 0);
+char *mystrrstr      (char *psrc, cchar *ppat);
+char *mystrristr     (char *psrc, cchar *ppat);
+int  mystrncmp      (char *psz1, cchar *psz2, int nLen, bool bCase=0);
+int  mystricmp      (char *psz1, cchar *psz2);
+int  mystrnicmp     (char *psz1, cchar *psz2, int nLen);
+bool  strBegins      (char *pszStr, cchar *pszPat);
+bool  striBegins     (char *pszStr, cchar *pszPat);
+bool  strEnds        (char *pszStr, cchar *pszPat);
 void  removeCRLF     (char *pszBuf);
 bool  sfkisalnum     (uchar uc);
 bool  sfkisprint     (uchar uc);
@@ -280,15 +276,15 @@ num   atonum         (char *psz);   // decimal only
 num   myatonum       (char *psz);   // with 0x support
 char *numtoa         (num n, int nDigits=1, char *pszBuf=0);
 char *numtohex       (num n, int nDigits=1, char *pszBuf=0);
-long  timeFromString (char *psz, num &nRetTime);
-void  doSleep        (long nmsec);
+int  timeFromString (char *psz, num &nRetTime);
+void  doSleep        (int nmsec);
 uchar *loadBinaryFile(char *pszFile, num &rnFileSize);
 bool  infoAllowed    ( );
 struct hostent *sfkhostbyname(const char *pstr, bool bsilent=0);
 
 class IOStatusPhase {
 public:
-		IOStatusPhase	(char *pinfo);
+		IOStatusPhase	(cchar *pinfo);
 	  ~IOStatusPhase	( );
 };
 
@@ -370,13 +366,13 @@ public:
    // removes all entries. keys are deleted.
    // values are not deleted, as their type is unknown.
 
-   long  put   (char *pkey, void *pvalue=0);
+   int  put   (char *pkey, void *pvalue=0);
    // set a key, or put a value under a key.
    // the key is copied. pvalue is not copied.
    // if the key exists already, old pvalue is replaced.
    // rc 0:done >0:error.
 
-   void  *get  (char *pkey, long *poutidx=0);
+   void  *get  (char *pkey, int *poutidx=0);
    // if a value was stored then it is returned.
    // if not, null is returned, no matter if the key is set.
    // if poutidx is given, it returns the nearest comparison index,
@@ -394,33 +390,33 @@ public:
    void  setreverse(bool bYesNo);
    // toggle reverse sorting order.
 
-   long  remove(char *pkey);
+   int  remove(char *pkey);
    // remove entry with that key, if any.
    // rc: 0:done 1:no_such_key >=5:error.
 
-   void *iget  (long nindex, char **ppkey=0);
+   void *iget  (int nindex, char **ppkey=0);
    // walk through map entries, sorted by the key.
    // nindex must be 0 ... size()-1.
    // returns value, if any.
    // if key ptr is provided, it is set.
 
-   long  put   (num nkey, void *pvalue=0);
+   int  put   (num nkey, void *pvalue=0);
    void *get   (num nkey);
    bool  isset (num nkey);
-   long  remove(num nkey);
-   void *iget  (long nindex, num *pkey);
+   int  remove(num nkey);
+   void *iget  (int nindex, num *pkey);
 
-   long  size  ( );
+   int  size  ( );
    // number of entries in KeyMap.
 
 protected:
    void  wipe     ( );
-   long  expand   (long n);
-   int   bfind    (char *pkey, long &rindex);
-   long  remove   (long nindex);
+   int  expand   (int n);
+   int   bfind    (char *pkey, int &rindex);
+   int  remove   (int nindex);
 
-   long  nClArrayAlloc;
-   long  nClArrayUsed;
+   int  nClArrayAlloc;
+   int  nClArrayUsed;
    char  **apClKey;
    void  **apClVal;
 
@@ -436,19 +432,19 @@ public:
 
    void  reset    ( );
 
-   long  put      (char *pkey, char *pvalue);
+   int  put      (char *pkey, char *pvalue);
    // value is COPIED and MANAGED by StringMap.
    // also accepts NULL values, if you want to use
    // only isset() instead of get.
 
    char  *get     (char *pkey, char *pszOptDefault=0);
-   char  *iget    (long nindex, char **ppkey);
-   long   remove  (char *pkey);
+   char  *iget    (int nindex, char **ppkey);
+   int   remove  (char *pkey);
 
-   long  put      (num nkey, char *pvalue);
+   int  put      (num nkey, char *pvalue);
    char *get      (num nkey);
-   char *iget     (long nindex, num *pkey);
-   long  remove   (num nkey);
+   char *iget     (int nindex, num *pkey);
+   int  remove   (num nkey);
 };
 
 // map of MANAGED strings with attributes.
@@ -457,33 +453,33 @@ public:
       AttribStringMap   ( );
      ~AttribStringMap   ( );
 
-   long  put      (char *pkey, char *ptext, char *pattr);
+   int  put      (char *pkey, char *ptext, char *pattr);
    char  *get     (char *pkey, char **ppattr);
-   char  *iget    (long nindex, char **ppkey, char **ppattr);
+   char  *iget    (int nindex, char **ppkey, char **ppattr);
 
-   long  put      (num nkey, char *ptext, char *pattr);
+   int  put      (num nkey, char *ptext, char *pattr);
    char *get      (num nkey, char **ppattr);
-   char *iget     (long nindex, num *pkey, char **ppattr);
+   char *iget     (int nindex, num *pkey, char **ppattr);
 
 private:
    char *mixdup   (char *ptext, char *pattr);
-   long  demix    (char *pmixed, char **pptext, char **ppattr);
+   int  demix    (char *pmixed, char **pptext, char **ppattr);
 };
 
 class LongTable {
 public:
    LongTable            ( );
   ~LongTable            ( );
-   long addEntry        (long nValue, long nAtPos=-1);
-   long updateEntry     (long nValue, long nIndex);
-   long numberOfEntries ( );
-   long getEntry        (long iIndex, int nTraceLine);
+   int addEntry        (int nValue, int nAtPos=-1);
+   int updateEntry     (int nValue, int nIndex);
+   int numberOfEntries ( );
+   int getEntry        (int iIndex, int nTraceLine);
    void resetEntries    ( );
 private:
-   long expand          (long nSoMuch);
-   long nClArraySize;
-   long nClArrayUsed;
-   long *pClArray;
+   int expand          (int nSoMuch);
+   int nClArraySize;
+   int nClArrayUsed;
+   int *pClArray;
 };
 
 class StringTable {
@@ -491,21 +487,21 @@ friend class Array;
 public:
    StringTable          ( );
   ~StringTable          ( );
-   long addEntry        (char *psz, long nAtPos=-1, char **ppCopy=0);
-   long removeEntry     (long nAtPos);
-   long numberOfEntries ( );
-   char *getEntry       (long iIndex, int nTraceLine);
-   long  setEntry       (long iIndex, char *psz);
+   int addEntry        (char *psz, int nAtPos=-1, char **ppCopy=0);
+   int removeEntry     (int nAtPos);
+   int numberOfEntries ( );
+   char *getEntry       (int iIndex, int nTraceLine);
+   int  setEntry       (int iIndex, char *psz);
    void resetEntries    ( );
-   bool isSet           (long iIndex);
-   void dump            (long nIndent=0);
-   long find            (char *psz); // out: index, or -1
+   bool isSet           (int iIndex);
+   void dump            (int nIndent=0);
+   int find            (char *psz); // out: index, or -1
 private:
-   long addEntryPrefixed(char *psz, char cPrefix);
-   long setEntryPrefixed(long iIndex, char *psz, char cPrefix);
-   long expand          (long nSoMuch);
-   long nClArraySize;
-   long nClArrayUsed;
+   int addEntryPrefixed(char *psz, char cPrefix);
+   int setEntryPrefixed(int iIndex, char *psz, char cPrefix);
+   int expand          (int nSoMuch);
+   int nClArraySize;
+   int nClArrayUsed;
    char **apClArray;
 };
 
@@ -513,15 +509,15 @@ class NumTable {
 public:
    NumTable            ( );
   ~NumTable            ( );
-   long addEntry        (num nValue, long nAtPos=-1);
-   long updateEntry     (num nValue, long nAtPos);
-   long numberOfEntries ( );
-   num  getEntry        (long iIndex, int nTraceLine);
+   int addEntry        (num nValue, int nAtPos=-1);
+   int updateEntry     (num nValue, int nAtPos);
+   int numberOfEntries ( );
+   num  getEntry        (int iIndex, int nTraceLine);
    void resetEntries    ( );
 private:
-   long expand          (long nSoMuch);
-   long nClArraySize;
-   long nClArrayUsed;
+   int expand          (int nSoMuch);
+   int nClArraySize;
+   int nClArrayUsed;
    num  *pClArray;
 };
 
@@ -529,35 +525,35 @@ class Array {
 public:
    Array                (const char *pszID); // one-dimensional by default
   ~Array                ( );
-   long addString       (char *psz);   // to current row (0 by default)
-   long addString       (long lRow, char *psz);
-   long setString       (long lRow, long iIndex, char *psz);
-   char *getString      (long iIndex); // use isStringSet() before
-   char *getString      (long lRow, long iIndex);
-   long addLong         (long nValue, int nTraceLine); // to current row (0 by default)
-   long addLong         (long lRow, long nValue, int nTraceLine);
-   long getLong         (long iIndex); // use isLongSet() before
-   long getLong         (long lRow, long iIndex, int nTraceLine);
-   long setLong         (long lRow, long iIndex, long nValue, int nTraceLine);
-   long numberOfEntries ( );           // in current row (0 by default)
-   long numberOfEntries (long lRow);
-   bool isLongSet       (long lRow, long iIndex); // index and type test
-   bool isStringSet     (long iIndex); // index and type test
-   bool isStringSet     (long lRow, long iIndex);
-   long addRow          (int nTraceLine); // add empty row, set as current
-   long setRow          (long iCurRow, int nTraceLine);// set current row
-   bool hasRow          (long iRow);   // tell if row exists
+   int addString       (char *psz);   // to current row (0 by default)
+   int addString       (int lRow, char *psz);
+   int setString       (int lRow, int iIndex, char *psz);
+   char *getString      (int iIndex); // use isStringSet() before
+   char *getString      (int lRow, int iIndex);
+   int addLong         (int nValue, int nTraceLine); // to current row (0 by default)
+   int addLong         (int lRow, int nValue, int nTraceLine);
+   int getLong         (int iIndex); // use isLongSet() before
+   int getLong         (int lRow, int iIndex, int nTraceLine);
+   int setLong         (int lRow, int iIndex, int nValue, int nTraceLine);
+   int numberOfEntries ( );           // in current row (0 by default)
+   int numberOfEntries (int lRow);
+   bool isLongSet       (int lRow, int iIndex); // index and type test
+   bool isStringSet     (int iIndex); // index and type test
+   bool isStringSet     (int lRow, int iIndex);
+   int addRow          (int nTraceLine); // add empty row, set as current
+   int setRow          (int iCurRow, int nTraceLine);// set current row
+   bool hasRow          (int iRow);   // tell if row exists
    void reset           ( );           // removes all entries
    void dump            ( );
-   long addNull         (long lRow);
+   int addNull         (int lRow);
 private:
-   bool isSet           (long iIndex); // in current row (0 by default)
-   long ensureBase      ( );  // make sure at least one row exists
-   long expand          (long nSoMuch);
-   long nClRowsSize;
-   long nClRowsUsed;
+   bool isSet           (int iIndex); // in current row (0 by default)
+   int ensureBase      ( );  // make sure at least one row exists
+   int expand          (int nSoMuch);
+   int nClRowsSize;
+   int nClRowsUsed;
    StringTable **apClRows;
-   long nClCurRow;
+   int nClCurRow;
    const char *pszClID;
 };
 
@@ -565,20 +561,20 @@ class FileSet {
 public:
    FileSet  ( );
   ~FileSet  ( );
-   long  beginLayer     (bool bWithEmptyCommand, int nTraceLine);
-   long  addRootDir     (char *pszName, int nTraceLine, bool bNoCmdFillup);
-   long  addDirMask     (char *pszName);
-   long  addDirCommand  (long);
-   long  addFileMask    (char *pszName);
-   long  autoCompleteFileMasks   (int nWhat);
+   int  beginLayer     (bool bWithEmptyCommand, int nTraceLine);
+   int  addRootDir     (char *pszName, int nTraceLine, bool bNoCmdFillup);
+   int  addDirMask     (char *pszName);
+   int  addDirCommand  (int);
+   int  addFileMask    (char *pszName);
+   int  autoCompleteFileMasks   (int nWhat);
    void  setBaseLayer   ( );
    void  reset          ( );
    void  shutdown       ( );
-   bool  hasRoot        (long iIndex);
-   char* setCurrentRoot (long iIndex);
+   bool  hasRoot        (int iIndex);
+   char* setCurrentRoot (int iIndex);
    char* getCurrentRoot ( );
    char* root           (bool braw=0); // like above, but returns "" if none, with braw: 0 if none
-   long  numberOfRootDirs ( );
+   int  numberOfRootDirs ( );
    Array &rootDirs      ( ) { return clRootDirs; }
    Array &dirMasks      ( ) { return clDirMasks; }
    Array &fileMasks     ( ) { return clFileMasks; }
@@ -586,22 +582,22 @@ public:
    bool  anyFileMasks   ( );  // that are non-"*"
    char* firstFileMask  ( );  // of current root
    void  dump           ( );
-   void  info           (void (*pout)(long nrectype, char *pline));
-   long  getDirCommand  ( );  // of current root
+   void  info           (void (*pout)(int nrectype, char *pline));
+   int  getDirCommand  ( );  // of current root
    bool  isAnyExtensionMaskSet   ( );
-   long  checkConsistency  ( );
+   int  checkConsistency  ( );
 private:
-   long  ensureBase     (int nTraceLine);
+   int  ensureBase     (int nTraceLine);
    void  resetAddFlags  ( ); // per layer
    Array clRootDirs;    // row 0: names/str, row 1: command/int, row 2: layer/int
    Array clDirMasks;    // row == layer
    Array clFileMasks;   // row == layer
-   long  nClCurDir;
-   long  nClCurLayer;
+   int  nClCurDir;
+   int  nClCurLayer;
    char  *pClLineBuf;
-   long  bClGotAllMask;
-   long  bClGotPosFile;
-   long  bClGotNegFile;
+   int  bClGotAllMask;
+   int  bClGotPosFile;
+   int  bClGotNegFile;
 };
 
 class StringPipe
@@ -611,16 +607,16 @@ public:
       char *read  (char **ppAttr=0);  // returns 0 on EOD
       void  resetPipe ( );
       bool  eod   ( );
-      void  dump  (char *pszTitle);
-      long  numberOfEntries ( ) { return clText.numberOfEntries(); }
-      char *getEntry        (long nIndex, long nLine, char **pAttr=0);
+      void  dump  (cchar *pszTitle);
+      int  numberOfEntries ( ) { return clText.numberOfEntries(); }
+      char *getEntry        (int nIndex, int nLine, char **pAttr=0);
       void  resetEntries    ( );
-      long  addEntry        (char *psz, char *pAttr);
-      long  setEntry        (long iIndex, char *psz, char *pAttr);
+      int  addEntry        (char *psz, char *pAttr);
+      int  setEntry        (int iIndex, char *psz, char *pAttr);
 private:
    StringTable clText;
    StringTable clAttr;
-   long nReadIndex;
+   int nReadIndex;
 };
 
 #ifdef _WIN32
@@ -638,9 +634,9 @@ struct SFKFindData
    num   time_create;
    num   size;
    bool  islink;
-   ulong rawmode; // for tracing
-   ulong rawtype; // for tracing
-   ulong rawnlnk; // link count
+   uint rawmode; // for tracing
+   uint rawtype; // for tracing
+   uint rawnlnk; // link count
    num   ninode;     // under linux
    __dev_t ostdev;   // under linux
    bool  bhavenode;  // under linux
@@ -672,12 +668,12 @@ public:
    char  *orgName( );      // same as name() except on redirects
    #endif // VFILEBASE
 
-   long  status   ( );
+   int  status   ( );
    // 0:yet_unknown 1:ok 9:fails_to_read
 
    // Coi's must have an initial filename,
    // but it can be changed later by this:
-   long  setName  (char *pszName, char *pszOptRootDir=0);
+   int  setName  (char *pszName, char *pszOptRootDir=0);
    // if rootdir is not given, the old one is kept.
 
    void  setIsDir    (bool bYesNo); // sets anydir status
@@ -685,7 +681,7 @@ public:
    bool  isTravelDir ( );
    bool  isDirLink   ( );
 
-   long  setRef   (char *pszName);
+   int  setRef   (char *pszName);
 
    bool  hasSize  ( );
    bool  hasTime  ( );
@@ -705,7 +701,7 @@ public:
    bool  isLink   ( );
 
    // extra string outside coi definition:
-   long  setExtStr   (char *psz);   // is copied
+   int  setExtStr   (char *psz);   // is copied
    char  *getExtStr  ( );           // null if none
 
    // check if coi is an existing file
@@ -713,7 +709,7 @@ public:
 
    // data I/O functions:
    bool   isFileOpen ( );
-   long   open       (char *pmode); // like fopen, but RC 0 == OK
+   int   open       (cchar *pmode); // like fopen, but RC 0 == OK
    // supported pmodes: "rb", "r", "r+b", "wb"
    // with "r", reading stops as soon as binary is detected.
    size_t read       (void *pbuf, size_t nbufsize);
@@ -734,18 +730,19 @@ public:
    void   setBinaryFile (bool bYesNo);
    bool   isBinaryFile  ( );
    uchar  isUTF16       ( ); // 0x00==none 0xFE==le 0xEF==be
+   bool	 isSnapFile		( );
 
    // readLine alloc's another I/O buffer on demand:
-   long   readLine   (char *pszOutBuf, long nOutBufLen);
+   int   readLine   (char *pszOutBuf, int nOutBufLen);
 
    // directory and archive processing:
-   long   openDir    ( );  // prep for nextEntry()
+   int   openDir    ( );  // prep for nextEntry()
    Coi   *nextEntry  ( );  // result owned by CALLER.
    void   closeDir   ( );  // required after processing.
    bool   isDirOpen  ( );
 
    #ifndef VFILEZIP
-   long  isZipSubEntry  ( )   { return 0; }
+   int  isZipSubEntry  ( )   { return 0; }
    bool   isTravelZip   (bool braw=0) { return 0; }
    void   setArc        (bool bIsArchive) { }
    bool   isKnownArc    ( )   { return 0; }
@@ -753,7 +750,7 @@ public:
 
    #ifdef VFILEBASE
 
-   long   rawLoadDir ( );
+   int   rawLoadDir ( );
    Coi   *getElementByAbsName (char *pabs); // result is NOT locked
 
    bool  isNet    ( );  // ftp OR http
@@ -765,27 +762,27 @@ public:
 
    num   getUsedBytes   ( );  // info for the cache
 
-	long	 prefetch		(bool bLoadNonArcBinaries, num nFogSizeLimit, num nHardSizeLimit);
+	int	 prefetch		(bool bLoadNonArcBinaries, num nFogSizeLimit, num nHardSizeLimit);
 
    // direct query of http header fields, if any given
    StringMap &headers     ( );            // creates on demand
-   char      *header      (char *pname);  // returns NULL or the value
+   char      *header      (cchar *pname);  // returns NULL or the value
 
-   static char *cacheName (char *pnamein, char *pbufin, long nbufsize, long *prDirPartLen=0);
+   static char *cacheName (char *pnamein, char *pbufin, int nbufsize, int *prDirPartLen=0);
    // nbufsize should be >= SFK_MAX_PATH
 
    #endif // VFILEBASE
 
    // reference counting:
-   long  incref   (char *pTraceFrom); // increment refcnt
-   long  decref   ( );  // decrement refcnt
-   long  refcnt   ( );  // current no. of refs
+   int  incref   (cchar *pTraceFrom); // increment refcnt
+   int  decref   ( );  // decrement refcnt
+   int  refcnt   ( );  // current no. of refs
 
    static bool bClDebug;
 
    bool   rawIsDir      ( );  // native filesystem dir
 
-   long   getContent    (uchar **ppdata, num &rnSize);
+   int   getContent    (uchar **ppdata, num &rnSize);
    // ppdata is MANAGED BY COI! i.e. as soon as Coi
    // is deleted, returned data is deleted as well.
    // rc >0: unable to access file content.
@@ -793,10 +790,10 @@ public:
    void   setContent    (uchar *pdata, num nsize, num ntime=0);
    // releases old content, if any.
 
-   long   releaseContent( );
+   int   releaseContent( );
    // after getContent(), tell that data buffer can be freed.
 
-   char  *lasterr       ( );
+   cchar  *lasterr      ( );
 
    #ifndef _WIN32
    // linux only:
@@ -807,30 +804,30 @@ public:
    #endif
 
    // if status()==0, can call this:
-   long  readStat       ( );
+   int  readStat       ( );
 
 private:
    // nextEntry() does additional checks, this does none:
    Coi   *nextEntryRaw  ( );  // result owned by CALLER.
 
    // native file system
-   long   rawOpenDir    ( );  // prep for nextEntry()
+   int   rawOpenDir    ( );  // prep for nextEntry()
    Coi   *rawNextEntry  ( );  // result owned by CALLER.
    void   rawCloseDir   ( );  // required after processing.
 
    #ifdef VFILEBASE
 
-   long   provideInput  (int nTraceLine, bool bsilent=0);
-   long   loadOwnFileRaw(num nmaxsize, uchar **ppout, num &rsize);
+   int   provideInput  (int nTraceLine, bool bsilent=0);
+   int   loadOwnFileRaw(num nmaxsize, uchar **ppout, num &rsize);
 
    // ftp folders and files
    bool   rawIsFtpDir    ( );
    //     rawLoadDir     ( )  // is generic
    Coi   *rawNextFtpEntry( );
    void   rawCloseFtpDir ( ); 
-   long   rawLoadFtpDir  ( ); // load remote dir listing
+   int   rawLoadFtpDir  ( ); // load remote dir listing
 
-   long   rawOpenFtpSubFile   (char *pmode);
+   int   rawOpenFtpSubFile   (cchar *pmode);
    size_t rawReadFtpSubFile   (void *pbufin, size_t nBufSize);
    void   rawCloseFtpSubFile  ( );
 
@@ -839,9 +836,9 @@ private:
    //     rawLoadDir     ( )  // is generic
    Coi   *rawNextHttpEntry( );
    void   rawCloseHttpDir ( ); 
-   long   rawLoadHttpDir  ( );
+   int   rawLoadHttpDir  ( );
 
-   long   rawOpenHttpSubFile  (char *pmode);
+   int   rawOpenHttpSubFile  (cchar *pmode);
    size_t rawReadHttpSubFile  (void *pbufin, size_t nBufSize);
    void   rawCloseHttpSubFile ( );
 
@@ -856,7 +853,7 @@ private:
    char  *pszClExtStr;
 
    uchar nClStatus;
-   ulong nClHave;
+   uint nClHave;
    num   nClSize;
    num   nClMTime;   // modification time
    num   nClCTime;   // creation time, or <= 0
@@ -869,17 +866,18 @@ private:
    bool  bClBinary;
    bool  bClArc;
    uchar nClUCS;     // 0:none 0xFE:LE 0xEF:BE
+   bool	bClSnap;		// sfk snapfile
 
    // ON EXTENSIONS ABOVE, ADAPT COI::COPY!
 
-   long  nClRefs;    // not to be coi::copied
+   int  nClRefs;    // not to be coi::copied
 
    #ifndef _WIN32
 public: // not yet defined
    // additional informal stuff
-   ulong rawmode;  // for tracing
-   ulong rawtype;  // for tracing
-   ulong rawnlnk;  // link count
+   uint rawmode;  // for tracing
+   uint rawtype;  // for tracing
+   uint rawnlnk;  // link count
    num   nClINode;   // under linux
    __dev_t oClStDev; // under linux
    // file id is made from:
@@ -920,20 +918,20 @@ public:
    CoiTable             ( );
   ~CoiTable             ( );
 
-   long addEntry        (Coi &ocoi, long nAtPos=-1);
+   int addEntry        (Coi &ocoi, int nAtPos=-1);
    // adds a COPY of the supplied coi.
 
-   long removeEntry     (long nAtPos);
-   long numberOfEntries ( );
-   Coi  *getEntry       (long iIndex, int nTraceLine);
-   long  setEntry       (long iIndex, Coi *pcoi);
-   long addSorted       (Coi &ocoi, char cSortedBy, bool bUseCase);
+   int removeEntry     (int nAtPos);
+   int numberOfEntries ( );
+   Coi  *getEntry       (int iIndex, int nTraceLine);
+   int  setEntry       (int iIndex, Coi *pcoi);
+   int addSorted       (Coi &ocoi, char cSortedBy, bool bUseCase);
    void resetEntries    ( );
-   bool isSet           (long iIndex);
+   bool isSet           (int iIndex);
 private:
-   long expand          (long nSoMuch);
-   long nClArraySize;
-   long nClArrayUsed;
+   int expand          (int nSoMuch);
+   int nClArraySize;
+   int nClArrayUsed;
    Coi  **apClArray;
 };
 
@@ -960,7 +958,7 @@ public:
    bool   bwrite;        // (also) writing to file
    bool   bstoprdbin;    // stop read if binary detected
    num    ntotalread;    // bytes read since open()
-   ulong  ntold;         // warnings told about this file
+   uint  ntold;         // warnings told about this file
    char   szlasterr[50]; // most recent error info
    #ifdef VFILEBASE
    bool   bloaddirdone;  // don't repeat dir loading
@@ -974,9 +972,9 @@ public:
    // it shall NOT be used by low-level read functions.
    struct CoiReadBuf {
       uchar  *data;     // alloc'ed on demand
-      long    getsize;
-      long    getindex;
-      long    geteod;
+      int    getsize;
+      int    getindex;
+      int    geteod;
       num     getpos;
    } rbuf;  // overlapping read cache buffer
 
@@ -1005,7 +1003,7 @@ public:
    CoiTable *pelements;
    CoiTable &elements ( );
 
-   long nNextElemEntry;
+   int nNextElemEntry;
 
    num  nPreCacheFileCnt;
    num  nPreCacheFileBytes;
@@ -1014,18 +1012,18 @@ public:
    FTPClient *pClFtp;
    // when set, it is allocated by the coi,
    // and must be released after use.
-   long  getFtp(char *purl);
+   int  getFtp(char *purl);
    // on rc0, can use pClFtp.
-   long  releaseFtp( );
+   int  releaseFtp( );
    // does NOT close connection, but clears pClFtp.
 
    // http support
    HTTPClient *pClHttp;
    // when set, it is allocated by the coi,
    // and must be released after use.
-   long  getHttp(char *purl);
+   int  getHttp(char *purl);
    // on rc0, can use pClHttp.
-   long  releaseHttp( );
+   int  releaseHttp( );
    // clears pClHttp, but if connection is
    // in keep-alive, does NOT close it yet.
    StringMap &headers( );
@@ -1065,32 +1063,32 @@ class ProgressInfo
 {
 public:
    ProgressInfo          ( );
-   void  setWidth        (long nColumns);
-   void  setAddInfoWidth (long nColumns); // abs. columns, high prio
+   void  setWidth        (int nColumns);
+   void  setAddInfoWidth (int nColumns); // abs. columns, high prio
    void  setAddInfoHalve ( );  // fills half of line, with low prio
    void  setAddInfo      (const char *pszFormat, ...);
-   void  setAction       (char *pszVerb, char *pszSubject, char *pszAddInfo=0, long nKeepFlags=0);
-   void  setStatus       (char *pszVerb, char *pszSubject, char *pszAddInfo=0, long nKeepFlags=0);
+   void  setAction       (cchar *pszVerb, cchar *pszSubject, cchar *pszAddInfo=0, int nKeepFlags=0);
+   void  setStatus       (cchar *pszVerb, cchar *pszSubject, cchar *pszAddInfo=0, int nKeepFlags=0);
    void  print           ( );  // print status now, keep line
-   void  printLine       (long nFilter=0); // print final status, including newline
+   void  printLine       (int nFilter=0); // print final status, including newline
    void  cycle           ( );  // print status if enough time elapsed
    void  clear           ( );  // clear status, if it was printed
-   long  print           (const char *pszFormat, ...);
-   void  setProgress     (num nMax, num nCur, char *pszUnit);
-   void  setStatProg     (char *pverb, char *psubj, num nMax, num nCur, char *pszUnit);
+   int  print           (const char *pszFormat, ...);
+   void  setProgress     (num nMax, num nCur, cchar *pszUnit);
+   void  setStatProg     (cchar *pverb, cchar *psubj, num nMax, num nCur, cchar *pszUnit);
 
 private:
    void  fixAddInfoWidth ( );
    void  dumpTermStatus  ( );
    void  clearTermStatus ( );  // if anything to clear
-   long  nMaxChars;
-   long  nMaxSubChars;
-   long  nAddInfoCols;
-   long  nDumped;
+   int  nMaxChars;
+   int  nMaxSubChars;
+   int  nAddInfoCols;
+   int  nDumped;
    num   nLastDumpTime;
    bool  bAddInfoPrio;
-   long  nAddInfoReserve;
-   long  nTurn;
+   int  nAddInfoReserve;
+   int  nTurn;
    char  szVerb   [200];
    char  szSubject[200];
    char  szAddInfo[200];

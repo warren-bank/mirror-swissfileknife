@@ -21,7 +21,45 @@
       -  fwrite is mapped to safefwrite
       to work around the Windows 60 MB I/O bug.
 
+   1.5.9
+   Revision 2:
+   -  fix: sfk tail did not work.
+   -  fix: compile errors under 64 bit linux.
+   Initial Revision:
+   -  CHG: SYNTAX CHANGE: option -waitonerror now does
+           exactly the same as -waitonerr. see fix below.
+   -  FIX: SFK FTPSERV in PASV mode: no longer sends 127.0.0.1
+           as the server's IP, but the first network interface
+           IP of the system. the IP can also be set manually
+           using an option -ownip=x.
+   -  DEL: FUNCTION REMOVAL: sfk synctext marked as deprecated.
+           it can still be used, but will be removed in future
+           releases. sfk synctext is very complicated to use,
+           and it's functionality is completely provided
+           in a much better way by Depeche View.
+   -  chg: main help text complete rework.
+   -  add: ftpserv: option -ownip=x to manually set PASV ip.
+   -  add: udpdump: command chaining support.
+   -  add: udpdump: option -stop=n to stop after n packages.
+   -  chg: udpdump: -quiet no longer shows "waiting on port".
+   -  FIX: option -waitonerr: long form -waitonerror
+           was misinterpreted as -wait.
+   -  fix: some help text typos.
+   -  fix: sfk samp html: typo.
+   -  fix: udpdump: missing socket close at command end.
+   -  fix: snapto: skipped nested snapfiles produced
+           unwanted blank line in output.
+   -  chg: sfk if, call no longer listed in main help text.
+   -  chg: code cleanup (deprecation warnings).
+   -  add: support to compile with current gcc/mingw.         
+   -  chg: cleanup: removed most compile warnings.
+   -  chg: global code cleanup: now using double bracket
+           mtklog, mtkerr and mtkwarn.
+   -  chg: global code cleanup: long elimination.
+           base numeric type of sfk is now int.
+
    1.5.8
+   Initial Revision:
    -  SYNTAX CHANGE: sfk detab: by default, the command
            now runs in SIMULATION mode if files are selected. 
            add -yes to really (re)write files.
@@ -1230,8 +1268,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.5.8"  // ver_ and check the _PRE definition
-#define SFK_FIXPACK  ""
+#define SFK_VERSION  "1.5.9"  // ver_ and check the _PRE definition
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1244,8 +1282,8 @@
 #endif // USE_SFK_BASE
 
 #define USE_SFT_UPDATE
-
-#define SFK_CCDIRTIME // copy over created dir time
+#define SFK_CCDIRTIME   // copy over created dir time
+#define SFK_DEPRECATED  // also compile deprecated stuff
 
 // should you get problems with fsetpos/fgetpos compile,
 // activate this to disable zip/jar file content listing:
@@ -1311,7 +1349,7 @@ static const char *pszGlblVerType = SFK_VERTYPE;
 #endif // USE_SFK_BASE
 
 #ifndef USE_SFK_BASE
- #ifdef WINFULL
+ #if defined(WINFULL) && defined(_MSC_VER)
   #define SFK_MEMTRACE
  #endif
 #endif
@@ -1327,7 +1365,35 @@ static const char *pszGlblVerType = SFK_VERTYPE;
 #endif
 
 #if defined(_WIN32) && defined(SFK_WINPOPUP_SUPPORT)
- #include "winpop.cpp"
+ #ifdef SFK_DEPRECATED
+  #include "winpop.cpp"
+ #endif
+#endif
+
+#ifdef _WIN32
+const char  glblPathChar    = '\\';
+const char  glblWrongPChar  = '/';
+const char *glblPathStr     = "\\";
+const char *glblAddWildCard = "*";
+const char *glblDotSlash    = ".\\";
+      char  glblNotChar     = '!';
+      char  glblRunChar     = '$';
+const char *glblWildStr     = "*";
+const char  glblWildChar    = '*';
+const char *glblWildInfoStr = "*";
+const char *glblLineEnd     = "\r\n";
+#else
+const char  glblPathChar    = '/';
+const char  glblWrongPChar  = '\\';
+const char *glblPathStr     = "/";
+const char *glblAddWildCard = "";    // not used w/ linux
+const char *glblDotSlash    = "./";
+      char  glblNotChar     = ':';
+      char  glblRunChar     = '#';
+      char  glblWildStr[10];       // "+";
+      char  glblWildChar;          // '+';
+      char  glblWildInfoStr[20];   // "+ or \\*";
+const char *glblLineEnd     = "\n";
 #endif
 
 void initWildCards() {
@@ -1357,10 +1423,10 @@ bool isWildStr(char *p) {
    return isWildChar(p[0]);
 }
 
-void setTextColor(long n, bool bStdErr=0);
-long perr(const char *pszFormat, ...);
-long pwarn(const char *pszFormat, ...);
-long pinf(const char *pszFormat, ...);
+void setTextColor(int n, bool bStdErr=0);
+int perr(const char *pszFormat, ...);
+int pwarn(const char *pszFormat, ...);
+int pinf(const char *pszFormat, ...);
 
 // ========== 64 bit abstraction layer begin ==========
 
@@ -1418,7 +1484,7 @@ num atonum(char *psz)
 num myatonum(char *psz)
 {
    if (!strncmp(psz, "0x", 2)) {
-      #ifdef _WIN32
+      #ifdef _MSC_VER
       return _strtoui64(psz+2, 0, 0x10);
       #else
       return strtoull(psz+2, 0, 0x10);
@@ -1442,7 +1508,7 @@ mytime_t getSystemTime()
 
 // ====== SFK primitive function library begin ========
 
-char *ownIPList(int &rhowmany, ulong nPort=0, const char *psep=" or ");
+char *ownIPList(int &rhowmany, uint nPort=0, const char *psep=" or ");
 
 // all closesocket calls are redirected to:
 void myclosesocket(SOCKET hsock, bool bread, bool bwrite)
@@ -1488,13 +1554,13 @@ num getCurrentTime()
 // AND adds a zero terminator at pszDst (within nMaxDst range!).
 // to use this like strncpy, always add +1 to nMaxDst.
 // NOTE: if nMaxDst == 0, NO zero terminator is added.
-void mystrcopy(char *pszDst, char *pszSrc, long nMaxDst) {
+void mystrcopy(char *pszDst, cchar *pszSrc, int nMaxDst) {
    if (nMaxDst < 2) {
       if (nMaxDst >= 1)
          pszDst[0] = '\0';
       return;
    }
-   long nLen = strlen(pszSrc);
+   int nLen = strlen(pszSrc);
    if (nLen > nMaxDst-1)
       nLen = nMaxDst-1;
    memcpy(pszDst, pszSrc, nLen);
@@ -1502,7 +1568,7 @@ void mystrcopy(char *pszDst, char *pszSrc, long nMaxDst) {
 }
 #define strcopy(dst,src) mystrcopy(dst,src,sizeof(dst)-10)
 
-uchar *mymemdup(char *psz, long nlen)
+uchar *mymemdup(char *psz, int nlen)
 {
    uchar *p = new uchar[nlen+2];
    if (!p) return p;
@@ -1513,21 +1579,21 @@ uchar *mymemdup(char *psz, long nlen)
 
 // remove blanks from right side of a string
 void myrtrim(char *pszBuf) {
-   long nlen = strlen(pszBuf);
+   int nlen = strlen(pszBuf);
    while (nlen > 0 && pszBuf[nlen-1] == ' ') {
       pszBuf[nlen-1] = '\0';
       nlen--;
    }
 }
 
-void skipUntil(char **pp, char *pdelim) {
+void skipUntil(char **pp, cchar *pdelim) {
    char *p = *pp;
    while (*p && !strchr(pdelim, *p))
       p++;
    *pp = p;
 }
 
-void skipOver(char **pp, char *pdelim) {
+void skipOver(char **pp, cchar *pdelim) {
    char *p = *pp;
    while (*p && strchr(pdelim, *p))
       p++;
@@ -1537,7 +1603,7 @@ void skipOver(char **pp, char *pdelim) {
 void skipToWhite(char **pp) { skipUntil(pp, " \t\r\n"); }
 void skipWhite(char **pp)   { skipOver(pp, " \t\r\n");  }
 
-long prepareTCP()
+int prepareTCP()
 {
    static bool bDone = 0;
    if (!bDone)
@@ -1551,65 +1617,6 @@ long prepareTCP()
       #endif
    }
    return 0;
-}
-
-char *ownIPList(int &rhowmany, ulong nPort, const char *psep)
-{
-   prepareTCP();
-
-   static char szIPListBuf[200];
-   szIPListBuf[0] = '\0';
-
-   char szPortStr[50];
-   szPortStr[0] = '\0';
-   if (nPort > 0)
-      sprintf(szPortStr, ":%lu", nPort);
-
-   #ifdef _WIN32
-
-   char *pownip = "";
-   struct in_addr addr;
-
-   hostent *pinfo = gethostbyname(""); // fails under linux
-   if (pinfo) {
-      memcpy(&addr,pinfo->h_addr_list[0],sizeof(struct in_addr));
-      pownip = inet_ntoa(addr);
-      strcopy(szIPListBuf, pownip);
-      strcat(szIPListBuf, szPortStr); // if any
-      rhowmany = 1;
-   }
-
-   #else
-
-   // linux: list all existing interface IPV4 addresses
-   struct ifaddrs *pAdrObj = NULL;
-   char szAdrBuf[200]; mclear(szAdrBuf);
-   getifaddrs(&pAdrObj);
-   const char *pprefix = "";
-   int ndone = 0;
-   while (pAdrObj != NULL) {
-     if (pAdrObj->ifa_addr->sa_family==AF_INET && strcmp(pAdrObj->ifa_name, "lo0")) {
-       void *pIPData = &((struct sockaddr_in *)pAdrObj->ifa_addr)->sin_addr;
-       const char *pszIP = inet_ntop(AF_INET, pIPData, szAdrBuf, sizeof(szAdrBuf)-10);
-       if (strcmp(pszIP, "127.0.0.1")) {
-          int nlen = strlen(pszIP);
-          int nrem = (int)sizeof(szIPListBuf) - (int)strlen(szIPListBuf);
-          if (nlen < nrem - 10) {
-             strcat(szIPListBuf, pprefix);
-             strcat(szIPListBuf, pszIP);
-             strcat(szIPListBuf, szPortStr); // if any
-             pprefix = psep;
-             ndone++;
-          }
-       }
-     }
-     pAdrObj = pAdrObj->ifa_next;
-   }
-   rhowmany = ndone;
-
-   #endif
-
-   return szIPListBuf;
 }
 
 // ====== SFK primitive function library end   ========
@@ -1676,11 +1683,11 @@ static char szGlblCurCmd[50];
 
 class CommandScope {
 public:
-      CommandScope (char *pszcmd);
+      CommandScope (cchar *pszcmd);
      ~CommandScope ( );
 };
 
-CommandScope::CommandScope(char *pszcmd) {
+CommandScope::CommandScope(cchar *pszcmd) {
    strcopy(szGlblCurCmd, pszcmd);
    bGlblCurCmdSet = 1;
 }
@@ -1748,16 +1755,16 @@ void cbtrace(const char *pszFormat, ...)
    pGlblTraceCallback(szTraceBuf);
 }
 
-long getFileStat( // RC == 0 if exists anything
+int getFileStat( // RC == 0 if exists anything
    char  *pszName,
-   long   &rbIsDirectory,
-   long   &rbCanRead,
-   long   &rbCanWrite,
+   int   &rbIsDirectory,
+   int   &rbCanRead,
+   int   &rbCanWrite,
    num    &rlFileTime,
    num    &rlFileSize,
    num   *ppcatimes = 0, // optional: creation and access time
    void  *prawstat = 0,  // optional: create copy of stat structure
-   long   nrawstatmax=0  // size of above buffer
+   int   nrawstatmax=0  // size of above buffer
  );
 
 #define delstring(x) \
@@ -1768,7 +1775,7 @@ long getFileStat( // RC == 0 if exists anything
 
 // this also sets zero terminator at end of string,
 // i.e. nmaxlen means including zero terminator.
-void setattr(char *pdst, uchar uc, ulong nlen, ulong nmaxlen)
+void setattr(char *pdst, uchar uc, uint nlen, uint nmaxlen)
 {
    if (nlen > nmaxlen) nlen = nmaxlen;
    if (nlen > 0) {
@@ -1786,7 +1793,7 @@ bool myisxdigit(char c) {
    return 0;
 }
 
-long getTwoDigitHex(char *psz)
+int getTwoDigitHex(char *psz)
 {
    char szHex[10];
 
@@ -1800,10 +1807,10 @@ long getTwoDigitHex(char *psz)
 
    szHex[2] = '\0';
 
-   return (long)strtoul(szHex,0,0x10);
+   return (int)strtoul(szHex,0,0x10);
 }
 
-void doSleep(long nmsec) 
+void doSleep(int nmsec) 
 {
    #ifdef _WIN32
    Sleep(nmsec);
@@ -1856,7 +1863,7 @@ enum eConvTargetFormats {
    eConvFormat_CRLF   = 2
 };
 
-long nGlblShellRC = 0;
+int nGlblShellRC = 0;
 
 struct CommandStats 
 {
@@ -1864,50 +1871,50 @@ public:
    CommandStats   ( );
    void reset     ( );
 
-   long debug     ;
-   long verbose   ;  // 0,1,2
+   int debug     ;
+   int verbose   ;  // 0,1,2
    bool delStaleFiles      ;
    bool skipOwnMetaDir     ;
    bool blockAutoComplete  ;
-   long tabSize   ;
-   long tabsDone  ;
-   long tabFiles  ;
-   long scanTabs  ;
+   int tabSize   ;
+   int tabsDone  ;
+   int tabFiles  ;
+   int scanTabs  ;
    bool scanIndent;
-   long indentFilt;
+   int indentFilt;
 
-   long files     ; // visible plus hidden
-   long filesChg  ; // no. of files changed
-   long noFiles   ; // fnames that failed to stat etc.
-   long dirs      ; // visible plus hidden
-   long filesCloned ; // no. of files with attributes copied
-   long dirsCloned  ; // no. of dirs with attributes copied
+   int files     ; // visible plus hidden
+   int filesChg  ; // no. of files changed
+   int noFiles   ; // fnames that failed to stat etc.
+   int dirs      ; // visible plus hidden
+   int filesCloned ; // no. of files with attributes copied
+   int dirsCloned  ; // no. of dirs with attributes copied
    bool hidden    ; // include hidden files and dirs
-   long numHiddenFiles ; // for list stats
-   long numHiddenDirs  ; // for list stats
-   long numHiddenFilesSkipped ;
-   long numHiddenDirsSkipped  ;
-   long binariesSkipped ;
-   long addedFilesSkipped ; // on -sincedif
-   long shadowsWritten ;
-   long shadowFallbacks ;
-   long filesDeleted ;
-   long filesDeletedWP;
-   long dirsDeleted  ;
-   long dirsDeletedWP;
-   long filesScanned ;
-   long dirsScanned  ;
-   long filesNewerInDst ;
-   long filesStale ; // deletion candidate
-   long lines    ;
+   int numHiddenFiles ; // for list stats
+   int numHiddenDirs  ; // for list stats
+   int numHiddenFilesSkipped ;
+   int numHiddenDirsSkipped  ;
+   int binariesSkipped ;
+   int addedFilesSkipped ; // on -sincedif
+   int shadowsWritten ;
+   int shadowFallbacks ;
+   int filesDeleted ;
+   int filesDeletedWP;
+   int dirsDeleted  ;
+   int dirsDeletedWP;
+   int filesScanned ;
+   int dirsScanned  ;
+   int filesNewerInDst ;
+   int filesStale ; // deletion candidate
+   int lines    ;
    num  maxFileTime;
-   ulong listForm;   // list -size etc.
+   uint listForm;   // list -size etc.
    bool sim   ;      // just simulate command
    bool nohead;      // leave out some header, trailer info
    bool pure  ;      // extra info if -pure was specified
    bool dostat;      // copy: list just size statistics
    bool tailTail;    // running tail, not head
-   long tailLines;   // head, tail
+   int tailLines;   // head, tail
    bool tailFollow;  // head, tail
    char *tomask;     // output filename mask
    char *curcmd;     // current command
@@ -1918,9 +1925,9 @@ public:
    bool wpat;        // support * and ?
    bool usecase;     // case-sensitive search or not
    bool nocase;      // optional: forced nocase on binary search
-   long blankRunFiles;  // no. of filenames w/blanks passing run
-   long wrongpcRunFiles;// no. of filenames w/wrong path chars
-   long badNameForm;    // set by execRunFile on bad filename formats
+   int blankRunFiles;  // no. of filenames w/blanks passing run
+   int wrongpcRunFiles;// no. of filenames w/wrong path chars
+   int badNameForm;    // set by execRunFile on bad filename formats
    bool nocheck;     // do not perform any checks
    bool noinfo;      // do not tell infos
    bool nochain;     // disable command chains
@@ -1933,22 +1940,22 @@ public:
    bool nonames;     // do NOT print/pass :file records
    char *runCmd;     // default: "" if not set.
    bool printcmd;    // run: print raw command
-   long stoprc;      // run: stop on rc >= stoprc
+   int stoprc;      // run: stop on rc >= stoprc
    bool anymatches;  // find: found at least 1 matching line in 1 file
    bool showrc;      // print rc at program end
    bool deplist;     // deplist command selected
-   long refsrccnt;   // reflist, deplist: no. of sources
+   int refsrccnt;   // reflist, deplist: no. of sources
    bool depsingle;   // process dependencies of a single file
    bool coldstnames; // reflist, deplist: execRefColSrc also collects DstNames
    bool refstripsrc; // strip source file contents from unused chars
-   long listByTime;
+   int listByTime;
    bool listByTimeAll;
-   long listBySize;
+   int listBySize;
    bool listBySizeAll;
-   long listByName;
+   int listByName;
    bool listByNameAll;
    bool tellExecTime;
-   long timeOutMSec;
+   int timeOutMSec;
    bool timeOutAutoSelect;
    num  selMinSize;  // consider only files >= so many bytes
    bool nowarn;      // disable all warning output
@@ -1963,11 +1970,11 @@ public:
    bool verifyLate;        // copy: verify in a separate pass
    FILE *outfile;          // can be used by chain.print
    bool listTargets;       // force target name listing i/o src
-   long idleMode;          // low prio processing, 0 (off) to 2
-   long walkDirDelay;      // low prio file processing with delays
-   long walkFileDelay;     // low prio file processing with delays
-   long treeStopRC;        // stop tree processing on internal RC >= this
-   bool stopTree(long nrc);   // tells if to stop on the supplied rc
+   int idleMode;          // low prio processing, 0 (off) to 2
+   int walkDirDelay;      // low prio file processing with delays
+   int walkFileDelay;     // low prio file processing with delays
+   int treeStopRC;        // stop tree processing on internal RC >= this
+   bool stopTree(int nrc);   // tells if to stop on the supplied rc
    bool toldTreeStop;
    bool skipDirFileColl;   // optim: do not collect flist per dir.
    // cannot be set w/functions that strictly need those lists.
@@ -1978,10 +1985,10 @@ public:
    bool justdirs;          // process only directories
    bool usesnap;           // interpret snapfile format and list titles
    bool usesnapfiltname;   // filter filenames as well
-   long addsnapraw;        // snapto raw mode 1 or 2
+   int addsnapraw;        // snapto raw mode 1 or 2
    const char *addsnaplf;  // "\n" or "\r\n" depending on mode and OS
-   ulong addsnapmeta;      // bit 0:time 1:size 2:encoding
-   long stathilitelevel;   // stat command: highlight dirs <= this
+   uint addsnapmeta;      // bit 0:time 1:size 2:encoding
+   int stathilitelevel;   // stat command: highlight dirs <= this
    bool travelzips;        // traverse zipfile contents
    bool incbin;            // include binary files in processing
    bool reldist;           // hexfind: tell also relative distances
@@ -1997,28 +2004,28 @@ public:
    bool subdirs;           // process subdirs
    bool utf8dec;           // utf-8  detect and decode (not yet impl.)
    bool utf16dec;          // utf-16 detect and decode
-   long utf16found;        // statistic for post-command info
-   long utf16read;         // statistic for post-command info
+   int utf16found;        // statistic for post-command info
+   int utf16read;         // statistic for post-command info
    bool showdupdirs;       // linux: tell if dir link contents are skipped
    bool usecirclemap;      // linux: allow circle map, on by default
    num  sincetime;         // process only files modified since that time
    num  untiltime;         // process only files modified until that time
    bool usectime;          // use creation time instead of modification time
    char paramprefix[30];   // for user defined script input parameter names
-   long wrapcol;           // if >0, auto-wrap lines in snapfile
-   long wrapbincol;        // only on binary to text conversion
+   int wrapcol;           // if >0, auto-wrap lines in snapfile
+   int wrapbincol;        // only on binary to text conversion
    bool rewrap;            // ignore linefeeds, rewrap all
    char listunit;          // stat output in 'b'ytes, 'k'bytes or default.
    bool flatdirstat;       // list no. of files per dir, not dir tree
-   long flatfilecnt;       // global stats if flatdirstat is set
-   long flatdircnt;        // "
+   int flatfilecnt;       // global stats if flatdirstat is set
+   int flatdircnt;        // "
    num  flatbytecnt;       // "
    bool statonlysum;       // sfk stat: quiet except summary
-   long quiet;             // quiet mode
+   int quiet;             // quiet mode
    bool ftpupdate;         // mput, mget: explicite -update
    bool ftpall;            // mput, mget: disable -update mode
    bool noclone;           // disable time stamp replication
-   long fast;              // command dependent optimization
+   int fast;              // command dependent optimization
    bool noprog;            // no progress indicator
    bool test;              // filter: run in test mode
    bool copyLinks;         // copy symlinks     , windows only, untested
@@ -2029,6 +2036,8 @@ public:
    bool binaryfiles;       // process only binaryfiles
    bool packalnum;         // deblank: reduce filenames to alnum
    bool noipexpand;        // disallow ip number expansion
+   int  stopcnt;           // stop command after n events
+   char szownip[60];       // manually set own ip
 };
 
 struct CommandStats gs; // global settings accross whole chain
@@ -2040,8 +2049,8 @@ bool infoAllowed() {
    return 1;
 }
 
-long quietMode() { return cs.quiet; }
-long fastMode()  { return cs.fast;  }
+int quietMode() { return cs.quiet; }
+int fastMode()  { return cs.fast;  }
 
 #ifdef VFILEBASE
 bool csExtDomRef() { return cs.extdomref; }
@@ -2049,9 +2058,84 @@ void setxelike(bool byes) { gs.xelike = cs.xelike = byes; }
 bool httpTravel()  { return cs.travelHttp; }
 #endif // VFILEBASE
 
+// IN: howmany==0 : list all ip's separated by psep,
+//                  return amount in howmany
+//     howmany==1 : list first ip only, ignore port
+char *ownIPList(int &rhowmany, uint nPort, const char *psep)
+{
+   static char szIPListBuf[200];
+   szIPListBuf[0] = '\0';
+
+   // if option -ownip=x is given
+   if (cs.szownip[0]) {
+      strcopy(szIPListBuf, cs.szownip);
+      return szIPListBuf;
+   }
+
+   bool bsingle = (rhowmany == 1) ? 1 : 0;
+
+   prepareTCP();
+
+   char szPortStr[50];
+   szPortStr[0] = '\0';
+   if (nPort > 0)
+      sprintf(szPortStr, ":%u", nPort);
+
+   char *psz = 0;
+
+   #ifdef _WIN32
+
+   struct in_addr addr;
+
+   hostent *pinfo = gethostbyname(""); // fails under linux
+   if (pinfo) {
+      memcpy(&addr,pinfo->h_addr_list[0],sizeof(struct in_addr));
+      char *pownip = inet_ntoa(addr);
+      strcopy(szIPListBuf, pownip);
+      if (bsingle)
+         return szIPListBuf;
+      strcat(szIPListBuf, szPortStr); // if any
+      rhowmany = 1;
+   }
+
+   #else
+
+   // linux: list all existing interface IPV4 addresses
+   struct ifaddrs *pAdrObj = NULL;
+   char szAdrBuf[200]; mclear(szAdrBuf);
+   getifaddrs(&pAdrObj);
+   const char *pprefix = "";
+   int ndone = 0;
+   while (pAdrObj != NULL) {
+     if (pAdrObj->ifa_addr->sa_family==AF_INET && strcmp(pAdrObj->ifa_name, "lo0")) {
+       void *pIPData = &((struct sockaddr_in *)pAdrObj->ifa_addr)->sin_addr;
+       const char *pszIP = inet_ntop(AF_INET, pIPData, szAdrBuf, sizeof(szAdrBuf)-10);
+       if (strcmp(pszIP, "127.0.0.1")) {
+          int nlen = strlen(pszIP);
+          int nrem = (int)sizeof(szIPListBuf) - (int)strlen(szIPListBuf);
+          if (nlen < nrem - 10) {
+             strcat(szIPListBuf, pprefix);
+             strcat(szIPListBuf, pszIP);
+             if (bsingle)
+               return szIPListBuf;
+             strcat(szIPListBuf, szPortStr); // if any
+             pprefix = psep;
+             ndone++;
+          }
+       }
+     }
+     pAdrObj = pAdrObj->ifa_next;
+   }
+   rhowmany = ndone;
+
+   #endif
+
+   return szIPListBuf;
+}
+
 void setArcTravel(bool bYesNo, bool bPreCache) 
 {
-   mtklog("setarctravel %d %d", bYesNo, bPreCache);
+   mtklog(("setarctravel %d %d", bYesNo, bPreCache));
    gs.travelzips  = bYesNo;
    cs.travelzips  = bYesNo;
    #ifdef VFILEBASE
@@ -2062,34 +2146,34 @@ void setArcTravel(bool bYesNo, bool bPreCache)
 bool getArcTravel( ) { return cs.travelzips; }
 
 void setSubLoad(bool bYesNo) {
-   mtklog("setsubload %d", bYesNo);
+   mtklog(("setsubload %d", bYesNo));
    gs.subdirs = bYesNo;
    cs.subdirs = bYesNo;
 }
 
 void setHiddenLoad(bool bYesNo) {
-   mtklog("sethidload %d", bYesNo);
+   mtklog(("sethidload %d", bYesNo));
    gs.hidden = bYesNo;
    cs.hidden = bYesNo;
 }
 
 void setBinaryLoad(bool bYesNo) {
-   mtklog("setbinload %d", bYesNo);
+   mtklog(("setbinload %d", bYesNo));
    gs.incbin = bYesNo;
    cs.incbin = bYesNo;
 }
 
 void setUTFLoad(bool bYesNo) {
-   mtklog("setutfload %d", bYesNo);
+   mtklog(("setutfload %d", bYesNo));
    gs.utf16dec = bYesNo;
    cs.utf16dec = bYesNo;
 }
 
-long getWrapLoad(bool &rrewrap) {
+int getWrapLoad(bool &rrewrap) {
    rrewrap = cs.rewrap;
    return cs.wrapcol; 
 }
-void setWrapLoad(long n, bool brewrap) { 
+void setWrapLoad(int n, bool brewrap) { 
    cs.wrapcol = n;
    gs.wrapcol = n;
    cs.wrapbincol = (n >= 80) ? ((n * 90) / 100 - 10) : 80;
@@ -2100,7 +2184,7 @@ void setWrapLoad(long n, bool brewrap) {
 
 // tells if cur matches mask, including variations:
 // if mask="-sep" then "-sep" and "-ssep" is allowed.
-bool isxopt(char *pszcur, char *pszmask)
+bool isxopt(char *pszcur, cchar *pszmask)
 {
    char szBuf[100];
    if (pszmask[0] != '-') return 0;
@@ -2118,7 +2202,7 @@ bool isxopt(char *pszcur, char *pszmask)
    if (!strncmp(pszcur, pszmask, strlen(pszmask))) return 1;
 
    // check for indirect hit: "-ssep"
-   char *pszbase = pszmask+1;
+   cchar *pszbase = pszmask+1;
 
    // if so, auto-activate slash patterns for this command.
    sprintf(szBuf, "-s%s", pszbase);
@@ -2150,7 +2234,7 @@ void CommandStats::reset()
 { 
    memset(this, 0, sizeof(*this)); 
    wpat        =  1;
-   runCmd      = "";
+   runCmd      = str("");
    treeStopRC  = 19; // NOT 9
    subdirs     =  1;
    utf8dec     =  0;
@@ -2160,15 +2244,15 @@ void CommandStats::reset()
    addsnaplf   = "\n";
 }
 
-bool CommandStats::stopTree(long nrc) 
+bool CommandStats::stopTree(int nrc) 
 {
-   long lRC = 0;
-   long nShellRC = 0;
+   int lRC = 0;
+   int nShellRC = 0;
    if (nrc >= treeStopRC) {
       if (!toldTreeStop) {
          toldTreeStop = 1;
          #ifndef USE_SFK_BASE
-         long pinf(const char *pszFormat, ...);
+         int pinf(const char *pszFormat, ...);
          pinf("directory tree processing stopped by error.\n");
          #endif // USE_SFK_BASE
       }
@@ -2247,18 +2331,18 @@ struct hostent *sfkhostbyname(const char *pstr, bool bsilent)
 
 // replace \\t and \\xnn by a single character,
 // within a binary block that is not zero-terminated.
-long shrinkFormTextBlock(char *psz, long &rLen)
+int shrinkFormTextBlock(char *psz, int &rLen)
 {
    if (!cs.spat)
       return 0; // nothing to do
 
    // char *psz2 = psz;
    // printf("in : ");
-   // for (long i=0; i<rLen; i++) printf("%02X ",psz2[i]);
+   // for (int i=0; i<rLen; i++) printf("%02X ",psz2[i]);
    // printf("\n");
 
-   long getTwoDigitHex(char *psz);
-   long nRemain = rLen;
+   int getTwoDigitHex(char *psz);
+   int nRemain = rLen;
    while (nRemain > 0)
    {
       if (!strncmp(psz, "\\\\", 2)) {
@@ -2297,7 +2381,7 @@ long shrinkFormTextBlock(char *psz, long &rLen)
       }
       else
       if (!strncmp(psz, "\\x", 2)) {
-         long n = getTwoDigitHex(psz+2);
+         int n = getTwoDigitHex(psz+2);
          if (n < 0) return 9;
          memmove(psz+1, psz+4, nRemain-4);
          *psz = (char)n;
@@ -2309,19 +2393,19 @@ long shrinkFormTextBlock(char *psz, long &rLen)
    }
 
    // printf("out: ");
-   // for (long i=0; i<rLen; i++) printf("%02X ",psz2[i]);
+   // for (int i=0; i<rLen; i++) printf("%02X ",psz2[i]);
    // printf("\n");
 
    return 0;
 }
 
-long nGlblFunc        = 0;
+int nGlblFunc        = 0;
 bool bGlblSyntaxTest  = 0;
 bool bGlblCollectHelp = 0;
-long nGlblActiveFileAgeLimit = 30; // days
-long nGlblErrors   = 0;
-long nGlblWarnings = 0;
-long nGlblTraceSel = 0; // b0:dirs b1:files
+int nGlblActiveFileAgeLimit = 30; // days
+int nGlblErrors   = 0;
+int nGlblWarnings = 0;
+int nGlblTraceSel = 0; // b0:dirs b1:files
 bool bGlblMD5RelNames = 0;
 bool bGlblHaveInteractiveConsole = 0;
 bool bGlblEnableOPrintf = 1; // allow codepage conversion w/in oprintf
@@ -2360,61 +2444,59 @@ bool szMatchEsc[MAX_MATCH_BUF+10];  // strmatch escape flags
 char *pszGlblPreRoot = 0;
 char szGlblMixRoot[MAX_LINE_LEN+10];
 bool bErrBufSet = 0;
-char *pszGlblJamPrefix = ":file:";
+cchar *pszGlblJamPrefix = ":file:";
 char *pszGlblJamRoot = 0;
 bool  bGlblJamPure = 0;
 #define MAX_JAM_TARGETS 1000
 char *apJamTargets[MAX_JAM_TARGETS];
 num   alJamTargetTime[MAX_JAM_TARGETS];
 num   nJamSnapTime = -1;
-long  nJamTargets  = 0;
+int  nJamTargets  = 0;
 char *pszGlblRepSrc = 0;
 char *pszGlblRepDst = 0;
-char *pszGlblBlank =
+cchar *pszGlblBlank =
    "                                                "
    "                                                ";
 num  nGlblStartTime = 0;
 num  nGlblListMinSize = 0; // in bytes
-long nGlblListMode = 0;    // 1==stat 2==list
+int nGlblListMode = 0;    // 1==stat 2==list
 int  nGlblListDigits = 12;
 bool bGlblEscape = 0;
 char *pszGlblDstRoot = 0;
 num nGlblBytes = 0;
 char *pszGlblDirTimes = 0;
-char *pszGlblTurn = "\\|/-";
-long  nGlblTurnCnt = 0;
+cchar *pszGlblTurn = "\\|/-";
+int  nGlblTurnCnt = 0;
 bool  bGlblQuoted     = 0; // list: add quotes around filenames
 bool  bGlblNoRootDirFiles = 0; // list -dir +dirmask
-ulong nGlblConvTarget = 0; // see eConvTargetFormats
+uint nGlblConvTarget = 0; // see eConvTargetFormats
 #ifdef WITH_FN_INST
 bool  bGlblInstRevoke = 0;
 bool  bGlblInstRedo   = 0;
 bool  bGlblInstEol    = 0;
-char *pszGlblInstInc  = "";
-char *pszGlblInstMac  = "";
+cchar *pszGlblInstInc  = "";
+cchar *pszGlblInstMac  = "";
 static bool bGlblTouchOnRevoke = 1;
 #endif
-char *pszGlblSnapFileStamp    = ":snapfile sfk,1.1,lprefix=";
-char *pszGlblClusterFileStamp = ":cluster sfk,1.0.7,prefix=:";
 bool  bGlblRefRelCmp    = 1;
 bool  bGlblRefBaseCmp   = 0;
 bool  bGlblRefWideInfo  = 0;
-long  nGlblRefMaxSrc    = 10;
+int  nGlblRefMaxSrc    = 10;
 bool  bGlblRefLimitReached = 0;
 bool  bGlblStdInAny     = 0;  // all cmd except run: take list from stdin
 bool  bGlblStdInFiles   = 0;  // run only: take filename list from stdin
 bool  bGlblStdInDirs    = 0;  // run only: take directory list from stdin
-long  nGlblMD5Skip      = 0;
+int  nGlblMD5Skip      = 0;
 bool  bGlblMirrorByDate = 0;  // inofficial, might be removed.
 char *pszGlblXCopyCmd   = 0;
 char *pszGlblZipCmd     = 0;
 char *pszGlblUnzipCmd   = 0;
 char *pszGlblSFKCmd     = 0;
-long nGlblZipVersionHi  = 0;
-long nGlblZipVersionLo  = 0;
-long nGlblUnzipVersionHi = 0;
-long nGlblUnzipVersionLo = 0;
-long nGlblTCPMaxSizeMB   = 500;
+int nGlblZipVersionHi  = 0;
+int nGlblZipVersionLo  = 0;
+int nGlblUnzipVersionHi = 0;
+int nGlblUnzipVersionLo = 0;
+int nGlblTCPMaxSizeMB   = 500;
 // #ifdef WITH_TCP
 SOCKET hGlblTCPOutSocket = 0;
 bool bGlblFTPReadWrite   = 0;
@@ -2425,8 +2507,8 @@ bool bGlblFTPListAsHTML  = 0;
 bool bGlblBinGrep           = 0;
 bool bGlblBinGrepAutoDetect = 1;
 uchar nGlblBinTextBinRange  = 0xFF;
-long nGlblDarkColBase    = 0;
-long nGlblBrightColBase  = 1;
+int nGlblDarkColBase    = 0;
+int nGlblBrightColBase  = 1;
 bool bGlblSysErrDetail   = 0;
 
 // highlight=1 red=2 green=4 blue=8
@@ -2436,36 +2518,36 @@ bool bGlblUseHelpColor   =  1;
 // windows default safety colors for ANY background.
 // will be changed automatically if black background is detected.
 // help part
-long nGlblHeadColor      =  5; // green
-long nGlblExampColor     = 11; // purple (magenta)
+int nGlblHeadColor      =  5; // green
+int nGlblExampColor     = 11; // purple (magenta)
 // functional part
-long nGlblFileColor      = 11; // purple
-long nGlblLinkColor      = 12; // cyan
-long nGlblHitColor       =  5; // green
-long nGlblRepColor       =  7; // yellow
-long nGlblErrColor       =  3; // red
-long nGlblWarnColor      = 11; // purple
-long nGlblPreColor       =  9; // bright blue
-long nGlblTimeColor      =  9; // bright blue
-long nGlblTraceIncColor  = 12; // cyan
-long nGlblTraceExcColor  = 11; // purple
+int nGlblFileColor      = 11; // purple
+int nGlblLinkColor      = 12; // cyan
+int nGlblHitColor       =  5; // green
+int nGlblRepColor       =  7; // yellow
+int nGlblErrColor       =  3; // red
+int nGlblWarnColor      = 11; // purple
+int nGlblPreColor       =  9; // bright blue
+int nGlblTimeColor      =  9; // bright blue
+int nGlblTraceIncColor  = 12; // cyan
+int nGlblTraceExcColor  = 11; // purple
 #else
 bool bGlblUseColor       =  0;
 bool bGlblUseHelpColor   =  0;
 // unix default colors for white background
-long nGlblFileColor      = 10; // purple
-long nGlblLinkColor      = 12; // cyan
-long nGlblHitColor       =  4; // green
-long nGlblRepColor       =  8; // blue
-long nGlblErrColor       =  2; // red
-long nGlblWarnColor      =  2; // red
-long nGlblPreColor       =  8; // blue
-long nGlblHeadColor      =  4; // green
-long nGlblExampColor     = 10; // purple
-long nGlblDefColor       =  0; // default
-long nGlblTimeColor      =  8; // blue
-long nGlblTraceIncColor  = 12; // cyan
-long nGlblTraceExcColor  = 11; // purple
+int nGlblFileColor      = 10; // purple
+int nGlblLinkColor      = 12; // cyan
+int nGlblHitColor       =  4; // green
+int nGlblRepColor       =  8; // blue
+int nGlblErrColor       =  2; // red
+int nGlblWarnColor      =  2; // red
+int nGlblPreColor       =  8; // blue
+int nGlblHeadColor      =  4; // green
+int nGlblExampColor     = 10; // purple
+int nGlblDefColor       =  0; // default
+int nGlblTimeColor      =  8; // blue
+int nGlblTraceIncColor  = 12; // cyan
+int nGlblTraceExcColor  = 11; // purple
 #endif
 
 bool bGlblGrepLineNum    = 0;
@@ -2475,22 +2557,22 @@ bool bGlblAnyUsed        = 0;
 bool bGlblAllowAllPlusPosFile = 0;
 char *pszGlblSinceDir    = 0;
 bool bGlblSinceDirIncRef = 0;
-long nGlblMissingRefDirs = 0;
-long nGlblMatchingRefDirs= 0;
-long nGlblSinceMode      = 0; // b0:add b1:dif
+int nGlblMissingRefDirs = 0;
+int nGlblMatchingRefDirs= 0;
+int nGlblSinceMode      = 0; // b0:add b1:dif
 bool bGlblIgnoreTime     = 0;
 bool bGlblIgnore3600     = 0;
 bool bGlblHexdumpShowLE  = 0;
 bool bGlblHexDumpWide    = 0;
-long nGlblHexDumpForm    = 0;
+int nGlblHexDumpForm    = 0;
 num  nGlblHexDumpOff     = 0;
 num  nGlblHexDumpLen     = 0;
 char  *pszGlblCopySrc    = 0;
 char  *pszGlblCopyDst    = 0;
 uchar *pGlblWorkBuf      = 0;
 num    nGlblWorkBufSize  = 0;
-long   nGlblCopyStyle    = 2; // how filenames are dumped onto terminal
-long   nGlblCopyShadows  = 0;
+int   nGlblCopyStyle    = 2; // how filenames are dumped onto terminal
+int   nGlblCopyShadows  = 0;
 num   nGlblShadowSizeLimit = 0;
 bool  bGlblUseCopyCache  = 0;
 bool  bGlblShowSyncDiff  = 0;
@@ -2499,16 +2581,16 @@ num   nGlblMemLimit      = 300 * 1048576;
 char  *pGlblCurrentScript = 0; // while within a script command
 
 #ifdef _WIN32
-char *pszGlblAliasBatchHead = "@rem sfk alias batch";
+cchar *pszGlblAliasBatchHead = "@rem sfk alias batch";
 #else
-char *pszGlblAliasBatchHead = "# sfk alias batch";
+cchar *pszGlblAliasBatchHead = "# sfk alias batch";
 #endif
 
-long nGlblFzMisArcFiles = 0;
-long nGlblFzConArcFiles = 0;
-long nGlblFzConArchives = 0;
-long nGlblFzMisCopFiles = 0;
-long nGlblFzConCopFiles = 0;
+int nGlblFzMisArcFiles = 0;
+int nGlblFzConArcFiles = 0;
+int nGlblFzConArchives = 0;
+int nGlblFzMisCopFiles = 0;
+int nGlblFzConCopFiles = 0;
 
 void cleanupTmpCmdData();
 void shutdownAllGlobalData();
@@ -2550,39 +2632,39 @@ class FileList;
 class StringPipe;
 class Coi;
 
-long execDetab       (char *pszFile, char *pszOutFile);
-long execEntab       (char *pszFile);
-long execScantab     (char *pszFile);
-long execDirMirror   (char *pszName, long  lLevel, FileList &oDirFiles, num &ntime1, num &ntime2);
-long execFileMirror  (char *pszFile, num &ntime1, num &ntime2, long nDirFileCnt);
-long execDirXCopy    (char *pszName, long  lLevel, FileList &oDirFiles, num &ntime1, num &ntime2);
-long execFileXCopy   (char *pszFile, num &ntime1, num &ntime2, long nDirFileCnt);
-long execDirFreeze   (char *pszName, long  lLevel, FileList &oDirFiles, num &ntime1, num &ntime2);
-long execFileFreeze  (char *pszFile, num &ntime1, num &ntime2, long nDirFileCnt);
-long getFileMD5      (char *pszFile, SFKMD5 &md5, bool bSilent=0, bool bInfoCycle=0);
-long execFormConv    (char *pszFile, char *pszOutFile);
-long execHexdump     (char *pszFile, uchar *pBuf, ulong nBufSize); // from file or buffer
-long walkFiles       (Coi  *pcoi, long lLevel, long &nGlobFiles, FileList &oDirFiles, long &lDirs, num &lBytes, num &ntime1, num &ntime2);
-long execSingleFile  (Coi  *pcoi, long lLevel, long &lGlobFiles, long nDirFileCnt, long &lDirs, num &lBytes, num &ntime1, num &ntime2);
-long execSingleDir   (Coi  *pcoi, long lLevel, long &lGlobFiles, FileList &oDirFiles, long &lDirs, num &lBytes, num &ntime1, num &ntime2);
-long execFileCopy    (Coi  *pcoi);
-long execDirCopy     (char *pszSrc, FileList &oDirFiles);
-long execFileCleanup (char *pszFile);
-long execDirCleanup  (char *pszSrc, FileList &oDirFiles);
-long timeFromString  (char *psz, num &nRetTime);
-bool tryGetRelTime   (char *psz, num &nRetTime);
-long execReplaceFix  (Coi *pcoi);
-long execReplaceVar  (Coi *pcoi);
+int execDetab       (char *pszFile, char *pszOutFile);
+int execEntab       (char *pszFile);
+int execScantab     (char *pszFile);
+int execDirMirror   (char *pszName, int  lLevel, FileList &oDirFiles, num &ntime1, num &ntime2);
+int execFileMirror  (char *pszFile, num &ntime1, num &ntime2, int nDirFileCnt);
+int execDirXCopy    (char *pszName, int  lLevel, FileList &oDirFiles, num &ntime1, num &ntime2);
+int execFileXCopy   (char *pszFile, num &ntime1, num &ntime2, int nDirFileCnt);
+int execDirFreeze   (char *pszName, int  lLevel, FileList &oDirFiles, num &ntime1, num &ntime2);
+int execFileFreeze  (char *pszFile, num &ntime1, num &ntime2, int nDirFileCnt);
+int getFileMD5      (char *pszFile, SFKMD5 &md5, bool bSilent=0, bool bInfoCycle=0);
+int execFormConv    (char *pszFile, char *pszOutFile);
+int execHexdump     (char *pszFile, uchar *pBuf, uint nBufSize); // from file or buffer
+int walkFiles       (Coi  *pcoi, int lLevel, int &nGlobFiles, FileList &oDirFiles, int &lDirs, num &lBytes, num &ntime1, num &ntime2);
+int execSingleFile  (Coi  *pcoi, int lLevel, int &lGlobFiles, int nDirFileCnt, int &lDirs, num &lBytes, num &ntime1, num &ntime2);
+int execSingleDir   (Coi  *pcoi, int lLevel, int &lGlobFiles, FileList &oDirFiles, int &lDirs, num &lBytes, num &ntime1, num &ntime2);
+int execFileCopy    (Coi  *pcoi);
+int execDirCopy     (char *pszSrc, FileList &oDirFiles);
+int execFileCleanup (char *pszFile);
+int execDirCleanup  (char *pszSrc, FileList &oDirFiles);
+int timeFromString  (char *psz, num &nRetTime);
+bool tryGetRelTime   (cchar *psz, num &nRetTime);
+int execReplaceFix  (Coi *pcoi);
+int execReplaceVar  (Coi *pcoi);
 size_t myfread       (uchar *pBuf, size_t nBytes, FILE *fin , num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
 size_t myfwrite      (uchar *pBuf, size_t nBytes, FILE *fout, num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
 char *rootRelativeName(char *pszFileName, char *pszOptRoot);
 char *relativeFilename(char *pszPath);
 void myfgets_init    ( );
-long myfgets         (char *pszOutBuf, long nOutBufLen, FILE *fin, bool *rpBinary=0, char *pAttrBuf=0);
-long execFilter      (Coi *pcoi, FILE *fin = 0, StringPipe *pin = 0, long nMaxLines = -1, char *pszOutFile = 0);
-long execDelFile     (char *pszName);
-long execDelDir      (char *pszName, long lLevel, long &lGlobFiles, FileList &oDirFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2);
-long execVersion     (Coi *pcoi);
+int myfgets         (char *pszOutBuf, int nOutBufLen, FILE *fin, bool *rpBinary=0, char *pAttrBuf=0);
+int execFilter      (Coi *pcoi, FILE *fin = 0, StringPipe *pin = 0, int nMaxLines = -1, char *pszOutFile = 0);
+int execDelFile     (char *pszName);
+int execDelDir      (char *pszName, int lLevel, int &lGlobFiles, FileList &oDirFiles, int &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2);
+int execVersion     (Coi *pcoi);
 
 // set/provide a minimum info about the current I/O operation.
 // if called multithreaded, this should not crash but in the
@@ -2592,7 +2674,7 @@ class IOStatus {
 public:
       IOStatus  ( );
 
-      void   setInfo (char *pinfo);
+      void   setInfo (cchar *pinfo);
       char  *getInfo (num &nagemsec, num &nbytes, num &nmaxbytes);
 
       num   countBytes  (num nbytes);
@@ -2611,7 +2693,7 @@ IOStatus::IOStatus() {
    memset(this, 0, sizeof(*this));
 }
 
-void IOStatus::setInfo(char *pinfo) {
+void IOStatus::setInfo(cchar *pinfo) {
    memset(szClStatus, 0, sizeof(szClStatus));
    if (!pinfo) {
       nClSince = 0;
@@ -2650,7 +2732,7 @@ void IOStatus::resetBytes() {
    nClMaxBytes = 0;
 }
 
-IOStatusPhase::IOStatusPhase(char *pinfo) {
+IOStatusPhase::IOStatusPhase(cchar *pinfo) {
    iostat.setInfo(pinfo);
 }
 
@@ -2709,12 +2791,12 @@ void skipPastToken(char **pp, char &rclast)
 
 // strip quotes, transform inner quotes \" to normal quotes "
 // uses: szLineBuf, szLineBuf2
-long postProcessToken(char **pptok, StringTable &oDynaStrings, int argc, char *argv[], int iParmOffs, int nParm)
+int postProcessToken(char **pptok, StringTable &oDynaStrings, int argc, char *argv[], int iParmOffs, int nParm)
 {
    char *ptok = *pptok;
    // strip outer quotes, if any
    if (*ptok == '\"') {
-      long nlen = strlen(ptok);
+      int nlen = strlen(ptok);
       if (ptok[nlen-1] == '\"') {
          memmove(ptok, ptok+1, nlen-1);
          nlen -= 2;         // count both quotes
@@ -2726,7 +2808,7 @@ long postProcessToken(char **pptok, StringTable &oDynaStrings, int argc, char *a
    char *psz = ptok;
    while (*psz) {
       if (!strncmp(psz, "\\\"", 2)) {
-         long nlen = strlen(psz);
+         int nlen = strlen(psz);
          memmove(psz, psz+1, nlen-1);   // cut backslash
          psz[nlen-1] = '\0'; // new terminator
       }
@@ -2743,24 +2825,24 @@ long postProcessToken(char **pptok, StringTable &oDynaStrings, int argc, char *a
    // accept "$" and "%" parameters, or user defined?
    bool buserpre = cs.paramprefix[0] ? 1 : 0;
 
-   for (long iparm=0; iparm<9; iparm++)
+   for (int iparm=0; iparm<9; iparm++)
    {
       char *pcur = szLineBuf;
       while (1)
       {
-         long nlen1=0,nlen2=0;
+         int nlen1=0,nlen2=0;
          if (buserpre) {
-            sprintf(szName1, "%.20s%ld" , cs.paramprefix, (int)(iparm+1));
+            sprintf(szName1, "%.20s%d" , cs.paramprefix, (int)(iparm+1));
             nlen1 = strlen(szName1);
          } else {
-            sprintf(szName1, "$%ld" , (int)(iparm+1));
-            sprintf(szName2, "%%%ld", (int)(iparm+1));
+            sprintf(szName1, "$%d" , (int)(iparm+1));
+            sprintf(szName2, "%%%d", (int)(iparm+1));
             nlen1 = strlen(szName1);
             nlen2 = strlen(szName2);
          }
          char *psz  = pcur;
          char clast = (char)-1, cesc = 0;
-         long nlenx = 0;
+         int nlenx = 0;
          while (*psz) {
             if (!strncmp(psz, szName1, nlen1)) {
                nlenx = nlen1;
@@ -2785,11 +2867,11 @@ long postProcessToken(char **pptok, StringTable &oDynaStrings, int argc, char *a
             */
          }
          // replace $param... by actual value
-         char *pval = "";
+         cchar *pval = "";
          if (iparm < nParm) pval = argv[iParmOffs+iparm];
-         long nleft = psz-pcur;
+         int nleft = psz-pcur;
          memcpy(szLineBuf2, pcur, nleft);
-         long nmid  = strlen(pval);
+         int nmid  = strlen(pval);
          memcpy(szLineBuf2+nleft, pval, nmid);
          char *prite= psz+nlenx;
          strcpy(szLineBuf2+nleft+nmid, prite);
@@ -2815,13 +2897,13 @@ long postProcessToken(char **pptok, StringTable &oDynaStrings, int argc, char *a
    return 0;
 }
 
-char *mystrrstr(char *psrc, char *ppat) 
+char *mystrrstr(char *psrc, cchar *ppat) 
 {
    if (!psrc || !ppat) return 0;
 
    char c = *ppat;
-   long nsrclen = strlen(psrc);
-   long npatlen = strlen(ppat);
+   int nsrclen = strlen(psrc);
+   int npatlen = strlen(ppat);
    if (npatlen > nsrclen) return 0;
 
    char *pcur = psrc + nsrclen - npatlen;
@@ -2833,13 +2915,12 @@ char *mystrrstr(char *psrc, char *ppat)
    return 0;
 }
 
-char *mystrristr(char *psrc, char *ppat)
+char *mystrristr(char *psrc, cchar *ppat)
 {
    if (!psrc || !ppat) return 0;
 
-   char c = *ppat;
-   long nsrclen = strlen(psrc);
-   long npatlen = strlen(ppat);
+   int nsrclen = strlen(psrc);
+   int npatlen = strlen(ppat);
    if (npatlen > nsrclen) return 0;
 
    char *pcur = psrc + nsrclen - npatlen;
@@ -2851,10 +2932,10 @@ char *mystrristr(char *psrc, char *ppat)
    return 0;
 }
 
-long   nGlblConsColumns    = 80;
+int   nGlblConsColumns    = 80;
 bool   bGlblConsColumnsSet =  0;
 
-long setWriteEnabled(char *pszFile)
+int setWriteEnabled(char *pszFile)
 {
    #ifdef _WIN32
 
@@ -2868,7 +2949,7 @@ long setWriteEnabled(char *pszFile)
    oinf.dwFileAttributes &= (0xFFFFFFFFUL ^ FILE_ATTRIBUTE_READONLY);
    bok = SetFileAttributes(pszFile, oinf.dwFileAttributes);
    #else
-   ulong nattrib = GetFileAttributesA(pszFile);
+   uint nattrib = GetFileAttributesA(pszFile);
    nattrib &= (0xFFFFFFFFUL ^ FILE_ATTRIBUTE_READONLY);
    SetFileAttributes(pszFile, nattrib);
    #endif
@@ -2911,7 +2992,7 @@ void cleanupFileWrite() {
       remove(szGlblOpenWriteName);
    }
 }
-FILE *myfopen(char *pszName, char *pszMode) {
+FILE *myfopen(char *pszName, cchar *pszMode) {
    FILE *f = fopen(pszName, pszMode);
    if (!f && !strcmp(pszMode, "wb") && fileExists(pszName)) {
       // file is probably write protected
@@ -2972,7 +3053,7 @@ void ctrlcHandler(int sig_number)
 }
 #endif
 
-void setColorScheme(char *psz1)
+void setColorScheme(cchar *psz1)
 {
    char *psz2 = 0;
    if (!strncmp(psz1, "off", 3))
@@ -3013,30 +3094,30 @@ void setColorScheme(char *psz1)
       nGlblTraceExcColor  = 11; // purple
    }
 
-   psz2 = strstr(psz1, "head:");  if (psz2) { nGlblHeadColor  = atol(psz2+5); }
-   psz2 = strstr(psz1, "examp:"); if (psz2) { nGlblExampColor = atol(psz2+6); }
-   psz2 = strstr(psz1, "file:");  if (psz2) { nGlblFileColor  = atol(psz2+5); }
-   psz2 = strstr(psz1, "link:");  if (psz2) { nGlblLinkColor  = atol(psz2+5); }
-   psz2 = strstr(psz1, "hit:");   if (psz2) { nGlblHitColor   = atol(psz2+4); }
-   psz2 = strstr(psz1, "rep:");   if (psz2) { nGlblRepColor   = atol(psz2+4); }
-   psz2 = strstr(psz1, "err:");   if (psz2) { nGlblErrColor   = atol(psz2+4); }
-   psz2 = strstr(psz1, "warn:");  if (psz2) { nGlblWarnColor  = atol(psz2+5); }
-   psz2 = strstr(psz1, "pre:");   if (psz2) { nGlblPreColor   = atol(psz2+4); }
+   psz2 = (char*)strstr(psz1, "head:");  if (psz2) { nGlblHeadColor  = atol(psz2+5); }
+   psz2 = (char*)strstr(psz1, "examp:"); if (psz2) { nGlblExampColor = atol(psz2+6); }
+   psz2 = (char*)strstr(psz1, "file:");  if (psz2) { nGlblFileColor  = atol(psz2+5); }
+   psz2 = (char*)strstr(psz1, "link:");  if (psz2) { nGlblLinkColor  = atol(psz2+5); }
+   psz2 = (char*)strstr(psz1, "hit:");   if (psz2) { nGlblHitColor   = atol(psz2+4); }
+   psz2 = (char*)strstr(psz1, "rep:");   if (psz2) { nGlblRepColor   = atol(psz2+4); }
+   psz2 = (char*)strstr(psz1, "err:");   if (psz2) { nGlblErrColor   = atol(psz2+4); }
+   psz2 = (char*)strstr(psz1, "warn:");  if (psz2) { nGlblWarnColor  = atol(psz2+5); }
+   psz2 = (char*)strstr(psz1, "pre:");   if (psz2) { nGlblPreColor   = atol(psz2+4); }
    #ifndef _WIN32
-   psz2 = strstr(psz1, "def:");   if (psz2) { nGlblDefColor   = atol(psz2+4); }
+   psz2 = (char*)strstr(psz1, "def:");   if (psz2) { nGlblDefColor   = atol(psz2+4); }
    #endif
    //                   0123456789
-   psz2 = strstr(psz1, "time:");     if (psz2) { nGlblTimeColor     = atol(psz2+5); }
-   psz2 = strstr(psz1, "traceinc:"); if (psz2) { nGlblTraceIncColor = atol(psz2+9); }
-   psz2 = strstr(psz1, "traceexc:"); if (psz2) { nGlblTraceExcColor = atol(psz2+9); }
+   psz2 = (char*)strstr(psz1, "time:");     if (psz2) { nGlblTimeColor     = atol(psz2+5); }
+   psz2 = (char*)strstr(psz1, "traceinc:"); if (psz2) { nGlblTraceIncColor = atol(psz2+9); }
+   psz2 = (char*)strstr(psz1, "traceexc:"); if (psz2) { nGlblTraceExcColor = atol(psz2+9); }
 }
 
-long nGlblCurColor = -1; // currently active color
+int nGlblCurColor = -1; // currently active color
 
-void setTextColor(long n, bool bStdErr)
+void setTextColor(int n, bool bStdErr)
 {
    if (n == nGlblCurColor) {
-      mtklog("color: ignore %ld, is set already", n);
+      mtklog(("color: ignore %d, is set already", n));
       return;
    }
    nGlblCurColor = n;
@@ -3045,7 +3126,7 @@ void setTextColor(long n, bool bStdErr)
    {
       static bool bAnySet = 0;
       static bool bIsBold = 0;
-      ulong ncol = 0;
+      uint ncol = 0;
       if (bAnySet) { printf("</font>"); bAnySet=0; }
       if (bIsBold) { printf("</b>"); bIsBold=0; }
       if (n == -1)
@@ -3061,7 +3142,7 @@ void setTextColor(long n, bool bStdErr)
    }
 
    if (!bGlblUseColor) {
-      mtklog("color: ignore %ld, no colors used", n);
+      mtklog(("color: ignore %d, no colors used", n));
       return;
    }
 
@@ -3083,13 +3164,13 @@ void setTextColor(long n, bool bStdErr)
    if (n == -1) {
       // default color: set all attribs as they were.
       SetConsoleTextAttribute(hGlblConsole, nGlblConsAttrib);
-      mtklog("color: scta %lxh (is default)", nGlblConsAttrib);
+      mtklog(("color: scta %lxh (is default)", nGlblConsAttrib));
    } else {
       // set new FOREGROUND text color, but make sure that
       // background color and anything else stays unchanged.
-      ulong nval = (nGlblConsAttrib & CCMASK_NOT_FGCOL) | nAttrib;
+      uint nval = (nGlblConsAttrib & CCMASK_NOT_FGCOL) | nAttrib;
       SetConsoleTextAttribute(hGlblConsole, nval);
-      mtklog("color: scta %lxh (default=%lxh)", nval, nGlblConsAttrib);
+      mtklog(("color: scta %lxh (default=%lxh)", nval, nGlblConsAttrib));
    }
    #endif
 
@@ -3160,8 +3241,8 @@ uchar aMapAnsi1250ToOEM850[] = {
 };
 
 char ansiCharToOEM(char c) {
-   long nentries = sizeof(aMapAnsi1250ToOEM850) / 2;
-   for (long i=0; i<nentries; i++)
+   int nentries = sizeof(aMapAnsi1250ToOEM850) / 2;
+   for (int i=0; i<nentries; i++)
       if (aMapAnsi1250ToOEM850[i*2+0] == (uchar)c)
          return aMapAnsi1250ToOEM850[i*2+1];
    return c;
@@ -3169,8 +3250,8 @@ char ansiCharToOEM(char c) {
 
 char oemCharToAnsi(char c) {
    if (((uchar)c) < 0x80) return c;
-   long nentries = sizeof(aMapAnsi1250ToOEM850) / 2;
-   for (long i=0; i<nentries; i++)
+   int nentries = sizeof(aMapAnsi1250ToOEM850) / 2;
+   for (int i=0; i<nentries; i++)
       if (aMapAnsi1250ToOEM850[i*2+1] == (uchar)c)
          return aMapAnsi1250ToOEM850[i*2+0];
    return c;
@@ -3178,12 +3259,12 @@ char oemCharToAnsi(char c) {
 
 void ansiToDos(char *psz) { while (*psz) *psz++ = ansiCharToOEM(*psz); }
 void dosToAnsi(char *psz) { while (*psz) *psz++ = oemCharToAnsi(*psz); }
-void oprintf(char *pszFormat, ...);
-void oprintf(StringPipe *pOutData, char *pszFormat, ...);
+void oprintf(cchar *pszFormat, ...);
+void oprintf(StringPipe *pOutData, cchar *pszFormat, ...);
 
 char szPrintBufMap[MAX_LINE_LEN+10];
 
-void mystrcatf(char *pOut, long nOutMax, char *pszFormat, ...)
+void mystrcatf(char *pOut, int nOutMax, cchar *pszFormat, ...)
 {
    va_list argList;
    va_start(argList, pszFormat);
@@ -3193,9 +3274,9 @@ void mystrcatf(char *pOut, long nOutMax, char *pszFormat, ...)
 
    if (nOutMax == 0) nOutMax = MAX_LINE_LEN;
 
-   long nlen1 = strlen(pOut);
-   long nrem1 = (nOutMax - nlen1) - 1; // including term.
-   long nlen2 = strlen(psz);
+   int nlen1 = strlen(pOut);
+   int nrem1 = (nOutMax - nlen1) - 1; // including term.
+   int nlen2 = strlen(psz);
    if (nlen2 > nrem1) nlen2 = nrem1;
    if (nlen2 > 0) {
       memcpy(pOut+nlen1, psz, nlen2);
@@ -3221,8 +3302,8 @@ void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1)
    // printf("pct.text: %s\n", pszText);
    // printf("pct.attr: %s\n", pszAttrib);
 
-   long nTextLen = strlen(pszText);
-   long nAttrLen = strlen(pszAttrib);
+   int nTextLen = strlen(pszText);
+   int nAttrLen = strlen(pszAttrib);
 
    // if insufficient attribs provided, use no color
    if (nAttrLen < nTextLen) {
@@ -3230,7 +3311,7 @@ void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1)
       return;
    }
 
-   long i1=0,i2=0,i3=0;
+   int i1=0,i2=0;
    while (i1 < nTextLen)
    {
       // identify next phrase of same color
@@ -3239,8 +3320,8 @@ void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1)
          if (pszAttrib[i1+i2] != a1)
             break;
       // dump next phrase with len i2.
-      long d = nGlblDarkColBase;
-      long b = nGlblBrightColBase;
+      int d = nGlblDarkColBase;
+      int b = nGlblBrightColBase;
       switch (a1) 
       {
          // sfk internal color codes. when extending this,
@@ -3327,17 +3408,17 @@ char szPrintBuf1[MAX_LINE_LEN+10];
 char szPrintBuf2[MAX_LINE_LEN+10];
 char szPrintAttr[MAX_LINE_LEN+10];
 
-long printx(const char *pszFormat, ...)
+int printx(const char *pszFormat, ...)
 {
    va_list argList;
    va_start(argList, pszFormat);
    ::vsnprintf(szPrintBuf1, sizeof(szPrintBuf1)-10, pszFormat, argList);
    szPrintBuf1[sizeof(szPrintBuf1)-10] = '\0';
    char *pszSrc = szPrintBuf1;
-   long iDst = 0;
+   int iDst = 0;
    char nAttr = ' ';
    bool bResetOnLF = 0;
-   while (*pszSrc && (iDst < sizeof(szPrintBuf2)-10)) 
+   while (*pszSrc && (iDst < (int)sizeof(szPrintBuf2)-10)) 
    {
       if (!strncmp(pszSrc, "<help>", 6))  { pszSrc += 6; if (bGlblUseHelpColor) bGlblUseColor = 1; } else
       if (!strncmp(pszSrc, "<file>", 6))  { pszSrc += 6; nAttr = 'f'; } else
@@ -3457,7 +3538,7 @@ long printx(const char *pszFormat, ...)
    }
    szPrintBuf2[iDst] = '\0';
    if (bGlblCollectHelp) {
-      long chainAddLine(char *pszText, char *pszAttr, bool bSplitByLF);
+      int chainAddLine(char *pszText, char *pszAttr, bool bSplitByLF);
       chainAddLine(szPrintBuf2, szPrintAttr, 1);
    }
    else
@@ -3465,9 +3546,87 @@ long printx(const char *pszFormat, ...)
    return 0;
 }
 
+// print whole chapter from main help text
+int printHelp(const char *pszFormat, ...)
+{
+   char *pszBuf  = (char*)abBuf;
+   int   iMaxBuf = sizeof(abBuf) - 100;
+
+   va_list argList;
+   va_start(argList, pszFormat);
+   ::vsnprintf(pszBuf, iMaxBuf, pszFormat, argList);
+   pszBuf[iMaxBuf] = '\0';
+
+   /*
+   file system
+      sfk list       - list directory tree contents.
+                       list latest, oldest or biggest files.
+                       list changed or identical files.
+      sfk filefind   - find files by filename
+      sfk treesize   - show directory size statistics
+   */
+
+   cchar *pszind = "   ";
+
+   char *psz1 = pszBuf;
+   char *psz2 = 0;
+   int   ilen = 0;
+   for (; psz1 && *psz1; psz1=psz2)
+   {
+      if ((psz2 = strchr(psz1, '\n'))) {
+         ilen = psz2 - psz1;
+         psz2++; // skip LF
+      } else {
+         ilen = strlen(psz1);
+      }
+      char *pszLineEnd = psz1 + ilen;
+
+      // process current line
+      if (*psz1 != ' ') {
+         // headline
+         printx("%s<file>%.*s<def>\n",pszind,ilen,psz1);
+         continue;
+      }
+
+      // split command entry
+      char *pcmd=0, *pcmde=0, *ptext=0;
+
+      pcmd = psz1;
+      skipOver(&pcmd, " ");
+      if (*pcmd=='\r' || *pcmd=='\n') {
+         // no command name, but empty line
+         printx("\n");
+         continue;
+      }
+      if (pcmd > psz1+3) {
+         // no command name, but continuation line
+         printx("%s%.*s\n",pszind,ilen,psz1);
+         continue;
+      }
+
+      ptext = strstr(pcmd, "- ");
+      if (ptext) {
+         // found "-" before info text
+         pcmde = ptext;
+         while (pcmde > pcmd && pcmde[-1] == ' ')
+            pcmde--;
+         // show name and text in two colors
+         int icmdlen = pcmde - pcmd;
+         int itxtlen = pszLineEnd - pcmde;
+         printx("%s   $%.*s<def>%.*s\n",pszind,icmdlen,pcmd,itxtlen,pcmde);
+      } else {
+         // command name without info text
+         printx("%s$%.*s<def>\n",pszind,ilen,psz1);
+         continue;
+      }
+   }
+
+   return 0;
+}
+
 static char szErrBuf[MAX_LINE_LEN+10];
 
-char *sfkLastError()
+cchar *sfkLastError()
 {
    if (bErrBufSet)
       return szErrBuf;
@@ -3544,7 +3703,7 @@ void List::remove(ListEntry* pRemove)
 
    if (!pPrevious)   // if 'pRemove' at start of list
    {
-      if (pClFirst = pNext)      // new list start becomes pNext ...
+      if ((pClFirst = pNext))    // new list start becomes pNext ...
          pNext->pClPrevious = 0; // ... and if pNext exists, adjust it,
       else
          pClLast  = 0;           // else list is empty.
@@ -3552,7 +3711,7 @@ void List::remove(ListEntry* pRemove)
    else
    {
       // at least a 'pClPrevious' is given.
-      if (pPrevious->pClNext = pNext)     // let pPrevious' 'pClNext' ptr bypass 'pRemove' ...
+      if ((pPrevious->pClNext = pNext))   // let pPrevious' 'pClNext' ptr bypass 'pRemove' ...
          pNext->pClPrevious = pPrevious;  // ... and if pNext exists, adjust it,
       else
          pClLast  = pPrevious;            // else set new listend.
@@ -3560,12 +3719,12 @@ void List::remove(ListEntry* pRemove)
 }
 
 KeyMap::KeyMap( ) {
-   mtklog("keymap ctr %p", this);
+   mtklog(("keymap ctr %p", this));
    wipe();
 }
 
 KeyMap::~KeyMap( ) {
-   mtklog("keymap dtr %p", this);
+   mtklog(("keymap dtr %p", this));
    reset();
    wipe();
 }
@@ -3581,7 +3740,7 @@ void KeyMap::wipe( ) {
 
 void KeyMap::reset( ) 
 {
-   for (long i=0; i<nClArrayUsed; i++)
+   for (int i=0; i<nClArrayUsed; i++)
       delete [] apClKey[i];
    if (apClKey) delete [] apClKey;
    if (apClVal) delete [] apClVal;
@@ -3591,7 +3750,7 @@ void KeyMap::reset( )
 void KeyMap::setcase(bool bYesNo)    { bClCase = bYesNo; }
 void KeyMap::setreverse(bool bYesNo) { bClRev = bYesNo;  }
 
-long KeyMap::expand(long nSoMuch)
+int KeyMap::expand(int nSoMuch)
 {__
    // expand the key array
    char **apTmp1 = new char*[nClArrayAlloc+nSoMuch];
@@ -3620,11 +3779,11 @@ long KeyMap::expand(long nSoMuch)
 // rc =0:found_and_index_set
 // rc <0:insert_before_index
 // rc >0:insert_after_index
-int KeyMap::bfind(char *pkey, long &rindex)
+int KeyMap::bfind(char *pkey, int &rindex)
 {
    // binary search for key, or insert position
-   ulong nbot=0,ndist=0,nhalf=0,imid=0;
-   ulong ntop=nClArrayUsed; // exclusive
+   uint nbot=0,ndist=0,nhalf=0,imid=0;
+   uint ntop=nClArrayUsed; // exclusive
    char  *ptmp=0;
    int    ncmp=-1;   // if empty, insert before index 0
 
@@ -3634,7 +3793,7 @@ int KeyMap::bfind(char *pkey, long &rindex)
          { perr(0, "int. 187281850"); ncmp=-1; break; }
 
       ndist = ntop - nbot;
-      // mtklog("dist %ld bot %ld top %ld",ndist,nbot,ntop);
+      // mtklog(("dist %d bot %d top %d",ndist,nbot,ntop));
       if (ndist == 0) break; // nothing left
       nhalf = ndist >> 1;
       imid  = nbot + nhalf;
@@ -3644,19 +3803,19 @@ int KeyMap::bfind(char *pkey, long &rindex)
       
       if (ncmp < 0) {
          // select lower half, if any
-         // mtklog(" take lower %lxh %lxh %ld",nval,ntmp,imid);
+         // mtklog((" take lower %lxh %lxh %d",nval,ntmp,imid));
          if (ntop == imid) break; // safety
          ntop = imid;
       }
       else
       if (ncmp > 0) {
          // select upper half, if any
-         // mtklog(" take upper %lxh %lxh %ld",nval,ntmp,imid);
+         // mtklog((" take upper %lxh %lxh %d",nval,ntmp,imid));
          if (nbot == imid+1) break; // required
          nbot = imid+1;
       } else {
          // straight match
-         mtklog("%ld = indexof(%.20s) used=%lu",imid,pkey,nClArrayUsed);
+         mtklog(("%d = indexof(%.20s) used=%u",imid,pkey,nClArrayUsed));
          break; // found
       }
    }
@@ -3665,7 +3824,7 @@ int KeyMap::bfind(char *pkey, long &rindex)
    return ncmp;
 }
 
-long KeyMap::put(char *pkey, void *pval)
+int KeyMap::put(char *pkey, void *pval)
 {
    // assure space for insertion, incl. safety
    if (nClArrayUsed >= nClArrayAlloc-10) {
@@ -3677,7 +3836,7 @@ long KeyMap::put(char *pkey, void *pval)
    }
 
    // search for key or insert position:
-   long imid=0;
+   int imid=0;
    int  nrc = bfind(pkey, imid);
 
    if (nrc) 
@@ -3688,7 +3847,7 @@ long KeyMap::put(char *pkey, void *pval)
       if (nrc > 0) imid++;
    
       // before imid as it is now
-      ulong ntomove = nClArrayUsed - imid;
+      uint ntomove = nClArrayUsed - imid;
       memmove(&apClKey[imid+1], &apClKey[imid], sizeof(char*) * ntomove);
       memmove(&apClVal[imid+1], &apClVal[imid], sizeof(void*) * ntomove);
       apClKey[imid] = strdup(pkey); // is COPIED.
@@ -3702,9 +3861,9 @@ long KeyMap::put(char *pkey, void *pval)
    return 0; // done
 }
 
-void *KeyMap::get(char *pkey, long *poutidx)
+void *KeyMap::get(char *pkey, int *poutidx)
 {
-   long imid=0;
+   int imid=0;
    int  nrc = bfind(pkey, imid);
    // even on miss return last comparison index
    // to allow caller to find nearby words.
@@ -3716,16 +3875,16 @@ void *KeyMap::get(char *pkey, long *poutidx)
 }
 
 bool KeyMap::isset(char *pkey) {
-   long imid=0;
+   int imid=0;
    return bfind(pkey, imid) ? 0 : 1;
 }
 
-long KeyMap::remove(long imid)
+int KeyMap::remove(int imid)
 {
    // remove entry at imid
    delete [] apClKey[imid];
    if (imid < nClArrayUsed) {
-      ulong ntomove = nClArrayUsed - imid - 1;
+      uint ntomove = nClArrayUsed - imid - 1;
       memmove(&apClKey[imid+0], &apClKey[imid+1], sizeof(char*) * ntomove);
       memmove(&apClVal[imid+0], &apClVal[imid+1], sizeof(void*) * ntomove);
    }
@@ -3733,19 +3892,19 @@ long KeyMap::remove(long imid)
    return 0;
 }
 
-long KeyMap::remove(char *pkey) 
+int KeyMap::remove(char *pkey) 
 {
-   long imid=0;
+   int imid=0;
    int  nrc = bfind(pkey, imid);
    if (nrc) return 1; // no such key
    return remove(imid);
 }
 
-long KeyMap::size( ) {
+int KeyMap::size( ) {
    return nClArrayUsed;
 }
 
-void *KeyMap::iget(long nindex, char **ppkey)
+void *KeyMap::iget(int nindex, char **ppkey)
 {
    if (nindex < 0 || nindex >= nClArrayUsed)
       { if (ppkey) *ppkey = 0; return 0; }
@@ -3764,7 +3923,7 @@ inline void numToKey(num nkey, char *pbuf) {
    numtohex(nkey, 16, pbuf+1);
 }
 
-long  KeyMap::put   (num nkey, void *pvalue) {
+int  KeyMap::put   (num nkey, void *pvalue) {
    char szBuf[100];
    numToKey(nkey, szBuf);
    return put(szBuf, pvalue);
@@ -3782,7 +3941,7 @@ bool  KeyMap::isset (num nkey) {
    return isset(szBuf);
 }
 
-long  KeyMap::remove(num nkey) {
+int  KeyMap::remove(num nkey) {
    char szBuf[100];
    numToKey(nkey, szBuf);
    return remove(szBuf);
@@ -3790,14 +3949,14 @@ long  KeyMap::remove(num nkey) {
 
 num hextonum(char *psz)
 {
-   #ifdef _WIN32
+   #ifdef _MSC_VER
    return _strtoui64(psz, 0, 0x10);
    #else
    return strtoull(psz, 0, 0x10);
    #endif
 }
 
-void *KeyMap::iget  (long nindex, num *pkey) {
+void *KeyMap::iget  (int nindex, num *pkey) {
    char *pszkey = 0;
    void *pres = iget(nindex, &pszkey);
    if (pkey) {
@@ -3805,7 +3964,7 @@ void *KeyMap::iget  (long nindex, num *pkey) {
          num nkey = hextonum(pszkey+1);
          *pkey = nkey;
       } else {
-         perr("wrong keymap key for index %ld", nindex);
+         perr("wrong keymap key for index %d", nindex);
          *pkey = 0;
       }
    }
@@ -3815,32 +3974,32 @@ void *KeyMap::iget  (long nindex, num *pkey) {
 // - - - keymap access with num keys end - -  -
 
 StringMap::StringMap( )  { 
-   mtklog("strmap ctr %p", this);
+   mtklog(("strmap ctr %p", this));
 }
 
 StringMap::~StringMap( ) {
-   mtklog("strmap dtr %p", this);
+   mtklog(("strmap dtr %p", this));
    reset(); 
 }
 
 void StringMap::reset( ) 
 {__
-   mtklog("strmap reset %p", this);
-   for (long i=0; i<size(); i++)
+   mtklog(("strmap reset %p", this));
+   for (int i=0; i<size(); i++)
       if (apClVal[i])
          delete [] (char*)apClVal[i];
    KeyMap::reset();
 }
 
-long StringMap::put(char *pkey, char *pvalin)
+int StringMap::put(char *pkey, char *pvalin)
 {__
    // COPY the input string, but also accept NULL.
    char *pcopy = pvalin ? strdup(pvalin) : 0;
 
-   mtklog("strmap put this=%p %p key=%s",this,pcopy,pkey);
+   mtklog(("strmap put this=%p %p key=%s",this,pcopy,pkey));
 
    // is the key is stored already?
-   long imid=0;
+   int imid=0;
    int  nrc = bfind(pkey, imid);
    if (!nrc)
    {
@@ -3863,16 +4022,16 @@ char *StringMap::get(char *pkey, char *pszOptDef)
    return pres;
 }
 
-long StringMap::remove(char *pkey) 
+int StringMap::remove(char *pkey) 
 {
-   long imid=0;
+   int imid=0;
    int  nrc = bfind(pkey, imid);
    if (!nrc && apClVal[imid]) 
       delete [] (char*)apClVal[imid];
    return KeyMap::remove(pkey);
 }
 
-char *StringMap::iget(long nindex, char **ppkey)
+char *StringMap::iget(int nindex, char **ppkey)
 {
    char *pkey = 0;
    char *pval = (char*)KeyMap::iget(nindex, &pkey);
@@ -3880,11 +4039,11 @@ char *StringMap::iget(long nindex, char **ppkey)
    return pval;
 }
 
-long StringMap::put(num nkey, char *pvalin) 
+int StringMap::put(num nkey, char *pvalin) 
 {__
    // pvalin is dup'ed in the called put()
 
-   mtklog("strmap nput this=%p %lxh %p",this,(ulong)nkey,pvalin);
+   mtklog(("strmap nput this=%p %lxh %p",this,(uint)nkey,pvalin));
 
    char szBuf[100];
    szBuf[0] = '\0';
@@ -3901,7 +4060,7 @@ char *StringMap::get(num nkey)
    return (char*)get(szBuf);
 }
 
-char *StringMap::iget(long nindex, num *pkey) 
+char *StringMap::iget(int nindex, num *pkey) 
 {
    char *pszkey = 0;
    void *pres = iget(nindex, &pszkey);
@@ -3912,13 +4071,13 @@ char *StringMap::iget(long nindex, num *pkey)
    return (char*)pres;
 }
 
-long StringMap::remove(num nkey) 
+int StringMap::remove(num nkey) 
 {
    char szBuf[100];
    szBuf[0] = '\0';
    numtohex(nkey, 16, szBuf);
 
-   long imid=0;
+   int imid=0;
    int  nrc = bfind(szBuf, imid);
    if (!nrc && apClVal[imid]) 
       delete [] (char*)apClVal[imid];
@@ -3931,11 +4090,11 @@ AttribStringMap::~AttribStringMap( ) { }
 
 char *AttribStringMap::mixdup(char *ptext, char *pattr)
 {__
-   long nlen1 = strlen(ptext);
-   long nlen2 = strlen(pattr);
+   int nlen1 = strlen(ptext);
+   int nlen2 = strlen(pattr);
 
    // mixed = TEXT + ZEROTERM + ATTR + ZEROTERM + MAGIC
-   long nmix  = nlen1 + 1 + nlen2 + 1 + 1;
+   int nmix  = nlen1 + 1 + nlen2 + 1 + 1;
 
    char *pmix = new char[nmix];
 
@@ -3951,13 +4110,13 @@ char *AttribStringMap::mixdup(char *ptext, char *pattr)
    return pmix;
 }
 
-long AttribStringMap::demix(char *pmixed, char **pptext, char **ppattr)
+int AttribStringMap::demix(char *pmixed, char **pptext, char **ppattr)
 {__
    // mixed = TEXT + ZEROTERM + ATTR + ZEROTERM + MAGIC
    char *ptext  = pmixed;
-   long nlen1   = strlen(ptext);
+   int nlen1   = strlen(ptext);
    char *pattr  = ptext + nlen1 + 1;
-   long nlen2   = strlen(pattr);
+   int nlen2   = strlen(pattr);
    char *pmagic = pattr + nlen2 + 1;
    if (*pmagic != (char)0xFF)
       return 9+perr("color string failure, %p \"%.10s\" \"%.10s\" \"%.10s\"", pmixed, pmixed, ptext, pattr);
@@ -3966,19 +4125,19 @@ long AttribStringMap::demix(char *pmixed, char **pptext, char **ppattr)
    return 0;
 }
 
-long AttribStringMap::put(char *pkey, char *ptext, char *pattr) 
+int AttribStringMap::put(char *pkey, char *ptext, char *pattr) 
 {__
    char *pmix = mixdup(ptext, pattr);
-   // mtklog("asmap::put \"%s\" \"%s\" \"%s\"",pkey,ptext,pattr);
+   // mtklog(("asmap::put \"%s\" \"%s\" \"%s\"",pkey,ptext,pattr));
    // the string is dup'ed already,
    // place ptr straight into the keymap:
    return KeyMap::put(pkey, pmix);
 }
 
-long AttribStringMap::put(num nkey, char *ptext, char *pattr) 
+int AttribStringMap::put(num nkey, char *ptext, char *pattr) 
 {__
    char *pmix = mixdup(ptext, pattr);
-   // mtklog("asmap::put %ld \"%s\" \"%s\"",(long)nkey,ptext,pattr);
+   // mtklog(("asmap::put %d \"%s\" \"%s\"",(int)nkey,ptext,pattr));
    // the string is dup'ed already,
    // place ptr straight into the keymap:
    return KeyMap::put(nkey, pmix);
@@ -3996,7 +4155,7 @@ char *AttribStringMap::get(char *pkey, char **ppattr)
    return ptext;
 }
 
-char *AttribStringMap::iget(long nindex, char **ppkey, char **ppattr) 
+char *AttribStringMap::iget(int nindex, char **ppkey, char **ppattr) 
 {
    char *pkey = 0;
    char *pmix = StringMap::iget(nindex, &pkey);
@@ -4022,7 +4181,7 @@ char *AttribStringMap::get(num nkey, char **ppattr)
    return ptext;
 }
 
-char *AttribStringMap::iget(long nindex, num *pkey, char **ppattr) 
+char *AttribStringMap::iget(int nindex, num *pkey, char **ppattr) 
 {
    num nkey = 0;
    char *pmix = StringMap::iget(nindex, &nkey);
@@ -4036,12 +4195,12 @@ char *AttribStringMap::iget(long nindex, num *pkey, char **ppattr)
    return ptext;
 }
 
-long parseVersion(char *psz, long nmaxlen, StringMap &rmap)
+int parseVersion(char *psz, int nmaxlen, StringMap &rmap)
 {
    // expect input from a binary block:
    char szBuf[300];
-   if (nmaxlen > sizeof(szBuf)-10)
-       nmaxlen = sizeof(szBuf)-10;
+   if (nmaxlen > (int)sizeof(szBuf)-10)
+       nmaxlen = (int)sizeof(szBuf)-10;
    memcpy(szBuf, psz, nmaxlen);
    szBuf[nmaxlen] = '\0';
 
@@ -4081,7 +4240,7 @@ long parseVersion(char *psz, long nmaxlen, StringMap &rmap)
 }
 
 #ifdef VFILENET
-char *flatURLName(char *purl, char *pctype, char *pbuf, long nmaxbuf, ulong nmode, bool &rdefault)
+char *flatURLName(char *purl, char *pctype, char *pbuf, int nmaxbuf, uint nmode, bool &rdefault)
 {
    bool bpath2name = (nmode & 1) ? 1 : 0;
    bool bpath2path = (nmode & 2) ? 1 : 0;
@@ -4137,7 +4296,7 @@ char *flatURLName(char *purl, char *pctype, char *pbuf, long nmaxbuf, ulong nmod
       return 0;
 
    char *pdst = pbuf;
-   long  nrem = nmaxbuf - 10;
+   int  nrem = nmaxbuf - 10;
 
    if (nrem <= 100) { perr("int. #9529106"); return 0; }
 
@@ -4170,9 +4329,8 @@ char *flatURLName(char *purl, char *pctype, char *pbuf, long nmaxbuf, ulong nmod
 
    // convert and add rest of url.
    // http: $-_.+!*'(),
-   char szBuf[10];
    char *psrc = prel;
-   char *pext1 = 0;
+   cchar *pext1 = 0;
    char *pext2 = 0;
    char  clast = 0;
    bool  lm    = 0; // last char was minus
@@ -4240,7 +4398,7 @@ char *flatURLName(char *purl, char *pctype, char *pbuf, long nmaxbuf, ulong nmod
    // if extension is not at end of name, append it again
    if (pext1)
    {
-      long nlen   = strlen(pext1);
+      int nlen   = strlen(pext1);
       bool binurl = (pext1 >= purl && pext1 <= purlmax);
       if (binurl && pext2 && (pext2 > pext1))
          nlen = pext2 - pext1;
@@ -4283,7 +4441,7 @@ Coi::Coi(char *pszName, char *pszRootDir)
          psz += 2;
          psz = strchr(psz, '/');
          if (!psz) {
-            long nlen = strlen(pszName);
+            int nlen = strlen(pszName);
             pszClName = new char[nlen+4];
             strcpy(pszClName, pszName);
             strcat(pszClName, "/");
@@ -4298,15 +4456,15 @@ Coi::Coi(char *pszName, char *pszRootDir)
 
    pszClRoot   = pszRootDir ? strdup(pszRootDir) : 0;
 
-   mtklog("coi ctr %p name %s proot %p", this, pszName, pszClRoot);
+   mtklog(("coi ctr %p name %s proot %p", this, pszName, pszClRoot));
 }
 
 Coi::~Coi( )
 {
-   mtklog("coi dtr %p %s\n", this, pszClName);
+   mtklog(("coi dtr %p %s\n", this, pszClName));
 
    if (nClRefs > 0) {
-      perr("url has %ld refs open, cannot dtr: %s", nClRefs, pszClName);
+      perr("url has %d refs open, cannot dtr: %s", nClRefs, pszClName);
       return; // avoid instant crash
    }
 
@@ -4351,21 +4509,21 @@ Coi *Coi::copy( )
    return pres;
 }
 
-long Coi::incref(char *pTraceFrom)  {
+int Coi::incref(cchar *pTraceFrom)  {
    ++nClRefs;
-   mtklog("inc-ref: cnt=%ld from %s on %p %s", nClRefs, pTraceFrom, this, name());
+   mtklog(("inc-ref: cnt=%d from %s on %p %s", nClRefs, pTraceFrom, this, name()));
    return nClRefs; 
 }
 
-long Coi::decref( )  {
+int Coi::decref( )  {
    nClRefs--;
-   mtklog("dec-ref: cnt=%ld on %p %s", nClRefs, this, name());
+   mtklog(("dec-ref: cnt=%d on %p %s", nClRefs, this, name()));
    if (nClRefs < 0)
-      pwarn("ref.cnt underflow (%ld): %s\n", name());
+      pwarn("ref.cnt underflow (%d): %s\n", name());
    return nClRefs;
 }
 
-long Coi::refcnt( )  { 
+int Coi::refcnt( )  { 
    return nClRefs;   
 }
 
@@ -4407,14 +4565,14 @@ void Coi::fillFrom(void *pfdatin) // SFKFindData ptr
    nClHave  |= COI_HAVE_TIME;
    nClHave  |= COI_HAVE_SIZE;
 
-   mtklog("coi::fillfrom done dir=%d %s", bClDir, name());
+   mtklog(("coi::fillfrom done dir=%d %s", bClDir, name()));
 
    // remember we don't need to readStat():
    nClStatus = 1; // meta infos now available
 }
 
-long Coi::status( ) {
-   return (long)nClStatus; 
+int Coi::status( ) {
+   return (int)nClStatus; 
 }
 
 #ifndef _WIN32
@@ -4426,17 +4584,17 @@ const char *pGlblHexChars = "0123456789ABCDEF";
 
 char *Coi::getFileID( )  
 {
-   if (!haveNode()) return "";
+   if (!haveNode()) return str("");
 
    // decode binary stdev and inode into a hex string
    uchar *pdst   = (uchar*)szClFileID;
    uchar *pmax   = pdst + sizeof(szClFileID)-4;
 
    uchar *psrc    = (uchar*)&oClStDev;
-   long  nsrcsize = sizeof(oClStDev);
-   long  isrc     = 0;
+   int  nsrcsize = sizeof(oClStDev);
+   int  isrc     = 0;
 
-   if (pdst + nsrcsize * 2 >= pmax) return "";
+   if (pdst + nsrcsize * 2 >= pmax) return str("");
    for (isrc=0; isrc<nsrcsize; isrc++) {
       *pdst++ = pGlblHexChars[(*psrc >> 4) & 0x0F];
       *pdst++ = pGlblHexChars[(*psrc >> 0) & 0x0F];
@@ -4446,7 +4604,7 @@ char *Coi::getFileID( )
    psrc = (uchar*)&nClINode;
    nsrcsize = sizeof(nClINode);
 
-   if (pdst + nsrcsize * 2 >= pmax) return "";
+   if (pdst + nsrcsize * 2 >= pmax) return str("");
    for (isrc=0; isrc<nsrcsize; isrc++) {
       *pdst++ = pGlblHexChars[(*psrc >> 4) & 0x0F];
       *pdst++ = pGlblHexChars[(*psrc >> 0) & 0x0F];
@@ -4456,7 +4614,7 @@ char *Coi::getFileID( )
    *pdst = '\0';
 
    if (cs.debug) {
-      printf("fileid=\"%s\" len=%ld for \"%s\"\n",szClFileID,(long)strlen(szClFileID),name());
+      printf("fileid=\"%s\" len=%d for \"%s\"\n",szClFileID,(int)strlen(szClFileID),name());
    }
 
    return szClFileID;
@@ -4464,7 +4622,7 @@ char *Coi::getFileID( )
 #endif
 
 CoiData::CoiData( ) {
-   mtklog("coidata ctr %p",this);
+   mtklog(("coidata ctr %p",this));
    memset(this, 0, sizeof(*this));   
    #ifdef _WIN32
    otrav = -1;
@@ -4473,22 +4631,22 @@ CoiData::CoiData( ) {
 
 CoiData::~CoiData( ) 
 {
-   mtklog("coidata dtr %p", this);
+   mtklog(("coidata dtr %p", this));
 
    #ifdef VFILEBASE
    if (pClFtp) {
-      mtklog("coidata dtr autoreleases ftp %p", pClFtp);
+      mtklog(("coidata dtr autoreleases ftp %p", pClFtp));
       releaseFtp();
       // do NOT delete, is managed by cache.
    }
 
    if (pClHeaders) {
-      mtklog("coidata dtr autoreleases headers %p", pClHeaders);
+      mtklog(("coidata dtr autoreleases headers %p", pClHeaders));
       delete pClHeaders;
    }
 
    if (pClHttp) {
-      mtklog("coidata dtr autoreleases http %p", pClHttp);
+      mtklog(("coidata dtr autoreleases http %p", pClHttp));
       releaseHttp();
       // do NOT delete, is managed by cache.
    }
@@ -4520,7 +4678,7 @@ CoiData::~CoiData( )
 //       adapt zzfind hashing of extensions.
 #endif // VFILEBASE
 
-char *arcExtList[] = 
+cchar *arcExtList[] = 
 {
    ".zip",".jar",".ear",".war",".aar",".xpi",
    #ifdef VFILEBASE
@@ -4604,12 +4762,12 @@ bool endsWithArcExt(char *pname)
    }
 
    // netto length until end point
-   long nnamlen = pend - pname;
+   int nnamlen = pend - pname;
 
-   for (long i=0; arcExtList[i]; i++) 
+   for (int i=0; arcExtList[i]; i++) 
    {
-      char *ppatstr = arcExtList[i];
-      long  npatlen = strlen(ppatstr);
+      cchar *ppatstr = arcExtList[i];
+      int  npatlen  = strlen(ppatstr);
       if (nnamlen < npatlen)
          continue;
       if (!mystrnicmp(pname + nnamlen - npatlen, ppatstr, npatlen))
@@ -4663,7 +4821,7 @@ num Coi::getTime( )
    return nClMTime;
 }
 
-long Coi::setExtStr(char *psz) {
+int Coi::setExtStr(char *psz) {
    delstring(pszClExtStr);
    if (psz)
       if (!(pszClExtStr = strdup(psz)))
@@ -4675,7 +4833,7 @@ char *Coi::getExtStr( ) {
    return pszClExtStr;
 }
 
-long Coi::readStat( )
+int Coi::readStat( )
 {__
    // NOTE: readStat cannot fetch "hidden" and "link" file info.
    //       such info seems to be available only via findFirstFile().
@@ -4714,16 +4872,16 @@ long Coi::readStat( )
    }
    #endif // VFILEBASE
 
-   long bIsDir    = 0;
-   long bCanRead  = 1;
-   long bCanWrite = 1;
+   int bIsDir    = 0;
+   int bCanRead  = 1;
+   int bCanWrite = 1;
    num  nFileTime = 0;
    num  nFileSize = 0;
    num aExtTimes[2];
    memset(aExtTimes, 0, sizeof(aExtTimes));
    if (getFileStat(name(), bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize, aExtTimes))
    {
-      mtklog("coi.stat failed: %s have=%lu", name(), nClHave);
+      mtklog(("coi.stat failed: %s have=%u", name(), nClHave));
       nClStatus = 9;
       return 9;
    }
@@ -4737,7 +4895,7 @@ long Coi::readStat( )
    bClWrite = (bool)bCanWrite;   nClHave |= COI_HAVE_WRITE;
    bClDir   = (bool)bIsDir;      nClHave |= COI_HAVE_DIR;
    
-   mtklog("coi.stat r=%d w=%d dir=%d %s", bClRead, bClWrite, bClDir, name());
+   mtklog(("coi.stat r=%d w=%d dir=%d %s", bClRead, bClWrite, bClDir, name()));
 
    return 0;
 }
@@ -4751,13 +4909,13 @@ bool Coi::isWriteable( )
    if (isTravelZip()) return 0;
    #endif // VFILEBASE
 
-   mtklog("coi::iswriteable.1 %d %ld %s",bClWrite,nClStatus,name());
+   mtklog(("coi::iswriteable.1 %d %d %s",bClWrite,nClStatus,name()));
 
    // only physical files are writeable, so far.
    if (!nClStatus) readStat();
    if (bClDir) return 0;
 
-   mtklog("coi::iswriteable.2 %d %ld %s",bClWrite,nClStatus,name());
+   mtklog(("coi::iswriteable.2 %d %d %s",bClWrite,nClStatus,name()));
 
    return bClWrite;
 }
@@ -4784,7 +4942,7 @@ char *Coi::rootRelName( )
    char *relName(char *pszRoot, char *pszAbs);
    if (pszClRoot) 
    {
-      mtklog("coi.rootrelname: %s %.10s %.10s", relName(pszClRoot, pszClName), pszClRoot, pszClName);
+      mtklog(("coi.rootrelname: %s %.10s %.10s", relName(pszClRoot, pszClName), pszClRoot, pszClName));
       if (debug()) printf("coi.rootrelname: %s\n", relName(pszClRoot, pszClName));
       char *prel = relName(pszClRoot, pszClName);
       // special case: theroot.zip\\thesub.txt
@@ -4804,28 +4962,29 @@ bool Coi::isAnyDir( )
       return strstr(name(), "dir") ? 1 : 0;
    }
 
-   long n = 0;
+   int n = 0;
 
    #ifdef VFILEBASE
    if (isTravelZip()) {
       bClDir = 1;
-      mtklog("%d = isanydir(%s) by trvzip", bClDir, name());
+      mtklog(("%d = isanydir(%s) by trvzip", bClDir, name()));
       nClHave |= COI_HAVE_DIR;
       return bClDir;
    }
-   if (n = isZipSubEntry()) {
+   if ((n = isZipSubEntry())) 
+   {
       switch (n) {
          case 1: bClDir = 0; break; // file within zip
          case 2: bClDir = 1; break; // dir within zip (but not traversable)
       }
-      mtklog("%d = isanydir(%s) by zipsub (%ld)", bClDir, name(), n);
+      mtklog(("%d = isanydir(%s) by zipsub (%d)", bClDir, name(), n));
       nClHave |= COI_HAVE_DIR;
       return bClDir;
    }
    #endif // VFILEBASE
 
    if (nClHave & COI_HAVE_DIR) {
-      mtklog("%d = isanydir(%s) as stored", bClDir, name());
+      mtklog(("%d = isanydir(%s) as stored", bClDir, name()));
       return bClDir;
    }
 
@@ -4835,18 +4994,18 @@ bool Coi::isAnyDir( )
    #ifdef VFILEBASE
    if (isHttp()) {
       bClDir = rawIsHttpDir();
-      mtklog("%d = isanydir(%s) by httpdir", bClDir, name());
+      mtklog(("%d = isanydir(%s) by httpdir", bClDir, name()));
    }
    else
    if (isFtp()) {
       bClDir = rawIsFtpDir();
-      mtklog("%d = isanydir(%s) by ftpdir", bClDir, name());
+      mtklog(("%d = isanydir(%s) by ftpdir", bClDir, name()));
    }
    else
    #endif // VFILEBASE
    {
       bClDir = rawIsDir();
-      mtklog("%d = isanydir(%s) by fs", bClDir, name());
+      mtklog(("%d = isanydir(%s) by fs", bClDir, name()));
    }
 
    // avoid redundant high-effort reads of dir info
@@ -4872,23 +5031,9 @@ bool Coi::isTravelDir( )
    if (isZipSubEntry()) brawdir = 0;   // travel done otherwise
    #endif // VFILEBASE
 
-   mtklog("%d = istravdir(%s)", brawdir, name());
+   mtklog(("%d = istravdir(%s)", brawdir, name()));
 
    return brawdir;
-}
-
-num strHash(char *pstr) 
-{
-   SFKMD5 md5;
-   md5.update((uchar*)pstr,strlen(pstr));
-   unsigned char *pmd5 = md5.digest();
-   num nsumlo=0, nsumhi=0;
-   for (long i=0,b=64-8; i<8; i++) {
-   // nsumhi = nsumhi | (((num)pmd5[0+i]&0xFF) << b);
-      nsumlo = nsumlo | (((num)pmd5[8+i]&0xFF) << b);
-      b -= 8;
-   }
-   return nsumlo;
 }
 
 bool Coi::rawIsDir( ) {
@@ -4898,7 +5043,7 @@ bool Coi::rawIsDir( ) {
 }
 
 // used so far only for http redirects
-long Coi::setName(char *psz, char *pszOptRoot)
+int Coi::setName(char *psz, char *pszOptRoot)
 {
    #ifdef VFILEBASE
    if (pszClName && hasData() && !data().pClOrgName) 
@@ -4943,7 +5088,7 @@ char  *Coi::ref (bool braw) {
    return pszClRef ? pszClRef : (char*)""; 
 }
 
-long  Coi::setRef(char *pszName) {
+int  Coi::setRef(char *pszName) {
    delstring(pszClRef);
    if (pszName) 
       if (!(pszClRef = strdup(pszName)))
@@ -4993,12 +5138,12 @@ void Coi::setContent(uchar *pdata, num nsize, num ntime)
    #endif // VFILEBASE
 }
 
-long Coi::releaseContent( )
+int Coi::releaseContent( )
 {__
    setContent(0,0); // free existing
 
    if (data().rbuf.data) {
-      mtklog("coi releases rbuf: %s",name());
+      mtklog(("coi releases rbuf: %s",name()));
       delete [] data().rbuf.data;
       mclear(data().rbuf);
    }
@@ -5006,7 +5151,7 @@ long Coi::releaseContent( )
    return 0;
 }
 
-long Coi::getContent(uchar **ppdata, num &rnSize)
+int Coi::getContent(uchar **ppdata, num &rnSize)
 {__
    if (!ppdata) return 9; // parameter error
 
@@ -5026,16 +5171,16 @@ long Coi::getContent(uchar **ppdata, num &rnSize)
    if (isNet())
    {
       // always expect unknown sizes from the net
-      mtklog("loadownraw, expect unknown size: %s", name());
+      mtklog(("loadownraw, expect unknown size: %s", name()));
       uchar *pdata = 0;
       num    nsize = 0;
-      long nrc = 0;
-      if (nrc = loadOwnFileRaw(100 * 1000000, &pdata, nsize)) {
-         mtklog("loadownraw failed, %ld", nrc);
+      int nrc = 0;
+      if ((nrc = loadOwnFileRaw(100 * 1000000, &pdata, nsize))) {
+         mtklog(("loadownraw failed, %d", nrc));
          return 9;   // failed
       }
   
-      mtklog("loadownraw ok, %ld bytes", (long)nsize);
+      mtklog(("loadownraw ok, %d bytes", (int)nsize));
 
       setContent(pdata, nsize);
 
@@ -5069,7 +5214,7 @@ long Coi::getContent(uchar **ppdata, num &rnSize)
       return 9;
    }
 
-   long nRead = myfread((uchar*)pOut, nFileSize, fin);
+   int nRead = myfread((uchar*)pOut, nFileSize, fin);
    fclose(fin);
    if (nRead != nFileSize) {
       perr("cannot read: %s (%d %d)\n", pszFile, nRead, nFileSize);
@@ -5098,7 +5243,7 @@ bool Coi::existsFile(bool bOrDir)
    // .zip file: fall through
    #endif // VFILEBASE
 
-   #ifdef _MSC_VER
+   #ifdef _WIN32
 
    DWORD nAttrib = GetFileAttributes(pszName);
    if (nAttrib == 0xFFFFFFFF) // "INVALID_FILE_ATTRIBUTES"
@@ -5122,9 +5267,9 @@ bool Coi::existsFile(bool bOrDir)
    return 1;
 }
 
-long Coi::open(char *pmode)
+int Coi::open(cchar *pmode)
 {__
-   mtklog("coi-open %p %s %s %p",this,name(),pmode);
+   mtklog(("coi-open %p %s %s %p",this,name(),pmode));
 
    // reset per-file statistics
    resetIOStatus();
@@ -5186,11 +5331,11 @@ long Coi::open(char *pmode)
    {
       if (data().bwrite) {
          // re-write of a file: reset cache
-         mtklog("coi-open for write: reset cache");
+         mtklog(("coi-open for write: reset cache"));
          setContent(0,0);
       } else {
          // read: simply reset read index
-         mtklog("coi-open uses cached data, %ld bytes",data().src.size);
+         mtklog(("coi-open uses cached data, %d bytes",data().src.size));
          data().src.index = 0;
          return 0;
       }
@@ -5212,7 +5357,7 @@ long Coi::open(char *pmode)
    return 9;
 }
 
-char *Coi::lasterr( ) {
+cchar *Coi::lasterr( ) {
    if (!hasData()) return "";
    return data().szlasterr;
 }
@@ -5242,6 +5387,8 @@ bool isTextChar(uchar uc) {
 
 uchar Coi::isUTF16( ) { return nClUCS; }
 
+bool Coi::isSnapFile( ) { return bClSnap; }
+
 bool Coi::isBinaryFile( )
 {__
    // if binary status was alread set, return it:
@@ -5251,7 +5398,7 @@ bool Coi::isBinaryFile( )
    // TODO: buffer file header data, then reuse on later reads
    if (open("rb")) return 0;
 
-   mtklog("coi isbinary %p", this);
+   mtklog(("coi isbinary %p", this));
  
    // assure read buffer on demand
    if (!data().rbuf.data) {
@@ -5259,68 +5406,94 @@ bool Coi::isBinaryFile( )
       data().rbuf.data = new uchar[MY_GETBUF_MAX+100];
    }
 
-   long nCheckLen = MY_GETBUF_MAX - 10;
-   if (nCheckLen > 4096) nCheckLen = 4096;
-   long nRead = readRaw(data().rbuf.data, nCheckLen);
-
    bool brc = 0;
-
-   // if (cs.utf16dec) 
-   {
-      // ucs-2 heuristic detection
-      bool  bbin=0;
-      ulong blehead=0,bbehead=0;
-      uchar *pdat = data().rbuf.data;
    
-      if (nRead>=2 && pdat[0]==0xFF && pdat[1]==0xFE) blehead=1;
-      if (nRead>=2 && pdat[0]==0xFE && pdat[1]==0xFF) bbehead=1;
-      if (blehead || bbehead) {
-         // scan first part of text for double-byte chars.
-         // accept only very low code points.
-         long nWChars = (nRead - 2) / 2;
-         if (nWChars > 10) nWChars = 10;
-         long iwc=0;
-         for (iwc=0; iwc<nWChars; iwc++) {
-            uchar nlo = pdat[2+iwc*2+bbehead];
-            uchar nhi = pdat[2+iwc*2+blehead];
-            if (!isTextChar(nlo) || isTextChar(nhi))
-               break;
-         }
-         if (iwc >= nWChars) {
-            // count detected ucs-2 files
-            gs.utf16found++;
-            mtklog("utf16%s%s, dec=%d: %s\n",blehead?"le":"",bbehead?"be":"",(int)cs.utf16dec,name());
-            // but are we allowed to decode?
-            if (cs.utf16dec) {
-               if (blehead) nClUCS = (uchar)0xFE;
-               if (bbehead) nClUCS = (uchar)0xEF;
-               if (cs.verbose)
-                  printf("utf16%s%s: %s\n",blehead?"le":"",bbehead?"be":"",name());
+   do
+   {
+      int nCheckLen = MY_GETBUF_MAX - 10;
+      if (nCheckLen > 4096) nCheckLen = 4096;
+      
+      int nRead = readRaw(data().rbuf.data, nCheckLen);
+      
+      // no checks on empty files
+      if (nRead <= 0)
+         break;
+      
+      // always assure zero-term'ed memory
+      if (nRead <= nCheckLen)
+         data().rbuf.data[nRead] = '\0'; // safety
+   
+      // if (cs.utf16dec) 
+      {
+         // ucs-2 heuristic detection
+         uint blehead=0,bbehead=0;
+         uchar *pdat = data().rbuf.data;
+      
+         if (nRead>=2 && pdat[0]==0xFF && pdat[1]==0xFE) blehead=1;
+         if (nRead>=2 && pdat[0]==0xFE && pdat[1]==0xFF) bbehead=1;
+         if (blehead || bbehead) {
+            // scan first part of text for double-byte chars.
+            // accept only very low code points.
+            int nWChars = (nRead - 2) / 2;
+            if (nWChars > 10) nWChars = 10;
+            int iwc=0;
+            for (iwc=0; iwc<nWChars; iwc++) {
+               uchar nlo = pdat[2+iwc*2+bbehead];
+               uchar nhi = pdat[2+iwc*2+blehead];
+               if (!isTextChar(nlo) || isTextChar(nhi))
+                  break;
+            }
+            if (iwc >= nWChars) {
+               // count detected ucs-2 files
+               gs.utf16found++;
+               mtklog(("utf16%s%s, dec=%d: %s\n",blehead?"le":"",bbehead?"be":"",(int)cs.utf16dec,name()));
+               // but are we allowed to decode?
+               if (cs.utf16dec) {
+                  if (blehead) nClUCS = (uchar)0xFE;
+                  if (bbehead) nClUCS = (uchar)0xEF;
+                  if (cs.verbose)
+                     printf("utf16%s%s: %s\n",blehead?"le":"",bbehead?"be":"",name());
+               }
             }
          }
       }
-   }
+   
+   
+      if (!brc && !nClUCS) {
+         // binary data heuristic detection
+         for (int i=0; i<nRead; i++)
+            if (data().rbuf.data[i] == 0x00)
+               { brc=1; break; }
+      }
+      
+      // sfk snapfile detection
+      {
+         const char *ppat = ":snapfile sfk,";
+         int npatlen = strlen(ppat);
+         if ((nRead > npatlen) && strBegins((char*)data().rbuf.data, (char*)ppat))
+            bClSnap = 1;
 
-   if (!brc && !nClUCS) {
-      // binary data heuristic detection
-      for (long i=0; i<nRead; i++)
-         if (data().rbuf.data[i] == 0x00)
-            { brc=1; break; }
+         ppat = ":cluster sfk,";
+         npatlen = strlen(ppat);
+         if ((nRead > npatlen) && strBegins((char*)data().rbuf.data, (char*)ppat))
+            bClSnap = 1;
+      }
    }
-
+   while (0);
+   
    // currently, this frees the rbuf.data!
    close();
 
    bClBinary = brc;
    nClHave  |= COI_HAVE_BINARY;
 
-   mtklog("%d = coi::isbinary %s",brc,name());
+   mtklog(("%d = coi::isbinary %s",brc,name()));
 
    return brc;
 }
 
 // TODO: rework rc handling in case of error
-long Coi::readLine(char *pszOutBuf, long nOutBufLen)
+int Coi::readLine(char *pszOutBuf, int nOutBufLen)
 {
    if (!data().rbuf.data) {
       memset(&data().rbuf, 0, sizeof(data().rbuf));
@@ -5335,8 +5508,8 @@ long Coi::readLine(char *pszOutBuf, long nOutBufLen)
    if (!data().rbuf.geteod && ( data().rbuf.getsize < (MY_GETBUF_MAX/2)-100 ))
    {
       // move remaining cache data to front of buffer
-      long nindex  = data().rbuf.getindex;
-      long nremain = data().rbuf.getsize;
+      int nindex  = data().rbuf.getindex;
+      int nremain = data().rbuf.getsize;
       if (nindex + nremain < 0) return 0+perr("int. #60\n");
       if (nindex + nremain > MY_GETBUF_MAX) return 0+perr("int. #61\n");
       if (nremain > (MY_GETBUF_MAX/2)) return 0+perr("int. #62\n");
@@ -5348,10 +5521,10 @@ long Coi::readLine(char *pszOutBuf, long nOutBufLen)
       data().rbuf.getindex = 0;
 
       // re-fill remaining buffer space
-      long nBufFree = MY_GETBUF_MAX - data().rbuf.getsize;
+      int nBufFree = MY_GETBUF_MAX - data().rbuf.getsize;
       uchar *pRead  = data().rbuf.data + data().rbuf.getsize;
 
-      long nRead = 0;
+      int nRead = 0;
       if ((nRead = read(pRead, nBufFree)) <= 0)
          data().rbuf.geteod = 1;
       else
@@ -5373,8 +5546,8 @@ long Coi::readLine(char *pszOutBuf, long nOutBufLen)
    uchar *pdstmax  = pdst + nOutBufLen - 10;
 
    bool bBinary    = 0;
-   long nSrcBytes  = 0;
-   long nDstBytes  = 0;
+   int nSrcBytes  = 0;
+   int nDstBytes  = 0;
 
    for (; psrc < psrcmax && pdst < pdstmax;)
    {
@@ -5445,7 +5618,7 @@ size_t Coi::read(void *pbufin, size_t nBufSize)
          psrc += 2;
 
       // copy loop with zero truncation
-      ulong nreloff = (nClUCS == 0xFE) ? 0 : 1;
+      uint nreloff = (nClUCS == 0xFE) ? 0 : 1;
       while (psrc < psrcmax && pdst < pdstmax) {
          *pdst++ = psrc[nreloff];
          psrc += 2;
@@ -5454,7 +5627,7 @@ size_t Coi::read(void *pbufin, size_t nBufSize)
       // calc new netto size
       nres = pdst - pdstbeg;
 
-      mtklog("filtered %ld ucs-2 chars", (long)nres);
+      mtklog(("filtered %d ucs-2 chars", (int)nres));
 
       if (bfirst) gs.utf16read++;
    }
@@ -5467,14 +5640,14 @@ size_t Coi::readRaw(void *pbufin, size_t nBufSize)
    // take cached data?
    if (data().src.data) 
    {
-      long nremain = data().src.size - data().src.index;
-      long ntocopy = (long)nBufSize;
+      int nremain = data().src.size - data().src.index;
+      int ntocopy = (int)nBufSize;
       if (ntocopy > nremain) ntocopy = nremain;
       if (ntocopy > 0) {
          memcpy(pbufin, data().src.data + data().src.index, ntocopy);
          data().src.index += ntocopy;
       }
-      mtklog("coi-read copied %ld bytes from cache idx %ld", ntocopy, (long)data().src.index);
+      mtklog(("coi-read copied %d bytes from cache idx %d", ntocopy, (int)data().src.index));
       data().ntotalread += ntocopy;
       return ntocopy;
    }
@@ -5548,7 +5721,7 @@ int Coi::seek(num nOffset, int nOrigin)
    // take cached data?
    if (data().src.data) 
    {
-      mtklog("coi::seek to %ld in cache", (long)nOffset);
+      mtklog(("coi::seek to %d in cache", (int)nOffset));
       if (nOffset < 0 || nOffset > data().src.size)
          return 9+perr("cannot seek to position %s", numtoa(nOffset));
       data().src.index = nOffset;
@@ -5632,20 +5805,20 @@ size_t Coi::write(uchar *pBuf, size_t nBytes)
 
 void Coi::close( )
 {__
-   mtklog("coi-close %p %s", this, name());
+   mtklog(("coi-close %p %s", this, name()));
 
    // reset per-file statistics
    resetIOStatus();
 
    // assuming: close methods below do NOT use rbuf
    if (data().rbuf.data) {
-      mtklog("coi-close deletes rbuf %p size %ld", data().rbuf.data, data().rbuf.getsize);
+      mtklog(("coi-close deletes rbuf %p size %d", data().rbuf.data, data().rbuf.getsize));
       delete [] data().rbuf.data;
    }
    memset(&data().rbuf, 0, sizeof(data().rbuf));
  
    if (data().src.data) {
-      mtklog("coi-close finished read from cache");
+      mtklog(("coi-close finished read from cache"));
       data().src.index = 0; // safety
       return;
    }
@@ -5669,11 +5842,11 @@ void Coi::close( )
 _  data().pfile = 0;
 }
 
-long Coi::openDir( )
+int Coi::openDir( )
 {__
    #ifdef VFILEBASE
    if (isTravelZip() || isNet()) {
-      long nrc = rawLoadDir();
+      int nrc = rawLoadDir();
       if (nrc >= 5) return nrc; // failed
       data().bdiropen = 1;
       return 0;
@@ -5697,7 +5870,7 @@ Coi *Coi::nextEntry( )
       Coi *psub = nextEntryRaw();
       if (!psub) return 0;
       if (psub == this) {
-         mtklog("coi.nextentry: skip sub == top for %p", psub);
+         mtklog(("coi.nextentry: skip sub == top for %p", psub));
          // psub is OWNED BY US, so release it first.
          if (!psub->decref())
             perr("int. #1310281137"); // should NOT happen
@@ -5705,7 +5878,7 @@ Coi *Coi::nextEntry( )
          continue;
       }
       if (!strcmp(psub->name(), name())) {
-         mtklog("coi.nextentry: skip equal sub %p, top %p for name %s", psub, this, psub->name());
+         mtklog(("coi.nextentry: skip equal sub %p, top %p for name %s", psub, this, psub->name()));
          // psub is OWNED BY US, so release it first.
          if (!psub->decref())
             delete psub; // no refs remaining, not cached
@@ -5733,7 +5906,7 @@ Coi *Coi::nextEntryRaw( )
 
 void Coi::closeDir( )
 {__
-   mtklog("coi::closedir %p", this);
+   mtklog(("coi::closedir %p", this));
 
    #ifdef VFILEBASE
    if (isHttp())  return rawCloseHttpDir();
@@ -5746,14 +5919,14 @@ void Coi::closeDir( )
    perr("no directory, cannot close: %s", name());
 }
 
-long Coi::rawOpenDir( ) 
+int Coi::rawOpenDir( ) 
 {
-   long joinPath(char *pszDst, long nMaxDst, char *pszSrc1, char *pszSrc2);
+   int joinPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2);
 
    // prepare traversal pattern, or simply
    // the directory name stripped from possible slash
 
-   long nsize1 = strlen(name());
+   int nsize1 = strlen(name());
    if (data().pdirpat) delete [] data().pdirpat;
    data().pdirpat = new char[nsize1+12];
    #ifdef _WIN32
@@ -5795,10 +5968,10 @@ bool isAbsolutePath(char *psz1)
    return 0;
 }
 
-long joinPath(char *pszDst, long nMaxDst, char *pszSrc1, char *pszSrc2)
+int joinPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2)
 {
    mystrcopy(pszDst, pszSrc1, nMaxDst-4); // colon, terminator, 2 buffer.
-   long nlen = strlen(pszDst);
+   int nlen = strlen(pszDst);
    if (nlen > 0) {
       char clast = pszDst[nlen-1];
       #ifdef _WIN32
@@ -5815,10 +5988,10 @@ long joinPath(char *pszDst, long nMaxDst, char *pszSrc1, char *pszSrc2)
    return 0;
 }
 
-long joinShadowPath(char *pszDst, long nMaxDst, char *pszSrc1, char *pszSrc2)
+int joinShadowPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2)
 {
    mystrcopy(pszDst, pszSrc1, nMaxDst-4); // colon, terminator, 2 buffer.
-   long nlen = strlen(pszDst);
+   int nlen = strlen(pszDst);
    if (nlen > 0) {
       char clast = pszDst[nlen-1];
       #ifdef _WIN32
@@ -5864,7 +6037,7 @@ Coi *Coi::rawNextEntry( )
          data().otrav = _findfirst64(data().pdirpat, &myfdat);
          #else
           #ifndef _INTPTR_T_DEFINED
-           typedef long intptr_t;
+           typedef int intptr_t;
           #endif
          data().otrav = _findfirst(data().pdirpat, &myfdat);
          #endif
@@ -5880,7 +6053,7 @@ Coi *Coi::rawNextEntry( )
          if (nrc) return 0; // no further entries
       }
 
-      mtklog("rawnextentry attr %lxh %s", (ulong)myfdat.attrib, myfdat.name);
+      mtklog(("rawnextentry attr %lxh %s", (uint)myfdat.attrib, myfdat.name));
    
       #else
    
@@ -5891,7 +6064,7 @@ Coi *Coi::rawNextEntry( )
    
       myfdat.name    = e->d_name;
       myfdat.attrib  = 0;
-      myfdat.rawtype = (ulong)e->d_type;
+      myfdat.rawtype = (uint)e->d_type;
 
       // dirent symbolic links have their own inode,
       // and are of no use to detect repeated content listings.
@@ -5908,11 +6081,11 @@ Coi *Coi::rawNextEntry( )
 
       // construct absolute name of entry now,
       // although we may decide to skip the file.
-      long nRootLen = strlen(name());
-      long nSubLen  = strlen(myfdat.name);
+      int nRootLen = strlen(name());
+      int nSubLen  = strlen(myfdat.name);
    
       // create tmp absname, taking care of ":" and slash
-      long nMixLen  = nRootLen+nSubLen;
+      int nMixLen  = nRootLen+nSubLen;
       pabsname = new char[nMixLen+20];
       joinPath(pabsname, nMixLen+10, name(), myfdat.name);
 
@@ -5931,8 +6104,8 @@ Coi *Coi::rawNextEntry( )
          continue;
       }
    
-      myfdat.rawmode = (ulong)hStat1.st_mode;
-      myfdat.rawnlnk = (ulong)hStat1.st_nlink;
+      myfdat.rawmode = (uint)hStat1.st_mode;
+      myfdat.rawnlnk = (uint)hStat1.st_nlink;
    
       // get the "true" (dereferenced) inode,
       // allowing dup content listing detection:
@@ -6029,7 +6202,7 @@ bool Coi::isHidden( ) {
    // TODO: so far, readStat can NOT determine the hidden status,
    //       therefore the call doesn't help unless this changes.
    if (!nClStatus) readStat();
-   mtklog("%d = coi::ishidden %s",bClHidden,name());
+   mtklog(("%d = coi::ishidden %s",bClHidden,name()));
    return bClHidden; 
 }
 
@@ -6077,19 +6250,19 @@ void Coi::rawCloseDir( )
 }
 
 CoiTable::CoiTable() {
-   mtklog("coitab ctr %p",this);
+   mtklog(("coitab ctr %p",this));
    nClArraySize = 0;
    nClArrayUsed = 0;
    apClArray    = 0;
 }
 
 CoiTable::~CoiTable() {
-   mtklog("coitab dtr %p",this);
+   mtklog(("coitab dtr %p",this));
    resetEntries();
 }
 
 void CoiTable::resetEntries() {
-   for (long i=0; i<nClArrayUsed; i++) {
+   for (int i=0; i<nClArrayUsed; i++) {
       if (apClArray[i]) delete apClArray[i];
       apClArray[i] = 0;
    }
@@ -6100,14 +6273,14 @@ void CoiTable::resetEntries() {
    nClArraySize = 0;
 }
 
-long CoiTable::numberOfEntries() { return nClArrayUsed; }
+int CoiTable::numberOfEntries() { return nClArrayUsed; }
 
-bool CoiTable::isSet(long iIndex) {
+bool CoiTable::isSet(int iIndex) {
    if (iIndex < 0) { pwarn("illegal index: %d\n", iIndex); return 0; }
    return (iIndex < nClArrayUsed) ? 1 : 0;
 }
 
-long CoiTable::expand(long nSoMuch) {
+int CoiTable::expand(int nSoMuch) {
    Coi **apTmp = new Coi*[nClArraySize+nSoMuch];
    if (!apTmp) return 9;
    if (apClArray) {
@@ -6120,7 +6293,7 @@ long CoiTable::expand(long nSoMuch) {
 }
 
 // add a COPY of the supplied coi
-long CoiTable::addEntry(Coi &ocoi, long nAtPos) {
+int CoiTable::addEntry(Coi &ocoi, int nAtPos) {
    if (nClArrayUsed == nClArraySize) {
       if (nClArraySize == 0) {
          if (expand(10)) return 9;
@@ -6129,7 +6302,7 @@ long CoiTable::addEntry(Coi &ocoi, long nAtPos) {
       }
    }
    if (nAtPos != -1) {
-      for (long i=nClArrayUsed; i>nAtPos; i--)
+      for (int i=nClArrayUsed; i>nAtPos; i--)
          apClArray[i] = apClArray[i-1];
       apClArray[nAtPos] = ocoi.copy();
       nClArrayUsed++;
@@ -6139,7 +6312,7 @@ long CoiTable::addEntry(Coi &ocoi, long nAtPos) {
    return 0;
 }
 
-long CoiTable::addSorted(Coi &ocoi, char cSortedBy, bool bUseCase) 
+int CoiTable::addSorted(Coi &ocoi, char cSortedBy, bool bUseCase) 
 {
    if (nClArrayUsed == nClArraySize) {
       if (nClArraySize == 0) {
@@ -6151,10 +6324,10 @@ long CoiTable::addSorted(Coi &ocoi, char cSortedBy, bool bUseCase)
 
    Coi *padd = &ocoi;
 
-   long nInsPos = -1;
+   int nInsPos = -1;
 
-   long nCnt = numberOfEntries();
-   long i=0; bool bbail=0;
+   int nCnt = numberOfEntries();
+   int i=0; bool bbail=0;
    for (i=0; i<nCnt; i++) 
    {
       Coi *pown = apClArray[i];
@@ -6164,13 +6337,13 @@ long CoiTable::addSorted(Coi &ocoi, char cSortedBy, bool bUseCase)
          case 'S': bbail = (pown->getSize() > padd->getSize()); break;
          case 's': bbail = (pown->getSize() < padd->getSize()); break;
          case 'N': {
-            long ncmp = bUseCase ?      strcmp(pown->name(), padd->name())
+            int ncmp = bUseCase ?      strcmp(pown->name(), padd->name())
                                    : mystricmp(pown->name(), padd->name());
             bbail = (ncmp > 0);
             break;
          }
          case 'n': {
-            long ncmp = bUseCase ?      strcmp(pown->name(), padd->name())
+            int ncmp = bUseCase ?      strcmp(pown->name(), padd->name())
                                    : mystricmp(pown->name(), padd->name());
             bbail = (ncmp < 0);
             break;
@@ -6184,18 +6357,18 @@ long CoiTable::addSorted(Coi &ocoi, char cSortedBy, bool bUseCase)
    return addEntry(ocoi, nInsPos);
 }
 
-long CoiTable::removeEntry(long nAtPos) {
+int CoiTable::removeEntry(int nAtPos) {
    if (nAtPos < 0 || nAtPos >= nClArrayUsed)
       return 9;
    if (apClArray[nAtPos]) delete apClArray[nAtPos];
-   for (long i=nAtPos; i<nClArrayUsed-1; i++)
+   for (int i=nAtPos; i<nClArrayUsed-1; i++)
       apClArray[i] = apClArray[i+1];
    apClArray[nClArrayUsed-1] = 0; // just in case
    nClArrayUsed--;
    return 0;
 }
 
-long CoiTable::setEntry(long nIndex, Coi *pcoi) {
+int CoiTable::setEntry(int nIndex, Coi *pcoi) {
    if (nIndex >= nClArrayUsed)
       return 9+perr("illegal set index: %d\n", nIndex);
    if (apClArray[nIndex])
@@ -6204,7 +6377,7 @@ long CoiTable::setEntry(long nIndex, Coi *pcoi) {
    return 0;
 }
 
-Coi *CoiTable::getEntry(long nIndex, int nTraceLine) {
+Coi *CoiTable::getEntry(int nIndex, int nTraceLine) {
    if (nIndex >= 0 && nIndex < nClArrayUsed)
       return apClArray[nIndex];
    perr("illegal CoiTable index: %d tline %d\n", nIndex, nTraceLine);
@@ -6222,7 +6395,7 @@ void initConsole()
    if (psz2) {
       psz2 = strstr(psz2, "columns:");
       if (psz2) {
-         long ncols = atol(psz2+8);
+         int ncols = atol(psz2+8);
          if (ncols >= 40) {
             nGlblConsColumns = ncols;
             bGlblConsColumnsSet = true;
@@ -6248,9 +6421,9 @@ void initConsole()
    nGlblConsAttrib = oConInf.wAttributes;
    /*
    printf("CONSATTRIB DEFAULTS %lxh:\n",nGlblConsAttrib);
-   printf("   %lu  BACKGROUND_BLUE\n" , nGlblConsAttrib & BACKGROUND_BLUE);
-   printf("   %lu  BACKGROUND_GREEN\n", nGlblConsAttrib & BACKGROUND_GREEN);
-   printf("   %lu  BACKGROUND_RED\n"  , nGlblConsAttrib & BACKGROUND_RED);
+   printf("   %u  BACKGROUND_BLUE\n" , nGlblConsAttrib & BACKGROUND_BLUE);
+   printf("   %u  BACKGROUND_GREEN\n", nGlblConsAttrib & BACKGROUND_GREEN);
+   printf("   %u  BACKGROUND_RED\n"  , nGlblConsAttrib & BACKGROUND_RED);
    */
    if (!bGlblConsColumnsSet && (oConInf.dwSize.X >= 60)) {
       nGlblConsColumns = oConInf.dwSize.X;
@@ -6261,7 +6434,7 @@ void initConsole()
    if (!pszColEnv)
    {
       // if we autodetect a black background shell
-      ulong nBackMask = BACKGROUND_RED|BACKGROUND_GREEN|BACKGROUND_BLUE;
+      uint nBackMask = BACKGROUND_RED|BACKGROUND_GREEN|BACKGROUND_BLUE;
       if ((nGlblConsAttrib & (nBackMask)) == 0) {
          // auto-select color theme:black
          setColorScheme("theme:black");
@@ -6287,10 +6460,10 @@ void initConsole()
    #endif
 }
 
-long autoCalcWrapColumns() {
-   long ncols = 80;
+int autoCalcWrapColumns() {
+   int ncols = 80;
    if (bGlblConsColumnsSet) {
-      if (cs.verbose >= 2) printf("ConsoleColumns=%ld\n",nGlblConsColumns);
+      if (cs.verbose >= 2) printf("ConsoleColumns=%d\n",nGlblConsColumns);
       return nGlblConsColumns-2;
    }
    #ifdef _WIN32
@@ -6298,11 +6471,11 @@ long autoCalcWrapColumns() {
    if (hDeskWin) {
       HDC hdcDesk = GetWindowDC(hDeskWin);
       if (hdcDesk != NULL) {
-         long ndeskw = GetDeviceCaps(hdcDesk, HORZRES);
-         long ncols2 = ndeskw / 10; // default char width: 10 pixels
+         int ndeskw = GetDeviceCaps(hdcDesk, HORZRES);
+         int ncols2 = ndeskw / 10; // default char width: 10 pixels
          if (ncols2 > 80)
             ncols = ncols2;
-         if (cs.verbose >= 2) printf("wdesk %ld col.calc %ld used %ld\n",ndeskw,ncols2,ncols);
+         if (cs.verbose >= 2) printf("wdesk %d col.calc %d used %d\n",ndeskw,ncols2,ncols);
          ReleaseDC(hDeskWin, hdcDesk);
       }
    }
@@ -6320,12 +6493,12 @@ ProgressInfo::ProgressInfo()
    bAddInfoPrio  = 1;
 }
 
-void ProgressInfo::setWidth(long nColumns) {
+void ProgressInfo::setWidth(int nColumns) {
    nMaxChars      = nColumns  -  3;
    nMaxSubChars   = nMaxChars - 20;
 }
 
-void ProgressInfo::setAddInfoWidth(long nAddCols) {
+void ProgressInfo::setAddInfoWidth(int nAddCols) {
    nAddInfoCols = nAddCols;
    // vrfy  58% [filename]......... addinfo
    // 1234567890                    addcols
@@ -6335,16 +6508,16 @@ void ProgressInfo::setAddInfoWidth(long nAddCols) {
 }
 
 void ProgressInfo::fixAddInfoWidth() {
-   if ((long)strlen(szAddInfo) > nAddInfoCols) {
-      nAddInfoCols = (long)strlen(szAddInfo);
-      long nAddCols = nAddInfoCols + 10;
+   if ((int)strlen(szAddInfo) > nAddInfoCols) {
+      nAddInfoCols = (int)strlen(szAddInfo);
+      int nAddCols = nAddInfoCols + 10;
       if (nMaxChars > nAddCols + 30)
          nMaxSubChars = nMaxChars - nAddCols;
    }
 }
 
 void ProgressInfo::setAddInfoHalve() {
-   long nAddCols = (nMaxChars - 10) / 2;
+   int nAddCols = (nMaxChars - 10) / 2;
    nAddInfoCols = nAddCols;
    nAddInfoReserve = nAddCols; // if addinfo is overwritten
    nAddCols += 10; // add left side columns
@@ -6352,7 +6525,7 @@ void ProgressInfo::setAddInfoHalve() {
    bAddInfoPrio = 0;
 }
 
-void ProgressInfo::setStatus(char *pverb, char *psubj, char *pszAddInfo, long nKeepFlags) 
+void ProgressInfo::setStatus(cchar *pverb, cchar *psubj, cchar *pszAddInfo, int nKeepFlags) 
 {
    strcopy(szVerb, pverb);
    strcopy(szSubject, psubj);
@@ -6379,25 +6552,25 @@ void ProgressInfo::setStatus(char *pverb, char *psubj, char *pszAddInfo, long nK
       cycle();
 }
 
-void ProgressInfo::setStatProg(char *pverb, char *psubj, num nMax, num nCur, char *pszUnit) {
+void ProgressInfo::setStatProg(cchar *pverb, cchar *psubj, num nMax, num nCur, cchar *pszUnit) {
    strcopy(szVerb, pverb);
    strcopy(szSubject, psubj);
    szAddInfo[0] = '\0';
    setProgress(nMax, nCur, pszUnit);
 }
 
-void ProgressInfo::setProgress(num nMax, num nCur, char *pszUnit) {
+void ProgressInfo::setProgress(num nMax, num nCur, cchar *pszUnit) {
    if (nMax <= 0) nMax = 1; // safe division
-   long nPerc = (long)(nCur * 100 / nMax);
+   int nPerc = (int)(nCur * 100 / nMax);
    if (nPerc > 0 && nPerc <= 100)
-      sprintf(szPerc, "%02ld%% ", nPerc);
+      sprintf(szPerc, "%02d%% ", nPerc);
    else
    if (nPerc > 100) {
       sprintf(szPerc, "100%% ");
-      if (cs.debug) printf("[progress: cur=%ld max=%ld perc=%ld]\n", (long)nCur, (long)nMax, (long)nPerc);
+      if (cs.debug) printf("[progress: cur=%d max=%d perc=%d]\n", (int)nCur, (int)nMax, (int)nPerc);
    } else {
       sprintf(szPerc, "... ");
-      if (cs.debug) printf("[progress: cur=%ld max=%ld perc=%ld]\n", (long)nCur, (long)nMax, (long)nPerc);
+      if (cs.debug) printf("[progress: cur=%d max=%d perc=%d]\n", (int)nCur, (int)nMax, (int)nPerc);
    }
    cycle();
 }
@@ -6415,7 +6588,7 @@ void ProgressInfo::cycle() {
    }
 }
 
-void ProgressInfo::setAction(char *pverb, char *psubj, char *pszAddInfo, long nKeepFlags) {
+void ProgressInfo::setAction(cchar *pverb, cchar *psubj, cchar *pszAddInfo, int nKeepFlags) {
    setStatus(pverb, psubj, pszAddInfo, nKeepFlags);
    print();
 }
@@ -6426,7 +6599,7 @@ void ProgressInfo::print() {
    dumpTermStatus();
 }
 
-void ProgressInfo::printLine(long nFilter) {
+void ProgressInfo::printLine(int nFilter) {
    if (cs.quiet || cs.noprog)
       return;
    if (nFilter & (1<<1)) {
@@ -6442,7 +6615,7 @@ void ProgressInfo::printLine(long nFilter) {
    nDumped = 0;
 }
 
-long ProgressInfo::print(const char *pszFormat, ...)
+int ProgressInfo::print(const char *pszFormat, ...)
 {
    va_list argList;
    va_start(argList, pszFormat);
@@ -6475,7 +6648,7 @@ void ProgressInfo::clear()
 void ProgressInfo::clearTermStatus() 
 {__
    if (nDumped) {
-      mtklog("info::clearterm");
+      mtklog(("info::clearterm"));
       memset(szTermBuf, ' ', nDumped);
       szTermBuf[nDumped] = '\0';
       printf("%s\r",szTermBuf);
@@ -6496,22 +6669,22 @@ void ProgressInfo::dumpTermStatus()
    if (!szSubject[0])
       return;  // nothing to dump
 
-   long nMaxMiddle = nMaxSubChars;
+   int nMaxMiddle = nMaxSubChars;
    if (!szPerc[0])
       nMaxMiddle += 2; // no percentage: have more chars to use
 
    // if there is few space, and low addinfo prio
    bool bWithAdd = 1;
-   if ((long)strlen(szSubject) > nMaxMiddle) {
+   if ((int)strlen(szSubject) > nMaxMiddle) {
       if (!bAddInfoPrio) {
          bWithAdd = 0;
          nMaxMiddle += nAddInfoReserve; // add space to center
       }
    }
 
-   if ((long)strlen(szSubject) > nMaxMiddle) {
-      long nlen  = strlen(szSubject);
-      long nmax2 = nMaxMiddle - 3;
+   if ((int)strlen(szSubject) > nMaxMiddle) {
+      int nlen  = strlen(szSubject);
+      int nmax2 = nMaxMiddle - 3;
       if (nmax2 < 0) nmax2 = 0;
       char *psz1 = &szSubject[nlen-nmax2];
       snprintf(szTermBuf, sizeof(szTermBuf)-10, "...%s", psz1);
@@ -6530,7 +6703,7 @@ void ProgressInfo::dumpTermStatus()
       while (nvlen > 3 && szVerb[nvlen-1] == ' ')
          nvlen--;
       if (szPerc[0]) {
-         char *pszPerc2 = szPerc;
+         cchar *pszPerc2 = szPerc;
          if (!strcmp(szPerc, " "))
             pszPerc2 = ""; // ignore, is just a dummy
          printx("<head>%-*.*s %s<def>", nvlen,nvlen, szVerb, pszPerc2);
@@ -6541,7 +6714,7 @@ void ProgressInfo::dumpTermStatus()
       }
    }
 
-   mtklog("info::dump \"%s\"", szTermBuf);
+   mtklog(("info::dump \"%s\"", szTermBuf));
    printf("%s ",szTermBuf);
    nDumped += strlen(szTermBuf) + 1;
 
@@ -6600,7 +6773,7 @@ size_t myfwrite(uchar *pBuf, size_t nBytes, FILE *fout, num nMax, num nCur, SFKM
 
       size_t nWriteSub = fwrite(pBuf+nOffset, 1, nBlock, fout);
 
-      // mtklog("myfwrite: %ld = fwrite(%ld)",(long)nWriteSub,(long)nBlock);
+      // mtklog(("myfwrite: %d = fwrite(%d)",(int)nWriteSub,(int)nBlock));
 
       if (nWriteSub != nBlock)
          return nOffset+nWriteSub; // return no. of bytes actually written
@@ -6771,9 +6944,9 @@ char *netErrStr(int ncode=-1)
 }
 
 // optional reroute of error messages
-long (*pGlblSFKStatusCallBack)(long nMsgType, char *pmsg) = 0;
+int (*pGlblSFKStatusCallBack)(int nMsgType, char *pmsg) = 0;
 
-long perr(const char *pszFormat, ...)
+int perr(const char *pszFormat, ...)
 {
    if (cs.noerr) return 0;
 
@@ -6805,7 +6978,7 @@ long perr(const char *pszFormat, ...)
       setTextColor(-1, 1);
    }
 
-   mtkerr("%s", szErrBuf);
+   mtkerr(("%s", szErrBuf));
    bErrBufSet = 1;
    nGlblErrors++;
 
@@ -6819,7 +6992,7 @@ long perr(const char *pszFormat, ...)
    #endif
 }
 
-long pwarn(const char *pszFormat, ...)
+int pwarn(const char *pszFormat, ...)
 {
    if (cs.nowarn) return 0;
    va_list argList;
@@ -6848,13 +7021,13 @@ long pwarn(const char *pszFormat, ...)
       setTextColor(-1, 1);
    }
 
-   mtkwarn("%s", szErrBuf);
+   mtkwarn(("%s", szErrBuf));
    nGlblWarnings++;
 
    return 0;
 }
 
-long pinf(const char *pszFormat, ...)
+int pinf(const char *pszFormat, ...)
 {
    if (cs.nonotes) return 0;
 
@@ -6882,7 +7055,7 @@ long pinf(const char *pszFormat, ...)
       setTextColor(-1, 1);
    }
 
-   mtklog("note: %s", szPrintBuf1);
+   mtklog(("note: %s", szPrintBuf1));
 
    return 0;
 }
@@ -6899,7 +7072,7 @@ void perrinfo(const char *pszContext)
    #ifdef _WIN32
 
    #ifdef WINFULL
-   long  nerr1 = errno;
+   int  nerr1 = errno;
    DWORD nerr2 = GetLastError();
    LPVOID lpMsgBuf = 0;
    FormatMessage(
@@ -6912,18 +7085,18 @@ void perrinfo(const char *pszContext)
    if (lpMsgBuf) removeCRLF((char*)lpMsgBuf);
    info.clear(); // in case no perr was done
    setTextColor(nGlblWarnColor);
-   printf("cerno: %ld,%s\n", nerr1, strerror(nerr1));
-   printf("werno: %lu,%s\n", nerr2, lpMsgBuf ? lpMsgBuf : "");
+   printf("cerno: %d,%s\n", nerr1, strerror(nerr1));
+   printf("werno: %u,%s\n", nerr2, lpMsgBuf ? lpMsgBuf : "");
    setTextColor(-1);
    LocalFree(lpMsgBuf);
    #endif
 
    #else
 
-   long  nerr1 = errno;
+   int  nerr1 = errno;
    info.clear(); // in case no perr was done
    setTextColor(nGlblWarnColor);
-   printf("cerno: %ld,%s\n", nerr1, strerror(nerr1));
+   printf("cerno: %d,%s\n", nerr1, strerror(nerr1));
    setTextColor(-1);
 
    #endif
@@ -6931,7 +7104,7 @@ void perrinfo(const char *pszContext)
 
 bool bGlblSysErrOccured = 0;
 
-static long esys(const char *pszContext, const char *pszFormat, ...)
+static int esys(const char *pszContext, const char *pszFormat, ...)
 {
    bGlblSysErrOccured = 1;
 
@@ -6947,7 +7120,7 @@ static long esys(const char *pszContext, const char *pszFormat, ...)
    setTextColor(nGlblErrColor, 1); // on stderr
    fprintf(stderr, "error: %s", szErrBuf);
    setTextColor(-1, 1);
-   mtkerr("%s", szErrBuf);
+   mtkerr(("%s", szErrBuf));
    bErrBufSet = 1;
    nGlblErrors++;
 
@@ -6979,7 +7152,7 @@ enum eMatchStr {
 };
 
 // get single char from mask, managing \* etc.
-char getpatchr(char **ppPat, long &rEscaped)
+char getpatchr(char **ppPat, int &rEscaped)
 {
    rEscaped = 0;
    char *p = *ppPat;
@@ -7006,7 +7179,7 @@ char getpatchr(char **ppPat, long &rEscaped)
    return c;
 }
 
-char peekpatchr(char *p, long &rEscaped)
+char peekpatchr(char *p, int &rEscaped)
 {
    rEscaped = 0;
    char c  = *p++;
@@ -7029,12 +7202,12 @@ char peekpatchr(char *p, long &rEscaped)
    return c;
 }
 
-bool mystrhit(char *pszStr, char *pszPat, bool bCase, long *pOutHitIndex)
+bool mystrhit(char *pszStr, char *pszPat, bool bCase, int *pOutHitIndex)
 {
    if (bCase) {
       char *psz = strstr(pszStr, pszPat);
       if (psz) {
-         if (pOutHitIndex) *pOutHitIndex = (long)(psz-pszStr);
+         if (pOutHitIndex) *pOutHitIndex = (int)(psz-pszStr);
          return true;
       } else {
          if (pOutHitIndex) *pOutHitIndex = -1;
@@ -7048,32 +7221,32 @@ bool mystrhit(char *pszStr, char *pszPat, bool bCase, long *pOutHitIndex)
    }
 }
 
-bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rhitlen)
+bool matchstr(char *pszHay, char *pszPat, int nFlags, int &rfirsthit, int &rhitlen)
 {
    if (cs.debug)
-      printf("match: enter matchstr \"%s\" \"%s\" flags %lu\n",pszHay,pszPat,nFlags);
+      printf("match: enter matchstr \"%s\" \"%s\" flags %u\n",pszHay,pszPat,nFlags);
 
    bool bCase = ( nFlags & 1) ? 1 : 0;
    bool bHead = ( nFlags & 4) ? 1 : 0;
    bool bTail = ( nFlags & 8) ? 1 : 0;
 
-   long nhaylen = strlen(pszHay);
-   long ibase   = 0;
-   long ifirst  = -1;     // pos'n of first matching char
-   long ilast   = -1;     // pos'n of last matching char
+   int nhaylen = strlen(pszHay);
+   int ibase   = 0;
+   int ifirst  = -1;     // pos'n of first matching char
+   int ilast   = -1;     // pos'n of last matching char
    bool bmatch  = 0;
-   long nesc    = 0;      // escapes not (0), or 1 or 3 chars
+   int nesc    = 0;      // escapes not (0), or 1 or 3 chars
 
    if (!cs.wpat) {
       // no wildcard interpretation
-      long npatlen = strlen(pszPat);
+      int npatlen = strlen(pszPat);
       if (bTail) {
          // check for end-of-line match
          if (nhaylen < npatlen) return 0;
          char *pend = pszHay+nhaylen-npatlen;
          if (!mystrncmp(pend,pszPat,npatlen,bCase)) {
             if (cs.debug)
-               printf("match:  direct at %ld len %ld\n",nhaylen-npatlen,npatlen);
+               printf("match:  direct at %d len %d\n",nhaylen-npatlen,npatlen);
             rfirsthit = nhaylen-npatlen;
             rhitlen   = npatlen;
             return 1;
@@ -7081,14 +7254,14 @@ bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rh
          return 0;
       } else {
          // check for anywhere or start-of-line match
-         long ihit = 0;
+         int ihit = 0;
          bool brc = mystrhit(pszHay, pszPat, bCase, &ihit);
          if (!brc) return 0;
          if (bHead && ihit != 0) return 0;
          rfirsthit = ihit;
          rhitlen   = npatlen;
          if (cs.debug)
-            printf("match:  direct at %ld len %ld\n",ihit,npatlen);
+            printf("match:  direct at %d len %d\n",ihit,npatlen);
          rfirsthit = ihit;
          rhitlen   = npatlen;
          return 1;
@@ -7120,12 +7293,12 @@ bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rh
             biskip = 0;
             cpat   = '*';
             if (cs.debug)
-               printf("match:  process %c index %ld \"%s\"\n", cpat, ppat-pszPat, ppat);
+               printf("match:  process %c index %d \"%s\"\n", cpat, ppat-pszPat, ppat);
          } else {
             cpat  = *ppat++;
             cpat2 = *ppat;
             if (cs.debug)
-               printf("match:  process %c index %ld \"%s\"\n", cpat, ppat-pszPat-1, ppat-1);
+               printf("match:  process %c index %d \"%s\"\n", cpat, ppat-pszPat-1, ppat-1);
          }
       
          // remapping of \\ \n \t \* \?
@@ -7155,7 +7328,7 @@ bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rh
             // **?
             if (!nesc && cnext == '*') continue;
             // isolate next non-* part
-            long isrc=0,idst=0;
+            int isrc=0,idst=0;
             while (idst<MAX_MATCH_BUF) {
                char csub = peekpatchr(ppat+isrc, nesc);
                if (nesc)
@@ -7180,7 +7353,7 @@ bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rh
                if (cs.debug)
                   printf("match:   from %.10s\n",phay);
                // matched first char, compare rest
-               long isub=0;
+               int isub=0;
                char *ppat2=szMatchBuf;
                bool *epat2=szMatchEsc;
                for (; phay[isub] && ppat2[isub]; isub++)
@@ -7207,7 +7380,7 @@ bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rh
             if (!*ppat){
                if (bsubmatch) {
                   if (cs.debug)
-                     printf("match:   full inner match, %ld %ld\n",ifirst,ilast);
+                     printf("match:   full inner match, %d %d\n",ifirst,ilast);
                   bmatch=1;
                } else {
                   if (cs.debug)
@@ -7225,7 +7398,7 @@ bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rh
             // compare single char, adapt match positions
             if (!cmpchr(*phay, cpat, bCase, 0)) {
                if (cs.debug)
-                  printf("match:   miss at haychr \"%c\" msk %c position %ld\n",*phay,cpat,phay-pszHay);
+                  printf("match:   miss at haychr \"%c\" msk %c position %d\n",*phay,cpat,phay-pszHay);
                break; // miss
             }
             if (ifirst < 0)
@@ -7237,14 +7410,14 @@ bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rh
       }  // end inner search loop
  
       if (cs.debug)
-         printf("match:  1) ifirst %ld ilast %ld bmatch %d\n",ifirst,ilast,bmatch);
+         printf("match:  1) ifirst %d ilast %d bmatch %d\n",ifirst,ilast,bmatch);
 
       if (bmatch) {
          // full hit somewhere, do we accept?
          if (!bTail) break;
          if (nhaylen > 0 && ilast == nhaylen-1) break;
          if (cs.debug)
-            printf("match:  c) no line-end hit, %ld != %ld\n",ilast,nhaylen-1);
+            printf("match:  c) no line-end hit, %d != %d\n",ilast,nhaylen-1);
          // tail, and no hit at end: continue searching
       }
  
@@ -7255,7 +7428,7 @@ bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rh
    while (ibase < nhaylen);
  
    if (cs.debug)
-      printf("match:  2) ifirst %ld ilast %ld bmatch %d for hay \"%s\" pat \"%s\"\n",ifirst,ilast,bmatch,pszHay,pszPat);
+      printf("match:  2) ifirst %d ilast %d bmatch %d for hay \"%s\" pat \"%s\"\n",ifirst,ilast,bmatch,pszHay,pszPat);
 
    if (bmatch && ifirst >= 0) {
       rfirsthit  = ifirst;
@@ -7267,7 +7440,7 @@ bool matchstr(char *pszHay, char *pszPat, long nFlags, long &rfirsthit, long &rh
    return 0;
 }
 
-long indent(char *pszin) {
+int indent(char *pszin) {
    char *psz = pszin;
    bool bempty = 1;
    for (; *psz; psz++)
@@ -7309,22 +7482,21 @@ bool equalFileName(char *psz1, char *psz2) {
    #endif
 }
 
-bool strBegins(char *pszStr, char *pszPat) {
+bool strBegins(char *pszStr, cchar *pszPat) {
    if (!strncmp(pszStr, pszPat, strlen(pszPat)))
       return 1;
    return 0;
 }
 
-bool striBegins(char *pszStr, char *pszPat) {
-   long mystrnicmp(char *psz1, char *psz2, long nLen);
+bool striBegins(char *pszStr, cchar *pszPat) {
    if (!mystrnicmp(pszStr, pszPat, strlen(pszPat)))
       return 1;
    return 0;
 }
 
-bool strEnds(char *pszStr, char *pszPat) {
-   long nlenhay = strlen(pszStr);
-   long nlenpat = strlen(pszPat);
+bool strEnds(char *pszStr, cchar *pszPat) {
+   int nlenhay = strlen(pszStr);
+   int nlenpat = strlen(pszPat);
    if (nlenhay < nlenpat) return 0;
    return !strcmp(pszStr+nlenhay-nlenpat, pszPat) ? 1 : 0;
 }
@@ -7340,29 +7512,29 @@ bool startsLikeActFile(char *psz) {
 class InfoCounter {
 public:
    InfoCounter    ( );
-   ulong count    ( );  // RC > 0 says print the counter now
+   uint count    ( );  // RC > 0 says print the counter now
    bool  checkTime( );  // RC > 0 says print the counter now
    bool  countSkip(char *pszFile);
-   ulong value    ( );
-   ulong skipped  ( );
+   uint value    ( );
+   uint skipped  ( );
    char  *skipInfo( );
    void  reset    ( );
 private:
    void  copyAll  ( );
 
-   ulong nClUnits;
-   ulong nClSkipped;
+   uint nClUnits;
+   uint nClSkipped;
    num   nClTime;
 
-   ulong nClTellSteps;
-   ulong nClLastTold;
-   ulong nClTellSteps2;
-   ulong nClLastTold2;
+   uint nClTellSteps;
+   uint nClLastTold;
+   uint nClTellSteps2;
+   uint nClLastTold2;
    num   nClLastTimeTold;
-   long  nClTimeInertia; // to avoid calling getCurrentTime() too often
+   int  nClTimeInertia; // to avoid calling getCurrentTime() too often
 
    char  aClSkipInfo[100];
-   long  nClSkipIdx;
+   int  nClSkipIdx;
 };
 
 InfoCounter::InfoCounter() { reset(); }
@@ -7392,11 +7564,11 @@ void InfoCounter::copyAll() {
    nClTimeInertia  = 10;
 }
 
-ulong InfoCounter::value()    { return nClUnits; }
-ulong InfoCounter::skipped()  { return nClSkipped; }
+uint InfoCounter::value()    { return nClUnits; }
+uint InfoCounter::skipped()  { return nClSkipped; }
 char *InfoCounter::skipInfo() { return aClSkipInfo; }
 
-ulong InfoCounter::count() {
+uint InfoCounter::count() {
    nClUnits++;
    if (nClUnits >= (nClLastTold+nClTellSteps)) {
       nClTellSteps++;
@@ -7410,13 +7582,13 @@ bool InfoCounter::countSkip(char *pszFile)
 {
    nClSkipped++;
 
-   // mtklog("countskip %s", pszFile);
+   // mtklog(("countskip %s", pszFile));
 
    // update list of skipped file extensions
    char *pszInfo = pszFile;
    char *pszExt  = strrchr(pszInfo, '.');
    if (pszExt) pszInfo = pszExt;
-   long nInfoLen = strlen(pszInfo);
+   int nInfoLen = strlen(pszInfo);
    if (nInfoLen > 4) pszInfo = pszInfo + nInfoLen - 4;
    char *pszCur = &aClSkipInfo[5*nClSkipIdx];
    nInfoLen = strlen(pszInfo);
@@ -7434,7 +7606,7 @@ bool InfoCounter::countSkip(char *pszFile)
          pszCur[4] = '\0';
    }
 
-   // mtklog("countskip info %s", aClSkipInfo);
+   // mtklog(("countskip info %s", aClSkipInfo));
 
    if (nClSkipped >= (nClLastTold2+nClTellSteps2)) {
       nClTellSteps2++;
@@ -7477,7 +7649,7 @@ NoCaseText glblNoCase;
 NoCaseText::NoCaseText()
 {
    memset(aClLowerTab, 0, sizeof(aClLowerTab));
-   for (ulong u1=0; u1<256; u1++)
+   for (uint u1=0; u1<256; u1++)
    {
       uchar u2 = (uchar)u1;
 
@@ -7496,8 +7668,8 @@ NoCaseText::NoCaseText()
 
 void NoCaseText::setStringToLower(char *psz)
 {
-   ulong nLen = strlen(psz);
-   for (ulong i=0; i<nLen; i++) {
+   uint nLen = strlen(psz);
+   for (uint i=0; i<nLen; i++) {
       // psz[i] = tolower(psz[i]);
       psz[i] = aClLowerTab[(uchar)psz[i]];
    }
@@ -7508,7 +7680,6 @@ uchar mytoloweru(uchar uc) { return glblNoCase.lowerUChar(uc); }
 
 uchar *memIFind(uchar *pNeedle, num nNeedleSize, uchar *pHayStack, num nHaySize)
 {
-   num nRemain = nHaySize;
    uchar *pCur = pHayStack;
    uchar *pMax = pHayStack + nHaySize - nNeedleSize; // inclusive
    uchar c1    = glblNoCase.lowerUChar(*pNeedle);
@@ -7540,19 +7711,19 @@ class FileInfo {
 public:
       FileInfo    (bool bWriteOnly=false);
      ~FileInfo    ( );
-long  init        (char *pszFileName, long nShortNameLen=60, num nFileSize=0);
+int  init        (char *pszFileName, int nShortNameLen=60, num nFileSize=0);
 bool  fileValid   ( );
 bool  timeToTell  ( );
-long  percentage  (num nPosition);
-char  *prefix     ( );
-char  *shortName  ( );
+int  percentage  (num nPosition);
+cchar  *prefix    ( );
+cchar  *shortName ( );
 num   fileSize    ( ) { return nClFileSize; }
-void  printBlankLine (long nChars);
+void  printBlankLine (int nChars);
 private:
 bool  bClWriteOnly;
 char  *pszClName;
-long  nClNameLen;
-long  nClShortNameLen;
+int  nClNameLen;
+int  nClShortNameLen;
 num   nClStartTime;
 num   nClNextTell;
 num   nClFileSize;
@@ -7567,7 +7738,7 @@ FileInfo::FileInfo(bool bWriteOnly) {
    nClFileSize    = 0;
 }
 
-long FileInfo::init(char *pszName, long nShortNameLen, num nFileSize) 
+int FileInfo::init(char *pszName, int nShortNameLen, num nFileSize) 
 {
    pszClName = strdup(pszName);
    if (!pszClName) return 9+perr("out of memory\n");
@@ -7595,45 +7766,45 @@ bool FileInfo::timeToTell() {
    return false;
 }
 
-long FileInfo::percentage(num nPosition) {
+int FileInfo::percentage(num nPosition) {
    if (!nClFileSize) return 100;
-   return (long)(nPosition * 100 / nClFileSize);
+   return (int)(nPosition * 100 / nClFileSize);
 }
 
-char *FileInfo::prefix() {
-   long nLimit = nClShortNameLen;
+cchar *FileInfo::prefix() {
+   int nLimit = nClShortNameLen;
    if (nClNameLen > nLimit)
       return "...";
    return "";
 }
 
-char *FileInfo::shortName() {
-   long nLimit = nClShortNameLen;
+cchar *FileInfo::shortName() {
+   int nLimit = nClShortNameLen;
    if (!pszClName) return "";
-   long noff = 0;
+   int noff = 0;
    if (nClNameLen > nLimit)
         noff = nClNameLen - nLimit;
    return pszClName+noff;
 }
 
-void FileInfo::printBlankLine(long nChars) {
-   for (long i=0; i<nChars; i++)
+void FileInfo::printBlankLine(int nChars) {
+   for (int i=0; i<nChars; i++)
       putchar(' ');
    printf("\r");
 }
 
-FileSet  glblFileSet;   // long format -dir and -file set
+FileSet  glblFileSet;   // int format -dir and -file set
 CoiTable glblSFL;       // short format specific file list
 
-long glblSFLNumberOfEntries() { return glblSFL.numberOfEntries(); }
+int glblSFLNumberOfEntries() { return glblSFL.numberOfEntries(); }
 
-long StringPipe::setEntry(long iIndex, char *psz, char *pAttr)
+int StringPipe::setEntry(int iIndex, char *psz, char *pAttr)
 {
    if (clAttr.setEntry(iIndex, pAttr)) return 9;
    return clText.setEntry(iIndex, psz);
 }
 
-long StringPipe::addEntry(char *psz, char *pAttr)
+int StringPipe::addEntry(char *psz, char *pAttr)
 {
    if (clAttr.addEntry(pAttr)) return 9;
    return clText.addEntry(psz);
@@ -7645,7 +7816,7 @@ void StringPipe::resetEntries()
    clAttr.resetEntries();
 }
 
-char *StringPipe::getEntry(long nIndex, long nLine, char **ppAttr)
+char *StringPipe::getEntry(int nIndex, int nLine, char **ppAttr)
 {
    char *ptext = clText.getEntry(nIndex, nLine);
    char *pattr = clAttr.getEntry(nIndex, nLine);
@@ -7659,22 +7830,22 @@ void StringPipe::resetPipe()
    nReadIndex = 0;
 }
 
-void StringPipe::dump(char *pszTitle)
+void StringPipe::dump(cchar *pszTitle)
 {
-   printf("[pipe %s contents (%ld lines):]\n",pszTitle,numberOfEntries());
-   for (long i=0; i<numberOfEntries(); i++)
+   printf("[pipe %s contents (%d lines):]\n",pszTitle,numberOfEntries());
+   for (int i=0; i<numberOfEntries(); i++)
       printf("[   \"%s\"]\n",getEntry(i,__LINE__));
 }
 
-void oprintf(char *pszFormat, ...)
+void oprintf(cchar *pszFormat, ...)
 {
    va_list argList;
    va_start(argList, pszFormat);
    ::vsnprintf(szPrintBufMap, sizeof(szPrintBufMap)-10, pszFormat, argList);
    szPrintBufMap[sizeof(szPrintBufMap)-10] = '\0';
-   char *psz = szPrintBufMap;
 
    #ifdef _WIN32
+   char *psz = szPrintBufMap;
    // windows only: if output is NOT directed to file, map it to DOS charset,
    // to have filenames listed with correct umlauts etc.
    if (bGlblEnableOPrintf && (bGlblForceCConv || bGlblHaveInteractiveConsole)) {
@@ -7687,7 +7858,7 @@ void oprintf(char *pszFormat, ...)
    fflush(stdout);
 }
 
-void oprintf(StringPipe *pOutData, char *pszFormat, ...)
+void oprintf(StringPipe *pOutData, cchar *pszFormat, ...)
 {
    va_list argList;
    va_start(argList, pszFormat);
@@ -7699,10 +7870,10 @@ void oprintf(StringPipe *pOutData, char *pszFormat, ...)
    if (pOutData) {
       // auto-strip LF if given. oprintf adds full records only.
       // do NOT convert text, as it is passed to further chain commands.
-      long nlen = strlen(psz);
+      int nlen = strlen(psz);
       if (nlen > 0 && psz[nlen-1] == '\n')
          psz[nlen-1] = '\0';
-      pOutData->addEntry(psz, "");
+      pOutData->addEntry(psz, str(""));
    } else {
       #ifdef _WIN32
       // windows only: if output is NOT directed to file, map it to DOS charset,
@@ -7736,25 +7907,25 @@ public:
    bool  text2files;
    bool  files2text;
 
-   long  init();
+   int  init();
    void  reset();    // per loop
    void  shutdown();
    bool  colany() { return colfiles || coldata; }
    bool  useany() { return usefiles || usedata; }
-   long  moveOutToIn(char *pszCmd);
-   long  convInDataToInFiles ( );
+   int  moveOutToIn(char *pszCmd);
+   int  convInDataToInFiles ( );
 
-   long  addLine(char *pszText, char *pszAttr, bool bSplitByLF=0);
-   long  addToCurLine(char *pszWords, char *pszAttr, bool bNewLine=0);
+   int  addLine(char *pszText, char *pszAttr, bool bSplitByLF=0);
+   int  addToCurLine(char *pszWords, char *pszAttr, bool bNewLine=0);
 
-   long  addFile(Coi &ocoi); // is COPIED
-   long  numberOfInFiles() { return infiles->numberOfEntries(); }
-   Coi  *getFile(long nIndex); // returns null on wrong index
+   int  addFile(Coi &ocoi); // is COPIED
+   int  numberOfInFiles() { return infiles->numberOfEntries(); }
+   Coi  *getFile(int nIndex); // returns null on wrong index
 
-   long  print(char cattrib, long nflags, char *pszFormat, ...); // no multi-line
-   long  print(char *pszFormat, ...); // multi-line support
+   int  print(char cattrib, int nflags, cchar *pszFormat, ...); // no multi-line
+   int  print(cchar *pszFormat, ...); // multi-line support
 
-   long  printFile(char *pszOutFile, bool bWriteFile, char *pszFormat, ...);
+   int  printFile(cchar *pszOutFile, bool bWriteFile, cchar *pszFormat, ...);
 
    void  dumpContents();   // to terminal
 
@@ -7767,17 +7938,17 @@ chain;
 
 // bool chainColFiles() { return chain.colfiles; }
 
-long chainAddLine(char *pszText, char *pszAttr, bool bSplitByLF) 
+int chainAddLine(char *pszText, char *pszAttr, bool bSplitByLF) 
 {
-   // mtklog("chain-add: \"%.50s\"", pszText);
+   // mtklog(("chain-add: \"%.50s\"", pszText));
    return chain.addLine(pszText, pszAttr, bSplitByLF);
 }
 
-long CommandChaining::addFile(Coi &ocoi) {
+int CommandChaining::addFile(Coi &ocoi) {
    return outfiles->addEntry(ocoi);
 }
 
-Coi *CommandChaining::getFile(long nIndex) {
+Coi *CommandChaining::getFile(int nIndex) {
    return infiles->getEntry(nIndex, __LINE__);
 }
 
@@ -7785,8 +7956,8 @@ void CommandChaining::dumpContents()
 {
    if (usedata) {
       printf("[indata]\n");
-      for (long i=0; i<chain.indata->numberOfEntries(); i++) {
-         char *pattr = "";
+      for (int i=0; i<chain.indata->numberOfEntries(); i++) {
+         char *pattr = str("");
          char *ptext = chain.indata->getEntry(i, __LINE__, &pattr);
          if (ptext)
             printColorText(ptext, pattr, 1); // with lf
@@ -7795,7 +7966,7 @@ void CommandChaining::dumpContents()
 
    if (usefiles) {
       printf("[infiles]\n");
-      for (long i=0; i<chain.numberOfInFiles(); i++) {
+      for (int i=0; i<chain.numberOfInFiles(); i++) {
          Coi *pcoi = chain.getFile(i);
          if (pcoi) {
             oprintf("%s\n", pcoi->name());
@@ -7805,7 +7976,7 @@ void CommandChaining::dumpContents()
 }
 
 // uses print buffers from printx
-long CommandChaining::print(char cattrib, long nflags, char *pszFormat, ...)
+int CommandChaining::print(char cattrib, int nflags, cchar *pszFormat, ...)
 {
    va_list argList;
    va_start(argList, pszFormat);
@@ -7818,13 +7989,13 @@ long CommandChaining::print(char cattrib, long nflags, char *pszFormat, ...)
    szPrintBuf1[sizeof(szPrintBuf1)-10] = '\0';
 
    // prepare mono color
-   long nlen = strlen(szPrintBuf1);
+   int nlen = strlen(szPrintBuf1);
    memset(szPrintAttr, cattrib, nlen);
    szPrintAttr[nlen] = '\0';
 
    if (coldata) {
       if (bWithPreLF)
-         addLine("", "");
+         addLine(str(""), str(""));
       if (bWithPostLF) {
          return addLine(szPrintBuf1, szPrintAttr);
       } else {
@@ -7840,21 +8011,21 @@ long CommandChaining::print(char cattrib, long nflags, char *pszFormat, ...)
 }
 
 // uses print buffers from printx
-long CommandChaining::printFile(char *pszOutFile, bool bWriteFile, char *pszFormat, ...)
+int CommandChaining::printFile(cchar *pszOutFile, bool bWriteFile, cchar *pszFormat, ...)
 {
-   long nrc = 0;
+   int nrc = 0;
 
    // there should be no redirect file open
    if (cs.outfile) return 9+perr("redirect file already open");
 
    if (bWriteFile) {
       // isolate path, create all directories
-      long createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot);
+      int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot);
       strcopy(szPrintBuf2, pszOutFile);
       char *psz1 = strrchr(szPrintBuf2, glblPathChar);
       if (psz1) {
          *psz1 = '\0'; 
-         if (nrc = createSubDirTree(szPrintBuf2, "", 0))
+         if ((nrc = createSubDirTree(szPrintBuf2, str(""), 0)))
             return nrc+perr("cannot create dir: %s\n", szPrintBuf2);
       }
    
@@ -7884,7 +8055,7 @@ long CommandChaining::printFile(char *pszOutFile, bool bWriteFile, char *pszForm
       char *psz2 = strchr(psz1, '\n');
       if (psz2) {
          // intermediate record
-         long n = psz2-psz1;
+         int n = psz2-psz1;
          if (n > MAX_LINE_LEN) n = MAX_LINE_LEN;
          memcpy(szPrintBuf2, psz1, n);
          szPrintBuf2[n] = '\0';
@@ -7894,7 +8065,7 @@ long CommandChaining::printFile(char *pszOutFile, bool bWriteFile, char *pszForm
          strcopy(szPrintBuf2, psz1);
       }
 
-      long nlen = strlen(szPrintBuf2);
+      int nlen = strlen(szPrintBuf2);
       memset(szPrintAttr, ' ', nlen);
       szPrintAttr[nlen] = '\0';
 
@@ -7923,7 +8094,7 @@ long CommandChaining::printFile(char *pszOutFile, bool bWriteFile, char *pszForm
 // raw printf like method. no colors, no special options,
 // but it splits multiline text into many records.
 // one-line text SHOULD be terminated with LF.
-long CommandChaining::print(char *pszFormat, ...)
+int CommandChaining::print(cchar *pszFormat, ...)
 {__
    va_list argList;
    va_start(argList, pszFormat);
@@ -7941,7 +8112,7 @@ long CommandChaining::print(char *pszFormat, ...)
       char *psz2 = strchr(psz1, '\n');
       if (psz2) {
          // intermediate record
-         long n = psz2-psz1;
+         int n = psz2-psz1;
          if (n > MAX_LINE_LEN) n = MAX_LINE_LEN;
          memcpy(szPrintBuf2, psz1, n);
          szPrintBuf2[n] = '\0';
@@ -7951,7 +8122,7 @@ long CommandChaining::print(char *pszFormat, ...)
          strcopy(szPrintBuf2, psz1);
       }
 
-      long nlen = strlen(szPrintBuf2);
+      int nlen = strlen(szPrintBuf2);
       memset(szPrintAttr, ' ', nlen);
       szPrintAttr[nlen] = '\0';
 
@@ -7969,14 +8140,14 @@ long CommandChaining::print(char *pszFormat, ...)
    return 0;
 }
 
-long CommandChaining::convInDataToInFiles()
+int CommandChaining::convInDataToInFiles()
 {
    // user wants to convert text to filename list
-   for (long i=0; i<indata->numberOfEntries(); i++) {
+   for (int i=0; i<indata->numberOfEntries(); i++) {
       char *psz1 = indata->getEntry(i, __LINE__);
       // strip LFs (if any) from indata. we will drop
       // all indata records below, therefore edit directly:
-      long nlen = strlen(psz1);
+      int nlen = strlen(psz1);
       if (nlen > 0 && psz1[nlen-1] == '\n')
           psz1[nlen-1] = '\0';
       Coi ocoi(psz1, 0);
@@ -7990,10 +8161,10 @@ long CommandChaining::convInDataToInFiles()
    return 0;
 }
 
-long CommandChaining::addLine(char *pszText, char *pszAttr, bool bSplitByLF)
+int CommandChaining::addLine(char *pszText, char *pszAttr, bool bSplitByLF)
 {
-   mtklog("addl.text: %d %04d \"%s\"", bSplitByLF, strlen(pszText), pszText);
-   mtklog("addl.attr: %d %04d \"%s\"", bSplitByLF, strlen(pszAttr), pszAttr);
+   mtklog(("addl.text: %d %04d \"%s\"", bSplitByLF, strlen(pszText), pszText));
+   mtklog(("addl.attr: %d %04d \"%s\"", bSplitByLF, strlen(pszAttr), pszAttr));
 
    if (pszText[0] && bSplitByLF) 
    {
@@ -8001,13 +8172,13 @@ long CommandChaining::addLine(char *pszText, char *pszAttr, bool bSplitByLF)
       // if so, create multiple records.
       bool btermlf = 0;
       char *psz  = pszText;
-      long nalen = strlen(pszAttr);
+      int nalen = strlen(pszAttr);
       while (*psz) 
       {
          char *psz2 = psz;
          while (*psz2 && *psz2 != '\n')
             psz2++;
-         long nlen = psz2-psz;
+         int nlen = psz2-psz;
          if (nlen > MAX_LINE_LEN) nlen = MAX_LINE_LEN;
 
          // isolate text part
@@ -8016,7 +8187,7 @@ long CommandChaining::addLine(char *pszText, char *pszAttr, bool bSplitByLF)
          removeCRLF(szClBuf); // just in case
 
          // isolate attribute part
-         long noff = psz-pszText;
+         int noff = psz-pszText;
          if (noff < nalen) {
             strncpy(szClAttr, pszAttr+noff, nlen);
             szClAttr[nlen] = '\0';
@@ -8036,7 +8207,7 @@ long CommandChaining::addLine(char *pszText, char *pszAttr, bool bSplitByLF)
       if (btermlf && (bSplitByLF > 1)) {
          // the text was ended by a LF. this should procude
          // an empty line only if SplitByLF == 2.
-         outdata->addEntry("", "");
+         outdata->addEntry(str(""), str(""));
       }
    } else {
       // used also for empty strings, to add empty line
@@ -8045,18 +8216,18 @@ long CommandChaining::addLine(char *pszText, char *pszAttr, bool bSplitByLF)
    return 0;
 }
 
-long CommandChaining::addToCurLine(char *pszWords, char *pszAttr, bool bNewLine)
+int CommandChaining::addToCurLine(char *pszWords, char *pszAttr, bool bNewLine)
 {
-   mtklog("addc.text: %d %04d \"%s\"", bNewLine, strlen(pszWords), pszWords);
-   mtklog("addc.attr: %d %04d \"%s\"", bNewLine, strlen(pszAttr ), pszAttr );
+   mtklog(("addc.text: %d %04d \"%s\"", bNewLine, strlen(pszWords), pszWords));
+   mtklog(("addc.attr: %d %04d \"%s\"", bNewLine, strlen(pszAttr ), pszAttr ));
 
    if (!outdata->numberOfEntries() || bNewLine)
-       if (outdata->addEntry("", ""))
+       if (outdata->addEntry(str(""), str("")))
          return 9;
 
    // append actual text
    {
-      long nidx = outdata->numberOfEntries()-1;
+      int nidx = outdata->numberOfEntries()-1;
       if (nidx < 0) return 9+perr("internal 200706102039");
 
       char *pAttr  = 0;   
@@ -8065,22 +8236,22 @@ long CommandChaining::addToCurLine(char *pszWords, char *pszAttr, bool bNewLine)
       if (pAttr) strcopy(szClAttr, pAttr);
       else szClAttr[0] = '\0';
 
-      long icurlen = strlen(szClBuf);   
-      long nremain = MAX_LINE_LEN - icurlen - 1;
+      int icurlen = strlen(szClBuf);   
+      int nremain = MAX_LINE_LEN - icurlen - 1;
 
       // append text
-      long naddlen = strlen(pszWords);
+      int naddlen = strlen(pszWords);
       if (naddlen > nremain) {
          if (!btold1) {
             btold1 = 1;
             perr("line buffer overflow: cannot join \"%s\" and following\n", pszWords);
-            pinf("buffered lines may have %ld characters max.\n", MAX_LINE_LEN-10);
+            pinf("buffered lines may have %d characters max.\n", MAX_LINE_LEN-10);
          }
          return 1;
       }
 
       // and attributes as well, length limited by text
-      long nattlen = strlen(pszAttr);
+      int nattlen = strlen(pszAttr);
       if (nattlen > naddlen) nattlen = naddlen;
 
       strncpy(szClBuf+icurlen, pszWords, naddlen);
@@ -8095,7 +8266,7 @@ long CommandChaining::addToCurLine(char *pszWords, char *pszAttr, bool bNewLine)
    return 0;
 }
 
-long CommandChaining::moveOutToIn(char *pszCmd)
+int CommandChaining::moveOutToIn(char *pszCmd)
 {
    CoiTable *p1 = infiles;
    infiles      = outfiles;
@@ -8142,28 +8313,27 @@ long CommandChaining::moveOutToIn(char *pszCmd)
 
    if (usedata && !usefiles && !indata->numberOfEntries()) {
       if (cs.verbose)
-         printf("[chain autoselects ftt from %ld filenames.]\n",numberOfInFiles());
+         printf("[chain autoselects ftt from %d filenames.]\n",numberOfInFiles());
       bf2t = 1;
    }
 
    if (usefiles && !usedata && !numberOfInFiles()) {
       if (cs.verbose)
-         printf("[chain autoselects ttf from %ld text lines.]\n",indata->numberOfEntries());
+         printf("[chain autoselects ttf from %d text lines.]\n",indata->numberOfEntries());
       bt2f = 1;
    }
 
    if (bf2t)
    {
       // autoconvert filename list to text, even on empty list.
-      long nrec = numberOfInFiles();
-      char *pfile=0;
-      for (long i=0; i<nrec; i++) {
+      int nrec = numberOfInFiles();
+      for (int i=0; i<nrec; i++) {
          Coi *pcoi = getFile(i);
-         if (pcoi) indata->addEntry(pcoi->name(), "");
+         if (pcoi) indata->addEntry(pcoi->name(), str(""));
       }
       infiles->resetEntries();
       if (cs.verbose)
-         printf("[chain converts filename list to text data, %ld records]\n", nrec);
+         printf("[chain converts filename list to text data, %d records]\n", nrec);
       usefiles = 0;
       usedata  = 1;
    }
@@ -8184,9 +8354,9 @@ long CommandChaining::moveOutToIn(char *pszCmd)
 
    if (cs.verbose) {
       if (usefiles)
-         printf("[chain passes %ld files to %s]\n",numberOfInFiles(),pszCmd);
+         printf("[chain passes %d files to %s]\n",numberOfInFiles(),pszCmd);
       if (usedata)
-         printf("[chain passes %ld text lines to %s]\n",indata->numberOfEntries(),pszCmd);
+         printf("[chain passes %d text lines to %s]\n",indata->numberOfEntries(),pszCmd);
    }
 
    return 0;
@@ -8210,7 +8380,7 @@ CommandChaining::CommandChaining()
    btold1     = 0;
 }
 
-long CommandChaining::init()
+int CommandChaining::init()
 {
    infiles  = new CoiTable();
    outfiles = new CoiTable();
@@ -8262,17 +8432,17 @@ void CommandChaining::shutdown()
    }
 }
 
-long printEcho(bool bAddToCurLine, const char *pszFormat, ...)
+int printEcho(bool bAddToCurLine, const char *pszFormat, ...)
 {__
    va_list argList;
    va_start(argList, pszFormat);
    ::vsnprintf(szPrintBuf1, sizeof(szPrintBuf1)-10, pszFormat, argList);
    szPrintBuf1[sizeof(szPrintBuf1)-10] = '\0';
    char *pszSrc = szPrintBuf1;
-   long iDst = 0;
+   int iDst = 0;
    char nAttr = ' ';
    bool bResetOnLF = 0;
-   while (*pszSrc && (iDst < sizeof(szPrintBuf2)-10)) 
+   while (*pszSrc && (iDst < (int)sizeof(szPrintBuf2)-10)) 
    {
       /*
       if (pszSrc[0] == '\\' && pszSrc[1] == glblWildChar) {
@@ -8354,15 +8524,15 @@ StringTable::~StringTable() {
    resetEntries();
 }
 
-void StringTable::dump(long nIndent) {
+void StringTable::dump(int nIndent) {
    printf("] %.*sstringtable %p, %d entries:\n",nIndent,pszGlblBlank,this,nClArrayUsed);
-   for (long i=0; i<nClArrayUsed; i++) {
+   for (int i=0; i<nClArrayUsed; i++) {
       printf("]   %.*s%s\n", nIndent,pszGlblBlank,apClArray[i] ? apClArray[i] : "<null>");
    }
 }
 
 void StringTable::resetEntries() {
-   for (long i=0; i<nClArrayUsed; i++) {
+   for (int i=0; i<nClArrayUsed; i++) {
       if (apClArray[i]) delete [] apClArray[i];
       apClArray[i] = 0;
    }
@@ -8373,17 +8543,17 @@ void StringTable::resetEntries() {
    nClArraySize = 0;
 }
 
-long StringTable::numberOfEntries() {
+int StringTable::numberOfEntries() {
    return nClArrayUsed;
 }
 
-bool StringTable::isSet(long iIndex) {
+bool StringTable::isSet(int iIndex) {
    if (iIndex < 0)
       { pwarn("illegal index: %d\n", iIndex); return 0; }
    return (iIndex < nClArrayUsed) ? 1 : 0;
 }
 
-long StringTable::expand(long nSoMuch) {
+int StringTable::expand(int nSoMuch) {
    char **apTmp = new char*[nClArraySize+nSoMuch];
    if (!apTmp) return 9;
    if (apClArray) {
@@ -8395,7 +8565,7 @@ long StringTable::expand(long nSoMuch) {
    return 0;
 }
 
-long StringTable::addEntry(char *psz, long nAtPos, char **ppCopy) 
+int StringTable::addEntry(char *psz, int nAtPos, char **ppCopy) 
 {
    char *pCopy = 0;
    if (nClArrayUsed == nClArraySize) {
@@ -8406,7 +8576,7 @@ long StringTable::addEntry(char *psz, long nAtPos, char **ppCopy)
       }
    }
    if (nAtPos != -1) {
-      for (long i=nClArrayUsed; i>nAtPos; i--)
+      for (int i=nClArrayUsed; i>nAtPos; i--)
          apClArray[i] = apClArray[i-1];
       pCopy = psz ? strdup(psz) : 0;
       apClArray[nAtPos] = pCopy;
@@ -8419,18 +8589,18 @@ long StringTable::addEntry(char *psz, long nAtPos, char **ppCopy)
    return 0;
 }
 
-long StringTable::removeEntry(long nAtPos) {
+int StringTable::removeEntry(int nAtPos) {
    if (nAtPos < 0 || nAtPos >= nClArrayUsed)
       return 9;
    if (apClArray[nAtPos]) delete [] apClArray[nAtPos];
-   for (long i=nAtPos; i<nClArrayUsed-1; i++)
+   for (int i=nAtPos; i<nClArrayUsed-1; i++)
       apClArray[i] = apClArray[i+1];
    apClArray[nClArrayUsed-1] = 0; // just in case
    nClArrayUsed--;
    return 0;
 }
 
-long StringTable::addEntryPrefixed(char *psz, char cPrefix) {
+int StringTable::addEntryPrefixed(char *psz, char cPrefix) {
    if (nClArrayUsed == nClArraySize) {
       if (nClArraySize == 0) {
          if (expand(10)) return 9;
@@ -8439,7 +8609,7 @@ long StringTable::addEntryPrefixed(char *psz, char cPrefix) {
       }
    }
    // create extended copy with prefix at beginning
-   long nLen = strlen(psz);
+   int nLen = strlen(psz);
    char *pszCopy = new char[nLen+2];
    pszCopy[0] = cPrefix;
    strcpy(pszCopy+1, psz);
@@ -8449,7 +8619,7 @@ long StringTable::addEntryPrefixed(char *psz, char cPrefix) {
    return 0;
 }
 
-long StringTable::setEntry(long nIndex, char *psz) {
+int StringTable::setEntry(int nIndex, char *psz) {
    if (nIndex >= nClArrayUsed)
       return 9+perr("illegal set index: %d\n", nIndex);
    if (apClArray[nIndex])
@@ -8458,11 +8628,11 @@ long StringTable::setEntry(long nIndex, char *psz) {
    return 0;
 }
 
-long StringTable::setEntryPrefixed(long nIndex, char *psz, char cPrefix) {
+int StringTable::setEntryPrefixed(int nIndex, char *psz, char cPrefix) {
    if (nIndex >= nClArrayUsed)
       return 9+perr("illegal set index: %d\n", nIndex);
    // create extended copy with prefix at beginning
-   long nLen = strlen(psz);
+   int nLen = strlen(psz);
    char *pszCopy = new char[nLen+2];
    pszCopy[0] = cPrefix;
    strcpy(pszCopy+1, psz);
@@ -8475,15 +8645,15 @@ long StringTable::setEntryPrefixed(long nIndex, char *psz, char cPrefix) {
    return 0;
 }
 
-char *StringTable::getEntry(long nIndex, int nTraceLine) {
+char *StringTable::getEntry(int nIndex, int nTraceLine) {
    if (nIndex >= 0 && nIndex < nClArrayUsed)
       return apClArray[nIndex];
    perr("illegal StringTable index: %d tline %d\n", nIndex, nTraceLine);
    return 0;
 }
 
-long StringTable::find(char *psz) {
-   for (long i=0; i<nClArrayUsed; i++)
+int StringTable::find(char *psz) {
+   for (int i=0; i<nClArrayUsed; i++)
       if (apClArray[i] && !strcmp(apClArray[i], psz))
          return i;
    return -1;
@@ -8507,7 +8677,7 @@ char *StringPipe::read(char **ppAttr)
    if (nReadIndex < numberOfEntries()) {
       char *psz   = clText.getEntry(nReadIndex, __LINE__);
       char *pattr = clAttr.getEntry(nReadIndex, __LINE__);
-      // printf("PIPE.READ %ld = %s\n",nReadIndex,psz);
+      // printf("PIPE.READ %d = %s\n",nReadIndex,psz);
       nReadIndex++;
       if (ppAttr)
          *ppAttr = pattr;
@@ -8539,8 +8709,8 @@ void trackStaleZip(char *pszFileName)
    if (!strncmp(pszFileName, glblDotSlash, 2))
       pszFileName += 2;
 
-   long nEntries = glblStaleLog.numberOfEntries();
-   for (long i=0; i<nEntries; i++)
+   int nEntries = glblStaleLog.numberOfEntries();
+   for (int i=0; i<nEntries; i++)
    {
       char *psz = glblStaleLog.getEntry(i, __LINE__);
       if (!strcmp(psz, pszFileName))
@@ -8552,7 +8722,7 @@ void trackStaleZip(char *pszFileName)
 }
 
 bool endsWithPathChar(char *pszPath, bool bAcceptFWSlash=0) {
-   long nLen = strlen(pszPath);
+   int nLen = strlen(pszPath);
    if (nLen>0) {
       if (pszPath[nLen-1] == glblPathChar)
          return 1;
@@ -8564,7 +8734,7 @@ bool endsWithPathChar(char *pszPath, bool bAcceptFWSlash=0) {
 
 bool endsWithColon(char *pszPath) {
    #ifdef _WIN32
-   long nLen = strlen(pszPath);
+   int nLen = strlen(pszPath);
    if (nLen>0 && pszPath[nLen-1] == ':')
       return 1;
    #endif
@@ -8587,7 +8757,7 @@ Array::~Array() {
 
 void Array::dump() {
    printf("] array %s dump:\n",pszClID);
-   for (long iRow=0; iRow<nClRowsUsed; iRow++) {
+   for (int iRow=0; iRow<nClRowsUsed; iRow++) {
       StringTable *pRow = apClRows[iRow];
       printf("]   row %p:\n",pRow);
       pRow->dump(5);
@@ -8595,7 +8765,7 @@ void Array::dump() {
 }
 
 // internal: expand row array
-long Array::expand(long nSoMuch) {
+int Array::expand(int nSoMuch) {
    StringTable **apTmp = new StringTable*[nClRowsSize+nSoMuch];
    if (!apTmp) return 9;
    if (apClRows) {
@@ -8608,7 +8778,7 @@ long Array::expand(long nSoMuch) {
 }
 
 // internal: make sure at least one row exists
-long Array::ensureBase( ) {
+int Array::ensureBase( ) {
    if (!nClRowsSize) {
       // if (cs.debug) printf("] array %p crt initial\n",this);
       // create initial row, for one-dimensional mode
@@ -8623,7 +8793,7 @@ long Array::ensureBase( ) {
 // public: remove everything
 void Array::reset() {
    // if (cs.debug) printf("] array %p RESET\n",this);
-   for (long i=0; i<nClRowsUsed; i++) {
+   for (int i=0; i<nClRowsUsed; i++) {
       delete apClRows[i];
       apClRows[i] = 0;
    }
@@ -8636,12 +8806,12 @@ void Array::reset() {
 }
 
 // public: return number of columns in current row
-long Array::numberOfEntries() {
+int Array::numberOfEntries() {
    if (ensureBase()) return 0;
    return apClRows[nClCurRow]->numberOfEntries();
 }
 
-long Array::numberOfEntries(long lRow) {
+int Array::numberOfEntries(int lRow) {
    if (ensureBase()) return 0;
    if (lRow < 0 || lRow > nClRowsUsed)
       return 9+perr("%s: illegal row %d\n",pszClID,lRow);
@@ -8649,42 +8819,42 @@ long Array::numberOfEntries(long lRow) {
 }
 
 // public: add string object to current row
-long Array::addString(char *psz) {
+int Array::addString(char *psz) {
    if (ensureBase()) return 0;
    if (cs.debug) printf("] array %s: add to row %d entry %s. [%d rows total]\n",pszClID,nClCurRow,psz,nClRowsUsed);
-   long lRC = apClRows[nClCurRow]->addEntryPrefixed(psz, 's');
+   int lRC = apClRows[nClCurRow]->addEntryPrefixed(psz, 's');
    return lRC;
 }
 
-long Array::addString(long lRow, char *psz) {
+int Array::addString(int lRow, char *psz) {
    if (ensureBase()) return 0;
    if (lRow < 0 || lRow > nClRowsUsed)
       return 9+perr("%s: illegal row %d\n",pszClID,lRow);
    if (cs.debug) printf("] array %s: add to row %d entry %s. [%d rows total]\n",pszClID,lRow,psz,nClRowsUsed);
-   long lRC = apClRows[lRow]->addEntryPrefixed(psz, 's');
+   int lRC = apClRows[lRow]->addEntryPrefixed(psz, 's');
    return lRC;
 }
 
-long Array::addNull(long lRow) {
+int Array::addNull(int lRow) {
    if (ensureBase()) return 0;
    if (lRow < 0 || lRow > nClRowsUsed)
       return 9+perr("%s: illegal row %d\n",pszClID,lRow);
    if (cs.debug) printf("] array %s: add NULL to row %d. [%d rows total]\n",pszClID,lRow,nClRowsUsed);
-   long lRC = apClRows[lRow]->addEntry(0);
+   int lRC = apClRows[lRow]->addEntry(0);
    return lRC;
 }
 
-long Array::setString(long lRow, long nIndex, char *psz) {
+int Array::setString(int lRow, int nIndex, char *psz) {
    if (ensureBase()) return 0;
    if (lRow < 0 || lRow > nClRowsUsed)
       return 9+perr("%s: illegal row %d\n",pszClID,lRow);
    if (cs.debug) printf("] array %s: set row %d:%d entry %s. [%d rows total]\n",pszClID,lRow,nIndex,psz,nClRowsUsed);
-   long lRC = apClRows[lRow]->setEntryPrefixed(nIndex, psz, 's');
+   int lRC = apClRows[lRow]->setEntryPrefixed(nIndex, psz, 's');
    return lRC;
 }
 
 // public: get string object from current row
-char *Array::getString(long nIndex) {
+char *Array::getString(int nIndex) {
    if (ensureBase()) return 0;
    char *pszRaw = apClRows[nClCurRow]->getEntry(nIndex, __LINE__);
    if (!pszRaw)
@@ -8693,7 +8863,7 @@ char *Array::getString(long nIndex) {
    return pszRaw+1;
 }
 
-char *Array::getString(long lRow, long nIndex) {
+char *Array::getString(int lRow, int nIndex) {
    if (ensureBase()) return 0;
    if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    char *pszRaw = apClRows[lRow]->getEntry(nIndex, __LINE__);
@@ -8704,74 +8874,74 @@ char *Array::getString(long lRow, long nIndex) {
 }
 
 // public: add integer to current row, internally encoded as string
-long Array::addLong(long nValue, int nTraceLine) {
+int Array::addLong(int nValue, int nTraceLine) {
    if (ensureBase()) return 0;
    if (cs.debug) printf("] array %s: add to row %d entry %d [tline %d]\n",pszClID,nClCurRow,nValue,nTraceLine);
    char szBuf[100];
-   ulong uValue = (ulong)nValue;
-   // char *_ultoa( unsigned long value, char *string, int radix );
+   uint uValue = (uint)nValue;
+   // char *_ultoa( unsigned int value, char *string, int radix );
    #ifdef _WIN32
    _ultoa(uValue, szBuf, 16);
    #else
-   sprintf(szBuf, "%lx", uValue);
+   sprintf(szBuf, "%x", uValue);
    #endif
    return apClRows[nClCurRow]->addEntryPrefixed(szBuf, 'i');
 }
 
-long Array::addLong(long lRow, long nValue, int nTraceLine) {
+int Array::addLong(int lRow, int nValue, int nTraceLine) {
    if (ensureBase()) return 0;
    if (cs.debug) printf("] array %s: add to row %d entry %d [tline %d]\n",pszClID,lRow,nValue,nTraceLine);
    if (lRow < 0 || lRow > nClRowsUsed) return 9+perr("%s: illegal row %d\n",pszClID,lRow);
    char szBuf[100];
-   ulong uValue = (ulong)nValue;
+   uint uValue = (uint)nValue;
    #ifdef _WIN32
    _ultoa(uValue, szBuf, 16);
    #else
-   sprintf(szBuf, "%lx", uValue);
+   sprintf(szBuf, "%x", uValue);
    #endif
    return apClRows[lRow]->addEntryPrefixed(szBuf, 'i');
 }
 
-long Array::getLong(long nIndex) {
+int Array::getLong(int nIndex) {
    if (ensureBase()) return 0;
    char *pszRaw = apClRows[nClCurRow]->getEntry(nIndex, __LINE__);
    if (!pszRaw)
       return 0;
-   if (pszRaw[0] != 'i') { perr("no long entry type at row %u col %u\n", nClCurRow, nIndex); return 0; }
-   // unsigned long strtoul( const char *nptr, char **endptr, int base );
-   ulong uValue = strtoul(pszRaw+1, 0, 16);
-   return (long)uValue;
+   if (pszRaw[0] != 'i') { perr("no long entry type at row %u col %u\n", nClCurRow, nIndex); return 0; } 
+   // unsigned int strtoul( const char *nptr, char **endptr, int base );
+   uint uValue = strtoul(pszRaw+1, 0, 16);
+   return (int)uValue;
 }
 
-long Array::getLong(long lRow, long nIndex, int nTraceLine) {
+int Array::getLong(int lRow, int nIndex, int nTraceLine) {
    if (ensureBase()) return 0;
    if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    char *pszRaw = apClRows[lRow]->getEntry(nIndex, nTraceLine);
    if (!pszRaw)
       return 0;
-   if (pszRaw[0] != 'i') { perr("no long entry type at row %u col %u\n", lRow, nIndex); return 0; }
-   // unsigned long strtoul( const char *nptr, char **endptr, int base );
-   ulong uValue = strtoul(pszRaw+1, 0, 16);
-   return (long)uValue;
+   if (pszRaw[0] != 'i') { perr("no long entry type at row %u col %u\n", lRow, nIndex); return 0; } 
+   // unsigned int strtoul( const char *nptr, char **endptr, int base );
+   uint uValue = strtoul(pszRaw+1, 0, 16);
+   return (int)uValue;
 }
 
-long Array::setLong(long lRow, long nIndex, long nValue, int nTraceLine) {
+int Array::setLong(int lRow, int nIndex, int nValue, int nTraceLine) {
    if (ensureBase()) return 0;
    if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    char szBuf[100];
-   ulong uValue = (ulong)nValue;
-   // char *_ultoa( unsigned long value, char *string, int radix );
+   uint uValue = (uint)nValue;
+   // char *_ultoa( unsigned int value, char *string, int radix );
    #ifdef _WIN32
    _ultoa(uValue, szBuf, 16);
    #else
-   sprintf(szBuf, "%lx", uValue);
+   sprintf(szBuf, "%x", uValue);
    #endif
    return apClRows[lRow]->setEntryPrefixed(nIndex, szBuf, 'i');
 }
 
 // public: create new row. shouldn't be called for first row.
-long Array::addRow(int nTraceLine) {
-   long nOldRows = nClRowsSize;
+int Array::addRow(int nTraceLine) {
+   int nOldRows = nClRowsSize;
    if (ensureBase()) return 0;
    // if anyone calls this before adding first data, accept it.
    if (!nOldRows)
@@ -8791,7 +8961,7 @@ long Array::addRow(int nTraceLine) {
 }
 
 // public: select current row
-long Array::setRow(long iCurRow, int nTraceLine) {
+int Array::setRow(int iCurRow, int nTraceLine) {
    if (ensureBase()) return 9;
    if (iCurRow < 0 || iCurRow >= nClRowsUsed)
       return 9+perr("%s: illegal row index: %d on setRow, tline %d\n",pszClID,iCurRow,nTraceLine);
@@ -8801,13 +8971,13 @@ long Array::setRow(long iCurRow, int nTraceLine) {
 }
 
 // public: tell if index in current row is set, used for loops
-bool Array::isSet(long iIndex) {
+bool Array::isSet(int iIndex) {
    if (ensureBase()) return 0;
    return apClRows[nClCurRow]->isSet(iIndex);
 }
 
 // public: tell if index in current row is set with a string
-bool Array::isStringSet(long iIndex) {
+bool Array::isStringSet(int iIndex) {
    if (ensureBase()) return 0;
    if (!apClRows[nClCurRow]->isSet(iIndex)) {
       // if (cs.debug) printf("] %s: no string set at %d:%d\n",pszClID,nClCurRow,iIndex);
@@ -8829,7 +8999,7 @@ bool Array::isStringSet(long iIndex) {
    return 1;
 }
 
-bool Array::isStringSet(long lRow, long iIndex) {
+bool Array::isStringSet(int lRow, int iIndex) {
    if (ensureBase()) return 0;
    if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    if (!apClRows[lRow]->isSet(iIndex))
@@ -8845,8 +9015,8 @@ bool Array::isStringSet(long lRow, long iIndex) {
    return (pszRaw[0] == 's') ? 1 : 0;
 }
 
-// public: tell if index in current row is set with a long
-bool Array::isLongSet(long lRow, long iIndex) {
+// public: tell if index in current row is set with a int
+bool Array::isLongSet(int lRow, int iIndex) {
    if (ensureBase()) return 0;
    if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    if (!apClRows[lRow]->isSet(iIndex))
@@ -8858,7 +9028,7 @@ bool Array::isLongSet(long lRow, long iIndex) {
 }
 
 // public: tell if row exists
-bool Array::hasRow(long iRow) {
+bool Array::hasRow(int iRow) {
    if (ensureBase()) return 0;
    if (iRow < 0) {  perr("%s: illegal row index: %d on hasRow\n",pszClID,iRow); return 0; }
    return (iRow < nClRowsUsed) ? 1 : 0;
@@ -8884,15 +9054,15 @@ void LongTable::resetEntries() {
    nClArraySize = 0;
 }
 
-long LongTable::numberOfEntries() {
+int LongTable::numberOfEntries() {
    return nClArrayUsed;
 }
 
-long LongTable::expand(long nSoMuch) {
-   long *apTmp = new long[nClArraySize+nSoMuch];
+int LongTable::expand(int nSoMuch) {
+   int *apTmp = new int[nClArraySize+nSoMuch];
    if (!apTmp) return 9;
    if (pClArray) {
-      memcpy(apTmp, pClArray, nClArraySize*sizeof(long));
+      memcpy(apTmp, pClArray, nClArraySize*sizeof(int));
       delete [] pClArray;
    }
    pClArray = apTmp;
@@ -8900,7 +9070,7 @@ long LongTable::expand(long nSoMuch) {
    return 0;
 }
 
-long LongTable::addEntry(long nValue, long nAtPos)
+int LongTable::addEntry(int nValue, int nAtPos)
 {
    if (nClArrayUsed == nClArraySize) {
       if (nClArraySize == 0) {
@@ -8910,7 +9080,7 @@ long LongTable::addEntry(long nValue, long nAtPos)
       }
    }
    if (nAtPos != -1) {
-      for (long i=nClArrayUsed; i>nAtPos; i--)
+      for (int i=nClArrayUsed; i>nAtPos; i--)
          pClArray[i] = pClArray[i-1];
       pClArray[nAtPos] = nValue;
       nClArrayUsed++;
@@ -8920,14 +9090,14 @@ long LongTable::addEntry(long nValue, long nAtPos)
    return 0;
 }
 
-long LongTable::updateEntry(long nValue, long nIndex) {
+int LongTable::updateEntry(int nValue, int nIndex) {
    if (nIndex >= nClArrayUsed)
-      return 9+perr("wrong index for updateEntry: %ld\n", nIndex);
+      return 9+perr("wrong index for updateEntry: %d\n", nIndex);
    pClArray[nIndex] = nValue;
    return 0;
 }
 
-long LongTable::getEntry(long nIndex, int nTraceLine) {
+int LongTable::getEntry(int nIndex, int nTraceLine) {
    if (nIndex >= 0 && nIndex < nClArrayUsed)
       return pClArray[nIndex];
    perr("illegal LongTable index: %d %d tline %d\n", nIndex, nClArrayUsed, nTraceLine);
@@ -8954,11 +9124,11 @@ void NumTable::resetEntries() {
    nClArraySize = 0;
 }
 
-long NumTable::numberOfEntries() {
+int NumTable::numberOfEntries() {
    return nClArrayUsed;
 }
 
-long NumTable::expand(long nSoMuch) {
+int NumTable::expand(int nSoMuch) {
    num *apTmp = new num[nClArraySize+nSoMuch];
    if (!apTmp) return 9;
    if (pClArray) {
@@ -8970,7 +9140,7 @@ long NumTable::expand(long nSoMuch) {
    return 0;
 }
 
-long NumTable::addEntry(num nValue, long nAtPos) {
+int NumTable::addEntry(num nValue, int nAtPos) {
    if (nClArrayUsed == nClArraySize) {
       if (nClArraySize == 0) {
          if (expand(10)) return 9;
@@ -8979,7 +9149,7 @@ long NumTable::addEntry(num nValue, long nAtPos) {
       }
    }
    if (nAtPos != -1) {
-      for (long i=nClArrayUsed; i>nAtPos; i--)
+      for (int i=nClArrayUsed; i>nAtPos; i--)
          pClArray[i] = pClArray[i-1];
       pClArray[nAtPos] = nValue;
       nClArrayUsed++;
@@ -8989,14 +9159,14 @@ long NumTable::addEntry(num nValue, long nAtPos) {
    return 0;
 }
 
-long NumTable::updateEntry(num nValue, long nAtPos) {
+int NumTable::updateEntry(num nValue, int nAtPos) {
    if (nAtPos >= nClArrayUsed)
-      return 9+perr("illegal index for updateEntry: %ld\n", nAtPos);
+      return 9+perr("illegal index for updateEntry: %d\n", nAtPos);
    pClArray[nAtPos] = nValue;
    return 0;
 }
 
-num NumTable::getEntry(long nIndex, int nTraceLine) {
+num NumTable::getEntry(int nIndex, int nTraceLine) {
    if (nIndex >= 0 && nIndex < nClArrayUsed)
       return pClArray[nIndex];
    perr("illegal NumTable index: %d %d tline %d\n", nIndex, nClArrayUsed, nTraceLine);
@@ -9038,7 +9208,7 @@ void SFKMD5::update(uchar *pData, uint32_t nLen)
       if (nClBufCnt != 0)
       {
          int nAvail = nClBufLen - nClBufCnt;
-         int nMax = nAvail < nLen ? nAvail : nLen;
+         int nMax = nAvail < (int)nLen ? nAvail : (int)nLen;
    
          for (; nCnt < nMax; nCnt++)
             update(pData[nCnt]);
@@ -9060,7 +9230,7 @@ void SFKMD5::update(uchar *pData, uint32_t nLen)
          nCnt += nClBufLen;
       }
    
-      for (; nCnt < nLen; nCnt++)
+      for (; nCnt < (int)nLen; nCnt++)
          update(pData[nCnt]);
    }
 }
@@ -9227,8 +9397,8 @@ class FileList {
 public:
    FileList       ( );
   ~FileList       ( );
-   long  addFile        (char *pszAbsName, char *pszRoot, num nTimeStamp, num nSize, char cSortedBy=0);
-   long  checkAndMark   (char *pszName, num nSize);
+   int  addFile        (char *pszAbsName, char *pszRoot, num nTimeStamp, num nSize, char cSortedBy=0);
+   int  checkAndMark   (char *pszName, num nSize);
    void  reset          ( );
    StringTable clNames;
    StringTable clRoots;
@@ -9247,19 +9417,19 @@ void FileList::reset()
    clSizes.resetEntries();
 }
 
-long FileList::addFile(char *pszAbsName, char *pszRoot, num nTimeStamp, num nSize, char cSortedBy)
+int FileList::addFile(char *pszAbsName, char *pszRoot, num nTimeStamp, num nSize, char cSortedBy)
 {
    // IF filename starts with ".\\", skip this part
    if (!strncmp(pszAbsName, glblDotSlash, strlen(glblDotSlash)))
       pszAbsName += strlen(glblDotSlash);
 
    // insert sorted by (1)name, (2)time, (3)size?
-   long nInsPos = -1;
+   int nInsPos = -1;
 
    if (cSortedBy == 'T' || cSortedBy == 't') {
       // find insert by time position
-      long nCnt = clTimes.numberOfEntries();
-      long i=0;
+      int nCnt = clTimes.numberOfEntries();
+      int i=0;
       for (i=0; i<nCnt; i++)
          if (cSortedBy=='T' && (clTimes.getEntry(i, __LINE__) > nTimeStamp))
             break;
@@ -9272,8 +9442,8 @@ long FileList::addFile(char *pszAbsName, char *pszRoot, num nTimeStamp, num nSiz
 
    if (cSortedBy == 'S' || cSortedBy == 's') {
       // find insert by size position
-      long nCnt = clSizes.numberOfEntries();
-      long i=0;
+      int nCnt = clSizes.numberOfEntries();
+      int i=0;
       for (i=0; i<nCnt; i++)
          if (cSortedBy=='S' && (clSizes.getEntry(i, __LINE__) > nSize))
             break;
@@ -9286,16 +9456,16 @@ long FileList::addFile(char *pszAbsName, char *pszRoot, num nTimeStamp, num nSiz
 
    if (cSortedBy == 'N' || cSortedBy == 'n') {
       // find insert by name position
-      long nCnt = clNames.numberOfEntries();
-      long i=0;
+      int nCnt = clNames.numberOfEntries();
+      int i=0;
       for (i=0; i<nCnt; i++) {
          char *psz1 = clNames.getEntry(i, __LINE__);
          char *psz2 = pszAbsName;
          // both psz1 and psz2 point to a mixed string with a prefix.
          // need to find the actual filename first:
-         long npre1 = atol(psz1)+6; if (npre1 < (long)strlen(psz1)) psz1 += npre1;
-         long npre2 = atol(psz2)+6; if (npre2 < (long)strlen(psz2)) psz2 += npre2;
-         long ncmp  = cs.usecase ? strcmp(psz1,psz2) : mystricmp(psz1, psz2);
+         int npre1 = atol(psz1)+6; if (npre1 < (int)strlen(psz1)) psz1 += npre1;
+         int npre2 = atol(psz2)+6; if (npre2 < (int)strlen(psz2)) psz2 += npre2;
+         int ncmp  = cs.usecase ? strcmp(psz1,psz2) : mystricmp(psz1, psz2);
          if (cSortedBy=='N' && ncmp > 0)
             break;
          else
@@ -9316,9 +9486,9 @@ long FileList::addFile(char *pszAbsName, char *pszRoot, num nTimeStamp, num nSiz
 
 // checkAndMark checks the filename and size,
 // but NOT the rather complicated timestamps.
-long FileList::checkAndMark(char *pszName, num nSize) {
-   long nEntries = clNames.numberOfEntries();
-   for (long i=0; i<nEntries; i++) {
+int FileList::checkAndMark(char *pszName, num nSize) {
+   int nEntries = clNames.numberOfEntries();
+   for (int i=0; i<nEntries; i++) {
       char *psz = clNames.getEntry(i, __LINE__);
       if ((psz[0] != 0) && !strcmp(psz, pszName)) {
          num nSize2 = clSizes.getEntry(i, __LINE__);
@@ -9338,18 +9508,18 @@ long FileList::checkAndMark(char *pszName, num nSize) {
 class DupScanner {
 public:
    DupScanner     ( );
-   long  addFile  (char *psz);
-   long  analyze  (bool blistorg);
+   int  addFile  (char *psz);
+   int  analyze  (bool blistorg);
    void  reset    ( );
 public:
-   void  analyzeBlock   (long ilo, long ihi, bool blistorg);
+   void  analyzeBlock   (int ilo, int ihi, bool blistorg);
    NumTable    clSizes;
    StringTable clNames; // if name==null, was already processed
    StringTable clRoots;
    NumTable    clSumHi;
    NumTable    clSumLo;
-   long  clNumOrgs;
-   long  clNumDups;
+   int  clNumOrgs;
+   int  clNumDups;
    num   clOrgBytes;
    num   clDupBytes;
    bool  clDiffDirs;    // list only dups from different dirs
@@ -9370,7 +9540,7 @@ void DupScanner::reset() {
    clDiffDirs = 0;
 }
 
-long DupScanner::addFile(char *pszFile) 
+int DupScanner::addFile(char *pszFile) 
 {
    num nSize = getFileSize(pszFile);
    if (nSize <= 0) return 1;
@@ -9378,13 +9548,13 @@ long DupScanner::addFile(char *pszFile)
    if (cs.selMinSize > 0 && nSize < cs.selMinSize)
       return 0;
    // find insert position
-   long ipos=0;
+   int ipos=0;
    for (; ipos<clSizes.numberOfEntries(); ipos++)
       if (nSize < clSizes.getEntry(ipos, __LINE__))
          break;
    if (ipos >= clSizes.numberOfEntries())
       ipos = -1;
-   // mtklog("insert %s size %s at %ld",pszFile,numtoa(nSize),ipos);
+   // mtklog(("insert %s size %s at %d",pszFile,numtoa(nSize),ipos));
    clSizes.addEntry(nSize  , ipos);
    clNames.addEntry(pszFile, ipos);
    clRoots.addEntry(glblFileSet.root(), ipos);
@@ -9394,24 +9564,24 @@ long DupScanner::addFile(char *pszFile)
    return 0;
 }
 
-long DupScanner::analyze(bool blistorg) 
+int DupScanner::analyze(bool blistorg) 
 {
    char szAddInfo[200];
 
-   long nTotal   = clSizes.numberOfEntries();
+   int nTotal   = clSizes.numberOfEntries();
 
    #ifdef WITH_TRACING
-   mtklog("] scanned file sizes:");
-   for (long idump=0; idump<nTotal; idump++)
+   mtklog(("] scanned file sizes:"));
+   for (int idump=0; idump<nTotal; idump++)
    {
       num nref  = clSizes.getEntry(idump, __LINE__);
       char *psz = clNames.getEntry(idump, __LINE__);
-      mtklog("%s %s",numtoa(nref),psz);
+      mtklog(("%s %s",numtoa(nref),psz));
    }
    #endif
 
    num  nCurSize = -1;
-   for (long iouter=0; iouter<nTotal && !userInterrupt();)
+   for (int iouter=0; iouter<nTotal && !userInterrupt();)
    {
       num nref = clSizes.getEntry(iouter, __LINE__);
       if (nref == nCurSize)
@@ -9419,8 +9589,8 @@ long DupScanner::analyze(bool blistorg)
 
       // found start of new size block.
       nCurSize = nref;
-      long iblocklo = iouter + 0;
-      long iblockhi = iouter + 1;
+      int iblocklo = iouter + 0;
+      int iblockhi = iouter + 1;
       for (; iblockhi<nTotal && clSizes.getEntry(iblockhi, __LINE__) == nCurSize;)
          iblockhi++;
 
@@ -9448,14 +9618,14 @@ long DupScanner::analyze(bool blistorg)
 
       // have at least two entries in this block.
       // build content md5sums.
-      long nBlockFiles  = iblockhi-iblocklo;
+      int nBlockFiles  = iblockhi-iblocklo;
       num  nCurFileSize = clSizes.getEntry(iblocklo, __LINE__);
-      for (long icur=iblocklo; icur<iblockhi; icur++) 
+      for (int icur=iblocklo; icur<iblockhi; icur++) 
       {
          char *pszFile = clNames.getEntry(icur, __LINE__);
 
          info.setProgress(nBlockFiles, icur-iblocklo, "files");
-         sprintf(szAddInfo, "%ld files of size %s", nBlockFiles, numtoa(nCurFileSize));
+         sprintf(szAddInfo, "%d files of size %s", nBlockFiles, numtoa(nCurFileSize));
          info.setStatus("scan", pszFile, szAddInfo, (icur==iblocklo) ? eSlowCycle : 0);
 
          SFKMD5 md5;
@@ -9463,7 +9633,7 @@ long DupScanner::analyze(bool blistorg)
             return 9;
          unsigned char *pmd5 = md5.digest();
          num nsumlo=0, nsumhi=0;
-         for (long i=0,b=64-8; i<8; i++) {
+         for (int i=0,b=64-8; i<8; i++) {
             nsumhi = nsumhi | (((num)pmd5[0+i]&0xFF) << b);
             nsumlo = nsumlo | (((num)pmd5[8+i]&0xFF) << b);
             b -= 8;
@@ -9478,7 +9648,7 @@ long DupScanner::analyze(bool blistorg)
          strcat(szAddInfo, numtohex(nsumhi));
          strcat(szAddInfo, " ");
          strcat(szAddInfo, numtohex(nsumlo));
-         mtklog("md5num: %s", szAddInfo);
+         mtklog(("md5num: %s", szAddInfo));
          */
       }
       // all prepared for this block, list results:
@@ -9491,9 +9661,9 @@ long DupScanner::analyze(bool blistorg)
    return 0;
 }
 
-void DupScanner::analyzeBlock(long ilo, long ihi, bool blistorg)
+void DupScanner::analyzeBlock(int ilo, int ihi, bool blistorg)
 {
-   for (long iorg=ilo; iorg<ihi; iorg++)
+   for (int iorg=ilo; iorg<ihi; iorg++)
    {
       char *pszOrg     = clNames.getEntry(iorg, __LINE__);
       if (!pszOrg[0]) continue; // already processed
@@ -9505,7 +9675,7 @@ void DupScanner::analyzeBlock(long ilo, long ihi, bool blistorg)
 
       // see if any dups are present for this
       bool btoldorg=0;
-      for (long idup=iorg+1; idup<ihi; idup++)
+      for (int idup=iorg+1; idup<ihi; idup++)
       {
          char *pszDup     = clNames.getEntry(idup, __LINE__);
          if (!pszDup[0]) continue; // already processed
@@ -9537,7 +9707,7 @@ void DupScanner::analyzeBlock(long ilo, long ihi, bool blistorg)
             clDupBytes += clSizes.getEntry(idup, __LINE__);
 
             // mark dup as processed
-            clNames.setEntry(idup, "");
+            clNames.setEntry(idup, str(""));
          }
       }  // endfor potential dups
 
@@ -9555,7 +9725,7 @@ void DupScanner::analyzeBlock(long ilo, long ihi, bool blistorg)
       }
 
       // mark org as processed
-      clNames.setEntry(iorg, "");
+      clNames.setEntry(iorg, str(""));
 
    }  // endfor orgs
 }
@@ -9608,7 +9778,7 @@ void FileSet::shutdown() {
 
 char* FileSet::firstFileMask() {
    Array &rMasks = fileMasks();
-   if (!rMasks.isStringSet(0)) return "*";
+   if (!rMasks.isStringSet(0)) return str("*");
    return rMasks.getString(0);
 }
 
@@ -9623,7 +9793,7 @@ bool FileSet::isAnyExtensionMaskSet()
    return false;
 }
 
-long FileSet::getDirCommand() {
+int FileSet::getDirCommand() {
    return clRootDirs.getLong(1, nClCurDir, __LINE__);
 }
 
@@ -9636,10 +9806,10 @@ void FileSet::dump()
 {
    printf("=== fileset begin ===\n");
 
-   for (long i1=0; clRootDirs.isStringSet(0,i1); i1++)
+   for (int i1=0; clRootDirs.isStringSet(0,i1); i1++)
    {
-      long nLayer = clRootDirs.getLong(2,i1, __LINE__);
-      long nCmd   = 0;
+      int nLayer = clRootDirs.getLong(2,i1, __LINE__);
+      int nCmd   = 0;
       if (clRootDirs.isLongSet(1,i1))
            nCmd   = clRootDirs.getLong(1,i1, __LINE__);
       printf("] ROOT %s -> layer %d, cmd %d\n",
@@ -9649,16 +9819,16 @@ void FileSet::dump()
          );
    }
 
-   for (long iLayer=0; clDirMasks.hasRow(iLayer); iLayer++) 
+   for (int iLayer=0; clDirMasks.hasRow(iLayer); iLayer++) 
    {
       printf("] layer %d:\n", iLayer);
 
       printf("]  dmsk:\n");
-      for (long i5=0; clDirMasks.isStringSet(iLayer, i5); i5++)
+      for (int i5=0; clDirMasks.isStringSet(iLayer, i5); i5++)
          printf("]   %s\n",clDirMasks.getString(iLayer, i5));
 
       printf("]  fmsk:\n]   ");
-      for (long i6=0; clFileMasks.isStringSet(iLayer, i6); i6++)
+      for (int i6=0; clFileMasks.isStringSet(iLayer, i6); i6++)
          printf("%s, ",clFileMasks.getString(iLayer, i6));
       printf("\n");
    }
@@ -9667,91 +9837,91 @@ void FileSet::dump()
 }
 
 // like dump, but easier representation, using pinf
-void FileSet::info(void (*pout)(long nrectype, char *pline))
+void FileSet::info(void (*pout)(int nrectype, char *pline))
 {
    char *psml = szLineBuf;
    char *pbig = (char*)abBuf;
 
-   for (long i1=0; clRootDirs.isStringSet(0,i1); i1++)
+   for (int i1=0; clRootDirs.isStringSet(0,i1); i1++)
    {
-      long nLayer = clRootDirs.getLong(2,i1, __LINE__);
-      long nCmd   = 0;
+      int nLayer = clRootDirs.getLong(2,i1, __LINE__);
+      int nCmd   = 0;
       if (clRootDirs.isLongSet(1,i1))
            nCmd   = clRootDirs.getLong(1,i1, __LINE__);
 
-      sprintf(pbig, "directory tree %ld:", i1+1);
+      sprintf(pbig, "directory tree %d:", i1+1);
       pout(1, pbig);
 
       pout(2, clRootDirs.getString(0,i1));
 
       // list masks used by that tree, possibly redundant
-      long iLayer = nLayer;
+      int iLayer = nLayer;
 
       pbig[0] = '\0';
-      long i5=0;
+      int i5=0;
       for (; clDirMasks.isStringSet(iLayer, i5); i5++) {
          strcat(pbig, clDirMasks.getString(iLayer, i5));
          strcat(pbig, " ");
       }
       if (i5) {
-         sprintf(psml, "... uses %ld dir masks:", i5);
+         sprintf(psml, "... uses %d dir masks:", i5);
          pout(3, psml);
          pout(4, pbig);
       } else {
-         pout(3, "... uses no dir masks.");
+         pout(3, str("... uses no dir masks."));
       }
 
       pbig[0] = '\0';
-      long i6=0;
+      int i6=0;
       for (; clFileMasks.isStringSet(iLayer, i6); i6++) {
          strcat(pbig, clFileMasks.getString(iLayer, i6));
          strcat(pbig, " ");
       }
       if (i6) {
-         sprintf(psml, "... uses %ld file masks:", i6);
+         sprintf(psml, "... uses %d file masks:", i6);
          pout(5, psml);
          pout(6, pbig);
       } else {
-         pout(5, "... uses no file masks.");
+         pout(5, str("... uses no file masks."));
       }
    }
 }
 
-long FileSet::checkConsistency()
+int FileSet::checkConsistency()
 {
-   long nLayers = 0;
-   for (long i0=0; clDirMasks.hasRow(i0); i0++) 
+   int nLayers = 0;
+   for (int i0=0; clDirMasks.hasRow(i0); i0++) 
       nLayers++;
 
-   mtklog("check consistency of %ld layers", nLayers);
+   mtklog(("check consistency of %d layers", nLayers));
 
-   long lRC = 0;
+   int lRC = 0;
 
-   long *pRefCnt = new long[nLayers+10];
-   memset(pRefCnt, 0, (nLayers+10)*sizeof(long));
+   int *pRefCnt = new int[nLayers+10];
+   memset(pRefCnt, 0, (nLayers+10)*sizeof(int));
    // NO RETURN FROM HERE
 
    // count for each layer how often it's referenced
-   for (long i1=0; clRootDirs.isStringSet(0,i1); i1++)
+   for (int i1=0; clRootDirs.isStringSet(0,i1); i1++)
    {
-      long iLayer = clRootDirs.getLong(2,i1, __LINE__);
+      int iLayer = clRootDirs.getLong(2,i1, __LINE__);
       if (iLayer < 0 || iLayer >= nLayers) {
-         perr("internal #60 %ld\n", iLayer);
+         perr("internal #60 %d\n", iLayer);
          lRC = 9;
          break;
       }
-      mtklog("root %ld references layer %ld", i1, iLayer);
+      mtklog(("root %d references layer %d", i1, iLayer));
       pRefCnt[iLayer]++;
    }
 
    // find unreferenced layers
-   for (long i2=0; i2<nLayers; i2++) {
+   for (int i2=0; i2<nLayers; i2++) {
       if (!pRefCnt[i2]) {
          // if -any is specified, the first layer is used implicitely
          // to list important file extensions.
          if ((i2 == 0) && bGlblAnyUsed)
             continue;
-         perr("wrong -dir and -file sequence (%ld)\n", i2);
+         perr("wrong -dir and -file sequence (%d)\n", i2);
          pinf("specify -dir ... before -file\n");
          lRC = 9;
       }
@@ -9785,24 +9955,23 @@ bool FileSet::anyFileMasks()
    return false;
 }
 
-bool FileSet::hasRoot(long iIndex) {
+bool FileSet::hasRoot(int iIndex) {
    bool bRC = clRootDirs.isStringSet(iIndex);
    // if (cs.debug) printf("] %d = hasRoot(%d)\n", bRC, iIndex);
    return bRC;
 }
 
-char* FileSet::setCurrentRoot(long iIndex) 
+char* FileSet::setCurrentRoot(int iIndex) 
 {
    if (cs.debug) printf("] select root %d\n",iIndex);
-   mtklog("FileSet::setCurrentRoot(%ld)", iIndex);
+   mtklog(("FileSet::setCurrentRoot(%d)", iIndex));
    nClCurDir = iIndex;
    // the root dir no. iIndex selects a specific layer.
-   char *pszDirName = clRootDirs.getString(0, iIndex);
-   nClCurLayer      = clRootDirs.getLong(2, iIndex, __LINE__);
+   nClCurLayer = clRootDirs.getLong(2, iIndex, __LINE__);
    clRootDirs.setRow(0, __LINE__);
    // fully switch to current layer
    if (cs.debug) printf("]  select layer %d\n",nClCurLayer);
-   mtklog("   select layer %ld",nClCurLayer);
+   mtklog(("   select layer %d",nClCurLayer));
    clDirMasks.setRow(nClCurLayer, __LINE__);
    clFileMasks.setRow(nClCurLayer, __LINE__);
    return getCurrentRoot();
@@ -9838,15 +10007,15 @@ char* FileSet::getCurrentRoot()
    return pszDirName;
 }
 
-long FileSet::numberOfRootDirs() {
+int FileSet::numberOfRootDirs() {
    return clRootDirs.numberOfEntries(0);
 }
 
-long FileSet::ensureBase(int nTraceLine) {
-   mtklog("fs: ensureBase %d", nTraceLine);
+int FileSet::ensureBase(int nTraceLine) {
+   mtklog(("fs: ensureBase %d", nTraceLine));
    // clRootDirs must have 3 rows
    while (!clRootDirs.hasRow(2)) {
-      mtklog("fs: ... add another row");
+      mtklog(("fs: ... add another row"));
       if (clRootDirs.addRow(nTraceLine))
          return 9;
    }
@@ -9862,9 +10031,9 @@ long FileSet::ensureBase(int nTraceLine) {
 // - clRootDirs row 1 is the directory command (zip, copy).
 // - a directory tree references a layer.
 
-long FileSet::beginLayer(bool bWithEmptyCommand, int nTraceLine)
+int FileSet::beginLayer(bool bWithEmptyCommand, int nTraceLine)
 {
-   mtklog("fs: beginlayer %d", nTraceLine);
+   mtklog(("fs: beginlayer %d", nTraceLine));
 
    // reset state of add sequence controlling
    resetAddFlags();
@@ -9887,9 +10056,9 @@ long FileSet::beginLayer(bool bWithEmptyCommand, int nTraceLine)
    return 0;
 }
 
-long FileSet::addRootDir(char *pszRoot, int nTraceLine, bool bNoCmdFillup) 
+int FileSet::addRootDir(char *pszRoot, int nTraceLine, bool bNoCmdFillup) 
 {
-   mtklog("fs: addRootDir %s", pszRoot);
+   mtklog(("fs: addRootDir %s", pszRoot));
 
    if (cs.debug) printf("] add root dir: %s, referencing layer: %d [tline %d]\n", pszRoot, nClCurLayer, nTraceLine);
 
@@ -9912,7 +10081,7 @@ long FileSet::addRootDir(char *pszRoot, int nTraceLine, bool bNoCmdFillup)
       beginLayer(true, __LINE__);
    }
    // complete the current column
-   long nMax = clRootDirs.numberOfEntries(0);
+   int nMax = clRootDirs.numberOfEntries(0);
    if (!bNoCmdFillup)
       if (clRootDirs.numberOfEntries(1) < nMax)
           clRootDirs.addLong(1, 0, __LINE__); // add empty command
@@ -9935,25 +10104,25 @@ long FileSet::addRootDir(char *pszRoot, int nTraceLine, bool bNoCmdFillup)
    return 0;
 }  // FileSet::addRootDir
 
-long FileSet::addDirCommand(long lCmd)
+int FileSet::addDirCommand(int lCmd)
 {
    if (ensureBase(__LINE__)) return 9;
    // one single -cmd may map to several root dirs.
    // example: -dir a1 a2 a3 -copy
    // therefore fill up until root dir names number reached.
-   long nMax = clRootDirs.numberOfEntries(0);  
+   int nMax = clRootDirs.numberOfEntries(0);  
    while (clRootDirs.numberOfEntries(1) < nMax)
       clRootDirs.addLong(1, lCmd, __LINE__);
    return 0;
 }
 
-long FileSet::addDirMask(char *pszMask) {
+int FileSet::addDirMask(char *pszMask) {
    if (ensureBase(__LINE__)) return 9;
    clDirMasks.addString(pszMask);
    return 0;
 }
 
-long FileSet::addFileMask(char *pszMask)
+int FileSet::addFileMask(char *pszMask)
 {
    // if (cs.debug) printf("] addFileMask %s\n", pszMask);
    if (ensureBase(__LINE__)) return 9;
@@ -9980,14 +10149,14 @@ long FileSet::addFileMask(char *pszMask)
       if (bClGotNegFile)
          return 9+perr("wrong sequence: negative file pattern already given, specify \"%s\" before this.\n", pszMask);
       // map to * internally:
-      pszMask = "*";    // no wildstr, using real * internally
+      pszMask = str("*");    // no wildstr, using real * internally
       bClGotAllMask = 1;
    }
    else
    if (pszMask[0] == glblNotChar) {
       // negative file pattern: if it is the very first pattern
       if (!bClGotAllMask && !bClGotPosFile && !bClGotNegFile)
-         clFileMasks.addString("*"); // IMPLICITELY. no wildstr.
+         clFileMasks.addString(str("*")); // IMPLICITELY. no wildstr.
       bClGotNegFile = 1;
    }
    else {
@@ -10006,23 +10175,23 @@ long FileSet::addFileMask(char *pszMask)
    return 0;
 }
 
-long FileSet::autoCompleteFileMasks(int nWhat) 
+int FileSet::autoCompleteFileMasks(int nWhat) 
 {
    if (cs.debug) printf("] autocomplete %d:\n", nWhat);
 
    if (nWhat & 1)
-   for (long irow=0; clFileMasks.hasRow(irow); irow++) {
+   for (int irow=0; clFileMasks.hasRow(irow); irow++) {
       if (clFileMasks.setRow(irow, __LINE__)) return 9;
       if (clFileMasks.numberOfEntries() == 0) {
          if (cs.debug) printf("]  yes, at layer %d\n",irow);
-         if (clFileMasks.addString("*")) return 9;   // no wildstr
+         if (clFileMasks.addString(str("*"))) return 9;   // no wildstr
       }
    }
 
    if (nWhat & 2)
    if (clRootDirs.numberOfEntries() == 0) {
       if (cs.debug) printf("] adding dir .\n");
-      addRootDir(".", __LINE__, false);
+      addRootDir(str("."), __LINE__, false);
    }
 
    return 0;
@@ -10051,8 +10220,8 @@ public:
    };
 
    // uses szLineBuf, szLineBuf2.
-   long  process     (int nDoWhat);
-   long  processLine (char *pszBuf, int nDoWhat, long nLine, bool bHardWrap);
+   int  process     (int nDoWhat);
+   int  processLine (char *pszBuf, int nDoWhat, int nLine, bool bHardWrap);
 
 private:
    Coi  *pClCoi;
@@ -10091,13 +10260,13 @@ bool sfkisprint(uchar uc) {
 }
 
 // uses szLineBuf. Result in szLineBuf2.
-long BinTexter::process(int nDoWhat)
+int BinTexter::process(int nDoWhat)
 {
-   long icol   = 0;
-   long istate = 0;
-   long iword  = 0;  // index in short word target buffer
-   long nword  = 0;  // to count non-binary word length
-   long ihi    = 0;
+   int icol   = 0;
+   int istate = 0;
+   int iword  = 0;  // index in short word target buffer
+   int nword  = 0;  // to count non-binary word length
+   int ihi    = 0;
    bool bflush = 0;
    bool bisws  = 0;
    bool bwasws = 0;
@@ -10108,20 +10277,20 @@ long BinTexter::process(int nDoWhat)
    bool babineol = 0; // helper flag, add blank if not at end of line
    char c = 0;
    unsigned char uc = 0;
-   long nLine = 0;
-   long nMinWord = 1; // min word length adapted dynamically below
-   long lRC = 0;
+   int nLine = 0;
+   int nMinWord = 1; // min word length adapted dynamically below
+   int lRC = 0;
 
    szClOutBuf[0] = '\0';
 
    num  nTellTime  = getCurrentTime();
-   long nTellLines = 0;
+   int nTellLines = 0;
 
    bool bbail = 0;
    while (!bbail)
    {
-      // long nRead = pClCoi->readLine(szLineBuf, sizeof(szLineBuf)-10);
-      long nRead = pClCoi->read(szLineBuf, sizeof(szLineBuf)-10);
+      // int nRead = pClCoi->readLine(szLineBuf, sizeof(szLineBuf)-10);
+      int nRead = pClCoi->read(szLineBuf, sizeof(szLineBuf)-10);
 
       if (nRead <= 0) {
          bbail = 1;
@@ -10134,13 +10303,13 @@ long BinTexter::process(int nDoWhat)
             // working on the same file for 1000 msec: show status
             nTellTime = getCurrentTime();
             if (!cs.quiet && pClCoi->name()) {
-               info.setAddInfo("%lu files, %lu dirs", cs.filesScanned, cs.dirsScanned);
+               info.setAddInfo("%u files, %u dirs", cs.filesScanned, cs.dirsScanned);
                info.setStatus("scan", pClCoi->name(), 0, eKeepAdd);
             }
          }
       }
 
-      for (long i=0; i<nRead; i++)
+      for (int i=0; i<nRead; i++)
       {
          if (bbail) {
             c  = 0x00;
@@ -10244,7 +10413,7 @@ long BinTexter::process(int nDoWhat)
                if (icol >= cs.wrapbincol || c == '\n' || bbail)
                {
                   // line flush.
-                  if (lRC = processLine(szClOutBuf, nDoWhat, nLine, bhardwrap))
+                  if ((lRC = processLine(szClOutBuf, nDoWhat, nLine, bhardwrap)))
                      return lRC;
                   bhardwrap = 0;
                   icol = 0;
@@ -10277,11 +10446,12 @@ long BinTexter::process(int nDoWhat)
 }
 
 // snapto optional callback functions
-long (*pGlblJamFileCallBack)(char *pszFilename, num &rLines, num &rBytes) = 0;
-long (*pGlblJamLineCallBack)(char *pszLine, long nLineLen, bool bAddLF) = 0;
-long (*pGlblJamStatCallBack)(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes, ulong nSkipped, char *pszSkipInfo) = 0;
+int (*pGlblJamCheckCallBack)(char *pszFilename) = 0;
+int (*pGlblJamFileCallBack)(char *pszFilename, num &rLines, num &rBytes) = 0;
+int (*pGlblJamLineCallBack)(char *pszLine, int nLineLen, bool bAddLF) = 0;
+int (*pGlblJamStatCallBack)(char *pszInfo, uint nFiles, uint nLines, uint nMBytes, uint nSkipped, char *pszSkipInfo) = 0;
 
-long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWrap)
+int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
 {
    info.cycle();
 
@@ -10296,13 +10466,13 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWra
    else
    if (nDoWhat == eBT_JamFile) 
    {
-      long dumpJamLine(char *pszLine, long nLineLen, bool bAddLF); // len 0: zero-terminated
+      int dumpJamLine(char *pszLine, int nLineLen, bool bAddLF); // len 0: zero-terminated
 
       // strip empty lines from binary text:
       if (!strlen(szClOutBuf) || szClOutBuf[0] == '\n')
          return 0;
 
-      long lRC = dumpJamLine(szClOutBuf, 0, 1);
+      int lRC = dumpJamLine(szClOutBuf, 0, 1);
 
       nGlblBytes += strlen(szClOutBuf);
       cs.lines++;
@@ -10311,7 +10481,7 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWra
       // it doesn't matter that nLines is actually counted past call to dumpJamLine.
       if (pGlblJamStatCallBack && glblFileCount.checkTime())
       {
-         lRC |= pGlblJamStatCallBack(pClCoi->name(), glblFileCount.value(), cs.lines, (ulong)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+         lRC |= pGlblJamStatCallBack(pClCoi->name(), glblFileCount.value(), cs.lines, (uint)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
          // NO printf output here! BinTexter is also used by grep, strings.
       }
 
@@ -10321,10 +10491,10 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWra
    if (nDoWhat == eBT_Grep)
    {
       // 1. count no. of hits across current AND last line
-      long nMatchCur = 0;
-      long nMatchPre = 0;
-      long nGrepPat = glblGrepPat.numberOfEntries();
-      for (long i=0; ((nMatchCur+nMatchPre) < nGrepPat) && (i<nGrepPat); i++) 
+      int nMatchCur = 0;
+      int nMatchPre = 0;
+      int nGrepPat = glblGrepPat.numberOfEntries();
+      for (int i=0; ((nMatchCur+nMatchPre) < nGrepPat) && (i<nGrepPat); i++) 
       {
          if (mystrhit((char*)pszBuf, glblGrepPat.getString(i), cs.usecase, 0))
             nMatchCur++;
@@ -10388,7 +10558,7 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWra
             memset(szClAttBuf, ' ', sizeof(szClAttBuf));
             szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
             if (bGlblGrepLineNum)
-               sprintf(szClPreBuf, " / %04lu ", (nLine > 0) ? (nLine-1) : nLine);
+               sprintf(szClPreBuf, " / %04u ", (nLine > 0) ? (nLine-1) : nLine);
             else
                sprintf(szClPreBuf, " / ");
             szClAttBuf[1] = 'p';
@@ -10402,15 +10572,15 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWra
 
             memset(szClAttBuf, ' ', sizeof(szClAttBuf));
             szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
-            for (long k=0; k<nGrepPat; k++) 
+            for (int k=0; k<nGrepPat; k++) 
             {
                char *pszPat = glblGrepPat.getString(k);
-               long nPatLen = strlen(pszPat);
-               long nTmpLen = strlen(pszTmp);
-               long nCur = 0, nRel = 0;
+               int nPatLen = strlen(pszPat);
+               int nTmpLen = strlen(pszTmp);
+               int nCur = 0, nRel = 0;
                while (mystrhit(pszTmp+nCur, pszPat, cs.usecase, &nRel))
                {
-                  if (nCur+nRel+nPatLen < sizeof(szClAttBuf)-10)
+                  if (nCur+nRel+nPatLen < (int)sizeof(szClAttBuf)-10)
                      memset(&szClAttBuf[nCur+nRel], 'i', nPatLen);
                   nCur += nRel+nPatLen;
                   if (nCur >= nTmpLen-1)
@@ -10431,7 +10601,7 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWra
             memset(szClAttBuf, ' ', sizeof(szClAttBuf));
             szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
             if (bGlblGrepLineNum)
-               sprintf(szClPreBuf, "   %04lu ", nLine);
+               sprintf(szClPreBuf, "   %04u ", nLine);
             else
                sprintf(szClPreBuf, "   ");
             if (nMatchPre) {
@@ -10448,16 +10618,16 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWra
 
             memset(szClAttBuf, ' ', sizeof(szClAttBuf));
             szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
-            for (long k=0; k<nGrepPat; k++) 
+            for (int k=0; k<nGrepPat; k++) 
             {
                char *pszPat = glblGrepPat.getString(k);
-               long nPatLen = strlen(pszPat);
-               long nTmpLen = strlen(pszTmp);
-               long nCur = 0, nRel = 0;
+               int nPatLen = strlen(pszPat);
+               int nTmpLen = strlen(pszTmp);
+               int nCur = 0, nRel = 0;
                while (mystrhit(pszTmp+nCur, pszPat, cs.usecase, &nRel)) 
                {
-                  // printf("%ld.%ld ",nCur,nRel);
-                  if (nCur+nRel+nPatLen < sizeof(szClAttBuf)-10)
+                  // printf("%d.%d ",nCur,nRel);
+                  if (nCur+nRel+nPatLen < (int)sizeof(szClAttBuf)-10)
                      memset(&szClAttBuf[nCur+nRel], 'i', nPatLen);
                   nCur += nRel+nPatLen;
                   if (nCur >= nTmpLen-1)
@@ -10479,8 +10649,8 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWra
          szClLastLine[0] = '\0';
          if (!bHardWrap) {
             // and it's a soft-wrap line (no LF), so remember it.
-            long nCurLen = strlen(pszBuf);
-            long nCopyIndex = 0;
+            int nCurLen = strlen(pszBuf);
+            int nCopyIndex = 0;
             if (nCurLen > BT_LASTLINE_LEN) {
                nCopyIndex = nCurLen - BT_LASTLINE_LEN;
                nCurLen    = BT_LASTLINE_LEN;
@@ -10494,7 +10664,7 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWra
 }
 
 // only for processDirParms and walkAllTrees:
-long nGlblError = 0;
+int nGlblError = 0;
 StringTable *pGlblFileParms = 0;
 char **apGlblFileParms = 0;
 int  nGlblFileParms    = 0;
@@ -10523,12 +10693,12 @@ void skipSpaceRem(char **pszInOut)
    *pszInOut = psz1;
 }
 
-ulong currentProcessID()
+uint currentProcessID()
 {
    #ifdef _WIN32
-   return (ulong)GetCurrentProcessId();
+   return (uint)GetCurrentProcessId();
    #else
-   return (ulong)getpid();
+   return (uint)getpid();
    #endif
 }
 
@@ -10536,22 +10706,22 @@ ulong currentProcessID()
 class SFTmpFile
 {
 public:
-   SFTmpFile   (bool bNoAutoDelete, ulong nTmpFileNum = 0);
+   SFTmpFile   (bool bNoAutoDelete, uint nTmpFileNum = 0);
   ~SFTmpFile   ( );
    char *name  ( );
    static void setTmpDir(char *pszDir);
 private:
    bool  bClAutoDel;
-   ulong nClNum;
+   uint nClNum;
    char *pszClName;
-   static long ncnt;
+   static int ncnt;
    static char *pszTmpDir;
 };
 
-long SFTmpFile::ncnt = 1;
+int SFTmpFile::ncnt = 1;
 char *SFTmpFile::pszTmpDir = 0;
 
-SFTmpFile::SFTmpFile(bool bNoAutoDelete, ulong nTmpFileNum) {
+SFTmpFile::SFTmpFile(bool bNoAutoDelete, uint nTmpFileNum) {
    bClAutoDel = !bNoAutoDelete;
    nClNum     = nTmpFileNum;
    pszClName  = 0;
@@ -10579,19 +10749,19 @@ char *SFTmpFile::name()
       if (!psz) psz = getenv("TEMP");
       if (!psz) psz = getenv("TMP");
       #ifndef _WIN32
-      if (!psz) psz = "/tmp";
+      if (!psz) psz = str("/tmp");
       #endif
       if (!psz) 
          { perr("cannot create temporary file: no TEMP or TMP environment variable found.\n"); return 0; }
       pszClName = new char[MAX_LINE_LEN+10];
-      if (joinPath(pszClName, MAX_LINE_LEN-20, psz, "zz-tmp-sfk-"))
+      if (joinPath(pszClName, MAX_LINE_LEN-20, psz, str("zz-tmp-sfk-")))
          { perr("cannot create temporary file.\n"); return 0; }
-      long nlen = strlen(pszClName);
-      ulong uprocid = currentProcessID();
+      int nlen = strlen(pszClName);
+      uint uprocid = currentProcessID();
       if (nClNum > 0)
-         sprintf(pszClName+nlen, "%03lu.txt", nClNum);
+         sprintf(pszClName+nlen, "%03u.txt", nClNum);
       else
-         sprintf(pszClName+nlen, "%03lu.txt", uprocid);
+         sprintf(pszClName+nlen, "%03u.txt", uprocid);
       ncnt = (ncnt+1) % 3;
    }
    if (cperm.showtmp) {
@@ -10614,7 +10784,7 @@ bool isDirParm(char *psz)
 }
 
 // experimental: change thread priority
-void setPriority(long nprio) 
+void setPriority(int nprio) 
 {
    // supported values are -2 to +2
    #ifdef _WIN32
@@ -10640,12 +10810,12 @@ void setPriority(long nprio)
 extern "C" void setUzpMemLimit(num nlimit);
 #endif // VFILEBASE
 
-void setMemoryLimit(long nMBytes) 
+void setMemoryLimit(int nMBytes) 
 {
    num nbytes = nMBytes * 1048576;
    // no not accept limits below 10 MB:
    if (nbytes < 10 * 1000000) {
-      perr("ignoring memlimit, illegal value: %ld", nMBytes);
+      perr("ignoring memlimit, illegal value: %d", nMBytes);
    } else {
       nGlblMemLimit = nbytes;
    }
@@ -10716,7 +10886,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strncmp(psz1, "-ltarg", 6))  { pcs->listTargets = 1; return true; }
    if (!strncmp(psz1, "-stoponerr", 10))  { pcs->treeStopRC = 9; return true; }
    if (!strncmp(psz1, "-rcfromerr", 10))  { pcs->rcFromError = 9; return true; }
-   if (!strncmp(psz1, "-waitonerr", 11))  { bGlblPauseOnError = 1; return true; }
+   if (!strncmp(psz1, "-waitonerr", 10))  { bGlblPauseOnError = 1; return true; }
    else
    if (!strncmp(psz1, "-wait", 5))  { bGlblPauseOnEnd = 1; return true; }
    if (!strncmp(psz1, "-exterr", 7)){ bGlblSysErrDetail = 1; return true; }
@@ -10787,18 +10957,18 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    {
       if (!strcmp(psz1,"-rewrap")) pcs->rewrap = 1;
       // wrap with auto-calculated number of columns
-      long nCols = autoCalcWrapColumns();
+      int nCols = autoCalcWrapColumns();
       if (nCols) {
          pcs->wrapcol = nCols;
          if (pcs->wrapbincol == 80) // if on default
             pcs->wrapbincol = nCols;
       }
-      mtklog("opt: done %s, wrapcol=%ld, wrapbincol=%ld",psz1,pcs->wrapcol,pcs->wrapbincol);
+      mtklog(("opt: done %s, wrapcol=%d, wrapbincol=%d",psz1,pcs->wrapcol,pcs->wrapbincol));
       return true;
    }
    if (strBegins(psz1,"-wrap=") || strBegins(psz1,"-rewrap="))
    {
-      long nCols = 0;
+      int nCols = 0;
       if (strBegins(psz1,"-rewrap=")) {
          pcs->rewrap = 1;
          nCols = atol(psz1+8);
@@ -10811,12 +10981,12 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
          if (pcs->wrapbincol == 80) // if on default
             pcs->wrapbincol = nCols;
       }
-      mtklog("opt: done %s, wrapcol=%ld, wrapbincol=%ld",psz1,pcs->wrapcol,pcs->wrapbincol);
+      mtklog(("opt: done %s, wrapcol=%d, wrapbincol=%d",psz1,pcs->wrapcol,pcs->wrapbincol));
       return true;
    }
    if (!strncmp(psz1,"-wrapbin",8)) {
       // wrap for text extracted from binary files
-      long nCols = 0;
+      int nCols = 0;
       if (!strncmp(psz1,"-wrapbin=",9))
          nCols = atol(psz1+9);
       else
@@ -10827,7 +10997,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       return true;
    }
    if (!strncmp(psz1,"-memlimit=",strlen("-memlimit="))) {
-      long nMBytes = atol(psz1+strlen("-memlimit="));
+      int nMBytes = atol(psz1+strlen("-memlimit="));
       setMemoryLimit(nMBytes);
       return true;
    }
@@ -10839,7 +11009,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       bGlblHtml = 1;
       if (!getenv("SFK_COLORS"))
          setColorScheme("file:1,head:4,examp:8");
-      if (!strcmp(psz1, "-html-head"))
+      if (!strcmp(psz1, "-htmlpage"))
          printf("<font face=\"courier\" size=\"2\"><pre>\n");
       return true; 
    }
@@ -10911,7 +11081,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       char *psz1 = szBuf;
       while (*psz1 && *psz1 != ':') psz1++;
       if (*psz1) *psz1++ = '\0';
-      long nport = atol(psz1);
+      int nport = atol(psz1);
       TCPCore::setProxy(szBuf, nport);
       return true;
    }
@@ -11024,10 +11194,10 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    return false;
 }
 
-long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoComplete, int *iDirNext=0, bool *pAnyDone=0);
+int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoComplete, int *iDirNext=0, bool *pAnyDone=0);
 
 // uses szLineBuf. PreCmd is optional prefix, usually "-any" or NULL.
-long processFlatDirParms(char *pszPreCmd, char *pszCmdLine, int nAutoComplete)
+int processFlatDirParms(char *pszPreCmd, char *pszCmdLine, int nAutoComplete)
 {
    if (cs.debug) printf("processFlatDirParms\n");
 
@@ -11041,13 +11211,12 @@ long processFlatDirParms(char *pszPreCmd, char *pszCmdLine, int nAutoComplete)
    if (pszPreCmd)
       pGlblFileParms->addEntry(pszPreCmd);
 
-   long nAbsPathParms = 0;
+   int nAbsPathParms = 0;
 
    char *psz1 = pszCmdLine;
    while (*psz1) 
    {
       // find next token.
-      char *pszo = psz1;
       skipSpaceRem(&psz1);
  
       // find end of token. support "parm with blanks".
@@ -11068,7 +11237,7 @@ long processFlatDirParms(char *pszPreCmd, char *pszCmdLine, int nAutoComplete)
          // strip "", if any
          if (*psz1 == '"' && strlen(psz1) >= 2) {
             psz1++;
-            long nLen = strlen(psz1);
+            int nLen = strlen(psz1);
             if (psz1[nLen-1] == '"')
                 psz1[nLen-1] = '\0';
          }
@@ -11080,7 +11249,7 @@ long processFlatDirParms(char *pszPreCmd, char *pszCmdLine, int nAutoComplete)
             nAbsPathParms++;
 
          #ifdef VFILEBASE
-         Coi ocoi(psz1, "");
+         Coi ocoi(psz1, str(""));
          if (endsWithArcExt(psz1) || ocoi.isZipSubEntry())
             setArcTravel(1, 1);
          #endif // VFILEBASE
@@ -11091,13 +11260,13 @@ long processFlatDirParms(char *pszPreCmd, char *pszCmdLine, int nAutoComplete)
    }
 
    // pGlblFileParms now holds all parms
-   long nParms = pGlblFileParms->numberOfEntries();
-   mtklog("pfdp nparms %ld", nParms);
+   int nParms = pGlblFileParms->numberOfEntries();
+   mtklog(("pfdp nparms %d", nParms));
    apGlblFileParms = new char*[nParms];
-   for (long i=0; i<nParms; i++) {
+   for (int i=0; i<nParms; i++) {
       char *pszParm = pGlblFileParms->getEntry(i, __LINE__);
       apGlblFileParms[i] = pszParm;
-      mtklog("   copied %s", pszParm ? pszParm : "<null>");
+      mtklog(("   copied %s", pszParm ? pszParm : "<null>"));
    }
    nGlblFileParms = nParms;
 
@@ -11107,7 +11276,7 @@ long processFlatDirParms(char *pszPreCmd, char *pszCmdLine, int nAutoComplete)
       bGlblHaveMixedDirFileList = 1;
    }
 
-   return processDirParms("", nParms, apGlblFileParms, 0, nAutoComplete);
+   return processDirParms(str(""), nParms, apGlblFileParms, 0, nAutoComplete);
 }
 
 enum ePDPStates {
@@ -11121,7 +11290,7 @@ enum ePDPStates {
    eST_MAXStates
 };
 
-long containsWildCards(char *pszName)
+int containsWildCards(char *pszName)
 {
    if (strchr(pszName, glblWildChar)) return 1;
    if (strchr(pszName, '*')) return 1;
@@ -11129,23 +11298,23 @@ long containsWildCards(char *pszName)
    return 0;
 }
 
-long lastCharIsBackSlash(char *pszName)
+int lastCharIsBackSlash(char *pszName)
 {
-   ulong nlen = strlen(pszName);
+   uint nlen = strlen(pszName);
    if (!nlen) return 0;
    return (pszName[nlen-1] == glblPathChar) ? 1 : 0;
 }
 
 void stripTrailingBackSlashes(char *psz)
 {
-   long nidx = (long)strlen(psz);
+   int nidx = (int)strlen(psz);
    while (nidx > 0 && psz[nidx-1] == glblPathChar) {
       psz[nidx-1] = '\0';
       nidx--;
    }
 }
 
-char *aGlblChainCmds[] = 
+cchar *aGlblChainCmds[] = 
 {
    // list of all chainable commands and their name variations
    // (first unambigious chars). every command is prefixed
@@ -11221,7 +11390,7 @@ char *aGlblChainCmds[] =
 
 // when passing stuff from one command to another,
 // what is most probably used: text or filenames?
-char *aGlblDefChnModes[] =
+cchar *aGlblDefChnModes[] =
 {// from    to      use default mode (1==files, 2==text)
    "sel",  "detab", "1",
    "list", "detab", "1",
@@ -11240,7 +11409,7 @@ enum eChainCodes {
 // rc:  0 if NO chain command
 //     <0 if +text, +file etc.
 //     >0 if one of aGlblChainCmds
-long getChainCode(char *pszin, long &rtype)
+int getChainCode(char *pszin, int &rtype)
 {__
    if (   !strcmp(pszin, "+ftt")
        || !strcmp(pszin, "+filenamestotext")
@@ -11279,10 +11448,10 @@ long getChainCode(char *pszin, long &rtype)
    if (pszin[0] == '+')
    {
       pszin++;
-      for (long i=0; aGlblChainCmds[i]; i++)
+      for (int i=0; aGlblChainCmds[i]; i++)
       {
-         char *psz = aGlblChainCmds[i];
-         long aflags = *psz - '0';
+         cchar *psz = aGlblChainCmds[i];
+         int aflags = *psz - '0';
          psz++;
          if (!strncmp(psz, pszin, strlen(psz)))
          {
@@ -11300,16 +11469,16 @@ long getChainCode(char *pszin, long &rtype)
 // rc: 1==files, 2==text, 0==none
 // rforce: type is defined by +text etc. and MUST be used,
 //         otherwise caller may use defaults
-long findNextChainType(int iDir, char *argv[], int argc, char **pszNext, bool &rforce)
+int findNextChainType(int iDir, char *argv[], int argc, char **pszNext, bool &rforce)
 {__
    if (cs.nochain) return 0;
 
    for (; iDir < argc; iDir++) 
    {
       char *psz  = argv[iDir];
-      long ntype = 0;
-      long ncode = getChainCode(psz, ntype);
-      mtklog("chain: gcc: %ld = getChainCode(%s)",ncode,psz);
+      int ntype = 0;
+      int ncode = getChainCode(psz, ntype);
+      mtklog(("chain: gcc: %d = getChainCode(%s)",ncode,psz));
       if (ntype != 0) {
          if (psz[0] == '+') psz++;
          *pszNext = psz;
@@ -11327,10 +11496,10 @@ bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext,
    if (cs.nochain) return 0;
 
    // prefix mode switchers:
-   long nplus1=0, nplus2=0;
-   long ntype = 0;
-   long ncode = getChainCode(argv[iDir], ntype);
-   mtklog("chain: ics: %ld = getChainCode(%s)",ncode,argv[iDir]);
+   int nplus1=0, nplus2=0;
+   int ntype = 0;
+   int ncode = getChainCode(argv[iDir], ntype);
+   mtklog(("chain: ics: %d = getChainCode(%s)",ncode,argv[iDir]));
 
    switch (ncode) 
    {
@@ -11393,7 +11562,7 @@ bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext,
       // +then stops any further chain detections:
       if (iDirNext) *iDirNext = iDir;
       if (cs.verbose)
-         printf("[chain from %s to %s. collect f=%d t=%d, idir %ld %p]\n",pszCmd,pszParm,chain.colfiles,chain.coldata,iDir,iDirNext);
+         printf("[chain from %s to %s. collect f=%d t=%d, idir %d %p]\n",pszCmd,pszParm,chain.colfiles,chain.coldata,iDir,iDirNext);
       return true;
    }
  
@@ -11401,10 +11570,10 @@ bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext,
    {
       if (nplus2)
          nplus1 = 0;
-      for (long i=0; aGlblChainCmds[i]; i++) 
+      for (int i=0; aGlblChainCmds[i]; i++) 
       {
-         char *psz = aGlblChainCmds[i];
-         long aflags = *psz - '0';
+         cchar *psz = aGlblChainCmds[i];
+         int aflags = *psz - '0';
          psz++;
          if (!strncmp(psz, pszParm, strlen(psz)))
          {
@@ -11416,22 +11585,22 @@ bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext,
                // requires to find +text.
                bool bForce    = 0;
                char *pszNext  = 0;
-               long nNextType = findNextChainType(iDir, argv, argc, &pszNext, bForce);
-               mtklog("chain: ics: found chain type %ld at %s\n", nNextType, pszNext);
+               int nNextType = findNextChainType(iDir, argv, argc, &pszNext, bForce);
+               mtklog(("chain: ics: found chain type %d at %s\n", nNextType, pszNext));
  
                if (cs.verbose && pszNext)
-                  printf("[found chain type %ld at %s]\n", nNextType, pszNext);
+                  printf("[found chain type %d at %s]\n", nNextType, pszNext);
 
                // if next type is not a forced one like +text,
                if (!bForce && pszNext)
                {
                   // check if there is a default mapping
-                  for (long k=0; aGlblDefChnModes[k]; k += 3) 
+                  for (int k=0; aGlblDefChnModes[k]; k += 3) 
                   {
                      // look into defaults table
-                     char *pszFrom = aGlblDefChnModes[k+0];
-                     char *pszTo   = aGlblDefChnModes[k+1];
-                     char *pszMode = aGlblDefChnModes[k+2];
+                     cchar *pszFrom = aGlblDefChnModes[k+0];
+                     cchar *pszTo   = aGlblDefChnModes[k+1];
+                     cchar *pszMode = aGlblDefChnModes[k+2];
                      if (   !strncmp(pszCmd , pszFrom, strlen(pszFrom))
                          && !strncmp(pszNext, pszTo  , strlen(pszTo  ))
                         )
@@ -11439,7 +11608,7 @@ bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext,
                         // found a default:
                         nNextType = pszMode[0] - '0';
                         if (cs.verbose)
-                           printf("[but using default type mapping %ld]\n", nNextType);
+                           printf("[but using default type mapping %d]\n", nNextType);
                         break;
                      }
                   }
@@ -11463,7 +11632,7 @@ bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext,
  
             if (iDirNext) *iDirNext = iDir;
             if (cs.verbose) // && bAllowVerbose)
-               printf("[chain from %s to %s. collect f=%d t=%d, idir %ld %p]\n",pszCmd,pszParm,chain.colfiles,chain.coldata,iDir,iDirNext);
+               printf("[chain from %s to %s. collect f=%d t=%d, idir %d %p]\n",pszCmd,pszParm,chain.colfiles,chain.coldata,iDir,iDirNext);
  
             return true;
          }
@@ -11486,15 +11655,15 @@ bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext,
    return false;
 }
 
-long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoComplete, int *iDirNext, bool *pAnyDone)
+int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoComplete, int *iDirNext, bool *pAnyDone)
 {
-   long checkMask(char *pszMask);
+   int checkMask(char *pszMask);
 
-   mtklog("processDirParms with argc=%d",argc);
+   mtklog(("processDirParms with argc=%d",argc));
 
    bool bAnyDone = 0; // any user-supplied dir/file parm used
    bool bPreFileFlank = 0;
-   long lRC = 0;
+   int lRC = 0;
 
    bool aStateTouched[eST_MAXStates+10];
    memset(aStateTouched, 0, sizeof(aStateTouched));
@@ -11532,7 +11701,6 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
          while (*psz1) 
          {
             // find next token.
-            char *pszo = psz1;
             skipSpaceRem(&psz1);
 
             // find end of token. support "parm with blanks".
@@ -11553,7 +11721,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
                // strip "", if any
                if (*psz1 == '"' && strlen(psz1) >= 2) {
                   psz1++;
-                  long nLen = strlen(psz1);
+                  int nLen = strlen(psz1);
                   if (psz1[nLen-1] == '"')
                       psz1[nLen-1] = '\0';
                }
@@ -11567,9 +11735,9 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
          delete [] pszParmFile;
 
          // pGlblFileParms now holds all parms
-         long nParms = pGlblFileParms->numberOfEntries();
+         int nParms = pGlblFileParms->numberOfEntries();
          apGlblFileParms = new char*[nParms];
-         for (long i=0; i<nParms; i++)
+         for (int i=0; i<nParms; i++)
             apGlblFileParms[i] = pGlblFileParms->getEntry(i, __LINE__);
          nGlblFileParms = nParms;
 
@@ -11592,9 +11760,9 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
 
       if (*pszFirstParm == '-') 
       {
-         if (cs.debug) printf("process long format\n");
+         if (cs.debug) printf("process long format\n"); 
 
-         // process long format, allowing multiple dirs:
+         // process int format, allowing multiple dirs:
          // sfk cmd -dir dir1 dir2 !dir3 !dir4 -copy -file .hpp .cpp
 
          // we now have:
@@ -11603,14 +11771,14 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
          //   clDirMasks , one row , empty
          //   clFileMasks, one row , empty
 
-         long lState = eST_Idle;
+         int lState = eST_Idle;
          for (;iDir < argc; iDir++)
          {
             if (isChainStart(pszCmd, argv, argc, iDir, iDirNext, 1))
                break;
 
             // on every state switch, we're first landing here
-            if (lState >= 0 && lState < sizeof(aStateTouched)/sizeof(bool))
+            if (lState >= 0 && lState < (int)(sizeof(aStateTouched)/sizeof(bool)))
                aStateTouched[lState] = 1;
 
             char *psz1 = argv[iDir];
@@ -11639,7 +11807,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
                   // -dir tmp1 tmp2 -dir tmp3 -file .txt
                   // add implicite "-file *" to first layer
                   lState = eST_FileMasks;
-                  lRC |= glblFileSet.addFileMask("*");
+                  lRC |= glblFileSet.addFileMask(str("*"));
                   aStateTouched[lState] = 1;
                   if (cs.debug) printf("] -dir: begin layer.2\n");
                   if (glblFileSet.beginLayer(false, __LINE__))
@@ -11677,7 +11845,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
                   if (!glblFileSet.rootDirs().numberOfEntries()) {
                      // +dirmask supplied without any previous root dir.
                      // imply that user wants dirs within the current dir "."
-                     glblFileSet.addRootDir(".", __LINE__, false);
+                     glblFileSet.addRootDir(str("."), __LINE__, false);
                      // imply that user does NOT want to process files from "."
                   }
                   bGlblNoRootDirFiles = 1;
@@ -11689,7 +11857,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
                else
                if (containsWildCards(psz1)) {
                   if (!glblFileSet.rootDirs().numberOfEntries())
-                     glblFileSet.addRootDir(".", __LINE__, false);
+                     glblFileSet.addRootDir(str("."), __LINE__, false);
                   lRC |= glblFileSet.addDirMask(psz1);
                   bAnyDone = 1;
                   continue;
@@ -11793,7 +11961,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
       if (isChainStart(pszFirstParm, argv, argc, iDir, iDirNext))
       {
          // no actual dir parms at all, instead "+end" etc.:
-         mtklog("pdp: no parms, first is chain: %s", pszFirstParm);
+         mtklog(("pdp: no parms, first is chain: %s", pszFirstParm));
          // fall through to autocomplete, if any
       }
       else 
@@ -11804,7 +11972,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
          // or with a list of specified file names
          //    test1.txt test2.txt
          // OR, if simple drag+drop from explorer, mixed list.
-         mtklog("pdp: short: first=%s havemdfl=%d", pszFirstParm,bGlblHaveMixedDirFileList);
+         mtklog(("pdp: short: first=%s havemdfl=%d", pszFirstParm,bGlblHaveMixedDirFileList));
 
          Coi *pcoi = 0;
          #ifdef VFILEBASE
@@ -11834,11 +12002,11 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
                if (setGeneralOption(argv, argc, iDir))
                   continue;
                if (!strcmp(psz1, "-file"))
-                  return 9+perr("mixing of short and long syntax not allowed. you may try -dir %s -file ...\n", pszFirstParm);
+                  return 9+perr("mixing of short and long syntax not allowed. you may try -dir %s -file ...\n", pszFirstParm); 
                if (!strcmp(psz1, "-dir"))
-                  return 9+perr("mixing of short and long syntax not allowed. you may try -dir %s ...\n", pszFirstParm);
+                  return 9+perr("mixing of short and long syntax not allowed. you may try -dir %s ...\n", pszFirstParm); 
 
-               // workaround for "*" under unix. see also long syntax.
+               // workaround for "*" under unix. see also int syntax.
                if (!strcmp(psz1, "-all")) {
                   // fall through to add
                }
@@ -11910,7 +12078,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
    {
       // no parms at all supplied:
       if (!cs.blockAutoComplete && (nAutoComplete & 2))
-         glblFileSet.addRootDir(".", __LINE__, false);
+         glblFileSet.addRootDir(str("."), __LINE__, false);
       // possibly redundant, see autocomplete below
    }
 
@@ -11940,7 +12108,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
    // -sincedir requires root dir parameters
    if (pszGlblSinceDir && !glblFileSet.hasRoot(0)) {
       // Array &aroots = glblFileSet.rootDirs();
-      // long nroots = aroots.numberOfEntries(0);
+      // int nroots = aroots.numberOfEntries(0);
       // if (nroots <= 0) 
       return 9+perr("-sincedir/add/diff requires two directories.\n");
    }
@@ -11951,7 +12119,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
    return bFail ? 9 : 0;
 }
 
-long setProcessSingleDir(char *pszDirName)
+int setProcessSingleDir(char *pszDirName)
 {
    #ifdef VFILEBASE
    if (   !strBegins(pszDirName, "http://")
@@ -12016,9 +12184,9 @@ int myfseek(FILE *f, num nOffset, int nOrigin)
 }
 
 uchar   aGlblGetBuf[MY_GETBUF_MAX+100];
-long    nGlblGetSize  = 0;
-long    nGlblGetIndex = 0;
-long    nGlblGetEOD   = 0;
+int    nGlblGetSize  = 0;
+int    nGlblGetIndex = 0;
+int    nGlblGetEOD   = 0;
 num     nGlblGetFPos  = 0;
 
 void myfgets_init()
@@ -12030,7 +12198,7 @@ void myfgets_init()
 }
 
 // replacement for fgets, which cannot cope with 0x00 (and 0x1A under windows)
-long myfgets(char *pszOutBuf, long nOutBufLen, FILE *fin, bool *rpIsBinary, char *pAttrBuf)
+int myfgets(char *pszOutBuf, int nOutBufLen, FILE *fin, bool *rpIsBinary, char *pAttrBuf)
 {
    if (!fin) return 9+perr("int. #66 missing file handle\n");
    if (nGlblGetSize  < 0 || nGlblGetSize  > MY_GETBUF_MAX) return 9+perr("int. #62 %d %d\n",(nGlblGetSize < 0),(nGlblGetSize > MY_GETBUF_MAX));
@@ -12038,11 +12206,11 @@ long myfgets(char *pszOutBuf, long nOutBufLen, FILE *fin, bool *rpIsBinary, char
    if (nGlblGetIndex > nGlblGetSize) return 9+perr("int. #64\n");
    if (nGlblGetEOD > 1) return 9+perr("int. #65\n");
 
-   long nBufFree = MY_GETBUF_MAX - nGlblGetSize;
+   int nBufFree = MY_GETBUF_MAX - nGlblGetSize;
    uchar *pRead  = &aGlblGetBuf[nGlblGetSize];
 
    // refill read buffer
-   long nRead = 0;
+   int nRead = 0;
    if (!nGlblGetEOD && (nGlblGetSize < MY_GETBUF_MAX/2)) {
       if ((nRead = fread(pRead, 1, nBufFree, fin)) <= 0)
          nGlblGetEOD = 1;
@@ -12050,7 +12218,7 @@ long myfgets(char *pszOutBuf, long nOutBufLen, FILE *fin, bool *rpIsBinary, char
          nGlblGetSize += nRead;
    }
 
-   if (cs.debug) printf("] pre size %ld index %ld free %ld nread %ld\n", nGlblGetSize, nGlblGetIndex, nBufFree, nRead);
+   if (cs.debug) printf("] pre size %d index %d free %d nread %d\n", nGlblGetSize, nGlblGetIndex, nBufFree, nRead);
 
    // anything remaining?
    if (nGlblGetIndex >= nGlblGetSize) {
@@ -12059,9 +12227,9 @@ long myfgets(char *pszOutBuf, long nOutBufLen, FILE *fin, bool *rpIsBinary, char
    }
 
    // copy next line from front
-   long nIndex     = nGlblGetIndex;
-   long nOutIndex  = 0;
-   long nOutSecLen = nOutBufLen-10;
+   int nIndex     = nGlblGetIndex;
+   int nOutIndex  = 0;
+   int nOutSecLen = nOutBufLen-10;
    bool bBinary    = 0;
    for (; (nIndex < nGlblGetSize) && (nOutIndex < nOutSecLen);)
    {
@@ -12089,7 +12257,7 @@ long myfgets(char *pszOutBuf, long nOutBufLen, FILE *fin, bool *rpIsBinary, char
       *rpIsBinary = 1;
 
    // move remaining cache data
-   long nCacheRemain = nGlblGetSize-nIndex;
+   int nCacheRemain = nGlblGetSize-nIndex;
    if (nIndex + nCacheRemain < 0) return 9+perr("int. #60\n");
    if (nIndex + nCacheRemain > MY_GETBUF_MAX) return 9+perr("int. #61\n");
    if (nCacheRemain > 0)
@@ -12098,20 +12266,20 @@ long myfgets(char *pszOutBuf, long nOutBufLen, FILE *fin, bool *rpIsBinary, char
    nGlblGetSize -= nIndex;
    nGlblGetIndex = 0;
 
-   // if (cs.debug) printf("] pos size %ld index %ld out %ld\n", nGlblGetSize, nGlblGetIndex, nOutIndex);
+   // if (cs.debug) printf("] pos size %d index %d out %d\n", nGlblGetSize, nGlblGetIndex, nOutIndex);
 
    return nOutIndex;
 }
 
 // just for sfk run: process text list with file- OR dirnames
-long walkStdInListFlat(long nFunc, long &rlFiles, num &rlBytes)
+int walkStdInListFlat(int nFunc, int &rlFiles, num &rlBytes)
 {
    if (nGlblError)
       return 9;
 
    nGlblFunc = nFunc;
 
-   long lDirs = 0;
+   int lDirs = 0;
    FileList oLocDirFiles;
 
    while (fgets(szLineBuf, sizeof(szLineBuf)-10, stdin))
@@ -12130,7 +12298,7 @@ long walkStdInListFlat(long nFunc, long &rlFiles, num &rlBytes)
       {
          Coi ocoi(szLineBuf, 0);
 
-         long lRC = execSingleFile(&ocoi, 0,
+         int lRC = execSingleFile(&ocoi, 0,
                         rlFiles, oLocDirFiles.clNames.numberOfEntries(),
                         lDirs, rlBytes,
                         nLocalMaxTime, nTreeMaxTime);
@@ -12147,9 +12315,9 @@ long walkStdInListFlat(long nFunc, long &rlFiles, num &rlBytes)
 
          Coi ocoi(szLineBuf, 0);
 
-         long rlDirs = 0;
+         int rlDirs = 0;
          num  nLocalBytes = 0;
-         long lRC = execSingleDir(&ocoi, 0, rlFiles, oLocDirFiles, rlDirs, nLocalBytes,
+         int lRC = execSingleDir(&ocoi, 0, rlFiles, oLocDirFiles, rlDirs, nLocalBytes,
                                   nLocalMaxTime, nTreeMaxTime);
          nLocalMaxTime = 0; // reset after use in execSingleDir
          rlBytes += nLocalBytes;
@@ -12165,13 +12333,10 @@ long walkStdInListFlat(long nFunc, long &rlFiles, num &rlBytes)
 // all commands except sfk run:
 // take list with mixed file- and dirnames.
 // in case of dirs, process each as root tree.
-long walkStdInListDeep(long nFunc, long &rlFiles, num &rlBytes)
+int walkStdInListDeep(int nFunc, int &rlFiles, num &rlBytes)
 {
    if (nGlblError)
       return 9;
-
-   long lDirs = 0;
-   num nLocalMaxTime = 0, nTreeMaxTime = 0;
 
    // select the default mask set.
    glblFileSet.setCurrentRoot(0);
@@ -12185,7 +12350,7 @@ long walkStdInListDeep(long nFunc, long &rlFiles, num &rlBytes)
       if (!strlen(szLineBuf))  continue;
 
       // now holding a file- OR a dirname.
-      long lDirs = 0;
+      int lDirs = 0;
       FileList oLocDirFiles;
       num  nLocalBytes = 0, nLocalMaxTime = 0, ntime2 = 0;
 
@@ -12194,7 +12359,7 @@ long walkStdInListDeep(long nFunc, long &rlFiles, num &rlBytes)
       CoiAutoDelete odel(pcoi, 0); // 0: no decref
 
       if (cs.debug) printf("] siw: %s\n", pcoi->name());
-      long lRC = walkFiles(pcoi, 0, rlFiles, oLocDirFiles, lDirs, nLocalBytes, nLocalMaxTime, ntime2);
+      int lRC = walkFiles(pcoi, 0, rlFiles, oLocDirFiles, lDirs, nLocalBytes, nLocalMaxTime, ntime2);
 
       // if (lRC >= 9) return lRC;
       if (cs.stopTree(lRC)) return lRC; else lRC=0;
@@ -12229,26 +12394,26 @@ long walkStdInListDeep(long nFunc, long &rlFiles, num &rlBytes)
 
 // process files from sfl or chain file list.
 // does NOT recurse into directories.
-long walkFileListFlat(CoiTable &oList, long nFunc, long &rlFiles, num &rlBytes, long &rlDirs)
+int walkFileListFlat(CoiTable &oList, int nFunc, int &rlFiles, num &rlBytes, int &rlDirs)
 {
    if (nGlblError)
       return 9;
 
-   long lDirs = 0;
+   int lDirs = 0;
    FileList oLocDirFiles;
-   long nLocFiles = 0;
+   int nLocFiles = 0;
    num  nLocBytes = 0;
    num  nLocalMaxTime = 0, nTreeMaxTime = 0;
 
-   long lRC = 0;
+   int lRC = 0;
 
    char szCurPath[300];
    memset(szCurPath, 0, sizeof(szCurPath));
 
    bGlblInSpecificProcessing = 1;
 
-   long nEntries = oList.numberOfEntries();
-   for (long i=0; i<nEntries; i++)
+   int nEntries = oList.numberOfEntries();
+   for (int i=0; i<nEntries; i++)
    {
       if (userInterrupt()) break;
 
@@ -12262,7 +12427,7 @@ long walkFileListFlat(CoiTable &oList, long nFunc, long &rlFiles, num &rlBytes, 
       Coi *ptmp = glblVCache.get(pszFile);
       // caller (we) MUST RELEASE COI after use!
       if (ptmp) {
-         mtklog("wfl: coi replaced by cache entry: %s", pszFile);
+         mtklog(("wfl: coi replaced by cache entry: %s", pszFile));
          pcoi = ptmp;
       }
       else
@@ -12278,7 +12443,7 @@ long walkFileListFlat(CoiTable &oList, long nFunc, long &rlFiles, num &rlBytes, 
       if (cs.debug) 
          printf("] wfl: %s   %s   %s   dir=%d\n", pszFile, pszRoot ? pszRoot : "[no root]", pszRef ? pszRef : "[no ref]", pcoi->isTravelDir());
 
-      mtklog("] wfl: %s   %s   %s   dir=%d", pszFile, pszRoot ? pszRoot : "[no root]", pszRef ? pszRef : "[no ref]", pcoi->isTravelDir());
+      mtklog(("] wfl: %s   %s   %s   dir=%d", pszFile, pszRoot ? pszRoot : "[no root]", pszRef ? pszRef : "[no ref]", pcoi->isTravelDir()));
 
       if (cs.withdirs && pcoi->isTravelDir()) {
          // file list mixed with dir names: expect dirname to come last.
@@ -12329,19 +12494,19 @@ void resetAllFileSets()
    glblSFL.resetEntries();
 }
 
-long walkAllTrees(long nFunc, long &rlFiles, long &rlDirs, num &rlBytes) 
+int walkAllTrees(int nFunc, int &rlFiles, int &rlDirs, num &rlBytes) 
 {
-   mtklog("wat: walkAllTrees fn %ld err %d",nFunc,nGlblError);
+   mtklog(("wat: walkAllTrees fn %d err %d",nFunc,nGlblError));
 
    if (nGlblError)
       return 9;
 
    nGlblFunc = nFunc;
 
-   long lRC = 0;
+   int lRC = 0;
 
    if (chain.usefiles) {
-      mtklog("wat: chain.usefiles is set, %ld in queue", chain.numberOfInFiles());
+      mtklog(("wat: chain.usefiles is set, %d in queue", chain.numberOfInFiles()));
       if (chain.numberOfInFiles())
          return walkFileListFlat(*chain.infiles, nFunc, rlFiles, rlBytes, rlDirs);
       else
@@ -12349,23 +12514,23 @@ long walkAllTrees(long nFunc, long &rlFiles, long &rlDirs, num &rlBytes)
    }
 
    if (bGlblStdInAny) {
-      mtklog("wat: processing stdinlist");
+      mtklog(("wat: processing stdinlist"));
       return walkStdInListDeep(nFunc, rlFiles, rlBytes);
    }
 
    if (glblSFL.numberOfEntries()) {
-      mtklog("wat: processing SFL entries, %ld in queue", glblSFL.numberOfEntries());
+      mtklog(("wat: processing SFL entries, %d in queue", glblSFL.numberOfEntries()));
       lRC = walkFileListFlat(glblSFL, nFunc, rlFiles, rlBytes, rlDirs);
       if (cs.stopTree(lRC)) return lRC; else lRC=0;
    }
 
-   for (long nDir=0; glblFileSet.hasRoot(nDir); nDir++)
+   for (int nDir=0; glblFileSet.hasRoot(nDir); nDir++)
    {
-      mtklog("wat: processing root dir %ld", nDir);
+      mtklog(("wat: processing root dir %d", nDir));
 
       // local tree statistics:
-      long nLocalDirs  = 0;
-      long nLocalFiles = 0;
+      int nLocalDirs  = 0;
+      int nLocalFiles = 0;
       num  nLocalBytes = 0;
 
       FileList oDirFiles;
@@ -12383,8 +12548,8 @@ long walkAllTrees(long nFunc, long &rlFiles, long &rlDirs, num &rlBytes)
       Coi *pcoi = 0;
 
       #ifdef VFILEBASE
-      if (pcoi = glblVCache.get(pszTree)) {
-         mtklog("wat: ... reusing root from vcache");
+      if ((pcoi = glblVCache.get(pszTree))) {
+         mtklog(("wat: ... reusing root from vcache"));
       }
       else
       #endif // VFILEBASE
@@ -12433,11 +12598,11 @@ long walkAllTrees(long nFunc, long &rlFiles, long &rlDirs, num &rlBytes)
    return lRC;
 }
 
-long isDirByName(char *pszName)
+int isDirByName(char *pszName)
 {
    // used for not-yet-existing targets:
    // tell if it should be a dir by looking at the name
-   long nlen = strlen(pszName);
+   int nlen = strlen(pszName);
    if (nlen <= 0) return 0;
    if (!strcmp(pszName, ".")) return 1;
    if (!strcmp(pszName, "..")) return 1;
@@ -12450,7 +12615,7 @@ long isDirByName(char *pszName)
    return 0;
 }
 
-long isDir(char *pszName)
+int isDir(char *pszName)
 {
    if (bGlblSyntaxTest) {
       // if just simulating, check how the name looks
@@ -12460,37 +12625,45 @@ long isDir(char *pszName)
    if (containsWildCards(pszName))
       return 0;
 
-   #ifdef _MSC_VER
+   #ifdef _WIN32
+
    DWORD nAttrib = GetFileAttributes(pszName);
    if (nAttrib == 0xFFFFFFFF) // "INVALID_FILE_ATTRIBUTES"
       return 0;
    if (nAttrib & FILE_ATTRIBUTE_DIRECTORY)
       return 1;
+
    #else
+
    struct stat64 buf;
    if (stat64(pszName, &buf))
       return 0;
    if (buf.st_mode & _S_IFDIR )
       return 1;
+
    #endif
 
    return 0;
 }
 
-long fileExists(char *pszName, bool bOrDir)
+int fileExists(char *pszName, bool bOrDir)
 {
-   #ifdef _MSC_VER
+   #ifdef _WIN32
+
    DWORD nAttrib = GetFileAttributes(pszName);
    if (nAttrib == 0xFFFFFFFF) // "INVALID_FILE_ATTRIBUTES"
       return 0;
    if (!bOrDir && (nAttrib & FILE_ATTRIBUTE_DIRECTORY))
       return 0; // is a dir, not a file
+
    #else
+
    struct stat64 buf;
    if (stat64(pszName, &buf))
       return 0;
    if (!bOrDir && (buf.st_mode & _S_IFDIR))
       return 0; // is a dir, not a file
+
    #endif
 
    // we can get the attribs, and it's not a dir,
@@ -12499,13 +12672,13 @@ long fileExists(char *pszName, bool bOrDir)
    return 1;
 }
 
-long coiExists(char *pszName, bool bOrDir)
+int coiExists(char *pszName, bool bOrDir)
 {
    Coi *pcoi = new Coi(pszName, 0);
    if (!pcoi) return 0;
    pcoi->incref("cex");
 
-   long nrc = pcoi->existsFile(bOrDir);
+   int nrc = pcoi->existsFile(bOrDir);
 
    if (!pcoi->decref())
       delete pcoi;
@@ -12513,21 +12686,21 @@ long coiExists(char *pszName, bool bOrDir)
    return nrc;   
 }
 
-long getFileStat( // RC == 0 if exists anything
+int getFileStat( // RC == 0 if exists anything
    char  *pszName,
-   long   &rbIsDirectory,
-   long   &rbCanRead,
-   long   &rbCanWrite,
+   int   &rbIsDirectory,
+   int   &rbCanRead,
+   int   &rbCanWrite,
    num    &rlFileTime,
    num    &rlFileSize,
    num   *ppcatimes,     // optional: creation and access time
    void  *prawstat,      // optional: create copy of stat structure
-   long   nrawstatmax    // size of above buffer
+   int   nrawstatmax    // size of above buffer
  )
 {
    if (prawstat) memset(prawstat, 0, nrawstatmax);
 
-   #ifdef _MSC_VER
+   #ifdef _WIN32
 
    #ifdef WINFULL
    // special case: top level of UNC paths
@@ -12546,11 +12719,11 @@ long getFileStat( // RC == 0 if exists anything
       if (!pszSub) 
       {
          // handle \\host\root using GetFileAttributesEx
-         mtklog("GetFileAttributesEx %s", pszName);
+         mtklog(("GetFileAttributesEx %s", pszName));
          WIN32_FILE_ATTRIBUTE_DATA oinf;
          if (!GetFileAttributesEx(pszName, GetFileExInfoStandard, &oinf))
             return -1;
-         ulong nattrib = oinf.dwFileAttributes;
+         uint nattrib = oinf.dwFileAttributes;
          rbIsDirectory = (nattrib & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
          rbCanRead     = 1;
          rbCanWrite    = (nattrib & FILE_ATTRIBUTE_READONLY)  ? 0 : 1;
@@ -12567,7 +12740,7 @@ long getFileStat( // RC == 0 if exists anything
       // else fall through
    }
    #else
-   ulong nattrib = GetFileAttributesA(pszName);
+   uint nattrib = GetFileAttributesA(pszName);
    rbIsDirectory = (nattrib & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
    rbCanRead     = 1;
    rbCanWrite    = (nattrib & FILE_ATTRIBUTE_READONLY)  ? 0 : 1;
@@ -12580,7 +12753,7 @@ long getFileStat( // RC == 0 if exists anything
       return -1;
    #else
    struct stat buf;
-   if (mystat(pszName, &buf))
+   if (stat(pszName, &buf))
       return -1;
    #endif
 
@@ -12617,7 +12790,7 @@ long getFileStat( // RC == 0 if exists anything
       ppcatimes[1] = buf.st_atime;
    }
    if (prawstat) {
-      if (nrawstatmax < sizeof(buf))
+      if (nrawstatmax < (int)sizeof(buf))
          return 9+perr("internal #1090: statbuf too small\n");
       memcpy(prawstat, &buf, sizeof(buf));
    }
@@ -12628,9 +12801,9 @@ long getFileStat( // RC == 0 if exists anything
 
 num getFileSize(char *pszName) 
 {
-   long bIsDir    = 0;
-   long bCanRead  = 1;
-   long bCanWrite = 1;
+   int bIsDir    = 0;
+   int bCanRead  = 1;
+   int bCanWrite = 1;
    num  nFileTime = 0;
    num  nFileSize = 0;
    if (getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize))
@@ -12655,9 +12828,9 @@ num getFileSizeSeek(char *pszName)
 
 num getFileTime(char *pszName)
 {
-   long bIsDir    = 0;
-   long bCanRead  = 1;
-   long bCanWrite = 1;
+   int bIsDir    = 0;
+   int bCanRead  = 1;
+   int bCanWrite = 1;
    num  nFileTime = 0;
    num  nFileSize = 0;
    if (getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize))
@@ -12678,9 +12851,9 @@ num getFileAge(char *pszName)
 
 bool canWriteFile(char *pszName, bool bTryCreate)
 {
-   long bIsDir    = 0;
-   long bCanRead  = 0;
-   long bCanWrite = 0;
+   int bIsDir    = 0;
+   int bCanRead  = 0;
+   int bCanWrite = 0;
    num  nFileTime = 0;
    num  nFileSize = 0;
    if (!getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize)) {
@@ -12698,14 +12871,14 @@ bool canWriteFile(char *pszName, bool bTryCreate)
 }
 
 // uses szLineBuf.
-long getFileSystemInfoRaw(
+int getFileSystemInfoRaw(
    char  *pszPath,         // e.g. "D:\\", "/home/user/"
    num   &nOutTotalBytes,  // total volume size
    num   &nOutFreeBytes,   // free bytes usable for normal users
    char  *pszOutFSName,    // file system name buffer
-   long  nOutFSNMaxSize,   // size of this buffer
+   int  nOutFSNMaxSize,   // size of this buffer
    char  *pszOutVolID,     // volume name and serial, if any
-   long  nOutVolIDMaxSize  // size of this buffer
+   int  nOutVolIDMaxSize  // size of this buffer
    )
 {
    nOutTotalBytes  = -1;
@@ -12755,20 +12928,20 @@ long getFileSystemInfoRaw(
    if (statvfs64(pszPath, &oinf))
       return 9+perr("unable to get free space of %s\n", pszPath);
 
-   // unsigned long f_bsize   - preferred filesystem blocksize. 
-   // unsigned long f_frsize  - fundamental filesystem blocksize (if supported) 
+   // unsigned int f_bsize   - preferred filesystem blocksize. 
+   // unsigned int f_frsize  - fundamental filesystem blocksize (if supported) 
    // fsblkcnt_t f_blocks     - total number of blocks on the filesystem, in units of f_frsize. 
    // fsblkcnt_t f_bfree      - total number of free blocks. 
    // fsblkcnt_t f_bavail     - number of free blocks available to a nonsuperuser. 
    // fsfilcnt_t f_files      - total number of file nodes (inodes). 
    // fsfilcnt_t f_ffree      - total number of free file nodes. 
    // fsfilcnt_t f_favail     - number of inodes available to a nonsuperuser. 
-   // unsigned long f_fsid    - filesystem ID (dev for now). 
+   // unsigned int f_fsid    - filesystem ID (dev for now). 
    // char f_basetype[16]     - type of the target filesystem, as a null-terminated string. 
-   // unsigned long f_flag    - bitmask of flags; the function can set these flags: 
+   // unsigned int f_flag    - bitmask of flags; the function can set these flags: 
    //    ST_RDONLY -- read-only filesystem. 
    //    ST_NOSUID -- the filesystem doesn't support setuid/setgid semantics. 
-   // unsigned long f_namemax - maximum filename length.
+   // unsigned int f_namemax - maximum filename length.
 
    // not with linux:
    // mystrcopy(pszOutFSName, oinf.f_basetype, nOutFSNMaxSize);
@@ -12785,14 +12958,14 @@ long getFileSystemInfoRaw(
    #endif
 }
 
-long getFileSystemInfo(
+int getFileSystemInfo(
    char  *pszPath,         // e.g. "D:\\", "/home/user/"
    num   &nOutTotalBytes,  // total volume size
    num   &nOutFreeBytes,   // free bytes usable for normal users
    char  *pszOutFSName,    // file system name buffer
-   long  nOutFSNMaxSize,   // size of this buffer
+   int  nOutFSNMaxSize,   // size of this buffer
    char  *pszOutVolID,     // volume name and serial, if any
-   long  nOutVolIDMaxSize  // size of this buffer
+   int  nOutVolIDMaxSize  // size of this buffer
    )
 {
    char szPath[SFK_MAX_PATH+10];
@@ -12886,7 +13059,7 @@ static const char *pszGlblMonths[] = {
    "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
 };
 
-bool tryGetRelTime(char *psz, num &nRetTime)
+bool tryGetRelTime(cchar *psz, num &nRetTime)
 {
    bool brc = false;
 
@@ -12896,7 +13069,7 @@ bool tryGetRelTime(char *psz, num &nRetTime)
    tm = localtime(&now);
    tm->tm_isdst = -1;
 
-   long nlen = strlen(psz);
+   int nlen = strlen(psz);
 
    if (!strcmp(psz, "now")) {
       brc = true;
@@ -12962,16 +13135,11 @@ bool tryGetRelTime(char *psz, num &nRetTime)
    num nTime2 = (num)nTime;
    if (nTime2 <= 0) { perr("cannot calc time: %s\n", psz); return 0; }
 
-   if (cs.verbose > 0) {
-      char *psz1 = timeAsString(nTime2);
-      // printf("TIME %s => %s\n", psz, psz1);
-   }
-
    nRetTime = nTime2;
    return brc;
 }
 
-long timeFromString(char *pszin, num &nRetTime)
+int timeFromString(char *pszin, num &nRetTime)
 {
    char *psz = pszin;
 
@@ -12992,9 +13160,9 @@ long timeFromString(char *pszin, num &nRetTime)
    // 20061121             - 08 chars
    // Sep 28 2006          - 11 chars
    // Sep 28 14:37         - 12 chars
-   ulong nyear=0,nmon=0,nday=0,nhour=0,nmin=0,nsec=0;
-   long nslen = strlen(psz);
-   long lrc = 0;
+   uint nyear=0,nmon=0,nday=0,nhour=0,nmin=0,nsec=0;
+   int nslen = strlen(psz);
+   int lrc = 0;
    if (nslen == 24 || nslen == 26 || nslen == 30) {
       // TODO: so far, "GMT" or "+0100" postfixes are ignored.
       nday = atol(psz);
@@ -13005,18 +13173,18 @@ long timeFromString(char *pszin, num &nRetTime)
             break;
       if (nmon >= 12) return 9+perr("wrong date/time format.0: %s\n", psz);
       psz += 4;
-      lrc = sscanf(psz, "%4lu %2lu:%2lu:%2lu", &nyear, &nhour, &nmin, &nsec);
+      lrc = sscanf(psz, "%4u %2u:%2u:%2u", &nyear, &nhour, &nmin, &nsec);
       if (lrc != 4) return 9+perr("wrong date/time format.0: %s\n", psz);
       nmon++; // ONE based months
    }
    else
    if (nslen == 19) {
-      lrc = sscanf(psz, "%4lu-%2lu-%2lu %2lu:%2lu:%2lu", &nyear, &nmon, &nday, &nhour, &nmin, &nsec);
+      lrc = sscanf(psz, "%4u-%2u-%2u %2u:%2u:%2u", &nyear, &nmon, &nday, &nhour, &nmin, &nsec);
       if (lrc != 6) return 9+perr("wrong date/time format.1: %s\n", psz);
    }
    else
    if (nslen == 14) {
-      lrc = sscanf(psz, "%4lu%2lu%2lu%2lu%2lu%2lu", &nyear, &nmon, &nday, &nhour, &nmin, &nsec);
+      lrc = sscanf(psz, "%4u%2u%2u%2u%2u%2u", &nyear, &nmon, &nday, &nhour, &nmin, &nsec);
       if (lrc != 6) return 9+perr("wrong date/time format.2: %s\n", psz);
    }
    else
@@ -13027,7 +13195,7 @@ long timeFromString(char *pszin, num &nRetTime)
             break;
       if (nmon >= 12) return 9+perr("wrong date/time format.3: %s\n", psz);
       psz += 4;
-      lrc = sscanf(psz, "%2lu %2lu:%2lu", &nday, &nhour, &nmin);
+      lrc = sscanf(psz, "%2u %2u:%2u", &nday, &nhour, &nmin);
       if (lrc == 3) {
          // copy year from current time:
          nyear = tm->tm_year;
@@ -13035,7 +13203,7 @@ long timeFromString(char *pszin, num &nRetTime)
             nyear = nyear - 100 + 2000;   // "108" -> "2008"
       } else {
          // retry on "29  2007" with TWO blanks:
-         lrc = sscanf(psz, "%2lu  %4lu", &nday, &nyear);
+         lrc = sscanf(psz, "%2u  %4u", &nday, &nyear);
          if (lrc != 2) return 9+perr("wrong date/time format.4: %s\n", psz);
       }
       nmon++; // ONE based months
@@ -13048,35 +13216,35 @@ long timeFromString(char *pszin, num &nRetTime)
             break;
       if (nmon >= 12) return 9+perr("wrong date/time format.5: %s\n", psz);
       psz += 4;
-      lrc = sscanf(psz, "%2lu %4lu", &nday, &nyear);
+      lrc = sscanf(psz, "%2u %4u", &nday, &nyear);
       if (lrc != 2) return 9+perr("wrong date/time format.6: %s\n", psz);
       nmon++; // ONE based months
    }
    else
    if (nslen == 10) {
-      lrc = sscanf(psz, "%4lu-%2lu-%2lu", &nyear, &nmon, &nday);
+      lrc = sscanf(psz, "%4u-%2u-%2u", &nyear, &nmon, &nday);
       if (lrc != 3) return 9+perr("wrong date format.7: %s\n", psz);
    }
    else
    if (nslen == 8) {
-      lrc = sscanf(psz, "%4lu%2lu%2lu", &nyear, &nmon, &nday);
+      lrc = sscanf(psz, "%4u%2u%2u", &nyear, &nmon, &nday);
       if (lrc != 3) return 9+perr("wrong date format.8: %s\n", psz);
    }
    else
       return 9+perr("wrong date and/or time format.9: \"%s\"\n", psz);
 
-   if (nyear < 1970) return 9+perr("unexpected year: %lu\n", nyear);
-   if (nmon < 1 || nmon > 12) return 9+perr("unexpected month: %lu in \"%s\" %ld\n", nmon, pszin, nslen);
-   if (nday < 1 || nday > 31) return 9+perr("unexpected day: %lu\n", nday);
-   if (nhour > 23) return 9+perr("unexpected hour: %lu\n", nhour);
-   if (nmin  > 59) return 9+perr("unexpected minute: %lu\n", nmin);
-   if (nsec  > 59) return 9+perr("unexpected second: %lu\n", nsec);
+   if (nyear < 1970) return 9+perr("unexpected year: %u\n", nyear);
+   if (nmon < 1 || nmon > 12) return 9+perr("unexpected month: %u in \"%s\" %d\n", nmon, pszin, nslen);
+   if (nday < 1 || nday > 31) return 9+perr("unexpected day: %u\n", nday);
+   if (nhour > 23) return 9+perr("unexpected hour: %u\n", nhour);
+   if (nmin  > 59) return 9+perr("unexpected minute: %u\n", nmin);
+   if (nsec  > 59) return 9+perr("unexpected second: %u\n", nsec);
 
    // adjust values
    nyear -= 1900;
    nmon--; // mktime uses ZERO BASED months
 
-   // printf("] %lu-%lu-%lu %lu:%lu:%lu\n",nyear,nmon,nday,nhour,nmin,nsec);
+   // printf("] %u-%u-%u %u:%u:%u\n",nyear,nmon,nday,nhour,nmin,nsec);
 
    tm->tm_year = nyear;
    tm->tm_mon  = nmon;
@@ -13114,9 +13282,9 @@ char getYNAchar()
 }
 
 // sizefromstr
-num numFromSizeStr(char *psz, char *pszLoudInfo=0)
+num numFromSizeStr(char *psz, cchar *pszLoudInfo=0)
 {
-   long nLen = strlen(psz);
+   int nLen = strlen(psz);
    if (nLen >= 1) {
       num lNum = myatonum(psz);
       char cPostFix = psz[nLen-1];
@@ -13143,29 +13311,29 @@ num numFromSizeStr(char *psz, char *pszLoudInfo=0)
 class FileStat {
 public:
    FileStat       ( );
-   long  readFrom (char *pszSrcFile, bool bWithFSInfo=0, bool bSilent=0);
-   long  writeTo  (char *pszDstFile, int nTraceLine);
-   long  differs  (FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder=0);
-   long  dump     ( );
-   long  dumpTimeDiff (FileStat &rdst);
+   int  readFrom (char *pszSrcFile, bool bWithFSInfo=0, bool bSilent=0);
+   int  writeTo  (char *pszDstFile, int nTraceLine);
+   int  differs  (FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder=0);
+   int  dump     ( );
+   int  dumpTimeDiff (FileStat &rdst);
    num   getSize  ( )   { return src.nSize; }
-   uchar *marshal (long &nRetSize);
-   long  setFrom  (uchar *pBuf, long nBufSize);
+   uchar *marshal (int &nRetSize);
+   int  setFrom  (uchar *pBuf, int nBufSize);
    char  *attrStr ( );
-   const char *diffReason  (long nReason);
+   const char *diffReason  (int nReason);
 
    num   getUnixTime ( ) { return src.nMTime; }
    num   getWinTime  ( );
 
 public:
-   long  dumpSub  (num nTime, char *pszInfo, long nRow);
+   int  dumpSub  (num nTime, cchar *pszInfo, int nRow);
    void  reset    ( );
 
    struct FileStatSrcInfo 
    {
-      long  bIsDir;
-      long  bIsReadable;
-      long  bIsWriteable;
+      int  bIsDir;
+      int  bIsReadable;
+      int  bIsWriteable;
    
       // time of MODIFICATION or LAST WRITE is ALWAYS available.
       num   nMTime;
@@ -13184,8 +13352,8 @@ public:
       #endif            // 2 = also have windows C and A time
    
       num   nSize;
-      long  bIsUTCTime;
-      ulong nAttribs;
+      int  bIsUTCTime;
+      uint nAttribs;
    }
    src;
 
@@ -13227,19 +13395,19 @@ char *FileStat::attrStr() {
    return szClAttrStr;
 }
 
-uchar *FileStat::marshal(long &nRetSize) {
+uchar *FileStat::marshal(int &nRetSize) {
    nRetSize = sizeof(src);
    return (uchar*)&src;
 }
 
-long FileStat::setFrom(uchar *pBuf, long nBufSize) {
+int FileStat::setFrom(uchar *pBuf, int nBufSize) {
    if (nBufSize != sizeof(src))
       return 9+perr("internal 612112005\n");
    memcpy(&src, pBuf, sizeof(src));
    return 0;
 }
 
-long FileStat::dump() 
+int FileStat::dump() 
 {
    dumpSub(src.nMTime, " mtime, ", 0);
    dumpSub(src.nATime, " atime, ", 1);
@@ -13249,7 +13417,7 @@ long FileStat::dump()
    return 0;
 }
 
-long FileStat::dumpTimeDiff(FileStat &rdst)
+int FileStat::dumpTimeDiff(FileStat &rdst)
 {
    num nsec = src.nMTime - rdst.src.nMTime;
    printf("diff: mtime %s sec ",numtoa(nsec));
@@ -13298,10 +13466,11 @@ long FileStat::dumpTimeDiff(FileStat &rdst)
    return 0;
 }
 
-long FileStat::dumpSub(num nTime, char *pszInfo, long nRow)
+int FileStat::dumpSub(num nTime, cchar *pszInfo, int nRow)
 {
    szClTextBuf1[0] = '\0';
-   strcat(szClTextBuf1, numtoa(nTime));   strcat(szClTextBuf1, pszInfo);
+   strcat(szClTextBuf1, numtoa(nTime));   
+   strcat(szClTextBuf1, pszInfo);
 
    num nModHourSec = nTime % (24 * 3600);
    num nModHours   = nModHourSec / 3600;
@@ -13385,7 +13554,7 @@ void FileStat::reset() {
    memset(szClDiffReason, 0, sizeof(szClDiffReason));
 }
 
-const char *FileStat::diffReason(long nReason)
+const char *FileStat::diffReason(int nReason)
 {
    if (szClDiffReason[0])
       return szClDiffReason;
@@ -13410,9 +13579,9 @@ bool is3600Range(num n) {
    return false;
 }
 
-long FileStat::differs(FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder)
+int FileStat::differs(FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder)
 {
-   long nTimeState = 0; // 0: time is no reason to process
+   int nTimeState = 0; // 0: time is no reason to process
 
    szClDiffReason[0] = '\0';
 
@@ -13431,33 +13600,33 @@ long FileStat::differs(FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder)
       num nSrcSec   = fileTimeToTimeT(nSrcMTime);
       num nNowSec   = getSystemTime();
       num nAgeSec   = nNowSec - nSrcSec;
-      long nAgeDays = (long)(nAgeSec / (24 * 3600));
+      int nAgeDays = (int)(nAgeSec / (24 * 3600));
 
       num ndif = (nSrcMTime - nRefMTime) / 10000000; // in seconds
-      if (abs((long)ndif) < 3)
+      if (abs((int)ndif) < 3)
          nTimeState = 0; // time is no reason
       else
-      if (bGlblIgnore3600 && is3600Range(abs((long)ndif)) && (nAgeDays > nGlblActiveFileAgeLimit))
+      if (bGlblIgnore3600 && is3600Range(abs((int)ndif)) && (nAgeDays > nGlblActiveFileAgeLimit))
       {
          nTimeState = 0; // dst jump difference
       }
       else
       if (bSameIfOlderSrc) {
          if (cs.verbose > 1 && (ndif != 0))
-            printf("wft diff %ld [1]\n", ndif);
+            printf("wft diff %d [1]\n", ndif);
          if (ndif > 0) {
             sprintf(szClDiffReason, "newer, wft by %s sec", numtoa(ndif));
             nTimeState = 8; // src is newer, must process
          }
          if ((ndif < 0) && pSrcIsOlder) {
-            if (is3600Range(abs((long)ndif)))
+            if (is3600Range(abs((int)ndif)))
                *pSrcIsOlder = 2; // notice: probably older due to dst jump
             else
                *pSrcIsOlder = 1; // notice
          }
       } else {
          if (cs.verbose > 1 && (ndif != 0))
-            printf("wft diff %ld [2]\n", ndif);
+            printf("wft diff %d [2]\n", ndif);
          if (nRefMTime != nSrcMTime) {
             sprintf(szClDiffReason, "time, wft by %s sec", numtoa(ndif));
             nTimeState = 7; // any time diff, must process
@@ -13480,26 +13649,26 @@ long FileStat::differs(FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder)
       num nSrcSec   = src.nMTime;
       num nNowSec   = getSystemTime();
       num nAgeSec   = nNowSec - nSrcSec;
-      long nAgeDays = (long)(nAgeSec / (24 * 3600));
+      int nAgeDays = (int)(nAgeSec / (24 * 3600));
 
       num ndif = src.nMTime - oref.src.nMTime;
-      if (abs((long)ndif) < 3)
+      if (abs((int)ndif) < 3)
          nTimeState = 0; // time is no reason
       else
-      if (bGlblIgnore3600 && is3600Range(abs((long)ndif)) && (nAgeDays > nGlblActiveFileAgeLimit))
+      if (bGlblIgnore3600 && is3600Range(abs((int)ndif)) && (nAgeDays > nGlblActiveFileAgeLimit))
       {
          nTimeState = 0; // dst jump difference
       }
       else
       if (bSameIfOlderSrc) {
          if (cs.verbose > 1 && (ndif != 0))
-            printf("wft diff %ld [3]\n", ndif);
+            printf("wft diff %d [3]\n", (int)ndif);
          if (ndif > 0) {
             sprintf(szClDiffReason, "newer, uft by %s sec", numtoa(ndif));
             nTimeState = 9; // src is newer, must process
          }
          if ((ndif < 0) && pSrcIsOlder) {
-            if (is3600Range(abs((long)ndif)))
+            if (is3600Range(abs((int)ndif)))
                *pSrcIsOlder = 2; // notice: probably older due to dst jump
             else
                *pSrcIsOlder = 1; // notice
@@ -13507,7 +13676,7 @@ long FileStat::differs(FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder)
       }
       else {
          if (cs.verbose > 1 && (ndif != 0))
-            printf("wft diff %ld [4]\n", ndif);
+            printf("wft diff %d [4]\n", (int)ndif);
          sprintf(szClDiffReason, "time, uft by %s sec", numtoa(ndif));
          nTimeState = 10; // any time diff, must process
          if ((ndif < 0) && pSrcIsOlder)
@@ -13536,29 +13705,33 @@ long FileStat::differs(FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder)
       )
    {
       if (cs.verbose > 1)
-         printf("[win_attributes differ, %lx %lx]\n",src.nAttribs,oref.src.nAttribs);
+         printf("[win_attributes differ, %x %x]\n",src.nAttribs,oref.src.nAttribs);
       return 5;
    } else {
       if (cs.verbose > 2)
-         printf("[win_attributes match, %lx %lx]\n",src.nAttribs,oref.src.nAttribs);
+         printf("[win_attributes match, %x %x]\n",src.nAttribs,oref.src.nAttribs);
    }
    #endif
 
    return nTimeState;
 }
 
-long FileStat::readFrom(char *pszSrcFile, bool bWithFSInfo, bool bSilent) 
+int FileStat::readFrom(char *pszSrcFile, bool bWithFSInfo, bool bSilent) 
 {
    reset();
 
    if (cs.debug)
       printf("filestat.1: \"%s\"\n",pszSrcFile);
 
-   #ifdef _MSC_VER
-      #ifdef SFK_W64
-      struct __stat64 ostat;
+   #ifdef _WIN32
+      #ifdef _MSC_VER
+         #ifdef SFK_W64
+         struct __stat64 ostat;
+         #else
+         struct stat ostat;
+         #endif
       #else
-      struct stat ostat;
+         struct stat ostat;
       #endif
    #else
       struct stat64 ostat;
@@ -13652,7 +13825,7 @@ long FileStat::readFrom(char *pszSrcFile, bool bWithFSInfo, bool bSilent)
    if (!bok2) {
       src.nAttribs = 0;
       if (!bSilent)
-         perr("cannot read attributes: %s (rc %lu)\n", pszSrcFile, GetLastError());
+         perr("cannot read attributes: %s (rc %u)\n", pszSrcFile, GetLastError());
       return 12;
    }
    src.nAttribs = oinf.dwFileAttributes;
@@ -13669,14 +13842,14 @@ long FileStat::readFrom(char *pszSrcFile, bool bWithFSInfo, bool bSilent)
    #else
 
    // src.bIsReadable, src.bIsWriteable
-   src.nAttribs = (ulong)ostat.st_mode;
+   src.nAttribs = (uint)ostat.st_mode;
 
    #endif
 
    return 0;
 }
 
-num calcSumTime(num nRawTime, long nTimeDiff, char *pszInfo)
+num calcSumTime(num nRawTime, int nTimeDiff, char *pszInfo)
 {
    // does RawTime point into a summertime section?
    time_t ntmod = (time_t)nRawTime;
@@ -13685,17 +13858,17 @@ num calcSumTime(num nRawTime, long nTimeDiff, char *pszInfo)
       // YES: change by one hour
       nRawTime += (num)nTimeDiff; // seconds
       if (pszInfo)
-         printf("%s time adapted, %02d.%02d., %ld\n",pszInfo,ptmod->tm_mday,ptmod->tm_mon+1,nTimeDiff);
+         printf("%s time adapted, %02d.%02d., %d\n",pszInfo,ptmod->tm_mday,ptmod->tm_mon+1,nTimeDiff);
    }
    if (ptmod && !ptmod->tm_isdst) {
       if (pszInfo)
-         printf("%s time not adapted, %02d.%02d., %ld\n",pszInfo,ptmod->tm_mday,ptmod->tm_mon+1,nTimeDiff);
+         printf("%s time not adapted, %02d.%02d., %d\n",pszInfo,ptmod->tm_mday,ptmod->tm_mon+1,nTimeDiff);
    }
    return nRawTime;
 }
 
 #ifdef _WIN32
-long makeWinFileTime(num nsrctime, FILETIME &rdsttime, char *pszDstFile)
+int makeWinFileTime(num nsrctime, FILETIME &rdsttime, char *pszDstFile)
 {
    time_t ftime = (time_t)nsrctime;
    struct tm *loctm;
@@ -13704,7 +13877,7 @@ long makeWinFileTime(num nsrctime, FILETIME &rdsttime, char *pszDstFile)
 
    loctm = localtime(&ftime);
    if (loctm == NULL)
-      return 9+perr("cannot convert time for: %s %lu\n",pszDstFile,(ulong)GetLastError());
+      return 9+perr("cannot convert time for: %s %u\n",pszDstFile,(uint)GetLastError());
 
    st.wYear         = (WORD)loctm->tm_year + 1900;
    st.wMonth        = (WORD)loctm->tm_mon + 1;
@@ -13717,7 +13890,7 @@ long makeWinFileTime(num nsrctime, FILETIME &rdsttime, char *pszDstFile)
 
    if (!SystemTimeToFileTime(&st, &locft) ||
       !LocalFileTimeToFileTime(&locft, &modft))
-      return 9+perr("cannot convert file time: %s %lu\n",pszDstFile,(ulong)GetLastError());
+      return 9+perr("cannot convert file time: %s %u\n",pszDstFile,(uint)GetLastError());
 
    rdsttime = modft;
 
@@ -13734,7 +13907,7 @@ long makeWinFileTime(num nsrctime, FILETIME &rdsttime, char *pszDstFile)
       4. all above for dst as well
 */
 
-long FileStat::writeTo(char *pszDstFile, int nTraceLine)
+int FileStat::writeTo(char *pszDstFile, int nTraceLine)
 {
    // totally experimental and incomplete,
    // esp. on NTFS <-> FAT file transfers.
@@ -13750,14 +13923,14 @@ long FileStat::writeTo(char *pszDstFile, int nTraceLine)
       0     // template file
       );
    if (hDst == INVALID_HANDLE_VALUE) {
-      ulong nerr = GetLastError();
-      perr("cannot set attributes (rc=%lu): %s\n",nerr,pszDstFile);
+      uint nerr = GetLastError();
+      perr("cannot set attributes (rc=%u): %s\n",nerr,pszDstFile);
       if (nerr == ERROR_ACCESS_DENIED)
         pinf("make sure you have full access rights. maybe you have to be administrator.\n");
       return 9;
    }
 
-   long nrc = 0;
+   int nrc = 0;
 
    // src.nMTime is a value in SECONDS since 1970.
 
@@ -13790,7 +13963,7 @@ long FileStat::writeTo(char *pszDstFile, int nTraceLine)
    /*
       // TODO: this works only in SystemInWinterTime. On Windows,
       //       use converted GetFileTime() only.
-      long nTimeDiff = 3600;
+      int nTimeDiff = 3600;
       num nDstMTime = calcSumTime(src.nMTime, nTimeDiff, 0);
       num nDstCTime = calcSumTime(src.nCTime, nTimeDiff, 0);
       num nDstATime = calcSumTime(src.nATime, nTimeDiff, 0);
@@ -13805,7 +13978,7 @@ long FileStat::writeTo(char *pszDstFile, int nTraceLine)
    #ifdef WINFULL
    if (!nrc) {
       if (!SetFileTime(hDst, &nDstCTime, &nDstATime, &nDstMTime)) {
-         perr("cannot set file time (rc=%lu): %s %s\n", (ulong)GetLastError(), pszDstFile, numtohex(src.nMTime));
+         perr("cannot set file time (rc=%u): %s %s\n", (uint)GetLastError(), pszDstFile, numtohex(src.nMTime));
          nrc = 9;
       }
    }
@@ -13821,7 +13994,7 @@ long FileStat::writeTo(char *pszDstFile, int nTraceLine)
    }
    else
    if (!SetFileAttributes(pszDstFile, src.nAttribs)) {
-      perr("failed to set attributes (rc=%lu): %s %s\n", (ulong)GetLastError(), pszDstFile, numtohex(src.nMTime));
+      perr("failed to set attributes (rc=%u): %s %s\n", (uint)GetLastError(), pszDstFile, numtohex(src.nMTime));
       nrc = 9;
    }
 
@@ -13848,7 +14021,7 @@ long FileStat::writeTo(char *pszDstFile, int nTraceLine)
    #endif
 }
 
-long cloneAttributes(char *pszSrc, char *pszDst, int nTraceLine)
+int cloneAttributes(char *pszSrc, char *pszDst, int nTraceLine)
 {
    FileStat ofs;
    if (ofs.readFrom(pszSrc)) return 9;
@@ -13856,7 +14029,7 @@ long cloneAttributes(char *pszSrc, char *pszDst, int nTraceLine)
    return 0;
 }
 
-long getFileMD5(char *pszFile, SFKMD5 &md5, bool bSilent, bool bInfoCycle)
+int getFileMD5(char *pszFile, SFKMD5 &md5, bool bSilent, bool bInfoCycle)
 {
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) {
@@ -13874,7 +14047,7 @@ long getFileMD5(char *pszFile, SFKMD5 &md5, bool bSilent, bool bInfoCycle)
    return 0;
 }
 
-long getFileMD5(char *pszFile, uchar *abOut16)
+int getFileMD5(char *pszFile, uchar *abOut16)
 {
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) return 9;
@@ -13886,7 +14059,7 @@ long getFileMD5(char *pszFile, uchar *abOut16)
    }
    fclose(fin);
    uchar *pmd5 = md5.digest();
-   for (ulong k=0; k<16; k++)
+   for (uint k=0; k<16; k++)
       abOut16[k] = pmd5[k];
    return 0;
 }
@@ -13895,16 +14068,16 @@ long getFileMD5(char *pszFile, uchar *abOut16)
 // size of windows-specific read buffer must be
 // a multiple of disk's sector size. the following
 // should be sufficient for everything.
-long   nGlblMD5NoCacheBufSize = 128000;
+int   nGlblMD5NoCacheBufSize = 128000;
 LPVOID pGlblMD5NoCacheBuf     = 0;
 #endif
 
-long getFileMD5NoCache(char *pszFile, uchar *abOut16, bool bSilent)
+int getFileMD5NoCache(char *pszFile, uchar *abOut16, bool bSilent)
 {
    #ifdef _WIN32
-   long lRC = 0;
+   int lRC = 0;
 
-   long nBufSize = nGlblMD5NoCacheBufSize;
+   int nBufSize = nGlblMD5NoCacheBufSize;
 
    // alloc read buffer on demand
    if (pGlblMD5NoCacheBuf == 0) {
@@ -13921,8 +14094,8 @@ long getFileMD5NoCache(char *pszFile, uchar *abOut16, bool bSilent)
    if (GetDiskFreeSpace(szRootDir, &nDummy1, &nBytesPerSector, &nDummy2, &nDummy3)) {
       // adjust max. read size to multiples of sector size
       if (nBytesPerSector > 0) {
-         long nBufSize2 = (long)(nBufSize / nBytesPerSector) * nBytesPerSector;
-         printf("adjusted %ld => %ld by %ld\n",nBufSize,nBufSize2,nBytesPerSector);
+         int nBufSize2 = (int)(nBufSize / nBytesPerSector) * nBytesPerSector;
+         printf("adjusted %d => %d by %d\n",nBufSize,nBufSize2,nBytesPerSector);
          nBufSize = nBufSize;
       }
    } else {
@@ -13951,7 +14124,7 @@ long getFileMD5NoCache(char *pszFile, uchar *abOut16, bool bSilent)
          {  lRC = 10; break;   }
       if (nRead <= 0)
          break;
-      // printf("%ld bytes,\n\"%.*s\"\n",nRead,(int)nRead,pBuf);
+      // printf("%d bytes,\n\"%.*s\"\n",nRead,(int)nRead,pBuf);
       md5.update((uchar*)pBuf,nRead);
       nGlblBytes += nRead;
       if (userInterrupt(bSilent))
@@ -13987,7 +14160,7 @@ long getFileMD5NoCache(char *pszFile, uchar *abOut16, bool bSilent)
    }
    fclose(fin);
    uchar *pmd5 = md5.digest();
-   for (ulong k=0; k<16; k++)
+   for (uint k=0; k<16; k++)
       abOut16[k] = pmd5[k];
    return 0;
    #endif
@@ -14005,11 +14178,11 @@ void ab8ToNum(uchar *pin, num &rn1) {
     rn1 = n1;
 }
 
-ulong ab4toulong(uchar *pin) {
-    ulong n1 = (ulong)(*(pin+0)) & 0xFFUL;
-    n1 = (n1 << 8) | ((ulong)(*(pin+1)) & 0xFFUL);
-    n1 = (n1 << 8) | ((ulong)(*(pin+2)) & 0xFFUL);
-    n1 = (n1 << 8) | ((ulong)(*(pin+3)) & 0xFFUL);
+uint ab4toulong(uchar *pin) {
+    uint n1 = (uint)(*(pin+0)) & 0xFFUL;
+    n1 = (n1 << 8) | ((uint)(*(pin+1)) & 0xFFUL);
+    n1 = (n1 << 8) | ((uint)(*(pin+2)) & 0xFFUL);
+    n1 = (n1 << 8) | ((uint)(*(pin+3)) & 0xFFUL);
     return n1;
 }
 
@@ -14029,7 +14202,7 @@ void numToAb8(num n1, uchar *pout) {
    n1 = (n1 >> 8); pout[0] = (uchar)n1;
 }
 
-void ulongtoab4(ulong n1, uchar *pout) {
+void ulongtoab4(uint n1, uchar *pout) {
    pout[3]  = (uchar)n1;
    n1 = (n1 >> 8); pout[2] = (uchar)n1;
    n1 = (n1 >> 8); pout[1] = (uchar)n1;
@@ -14051,39 +14224,39 @@ public:
    bool  canRead     ( ) { return nClMode == 1; }
    bool  canUpdate   ( ) { return nClMode == 2; }
 
-   long  openUpdate  (char *pszFilename);
-   long  openRead    (char *pszBaseName, bool bVerbose); // zz-sign w/o .dat
-   long  updateFile  (char *pszName, uchar *pmd5cont = 0, bool bJustKeep=false);
-   long  removeFile  (char *pszName, bool bPrefixLF = 0);
-   long  updateDir   (char *pszName);
-   long  save        (long &rnSignsWritten);
+   int  openUpdate  (char *pszFilename);
+   int  openRead    (char *pszBaseName, bool bVerbose); // zz-sign w/o .dat
+   int  updateFile  (char *pszName, uchar *pmd5cont = 0, bool bJustKeep=false);
+   int  removeFile  (char *pszName, bool bPrefixLF = 0);
+   int  updateDir   (char *pszName);
+   int  save        (int &rnSignsWritten);
    void  reset       ( );
-   long  checkFile   (char *pszName);
-   long  numberOfFiles  ( ) { return aUnixTime.numberOfEntries(); }
+   int  checkFile   (char *pszName);
+   int  numberOfFiles  ( ) { return aUnixTime.numberOfEntries(); }
 
-   long  getFileFlags   (long nIndex) { return aFlags.getEntry(nIndex, __LINE__); }
+   int  getFileFlags   (int nIndex) { return aFlags.getEntry(nIndex, __LINE__); }
 
-   long  verifyFile  (char *pszFilename, char *pszShFile=0, bool bSilentAttribs=0);
-   long  verifyFile  (long nIndex, bool bCleanup);
+   int  verifyFile  (char *pszFilename, char *pszShFile=0, bool bSilentAttribs=0);
+   int  verifyFile  (int nIndex, bool bCleanup);
    // 0:ok 1:notfound 9:file_differs_inconsistently
 
-   long  numberOfVerifies  ( ) { return nClVerified; }
-   long  numberOfVerMissing( ) { return nClVerMissing; }
-   long  numberOfVerFailed ( ) { return nClVerFailed; }
+   int  numberOfVerifies  ( ) { return nClVerified; }
+   int  numberOfVerMissing( ) { return nClVerMissing; }
+   int  numberOfVerFailed ( ) { return nClVerFailed; }
    bool  anyEvents         ( ) { return nClVerified || nClVerMissing || nClVerFailed; }
    char *filename          ( ) { return pszClDBFile; }
-   long  setMetaDir        (char *psz);
+   int  setMetaDir        (char *psz);
    char  *metaDir          ( ) { return pszClMetaDir; }
    bool  isSignatureFile   (char *pszFile);
 
 private:
-   long  indexOf     (char *pszFile);
-   long  writeRecord (FILE *fout, long nIndex, SFKMD5 *pmd5, bool bIsLastRec);
-   long  writeEpilogue     (FILE *fout, SFKMD5 *pmd5);
-   long  loadDB      (char *pszBasePath, bool bVerbose);
-   long  loadRecord  (FILE *fin, SFKMD5 *pmd5, bool bSim); // uses szLineBuf
-   long  loadHeader  (FILE *fin, SFKMD5 *pmd5);
-   long  loadCheckEpilogue (FILE *fin, SFKMD5 *pmd5);
+   int  indexOf     (char *pszFile);
+   int  writeRecord (FILE *fout, int nIndex, SFKMD5 *pmd5, bool bIsLastRec);
+   int  writeEpilogue     (FILE *fout, SFKMD5 *pmd5);
+   int  loadDB      (char *pszBasePath, bool bVerbose);
+   int  loadRecord  (FILE *fin, SFKMD5 *pmd5, bool bSim); // uses szLineBuf
+   int  loadHeader  (FILE *fin, SFKMD5 *pmd5);
+   int  loadCheckEpilogue (FILE *fin, SFKMD5 *pmd5);
 
    static char *pszClFileDBHead;
 
@@ -14091,10 +14264,10 @@ private:
    char     *pszClDBFile;
    char     *pszClLineBuf;
    char     *pszClMetaDir;
-   long     nClMode;
-   long     nClVerified;
-   long     nClVerMissing;
-   long     nClVerFailed;
+   int     nClMode;
+   int     nClVerified;
+   int     nClVerMissing;
+   int     nClVerFailed;
    NumTable  aUnixTime;
    NumTable  aWinTime;
    NumTable  aContSumLo;
@@ -14121,7 +14294,7 @@ FileMetaDB::FileMetaDB()
    nClVerFailed   = 0;
 }
 
-long FileMetaDB::setMetaDir(char *psz)
+int FileMetaDB::setMetaDir(char *psz)
 {
    if (pszClMetaDir) delete [] pszClMetaDir;
    pszClMetaDir = strdup(psz);
@@ -14136,19 +14309,19 @@ bool FileMetaDB::isSignatureFile(char *pszBase)
 
    bool bChecked = 0;
 
-   long i=0;
+   int i=0;
    for (i=1; i<=3 && !bChecked; i++)
    {
       SFKMD5 md5; // re-init per loop
 
-      sprintf(pszClLineBuf, "%s-%02ld.dat", pszBase, i);
+      sprintf(pszClLineBuf, "%s-%02d.dat", pszBase, i);
 
       FILE *fin = fopen(pszClLineBuf, "rb");
       if (!fin) return 0;
    
       uchar abin[20];
       char *pszHead = pszClFileDBHead;
-      long nread = fread(abin, 1, 8, fin);
+      int nread = fread(abin, 1, 8, fin);
       if (nread < 8) { fclose(fin); return 1; } // EOD
       abin[8] = '\0';
       if (!strcmp((char*)abin, pszHead))
@@ -14160,10 +14333,10 @@ bool FileMetaDB::isSignatureFile(char *pszBase)
    return bChecked;
 }
 
-long FileMetaDB::indexOf(char *pszInFile)
+int FileMetaDB::indexOf(char *pszInFile)
 {
-   long nEntries = aUnixTime.numberOfEntries();
-   for (long i=0; i<nEntries; i++) 
+   int nEntries = aUnixTime.numberOfEntries();
+   for (int i=0; i<nEntries; i++) 
    {
       char *pszRefFile = aPath.getEntry(i, __LINE__);
       if (!strcmp(pszInFile, pszRefFile))
@@ -14174,7 +14347,7 @@ long FileMetaDB::indexOf(char *pszInFile)
    return -1;
 }
 
-long FileMetaDB::loadDB(char *pszBase, bool bVerbose)
+int FileMetaDB::loadDB(char *pszBase, bool bVerbose)
 {
    if (pszClDBPath) { delete [] pszClDBPath; pszClDBPath=0; }
    pszClDBPath = strdup(pszBase);
@@ -14183,15 +14356,15 @@ long FileMetaDB::loadDB(char *pszBase, bool bVerbose)
    pszClDBFile = new char[strlen(pszClDBPath)+100];
 
    bool bChecked = 0;
-   long nSigRes  = 0;
+   int nSigRes  = 0;
 
    // pass 1: check several sign files until a functional one is found
-   long i=0;
+   int i=0;
    for (i=1; i<=3 && !bChecked; i++)
    {
       SFKMD5 md5; // re-init per loop
 
-      sprintf(pszClDBFile, "%s-%02ld.dat", pszClDBPath, i);
+      sprintf(pszClDBFile, "%s-%02d.dat", pszClDBPath, i);
 
       // if (i > 1)
       //   pwarn("retrying on signature db: %s\n", pszClDBFile);
@@ -14205,10 +14378,10 @@ long FileMetaDB::loadDB(char *pszBase, bool bVerbose)
             nSigRes = 3;
          else   
          if (!loadHeader(fin, &md5))
-         for (long nrec=1; ;nrec++)
+         for (int nrec=1; ;nrec++)
          {
-            long nrc = loadRecord(fin, &md5, 1); // uses szLineBuf
-            // printf("   rec %ld loaded, rc %ld\n", nrec, nrc);
+            int nrc = loadRecord(fin, &md5, 1); // uses szLineBuf
+            // printf("   rec %d loaded, rc %d\n", nrec, nrc);
             if (nrc == 1)
                break; // EOD
             if (bChecked) {
@@ -14220,7 +14393,7 @@ long FileMetaDB::loadDB(char *pszBase, bool bVerbose)
                   bChecked = 1;
             }
             if (nrc > 2) {
-               perr("error while reading %s: wrong content format (%ld)\n", pszClDBFile, nrc);
+               perr("error while reading %s: wrong content format (%d)\n", pszClDBFile, nrc);
                break;
             }
          }
@@ -14261,7 +14434,7 @@ long FileMetaDB::loadDB(char *pszBase, bool bVerbose)
 
       if (!loadHeader(fin, &md5))
       while (1) {
-         long nrc = loadRecord(fin, &md5, 0); // uses szLineBuf
+         int nrc = loadRecord(fin, &md5, 0); // uses szLineBuf
          if (nrc == 1)
             break; // EOD
          if (nrc == 2) {
@@ -14280,7 +14453,7 @@ long FileMetaDB::loadDB(char *pszBase, bool bVerbose)
    return 0;   
 }
 
-long FileMetaDB::openUpdate(char *pszBase)
+int FileMetaDB::openUpdate(char *pszBase)
 {
    loadDB(pszBase, 0);
    // ignore rc
@@ -14290,7 +14463,7 @@ long FileMetaDB::openUpdate(char *pszBase)
    return 0;
 }
 
-long FileMetaDB::openRead(char *pszBase, bool bVerbose)
+int FileMetaDB::openRead(char *pszBase, bool bVerbose)
 {
    if (loadDB(pszBase, bVerbose))
       return 9;
@@ -14300,7 +14473,7 @@ long FileMetaDB::openRead(char *pszBase, bool bVerbose)
    return 0;
 }
 
-long FileMetaDB::verifyFile(char *pszName, char *pszShadow, bool bSilentAttribs)
+int FileMetaDB::verifyFile(char *pszName, char *pszShadow, bool bSilentAttribs)
 {
    char *relName(char *pszRoot, char *pszAbs);
    char *pszRelName = pszName;
@@ -14308,7 +14481,7 @@ long FileMetaDB::verifyFile(char *pszName, char *pszShadow, bool bSilentAttribs)
    if (pszGlblCopySrc)
       pszRelName = relName(pszGlblCopySrc, pszName);
 
-   long nind = indexOf(pszRelName);
+   int nind = indexOf(pszRelName);
    if (nind < 0) {
       nClVerMissing++;
       return 8;   // not found
@@ -14316,7 +14489,7 @@ long FileMetaDB::verifyFile(char *pszName, char *pszShadow, bool bSilentAttribs)
 
    // get archived metadata
    num nUnixTime2  = aUnixTime.getEntry(nind, __LINE__);
-   num nWinTime2   = aWinTime.getEntry(nind, __LINE__);
+   // num nWinTime2   = aWinTime.getEntry(nind, __LINE__);
    num nContSumLo2 = aContSumLo.getEntry(nind, __LINE__);
    num nContSumHi2 = aContSumHi.getEntry(nind, __LINE__);
 
@@ -14324,7 +14497,7 @@ long FileMetaDB::verifyFile(char *pszName, char *pszShadow, bool bSilentAttribs)
    FileStat ofs;
    ofs.readFrom(pszName, 0, bSilentAttribs);
    num nUnixTime = ofs.getUnixTime();
-   num nWinTime  = ofs.getWinTime();
+   // num nWinTime  = ofs.getWinTime();
    num ncontlo, nconthi;
    uchar abContSum[20];
    if (getFileMD5(pszName, abContSum)) {
@@ -14361,19 +14534,19 @@ long FileMetaDB::verifyFile(char *pszName, char *pszShadow, bool bSilentAttribs)
    return 0;
 }
 
-long FileMetaDB::verifyFile(long nind, bool bCleanup)
+int FileMetaDB::verifyFile(int nind, bool bCleanup)
 {
-   ulong currentKBPerSec();
+   uint currentKBPerSec();
 
    // if anything fails with this record, skip it on cleanup
    aFlags.updateEntry(0, nind); // no save by default
 
    // get archived metadata
    char *pszRelName = aPath.getEntry(nind, __LINE__);
-   if (!pszRelName) return 9+perr("unexpected filedb entry at record %ld\n", nind);
+   if (!pszRelName) return 9+perr("unexpected filedb entry at record %d\n", nind);
 
    num nUnixTime2  = aUnixTime.getEntry(nind, __LINE__);
-   num nWinTime2   = aWinTime.getEntry(nind, __LINE__);
+   // num nWinTime2   = aWinTime.getEntry(nind, __LINE__);
    num nContSumLo2 = aContSumLo.getEntry(nind, __LINE__);
    num nContSumHi2 = aContSumHi.getEntry(nind, __LINE__);
 
@@ -14387,12 +14560,12 @@ long FileMetaDB::verifyFile(long nind, bool bCleanup)
 
    // show detailed info
    char szAddInfo[200];
-   long nVerOK     = filedb.numberOfVerifies();
-   long nVerFailed = filedb.numberOfVerFailed();
+   int nVerOK     = filedb.numberOfVerifies();
+   int nVerFailed = filedb.numberOfVerFailed();
    if (nVerFailed > 0)
-      sprintf(szAddInfo, "%u files ok, %ld failed, %u mb %u kbs", nVerOK, nVerFailed, (ulong)(nGlblBytes/1000000UL), currentKBPerSec());
+      sprintf(szAddInfo, "%u files ok, %d failed, %u mb %u kbs", nVerOK, nVerFailed, (uint)(nGlblBytes/1000000UL), currentKBPerSec());
    else
-      sprintf(szAddInfo, "%u files %u mb %u kbs", nVerOK, (ulong)(nGlblBytes/1000000UL), currentKBPerSec());
+      sprintf(szAddInfo, "%u files %u mb %u kbs", nVerOK, (uint)(nGlblBytes/1000000UL), currentKBPerSec());
    info.setProgress(numberOfFiles(), nind, "files");
    info.setStatus("verfy", pszName, szAddInfo, eKeepProg);
 
@@ -14486,7 +14659,7 @@ long FileMetaDB::verifyFile(long nind, bool bCleanup)
    return 0;
 }
 
-long FileMetaDB::updateFile(char *pszName, uchar *pmd5cont, bool bJustKeep)
+int FileMetaDB::updateFile(char *pszName, uchar *pmd5cont, bool bJustKeep)
 {
    // printf("updateFile %s, %02X%02X%02X%02X\n", pszName, *(pmd5cont+0),*(pmd5cont+1),*(pmd5cont+2),*(pmd5cont+3));
 
@@ -14503,7 +14676,7 @@ long FileMetaDB::updateFile(char *pszName, uchar *pmd5cont, bool bJustKeep)
    // strip x:\the\foo\bar.txt to the\foo\bar.txt
    char *pszRelName = relName(pszGlblCopySrc, pszName);
 
-   long nind = indexOf(pszRelName);
+   int nind = indexOf(pszRelName);
    if (nind >= 0)
    {
       // we have this filename in the db.
@@ -14562,14 +14735,14 @@ long FileMetaDB::updateFile(char *pszName, uchar *pmd5cont, bool bJustKeep)
    return 0;
 }
 
-long FileMetaDB::removeFile(char *pszName, bool bPrefixLF)
+int FileMetaDB::removeFile(char *pszName, bool bPrefixLF)
 {
    char *relName(char *pszRoot, char *pszAbs);
 
    // strip x:\the\foo\bar.txt to the\foo\bar.txt
    char *pszRelName = relName(pszGlblCopySrc, pszName);
 
-   long nind = indexOf(pszRelName);
+   int nind = indexOf(pszRelName);
    if (nind >= 0)
    {
       // mark this record as deleted, for save:
@@ -14584,7 +14757,7 @@ long FileMetaDB::removeFile(char *pszName, bool bPrefixLF)
    return 0;
 }
 
-long FileMetaDB::checkFile(char *pszName)
+int FileMetaDB::checkFile(char *pszName)
 {
    FileStat ofs;
    if (ofs.readFrom(pszName)) {
@@ -14595,14 +14768,14 @@ long FileMetaDB::checkFile(char *pszName)
    cs.files++;
 
    num nUnixTime = ofs.getUnixTime();
-   num nWinTime  = ofs.getWinTime();
+   // num nWinTime  = ofs.getWinTime();
 
-   long nind = indexOf(pszName);
+   int nind = indexOf(pszName);
    if (nind >= 0)
    {
       // we have this filename in the db
       num nUnixTime2  = aUnixTime.getEntry(nind, __LINE__);
-      num nWinTime2   = aUnixTime.getEntry(nind, __LINE__);
+      // num nWinTime2   = aUnixTime.getEntry(nind, __LINE__);
       num nContSumLo2 = aContSumLo.getEntry(nind, __LINE__);
       num nContSumHi2 = aContSumHi.getEntry(nind, __LINE__);
 
@@ -14625,17 +14798,17 @@ long FileMetaDB::checkFile(char *pszName)
    return 0;
 }
 
-long FileMetaDB::updateDir(char *pszName)
+int FileMetaDB::updateDir(char *pszName)
 {
     return 0;
 }
 
-long FileMetaDB::writeRecord(FILE *fout, long nIndex, SFKMD5 *pmd5, bool bIsLastRec)
+int FileMetaDB::writeRecord(FILE *fout, int nIndex, SFKMD5 *pmd5, bool bIsLastRec)
 {
    uchar about1[20];
 
-   // since SFKSIG10, first field is ulong nmetalen.
-   ulong nmetalen = 16+16+2;
+   // since SFKSIG10, first field is uint nmetalen.
+   uint nmetalen = 16+16+2;
    ulongtoab4(nmetalen, about1);
    if (myfwrite(about1, 4, fout, 0,0,pmd5) != 4) return 9;
 
@@ -14655,7 +14828,7 @@ long FileMetaDB::writeRecord(FILE *fout, long nIndex, SFKMD5 *pmd5, bool bIsLast
 
    // update flags
    uchar abFlags[2];
-   ulong nflags = aFlags.getEntry(nIndex, __LINE__);
+   uint nflags = aFlags.getEntry(nIndex, __LINE__);
    if (bIsLastRec)
       nflags |= 4;
    abFlags[0] = (uchar)(nflags >> 8);
@@ -14668,27 +14841,27 @@ long FileMetaDB::writeRecord(FILE *fout, long nIndex, SFKMD5 *pmd5, bool bIsLast
    memset(abPathLen, 0, sizeof(abPathLen));
    if (aPath.isSet(nIndex)) {
       char *psz  = aPath.getEntry(nIndex, __LINE__);
-      // printf("WRITE %ld %s\n", nIndex, psz);
-      ulong nlen = strlen(psz);
+      // printf("WRITE %d %s\n", nIndex, psz);
+      uint nlen = strlen(psz);
       abPathLen[0] = (uchar)(nlen >> 8);
       abPathLen[1] = (uchar)(nlen     );
       if (myfwrite(abPathLen,    2, fout, 0,0,pmd5) !=    2) return 9;
       if (myfwrite((uchar*)psz    , nlen, fout, 0,0,pmd5) != nlen) return 9;
    } else {
-      // printf("WRITE %ld [noname]\n", nIndex);
+      // printf("WRITE %d [noname]\n", nIndex);
       if (myfwrite(abPathLen,    2, fout, 0,0,pmd5) != 2) return 9;
    }
 
-   // printf(" saved record, %ld %d\n", nflags, bIsLastRec);
+   // printf(" saved record, %d %d\n", nflags, bIsLastRec);
 
    return 0;
 }
 
-long FileMetaDB::loadHeader(FILE *fin, SFKMD5 *pmd5)
+int FileMetaDB::loadHeader(FILE *fin, SFKMD5 *pmd5)
 {
    uchar abin[20];
    char *pszHead = pszClFileDBHead;
-   long nread = myfread(abin, 8, fin, 0,0,pmd5);
+   int nread = myfread(abin, 8, fin, 0,0,pmd5);
    if (nread < 8) { fclose(fin); return 1; } // EOD
    abin[8] = '\0';
    if (strcmp((char*)abin, pszHead))
@@ -14697,11 +14870,11 @@ long FileMetaDB::loadHeader(FILE *fin, SFKMD5 *pmd5)
    return 0;
 }
 
-long FileMetaDB::loadCheckEpilogue(FILE *fin, SFKMD5 *pmd5)
+int FileMetaDB::loadCheckEpilogue(FILE *fin, SFKMD5 *pmd5)
 {
    uchar abin[20];
 
-   long nread = myfread(abin, 16, fin, 0,0,0);
+   int nread = myfread(abin, 16, fin, 0,0,0);
    if (nread < 16) {
       return 1; // EOD
    }
@@ -14715,25 +14888,25 @@ long FileMetaDB::loadCheckEpilogue(FILE *fin, SFKMD5 *pmd5)
 }
 
 // uses szLineBuf
-long FileMetaDB::loadRecord(FILE *fin, SFKMD5 *pmd5, bool bSim)
+int FileMetaDB::loadRecord(FILE *fin, SFKMD5 *pmd5, bool bSim)
 {
    memset(abClRecBuf, 0, sizeof(abClRecBuf));
    uchar *abin = abClRecBuf;
 
-   long nread = myfread(abin, 4, fin, 0,0,pmd5);
+   int nread = myfread(abin, 4, fin, 0,0,pmd5);
    if (nread < 4) return 1; // EOD, read after epilogue
-   ulong nmetalen = ab4toulong(abin);
+   uint nmetalen = ab4toulong(abin);
 
    if (nmetalen > sizeof(abClRecBuf)-10)
-      return 9+perr("metadb: header block too large (%lu), cannot load.\n",nmetalen);
+      return 9+perr("metadb: header block too large (%u), cannot load.\n",nmetalen);
 
    if (nmetalen < 16+16+2)
-      return 9+perr("metadb: header block too small (%lu), cannot load.\n",nmetalen);
+      return 9+perr("metadb: header block too small (%u), cannot load.\n",nmetalen);
 
    // - - - meta data block - - -
 
    nread = myfread(abin, nmetalen, fin, 0,0,pmd5);
-   if (nread < (long)nmetalen) return 10; // unexpected
+   if (nread < (int)nmetalen) return 10; // unexpected
 
    num n1, n2;
    ab16ToNum(abin+0, n1, n2);
@@ -14751,7 +14924,7 @@ long FileMetaDB::loadRecord(FILE *fin, SFKMD5 *pmd5, bool bSim)
    // read flag value
    uchar abFlags[2];
    memcpy(abFlags, abin+32, 2);
-   ulong nflags = (((ulong)abFlags[0]) << 8) | ((ulong)abFlags[1]);
+   uint nflags = (((uint)abFlags[0]) << 8) | ((uint)abFlags[1]);
    if (!bSim) {
       // filter out flag "4" (last record marker):
       if (aFlags.addEntry(nflags & (255UL ^ 4))) return 9;
@@ -14763,11 +14936,11 @@ long FileMetaDB::loadRecord(FILE *fin, SFKMD5 *pmd5, bool bSim)
    uchar abPathLen[2];
    nread = myfread(abPathLen, 2, fin, 0,0,pmd5);
    if (nread < 2) return 12; // unexpected
-   ulong nlen = (((ulong)abPathLen[0]) << 8) | ((ulong)abPathLen[1]);
+   uint nlen = (((uint)abPathLen[0]) << 8) | ((uint)abPathLen[1]);
    if (nlen > 0) {
       if (nlen > MAX_LINE_LEN-1) return 13;
       nread = myfread((uchar*)szLineBuf, nlen, fin, 0,0,pmd5);
-      if (nread < (long)nlen) return 14;
+      if (nread < (int)nlen) return 14;
       szLineBuf[nlen] = '\0';
       if (!bSim) {
          aPath.addEntry(szLineBuf);
@@ -14785,27 +14958,27 @@ long FileMetaDB::loadRecord(FILE *fin, SFKMD5 *pmd5, bool bSim)
    return 0;
 }
 
-long FileMetaDB::writeEpilogue(FILE *fout, SFKMD5 *pmd5)
+int FileMetaDB::writeEpilogue(FILE *fout, SFKMD5 *pmd5)
 {
    uchar *pdig = pmd5->digest();
    if (myfwrite(pdig, 16, fout, 0,0,0) != 16) return 9;
    return 0;
 }
 
-long FileMetaDB::save(long &rnSignsWritten)
+int FileMetaDB::save(int &rnSignsWritten)
 {
    if (!pszClDBPath) return 9+perr("internal #11571945");
 
    if (pszClDBFile) { delete [] pszClDBFile; pszClDBFile=0; }
    pszClDBFile = new char[strlen(pszClDBPath)+100];
 
-   long nCopies = 3;
-   long nCopied = 0;
+   int nCopies = 3;
+   int nCopied = 0;
 
    // write signature db 3 times
-   for (long i=1; i<=nCopies; i++)
+   for (int i=1; i<=nCopies; i++)
    {
-      sprintf(pszClDBFile, "%s-%02ld.dat", pszClDBPath, i);
+      sprintf(pszClDBFile, "%s-%02d.dat", pszClDBPath, i);
    
       SFKMD5 md5;
    
@@ -14823,22 +14996,22 @@ long FileMetaDB::save(long &rnSignsWritten)
       bool bFailed = 0;
       bool bDoneLastRec = 0;
 
-      long nEntries = aUnixTime.numberOfEntries();
+      int nEntries = aUnixTime.numberOfEntries();
 
       // identify last valid record to be saved
-      long ilastval = 0;
-      for (long k=0; k<nEntries; k++) {
+      int ilastval = 0;
+      for (int k=0; k<nEntries; k++) {
          if (aFlags.getEntry(k, __LINE__) >= 1)
             ilastval = k;
       }
 
-      long nWritten = 0;
-      for (long i=0; i<nEntries; i++) 
+      int nWritten = 0;
+      for (int i=0; i<nEntries; i++) 
       {
          // write only added or updated records
          if (aFlags.getEntry(i, __LINE__) >= 1) {
             bool bIsLastRec = (i == ilastval);
-            // printf("   write rec %ld last=%d\n",i,bIsLastRec);
+            // printf("   write rec %d last=%d\n",i,bIsLastRec);
             if (writeRecord(fout, i, &md5, bIsLastRec)) {
                perr("error while writing file meta db: %s\n", pszClDBFile);
                bFailed = 1;
@@ -14852,7 +15025,7 @@ long FileMetaDB::save(long &rnSignsWritten)
       }
 
       if (!bDoneLastRec)
-         perr("internal: no lastrec saved %ld %ld\n",ilastval,nEntries);
+         perr("internal: no lastrec saved %d %d\n",ilastval,nEntries);
    
       if (!bFailed)
          writeEpilogue(fout, &md5);
@@ -14869,7 +15042,7 @@ long FileMetaDB::save(long &rnSignsWritten)
       return 9+perr("failed to write any metadb copy.\n");
 
    if (nCopied < nCopies)
-      return 5+perr("%ld metadb copies written, %ld failed.\n", nCopied, (nCopies-nCopied));
+      return 5+perr("%d metadb copies written, %d failed.\n", nCopied, (nCopies-nCopied));
 
    return 0;
 }
@@ -14904,18 +15077,18 @@ class FileVerifier
 {
 public:
    FileVerifier   ( );
-   long  remember (char *pszDstName, num nsumhi, num nsumlo);
-   long  verify   ( );
+   int  remember (char *pszDstName, num nsumhi, num nsumlo);
+   int  verify   ( );
    void  reset    ( );
-   long  matchedFiles( ) { return nClMatched; }
-   long  failedFiles ( ) { return nClFailed; }
-   long  totalFiles  ( ) { return aClDst.numberOfEntries(); }
+   int  matchedFiles( ) { return nClMatched; }
+   int  failedFiles ( ) { return nClFailed; }
+   int  totalFiles  ( ) { return aClDst.numberOfEntries(); }
 private:
    NumTable    aClSumHi;
    NumTable    aClSumLo;
    StringTable aClDst;
-   long  nClMatched;
-   long  nClFailed;
+   int  nClMatched;
+   int  nClFailed;
 };
 
 FileVerifier glblVerifier;
@@ -14933,7 +15106,7 @@ void FileVerifier::reset()
    aClDst.resetEntries();
 }
 
-long FileVerifier::remember(char *pszDst, num nsumhi, num nsumlo)
+int FileVerifier::remember(char *pszDst, num nsumhi, num nsumlo)
 {
    if (aClSumHi.addEntry(nsumhi)) return 9;
    if (aClSumLo.addEntry(nsumlo)) return 9;
@@ -14941,14 +15114,14 @@ long FileVerifier::remember(char *pszDst, num nsumhi, num nsumlo)
    return 0;
 }
 
-long FileVerifier::verify()
+int FileVerifier::verify()
 {
    char szAddInfo[200];
 
-   long lRC = 0;
+   int lRC = 0;
 
-   long nFiles = totalFiles();
-   for (long i=0; i<nFiles; i++)
+   int nFiles = totalFiles();
+   for (int i=0; i<nFiles; i++)
    {
       if (userInterrupt(1, 1)) // silent, wait for release
       {
@@ -14964,7 +15137,7 @@ long FileVerifier::verify()
       // build destination sum
       char *pszDst = aClDst.getEntry(i, __LINE__);
       info.setProgress(nFiles, i, "files");
-      sprintf(szAddInfo, "file %ld/%ld", i+1, nFiles);
+      sprintf(szAddInfo, "file %d/%d", i+1, nFiles);
       info.setStatus("verfy", pszDst, szAddInfo);
       uchar abMD5Dst[20];
       if (getFileMD5NoCache(pszDst, abMD5Dst, 1)) // silent
@@ -14981,7 +15154,7 @@ long FileVerifier::verify()
       }
       uchar *pmd5dst = abMD5Dst;
       num ndstlo=0, ndsthi=0;
-      for (long i=0,b=64-8; i<8; i++) {
+      for (int i=0,b=64-8; i<8; i++) {
          ndsthi = ndsthi | (((num)pmd5dst[0+i]&0xFF) << b);
          ndstlo = ndstlo | (((num)pmd5dst[8+i]&0xFF) << b);
          b -= 8;
@@ -15002,12 +15175,12 @@ long FileVerifier::verify()
    return lRC;
 }
 
-void printCopyCompleted(char *pszName, ulong nflags)
+void printCopyCompleted(char *pszName, uint nflags)
 {
    info.clear();
    if (cs.quiet >= 2)
       return;
-   char *pszpre = "";
+   cchar *pszpre = "";
    if (nflags & 8) {
       printx("<warn>##<def>"); pszpre=" "; 
    }
@@ -15029,11 +15202,11 @@ class CopyCache
 public:
    CopyCache      ( );
    void setBuf    (uchar *pBuf, num nBufSize);
-   long process   (char *pszSrcFile, char *pszDstFile, char *pszShDst, ulong nflags);
-   long flush     ( );
+   int process   (char *pszSrcFile, char *pszDstFile, char *pszShDst, uint nflags);
+   int flush     ( );
    void setEmpty  ( );
 private:
-   long putBlock  (uchar *pData, long nDataSize);
+   int putBlock  (uchar *pData, int nDataSize);
    uchar *pClBuf;
    num   nClBufSize;
    num   nClUsed;
@@ -15053,9 +15226,9 @@ void CopyCache::setBuf(uchar *pBuf, num nBufSize)
    nClUsed     = 0;
 }
 
-long CopyCache::process(char *pszSrcFile, char *pszDstFile, char *pszShDst, ulong nflags)
+int CopyCache::process(char *pszSrcFile, char *pszDstFile, char *pszShDst, uint nflags)
 {
-   if (!pszShDst) pszShDst = "";
+   if (!pszShDst) pszShDst = str("");
 
    // may another source file fit into the cache?
    FileStat ofsrc;
@@ -15067,7 +15240,7 @@ long CopyCache::process(char *pszSrcFile, char *pszDstFile, char *pszShDst, ulon
 
    // if not, write all cache contents
    if (nSrcSize + 1500 > nRemain) {
-      long lRes = flush();
+      int lRes = flush();
       if (lRes >= 9)
          return lRes;
       setEmpty(); // in case flush was interrupted
@@ -15085,7 +15258,7 @@ long CopyCache::process(char *pszSrcFile, char *pszDstFile, char *pszShDst, ulon
    if (putBlock((uchar*)pszShDst  , strlen(pszShDst  )+1)) return 9+perr("internal 612112029\n");
  
    // 2. meta data: filestat and flags
-   long nMetaSize = 0;
+   int nMetaSize = 0;
    uchar *pMeta = ofsrc.marshal(nMetaSize);
    if (putBlock(pMeta, nMetaSize)) return 9+perr("internal 612112006\n");
 
@@ -15098,19 +15271,19 @@ long CopyCache::process(char *pszSrcFile, char *pszDstFile, char *pszShDst, ulon
    {
       // set zero-sized content, meta data is sufficient
       uchar *pCur = pClBuf+nClUsed;
-      long nLongSize = 0;
-      memcpy(pCur, &nLongSize, sizeof(long));
-      pCur += sizeof(long);
-      nClUsed += sizeof(long);
+      int nLongSize = 0;
+      memcpy(pCur, &nLongSize, sizeof(int));
+      pCur += sizeof(int);
+      nClUsed += sizeof(int);
    }
    else
    {
       // else add the file content
       uchar *pCur = pClBuf+nClUsed;
-      long nLongSize = (long)nSrcSize;
-      memcpy(pCur, &nLongSize, sizeof(long));
-      pCur += sizeof(long);
-      nClUsed += sizeof(long);
+      int nLongSize = (int)nSrcSize;
+      memcpy(pCur, &nLongSize, sizeof(int));
+      pCur += sizeof(int);
+      nClUsed += sizeof(int);
   
       info.setStatProg("cache", pszSrcFile, nClBufSize, nUsedSave, "bytes");
 
@@ -15146,7 +15319,7 @@ long CopyCache::process(char *pszSrcFile, char *pszDstFile, char *pszShDst, ulon
          // remember source sum in case of late verify:
          if (cs.verifyLate) {
             num nsumlo=0, nsumhi=0;
-            for (long i=0,b=64-8; i<8; i++) {
+            for (int i=0,b=64-8; i<8; i++) {
                nsumhi = nsumhi | (((num)pmd5in[0+i]&0xFF) << b);
                nsumlo = nsumlo | (((num)pmd5in[8+i]&0xFF) << b);
                b -= 8;
@@ -15171,14 +15344,14 @@ long CopyCache::process(char *pszSrcFile, char *pszDstFile, char *pszShDst, ulon
    return 0;   
 }
 
-long CopyCache::putBlock(uchar *pData, long nDataSize) 
+int CopyCache::putBlock(uchar *pData, int nDataSize) 
 {
    uchar *pCur = pClBuf+nClUsed;
    num nRemain = nClBufSize-nClUsed;
    if (nDataSize > nRemain + 100) return 9;
-   memcpy(pCur, &nDataSize, sizeof(long));
-   memcpy(pCur+sizeof(long), pData, nDataSize);
-   nClUsed += sizeof(long)+nDataSize;
+   memcpy(pCur, &nDataSize, sizeof(int));
+   memcpy(pCur+sizeof(int), pData, nDataSize);
+   nClUsed += sizeof(int)+nDataSize;
    return 0;
 }
 
@@ -15187,7 +15360,7 @@ void CopyCache::setEmpty()
    nClUsed = 0;
 }
 
-long CopyCache::flush() 
+int CopyCache::flush() 
 {
    uchar *pCur = pClBuf;
    uchar *pMax = pClBuf+nClUsed;
@@ -15196,22 +15369,22 @@ long CopyCache::flush()
       bool bDoneFile = 0;
 
       // 1. filenames
-      long nBlockSize = 0;
-      if (pCur >= (pMax - sizeof(long))) return 9+perr("internal #113701\n");
-      memcpy(&nBlockSize, pCur, sizeof(long));
-      pCur += sizeof(long);
+      int nBlockSize = 0;
+      if (pCur >= (pMax - sizeof(int))) return 9+perr("internal #113701\n");
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
       char *pszSrc = (char*)pCur;
       pCur += nBlockSize;
       if (nBlockSize < 0 || pCur >= pMax) return 9+perr("internal #113702\n");
 
-      memcpy(&nBlockSize, pCur, sizeof(long));
-      pCur += sizeof(long);
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
       char *pszDst = (char*)pCur;
       pCur += nBlockSize;
       if (nBlockSize < 0 || pCur >= pMax) return 9+perr("internal #113703\n");
 
-      memcpy(&nBlockSize, pCur, sizeof(long));
-      pCur += sizeof(long);
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
       char *pszShDst = (char*)pCur;
       pCur += nBlockSize;
       if (nBlockSize < 0 || pCur >= pMax) return 9+perr("internal #113733\n");
@@ -15221,29 +15394,29 @@ long CopyCache::flush()
 
       // 2. meta data
       // filestat
-      memcpy(&nBlockSize, pCur, sizeof(long));
-      pCur += sizeof(long);
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
       uchar *pMeta = pCur;
-      long nMetaSize = nBlockSize;
+      int nMetaSize = nBlockSize;
       pCur += nBlockSize;
       if (nBlockSize < 0 || pCur >= pMax) return 9+perr("internal #113704\n");
 
       // flags, also prefixed by blocksize (4)
-      memcpy(&nBlockSize, pCur, sizeof(long));
-      pCur += sizeof(long);
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
       if (nBlockSize != 4) return 9+perr("internal #113704.2\n");
       uchar abflags[10];
       memcpy(abflags, pCur, 4);
       pCur += 4;
-      ulong nflags = ab4toulong(abflags);
+      uint nflags = ab4toulong(abflags);
       // bit0: verified by checksum. 
       // bit1: is shadow fallback.
       // bit2: 
       // bit3: source is older than target (sync)
 
       // 3. file content
-      memcpy(&nBlockSize, pCur, sizeof(long));
-      pCur += sizeof(long);
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
       uchar *pContent = pCur;
       pCur += nBlockSize;
       if (nBlockSize < 0 || pCur > pMax) return 9+perr("internal #113705\n");
@@ -15270,7 +15443,6 @@ long CopyCache::flush()
       if (cs.sim)
       {
          // 4. skip md5
-         uchar *pmd5in = pCur;
          pCur += 16;
 
          info.setStatus("", pszTell, "-----", eNoCycle);
@@ -15283,14 +15455,14 @@ long CopyCache::flush()
          uchar *pmd5in = pCur;
          pCur += 16;
 
-         for (long ntry=1; ntry<=3; ntry++)
+         for (int ntry=1; ntry<=3; ntry++)
          {
             // write target file
             info.setStatus("write", pszDst, "00");
    
             FILE *fout = myfopen(pszDst, "wb");
             if (!fout) {
-               perr("cannot open output file %s (rc %ld)\n", pszDst, (long)errno); 
+               perr("cannot open output file %s (rc %d)\n", pszDst, (int)errno); 
                break; // PROCEED with next file. errors are counted.
             }
       
@@ -15320,7 +15492,7 @@ long CopyCache::flush()
                info.setStatus("verfy", pszDst, "00");
                uchar abmd5[20];
 
-               long nrcsub = getFileMD5NoCache(pszDst, abmd5, 1);
+               int nrcsub = getFileMD5NoCache(pszDst, abmd5, 1);
 
                if (userInterrupt(1))
                {
@@ -15368,7 +15540,7 @@ long CopyCache::flush()
             info.setStatus("write", pszDst, "00");
             FILE *fout = myfopen(pszDst, "wb");
             if (!fout) {
-               perr("cannot open output file %s (rc %ld)\n", pszDst, (long)errno); 
+               perr("cannot open output file %s (rc %d)\n", pszDst, (int)errno); 
             } else {
                num nSize = ofsdst.src.nSize;
                size_t nWrite = myfwrite(pContent, nSize, fout, nSize, 0);
@@ -15405,45 +15577,45 @@ num currentElapsedMSec() {
    return getCurrentTime() - nGlblStartTime;
 }
 
-ulong currentKBPerSec() {
+uint currentKBPerSec() {
    num lMSElapsed = currentElapsedMSec();
    if (lMSElapsed == 0) lMSElapsed = 1;
-   return (ulong)(nGlblBytes / lMSElapsed);
+   return (uint)(nGlblBytes / lMSElapsed);
 }
 
-ulong currentMBPerSec() {
+uint currentMBPerSec() {
    num lMSElapsed = currentElapsedMSec();
    if (lMSElapsed == 0) lMSElapsed = 1;
-   return (ulong)((nGlblBytes / lMSElapsed) / 1000);
+   return (uint)((nGlblBytes / lMSElapsed) / 1000);
 }
 
 char szCmpBuf1[4096];
 char szCmpBuf2[4096];
-long mystrstri(char *psz1, char *psz2, long *lpAtPosition)
+int mystrstri(char *psz1, cchar *psz2, int *lpAtPosition)
 {
-   long slen1 = strlen(psz1);
-   if (slen1 > sizeof(szCmpBuf1)-10)
-       slen1 = sizeof(szCmpBuf1)-10;
+   int slen1 = strlen(psz1);
+   if (slen1 > (int)sizeof(szCmpBuf1)-10)
+       slen1 = (int)sizeof(szCmpBuf1)-10;
    memcpy(szCmpBuf1, psz1, slen1);
    szCmpBuf1[slen1] = '\0';
 
-   long slen2 = strlen(psz2);
-   if (slen2 > sizeof(szCmpBuf2)-10)
-       slen2 = sizeof(szCmpBuf2)-10;
+   int slen2 = strlen(psz2);
+   if (slen2 > (int)sizeof(szCmpBuf2)-10)
+       slen2 = (int)sizeof(szCmpBuf2)-10;
    memcpy(szCmpBuf2, psz2, slen2);
    szCmpBuf2[slen2] = '\0';
 
-   for (long i1=0; i1<slen1; i1++)
+   for (int i1=0; i1<slen1; i1++)
       szCmpBuf1[i1] = tolower(szCmpBuf1[i1]);
 
-   for (long i2=0; i2<slen2; i2++)
+   for (int i2=0; i2<slen2; i2++)
       szCmpBuf2[i2] = tolower(szCmpBuf2[i2]);
 
    char *pszHit = strstr(szCmpBuf1, szCmpBuf2);
 
    if (lpAtPosition) {
       if (pszHit)
-         *lpAtPosition = (long)(pszHit - szCmpBuf1);
+         *lpAtPosition = (int)(pszHit - szCmpBuf1);
       else
          *lpAtPosition = -1;
    }
@@ -15452,23 +15624,23 @@ long mystrstri(char *psz1, char *psz2, long *lpAtPosition)
 }
 
 // same as above, but support "?" wildcards
-long mystrstriq(char *psz1, char *psz2, long *lpAtPosition=0)
+int mystrstriq(char *psz1, cchar *psz2, int *lpAtPosition=0)
 {
-   long slen1 = strlen(psz1);
-   if (slen1 > sizeof(szCmpBuf1)-10)
-       slen1 = sizeof(szCmpBuf1)-10;
+   int slen1 = strlen(psz1);
+   if (slen1 > (int)sizeof(szCmpBuf1)-10)
+       slen1 = (int)sizeof(szCmpBuf1)-10;
    memcpy(szCmpBuf1, psz1, slen1);
    szCmpBuf1[slen1] = '\0';
 
-   long slen2 = strlen(psz2);
-   if (slen2 > sizeof(szCmpBuf2)-10)
-       slen2 = sizeof(szCmpBuf2)-10;
+   int slen2 = strlen(psz2);
+   if (slen2 > (int)sizeof(szCmpBuf2)-10)
+       slen2 = (int)sizeof(szCmpBuf2)-10;
    memcpy(szCmpBuf2, psz2, slen2);
    szCmpBuf2[slen2] = '\0';
 
-   for (long i1=0; i1<slen1; i1++)
+   for (int i1=0; i1<slen1; i1++)
       szCmpBuf1[i1] = tolower(szCmpBuf1[i1]);
-   for (long i2=0; i2<slen2; i2++)
+   for (int i2=0; i2<slen2; i2++)
       szCmpBuf2[i2] = tolower(szCmpBuf2[i2]);
 
    char *pszHay = szCmpBuf1;  // HayStack
@@ -15479,7 +15651,7 @@ long mystrstriq(char *psz1, char *psz2, long *lpAtPosition=0)
       if (*pszNed != '?' && *pszHay != *pszNed)
          { pszHay++; continue; }
       // compare against needle at current hay position
-      long i=0;
+      int i=0;
       for (; pszHay[i] && pszNed[i]; i++) {
          char c = pszNed[i];
          if (c == '?')
@@ -15499,7 +15671,7 @@ long mystrstriq(char *psz1, char *psz2, long *lpAtPosition=0)
 
    if (lpAtPosition) {
       if (pszHit)
-         *lpAtPosition = (long)(pszHit - szCmpBuf1);
+         *lpAtPosition = (int)(pszHit - szCmpBuf1);
       else
          *lpAtPosition = -1;
    }
@@ -15508,12 +15680,12 @@ long mystrstriq(char *psz1, char *psz2, long *lpAtPosition=0)
 }
 
 // returns 0 if equal.
-long mystrncmp(char *psz1, char *psz2, long nLen, bool bCase)
+int mystrncmp(char *psz1, cchar *psz2, int nLen, bool bCase)
 {
    if (bCase)
       return strncmp(psz1, psz2, nLen);
 
-   long i=0;
+   int i=0;
    for (i=0; i<nLen && psz1[i] && psz2[i]; i++)
       if (tolower(psz1[i]) != tolower(psz2[i]))
          return 1;
@@ -15521,7 +15693,7 @@ long mystrncmp(char *psz1, char *psz2, long nLen, bool bCase)
    return (i==nLen) ? 0 : 1;
 }
 
-long mystricmp(char *psz1, char *psz2)
+int mystricmp(char *psz1, cchar *psz2)
 {
    while (*psz1 && *psz2 && tolower(*psz1) == tolower(*psz2)) {
       psz1++;
@@ -15530,9 +15702,9 @@ long mystricmp(char *psz1, char *psz2)
    return tolower(*psz1) - tolower(*psz2);
 }
 
-long mystrnicmp(char *psz1, char *psz2, long nLen)
+int mystrnicmp(char *psz1, cchar *psz2, int nLen)
 {
-   long i=0;
+   int i=0;
    for (i=0; i<nLen && psz1[i] && psz2[i]; i++)
       if (tolower(psz1[i]) != tolower(psz2[i]))
          return tolower(psz1[i]) - tolower(psz2[i]);
@@ -15544,7 +15716,7 @@ long mystrnicmp(char *psz1, char *psz2, long nLen)
 
 #ifdef _WIN32
 // type: 1==onlyDown 2==onlyUp 0==any
-long getKeyPress(long ntype=0)
+int getKeyPress(int ntype=0)
 {
    #ifdef WINFULL
    DWORD dwNumEvents, dwEventsPeeked, dwInputEvents;
@@ -15568,7 +15740,7 @@ long getKeyPress(long ntype=0)
       return -1;
 
    if (aInputBuffer[0].EventType == KEY_EVENT) {
-      long ncode = aInputBuffer[0].Event.KeyEvent.wVirtualKeyCode;
+      int ncode = aInputBuffer[0].Event.KeyEvent.wVirtualKeyCode;
       bool bdown = aInputBuffer[0].Event.KeyEvent.bKeyDown;
       // react only on key down or key up?
       if (ntype == 1 && !bdown) return -1; // no type match
@@ -15625,7 +15797,7 @@ char *loadFile(char *pszFile, bool bquiet)
       return 0; 
    }
 
-   long nRead = fread(pOut, 1, nFileSize, fin);
+   int nRead = fread(pOut, 1, nFileSize, fin);
    fclose(fin);
    if (nRead != nFileSize) {
       if (!bquiet) perr("cannot read: %s (%d %d)\n", pszFile, nRead, nFileSize);
@@ -15659,7 +15831,7 @@ uchar *loadBinaryFile(char *pszFile, num &rnFileSize)
       return 0; 
    }
 
-   long nRead = fread(pOut, 1, nFileSize, fin);
+   int nRead = fread(pOut, 1, nFileSize, fin);
    fclose(fin);
    if (nRead != nFileSize) {
       perr("cannot read: %s (%d %d)\n", pszFile, nRead, nFileSize);
@@ -15675,39 +15847,42 @@ uchar *loadBinaryFile(char *pszFile, num &rnFileSize)
 }
 
 #ifndef USE_SFK_BASE
+
+#ifdef SFK_DEPRECATED
+
 class TextFile {
 public:
    TextFile (char *pszInFileName);
   ~TextFile ( );
-   long  loadFromFile      ( );
-   long  writeToFile       ( );
-   long  createFromMemory  (char *pszInTextMemBlock);
+   int  loadFromFile      ( );
+   int  writeToFile       ( );
+   int  createFromMemory  (char *pszInTextMemBlock);
    char  *getFileName      ( ) { return pszClFileName; }
-   long  dumpTo            (FILE *fout);
+   int  dumpTo            (FILE *fout);
    TextFile *clone         ( );
    bool  equals            (TextFile *pOther);
    void  setTouched        (bool b) { bClTouched = b; }
    bool  isTouched         ( )      { return bClTouched; }
    bool  fileStatChanged   ( );  // 1==yes, 2==gone
    bool  isContentValid    ( );  // i.e., contains no :create etc.
-   long  dataSize          ( )      { return nClDataSize; }
-   long  numberOfLines     ( )      { return nClLines; }
+   int  dataSize          ( )      { return nClDataSize; }
+   int  numberOfLines     ( )      { return nClLines; }
    bool  isReadOnly        ( )      { return bClReadOnly; }
    void  setReadOnly       (bool b) { bClReadOnly = b; }
 private:
    void  checkIntegrity    ( );
    char  *pszClFileName;
-   long  nClLines;
+   int  nClLines;
    char  **apClLines;
    char  *pClData;
-   long  nClDataSize;
+   int  nClDataSize;
    num   lClFileTime;
    bool  bClTouched;
    bool  bClReadOnly;
 };
 
 // all keywords of sfk and patch files
-char *apBlockedKeys[] = 
+cchar *apBlockedKeys[] = 
 {
    // input files containing these keys might break a cluster file's syntax. 
    // therefore input files containing them must be skipped.
@@ -15735,9 +15910,9 @@ char *apBlockedKeys[] =
 bool TextFile::isContentValid() {
    if (!pClData || !apClLines)
       { perr("internal #40\n"); return 0; }
-   for (long i1=0; i1<nClLines; i1++) {
+   for (int i1=0; i1<nClLines; i1++) {
       char *psz1 = apClLines[i1];
-      for (long i2=0; apBlockedKeys[i2]; i2++) {
+      for (int i2=0; apBlockedKeys[i2]; i2++) {
          if (!strncmp(psz1, apBlockedKeys[i2], strlen(apBlockedKeys[i2]))) {
             fprintf(stderr, "info : excluding file from input: %s\n", pszClFileName);
             fprintf(stderr, "info : contains line beginning with %s\n", apBlockedKeys[i2]);
@@ -15750,9 +15925,9 @@ bool TextFile::isContentValid() {
 }
 
 bool TextFile::fileStatChanged() {
-   long bIsDir    = 0;
-   long bCanRead  = 1;
-   long bCanWrite = 1;
+   int bIsDir    = 0;
+   int bCanRead  = 1;
+   int bCanWrite = 1;
    num  lFileTime = 0;
    num  nFileSize = 0;
    if (getFileStat(pszClFileName, bIsDir, bCanRead, bCanWrite, lFileTime, nFileSize)) {
@@ -15760,7 +15935,7 @@ bool TextFile::fileStatChanged() {
       return 2;
    }
    // change in file attributes?
-   long bReadOnly = 1 - bCanWrite;
+   int bReadOnly = 1 - bCanWrite;
    if (bReadOnly != bClReadOnly)
       return 1;
    // change in file time?
@@ -15791,7 +15966,7 @@ bool TextFile::equals(TextFile *pOther) {
    pOther->checkIntegrity();
    if (strcmp(pszClFileName, pOther->pszClFileName)) return 0;
    if (nClLines != pOther->nClLines) return 0;
-   for (long i=0; i<nClLines; i++)
+   for (int i=0; i<nClLines; i++)
       if (strcmp(apClLines[i], pOther->apClLines[i]))
          return 0;
    if (pOther->isReadOnly() != isReadOnly())
@@ -15804,7 +15979,7 @@ void TextFile::checkIntegrity() {
    if (!nClLines     ) { return; } // perr("internal #21\n"); exit(1); }
    if (!apClLines    ) { perr("internal #22\n"); exit(1); }
    if (!pClData      ) { perr("internal #23\n"); exit(1); }
-   for (long i=0; i<nClLines; i++)
+   for (int i=0; i<nClLines; i++)
       if (!apClLines[i])
          { perr("internal #24\n"); exit(1); }
 }
@@ -15818,7 +15993,7 @@ TextFile *TextFile::clone() {
    memcpy(pNew->pClData, pClData, nClDataSize);
    pNew->pClData[nClDataSize] = '\0';
    pNew->apClLines = new char*[nClLines];
-   for (long i=0; i<nClLines; i++)
+   for (int i=0; i<nClLines; i++)
       pNew->apClLines[i] = apClLines[i] - pClData + pNew->pClData;
    pNew->nClLines = nClLines;
    pNew->lClFileTime = lClFileTime;
@@ -15827,17 +16002,17 @@ TextFile *TextFile::clone() {
    return pNew;
 }
 
-long TextFile::dumpTo(FILE *fout) {
+int TextFile::dumpTo(FILE *fout) {
    // size_t fwrite( const void *buffer, size_t size, size_t count, FILE *stream );
    // int fputs( const char *string, FILE *stream );
-   for (long i=0; i<nClLines; i++) {
+   for (int i=0; i<nClLines; i++) {
       fputs(apClLines[i], fout);
       fputc('\n', fout);
    }
    return 0;
 }
 
-long TextFile::loadFromFile() 
+int TextFile::loadFromFile() 
 {
    if (getFileSize(pszClFileName) == 0) {
       pwarn("zero-sized file, skipping: %s\n", pszClFileName);
@@ -15845,9 +16020,9 @@ long TextFile::loadFromFile()
    }
 
    // get all infos about the file to load
-   long bIsDir    = 0;
-   long bCanRead  = 1;
-   long bCanWrite = 1;
+   int bIsDir    = 0;
+   int bCanRead  = 1;
+   int bCanWrite = 1;
    num  lFileTime = 0;
    num  nFileSize = 0;
    if (getFileStat(pszClFileName, bIsDir, bCanRead, bCanWrite, lFileTime, nFileSize)) {
@@ -15862,12 +16037,12 @@ long TextFile::loadFromFile()
    char *pszRaw = loadFile(pszClFileName);
    if (!pszRaw) return 9;
 
-   long lRC = createFromMemory(pszRaw);
+   int lRC = createFromMemory(pszRaw);
    delete [] pszRaw;
    return lRC;
 }
 
-long TextFile::writeToFile() {
+int TextFile::writeToFile() {
    FILE *fout = fopen(pszClFileName, "w");
    if (!fout) return 9+perr("unable to write: %s\n", pszClFileName);
    dumpTo(fout);
@@ -15876,7 +16051,7 @@ long TextFile::writeToFile() {
    return 0;
 }
 
-long TextFile::createFromMemory(char *pszRaw) 
+int TextFile::createFromMemory(char *pszRaw) 
 {
    // delete old data, if any
    if (pClData) delete [] pClData;
@@ -15892,8 +16067,8 @@ long TextFile::createFromMemory(char *pszRaw)
    apClLines   = 0;
 
    // determine number of lines in raw data.
-   long nLineFeeds = 0;
-   for (long i1=0; i1<nClDataSize; i1++) {
+   int nLineFeeds = 0;
+   for (int i1=0; i1<nClDataSize; i1++) {
       if (pClData[i1] == '\n')
          nLineFeeds++;
    }
@@ -15907,7 +16082,7 @@ long TextFile::createFromMemory(char *pszRaw)
 
    // convert raw data into array of lines
    apClLines = new char*[nClLines+2];
-   long iLine = 0;
+   int iLine = 0;
    char *psz1 = pClData;
    while (psz1 && *psz1 && (iLine < nClLines)) {
       char *psz2 = strchr(psz1, '\n');
@@ -15933,46 +16108,46 @@ class SnapShot {
 public:
    SnapShot (const char *pszID);
   ~SnapShot ( );
-   long  addTarget   (char *pszFileName);
-   long  addTarget   (TextFile *pTarget);
+   int  addTarget   (char *pszFileName);
+   int  addTarget   (TextFile *pTarget);
    void  setFileName (char *pszFileName);
    char *getFileName ( ) { return pClFileName; }
-   long  writeToFile ( );
-   long  readFromFile(long &rbDroppedAny, long bForceBuildMatch);
+   int  writeToFile ( );
+   int  readFromFile(int &rbDroppedAny, int bForceBuildMatch);
    void  addNotesLine(char *pszLine);
    void  setRootDir  (char *pszDirName);
-   long  copyTargetsFrom   (SnapShot &rFrom);
-   long  numberOfTargets   ( ) { return nClTargets; }
-   long  syncDownTargets   (SnapShot &oMaster, long &nSync);
-   long  syncUpTargets     (SnapShot &oSrc, long &nSynced);
-   long  mirrorTargetsFrom (SnapShot &oSrc, long &nMissing); // copies filenames, but up-loads
-   long  checkLoadTargets  ( );
-   long  hasTarget   (char *pszFileName); // based on the real target list
-   long  dropTarget  (char *pszFileName); // just the entry, doesn't delete the file
+   int  copyTargetsFrom   (SnapShot &rFrom);
+   int  numberOfTargets   ( ) { return nClTargets; }
+   int  syncDownTargets   (SnapShot &oMaster, int &nSync);
+   int  syncUpTargets     (SnapShot &oSrc, int &nSynced);
+   int  mirrorTargetsFrom (SnapShot &oSrc, int &nMissing); // copies filenames, but up-loads
+   int  checkLoadTargets  ( );
+   int  hasTarget   (char *pszFileName); // based on the real target list
+   int  dropTarget  (char *pszFileName); // just the entry, doesn't delete the file
    void  dumpTargets ( );
    void  shutdown    ( );
    void  setAllTouched     ( );
    void  resetLastSync     ( );
    void  registerLastSync  (char *pszInfo);
-   char *getLastSyncInfo   (unsigned long iIndex);
+   char *getLastSyncInfo   (unsigned int iIndex);
    void  mapCompilerOutput (bool bMix, char *pszCmd);
 protected:
-   void  expandTargets     (long lSoMuch);
-   long  removeTargetEntry (long n);
+   void  expandTargets     (int lSoMuch);
+   int  removeTargetEntry (int n);
    void  adjustNamePadding ( );
    void  resetTargets      (const char *pszInfo);
    void  resetNotes        ( );
    TextFile **apClTargets;
-   long  nClMaxTargets;
-   long  nClTargets;
+   int  nClMaxTargets;
+   int  nClTargets;
    char  *pClFileName;
    char  *pClRootName;
-   long  nClNamePadding;
-   long  lClLastSavedBuild;
-   long  lClLoadedRevision;
+   int  nClNamePadding;
+   int  lClLastSavedBuild;
+   int  lClLoadedRevision;
    char  *apLastSync[MAX_SYNC_INFO];
    char  *apNotes[MAX_NOTES_LINES+10]; // used only in FileSnap
-   long  nClNotes;
+   int  nClNotes;
    const char *pszClID;
 };
 
@@ -16004,7 +16179,7 @@ void SnapShot::addNotesLine(char *pszLine) {
       apNotes[nClNotes++] = strdup(pszLine);
    }
    else
-      pwarn("max. number of notes lines exceeded (%ld), ignoring\n", (long)MAX_NOTES_LINES);
+      pwarn("max. number of notes lines exceeded (%d), ignoring\n", (int)MAX_NOTES_LINES);
 }
 
 void SnapShot::shutdown() {
@@ -16038,16 +16213,16 @@ void SnapShot::registerLastSync(char *pszFileName) {
       }
 }
 
-char *SnapShot::getLastSyncInfo(unsigned long iIndex) {
+char *SnapShot::getLastSyncInfo(unsigned int iIndex) {
    if (iIndex < MAX_SYNC_INFO)
       return apLastSync[iIndex];
    return 0;
 }
 
 char szPadBuf[1024];
-char *padString(char *psz1, long lLen) {
-   long lBaseLen = strlen(psz1);
-   long lMaxLen  = sizeof(szPadBuf)-10;
+char *padString(char *psz1, int lLen) {
+   int lBaseLen = strlen(psz1);
+   int lMaxLen  = sizeof(szPadBuf)-10;
    if (lBaseLen > lMaxLen)
        lBaseLen = lMaxLen;
    if (lLen > lMaxLen)
@@ -16067,17 +16242,17 @@ char *padString(char *psz1, long lLen) {
 void SnapShot::mapCompilerOutput(bool bMixMappedWithUnmappedOutput, char *pszCmd)
 {
    // read compiler errors from stdin
-   long nMaxLineLen = sizeof(szLineBuf)-10;
-   long nLine = 0;
-   long nMaps = 0;
+   int nMaxLineLen = sizeof(szLineBuf)-10;
+   int nLine = 0;
+   int nMaps = 0;
    while (fgets(szLineBuf, nMaxLineLen, stdin))
    {
       nLine++;
 
       char *psz1 = 0;
-      if (psz1 = strchr(szLineBuf, '\n'))
+      if ((psz1 = strchr(szLineBuf, '\n')))
          *psz1 = '\0';
-      if (psz1 = strchr(szLineBuf, '\r'))
+      if ((psz1 = strchr(szLineBuf, '\r')))
          *psz1 = '\0';
 
       // any indication for an error or warning?
@@ -16089,11 +16264,11 @@ void SnapShot::mapCompilerOutput(bool bMixMappedWithUnmappedOutput, char *pszCmd
       // }
 
       // map every potential path info to our path char
-      while (psz1 = strchr(szLineBuf, glblWrongPChar))
+      while ((psz1 = strchr(szLineBuf, glblWrongPChar)))
          *psz1 = glblPathChar;
 
       // calc line number of first target's :create
-      ulong nBaseLine = 0;
+      uint nBaseLine = 0;
       nBaseLine += 5;            // header before index
       nBaseLine += nClTargets;   // index lines
       nBaseLine += 2;            // header after index
@@ -16106,7 +16281,7 @@ void SnapShot::mapCompilerOutput(bool bMixMappedWithUnmappedOutput, char *pszCmd
       char *pszHit = 0;
       TextFile *pTarget = 0;
       char *pszTargName = 0;
-      for (long i=0; i<nClTargets && !pszHit; i++) {
+      for (int i=0; i<nClTargets && !pszHit; i++) {
          nBaseLine++; // skip :create, now on 1st line of content
          pTarget = apClTargets[i];
          pszTargName = pTarget->getFileName();
@@ -16118,8 +16293,8 @@ void SnapShot::mapCompilerOutput(bool bMixMappedWithUnmappedOutput, char *pszCmd
       }
 
       char szLineNum[100];
-      ulong iLineNum =  0;
-      ulong iMaxSeek = 10; // search a max. of 10 chars for line number, past filename
+      uint iLineNum =  0;
+      uint iMaxSeek = 10; // search a max. of 10 chars for line number, past filename
       if (pszHit) {
          // a filename from the cluster appeared.
          // can we identify a line number nearby behind?
@@ -16141,7 +16316,7 @@ void SnapShot::mapCompilerOutput(bool bMixMappedWithUnmappedOutput, char *pszCmd
          // dump mapped output.
          printf("* %s\n", szLineBuf);
          // it seems we have a filename and a line number.
-         ulong aRelLine = (ulong)atol(szLineNum);
+         uint aRelLine = (uint)atol(szLineNum);
          printf("* ===> %s %u\n", getFileName(), nBaseLine+aRelLine);
          // if this is the first hit, exec optional command
          if (nMaps==0 && pszCmd!=0) {
@@ -16162,8 +16337,8 @@ void SnapShot::mapCompilerOutput(bool bMixMappedWithUnmappedOutput, char *pszCmd
    // printf("] %u mappings for %s, %u lines\n", nMaps, getFileName(), nLine);
 }
 
-long SnapShot::hasTarget(char *pszTargetName) {
-   for (long i=0; i<nClTargets; i++) {
+int SnapShot::hasTarget(char *pszTargetName) {
+   for (int i=0; i<nClTargets; i++) {
       TextFile *pTarget = apClTargets[i];
       if (!strcmp(pTarget->getFileName(), pszTargetName))
          return 1;
@@ -16171,9 +16346,9 @@ long SnapShot::hasTarget(char *pszTargetName) {
    return 0;
 }
 
-long SnapShot::dropTarget(char *pszFileName) {
+int SnapShot::dropTarget(char *pszFileName) {
    // remove from list of targets
-   long i2, bDone=0;
+   int i2, bDone=0;
    for (i2=0; i2<nClTargets; i2++) {
       TextFile *pTarget = apClTargets[i2];
       if (!strcmp(pTarget->getFileName(), pszFileName)) {
@@ -16190,40 +16365,40 @@ long SnapShot::dropTarget(char *pszFileName) {
 }
 
 void SnapShot::dumpTargets() {
-   for (long i=0; i<nClTargets; i++)
+   for (int i=0; i<nClTargets; i++)
       printf("... %s\n",apClTargets[i]->getFileName());
 }
 
 void SnapShot::setAllTouched() {
-   for (long i=0; i<nClTargets; i++)
+   for (int i=0; i<nClTargets; i++)
       apClTargets[i]->setTouched(1);
 }
 
-long SnapShot::removeTargetEntry(long n) {
+int SnapShot::removeTargetEntry(int n) {
    if (n >= nClTargets) return 9+perr("internal #53\n");
    delete apClTargets[n];
-   for (long k=n; k<nClTargets-1; k++)
+   for (int k=n; k<nClTargets-1; k++)
       apClTargets[k] = apClTargets[k+1];
    nClTargets--;
    // printf("[ dropped target entry %d, %d remaining ]\n", n, nClTargets);
    return 0;
 }
 
-long SnapShot::syncDownTargets(SnapShot &oMaster, long &rnSync)
+int SnapShot::syncDownTargets(SnapShot &oMaster, int &rnSync)
 {
    resetLastSync();
 
    if (nClTargets != oMaster.nClTargets)
       return 9+perr("target number differs (%s %d, %s %d)\n", oMaster.pszClID, oMaster.nClTargets, pszClID, nClTargets);
 
-   long nSynced = 0;
+   int nSynced = 0;
 
    // on every difference to master, take master's target
    if (nClTargets != oMaster.nClTargets)
       return 9+perr("number of targets changed (%u %u)\n", nClTargets, oMaster.nClTargets);
 
    // we expect an absolutely identical list of targets, with same sequence
-   for (long iTarg=0; iTarg<nClTargets; iTarg++) {
+   for (int iTarg=0; iTarg<nClTargets; iTarg++) {
       TextFile *pMemTarget    = apClTargets[iTarg];
       TextFile *pMasterTarget = oMaster.apClTargets[iTarg];
       if (strcmp(pMemTarget->getFileName(), pMasterTarget->getFileName()))
@@ -16234,8 +16409,8 @@ long SnapShot::syncDownTargets(SnapShot &oMaster, long &rnSync)
          if (!pMemTarget->isReadOnly()) {
             // on every difference, take master's target data
             // first, collect some difference stats
-            long lSizeDiff = pMasterTarget->dataSize() - pMemTarget->dataSize(); 
-            long lLineDiff = pMasterTarget->numberOfLines() - pMemTarget->numberOfLines(); 
+            int lSizeDiff = pMasterTarget->dataSize() - pMemTarget->dataSize(); 
+            int lLineDiff = pMasterTarget->numberOfLines() - pMemTarget->numberOfLines(); 
             // printf("[internal-replace: %s]\n", oMaster.getFileName());
             TextFile *pDownClone = oMaster.apClTargets[iTarg]->clone();
             if (!pDownClone) return 9+perr("internal #11\n");
@@ -16264,7 +16439,7 @@ long SnapShot::syncDownTargets(SnapShot &oMaster, long &rnSync)
    return 0;
 }
 
-long SnapShot::mirrorTargetsFrom(SnapShot &oMaster, long &nMissing)
+int SnapShot::mirrorTargetsFrom(SnapShot &oMaster, int &nMissing)
 {
    resetTargets("mirror");
 
@@ -16272,8 +16447,8 @@ long SnapShot::mirrorTargetsFrom(SnapShot &oMaster, long &nMissing)
    apClTargets    = new TextFile*[nClMaxTargets];
    nClTargets     = oMaster.nClTargets;
 
-   long lMissing = 0;
-   for (long iTarg=0; iTarg<nClTargets; iTarg++) 
+   int lMissing = 0;
+   for (int iTarg=0; iTarg<nClTargets; iTarg++) 
    {
       TextFile *pMasterTarget = oMaster.apClTargets[iTarg];
       TextFile *pCopy = new TextFile(pMasterTarget->getFileName());
@@ -16290,12 +16465,12 @@ long SnapShot::mirrorTargetsFrom(SnapShot &oMaster, long &nMissing)
    return 0;
 }
 
-long SnapShot::syncUpTargets(SnapShot &oMaster, long &rnSynced) {
-   long nSynced = 0;
+int SnapShot::syncUpTargets(SnapShot &oMaster, int &rnSynced) {
+   int nSynced = 0;
    // on every difference to master, take master's target
    if (nClTargets != oMaster.nClTargets) return 9+perr("number of targets changed (%u %u)\n", nClTargets, oMaster.nClTargets);
    // we expect an absolutely identical list of targets, with same sequence
-   for (long iTarg=0; iTarg<nClTargets; iTarg++) {
+   for (int iTarg=0; iTarg<nClTargets; iTarg++) {
       TextFile *pMemTarget      = oMaster.apClTargets[iTarg];
       TextFile *pSnapFileTarget = apClTargets[iTarg];
       if (strcmp(pMemTarget->getFileName(), pSnapFileTarget->getFileName()))
@@ -16308,8 +16483,8 @@ long SnapShot::syncUpTargets(SnapShot &oMaster, long &rnSynced) {
          printf("[ NODIF: %s ]\n", pMemTarget->getFileName());
       } else {
          // on every difference, take master's target data
-         long lSizeDiff = pMemTarget->dataSize() - pSnapFileTarget->dataSize();
-         long lLineDiff = pMemTarget->numberOfLines() - pSnapFileTarget->numberOfLines();
+         int lSizeDiff = pMemTarget->dataSize() - pSnapFileTarget->dataSize();
+         int lLineDiff = pMemTarget->numberOfLines() - pSnapFileTarget->numberOfLines();
          // printf("[internal-replace: %s]\n", oMaster.getFileName());
          TextFile *pUpClone = pMemTarget->clone();
          if (!pUpClone) return 9+perr("internal #30\n");
@@ -16332,15 +16507,15 @@ long SnapShot::syncUpTargets(SnapShot &oMaster, long &rnSynced) {
    return 0;
 }
 
-long SnapShot::checkLoadTargets() {
-   long lRC = 0;
+int SnapShot::checkLoadTargets() {
+   int lRC = 0;
    bool bReRun = false;
    do {
     bReRun = false;
-    for (long iTarg=0; iTarg<nClTargets; iTarg++) {
+    for (int iTarg=0; iTarg<nClTargets; iTarg++) {
       TextFile *pMemTarget = apClTargets[iTarg];
-      long lStatRC = 0;
-      if (lStatRC = pMemTarget->fileStatChanged()) {
+      int lStatRC = 0;
+      if ((lStatRC = pMemTarget->fileStatChanged())) {
          // printf("[ RELOAD: %s ]\n", pMemTarget->getFileName());
          if ((lStatRC==2) || pMemTarget->loadFromFile()) {
             // a target was probably deleted
@@ -16369,7 +16544,7 @@ void SnapShot::resetTargets(const char *pszInfo)
 {
    if (cs.debug) printf("%s reset tlist due to %s\n", pszClID, pszInfo);
    if (apClTargets) {
-      for (long i=0; i<nClTargets; i++)
+      for (int i=0; i<nClTargets; i++)
          delete apClTargets[i];
       delete [] apClTargets;
       apClTargets   = 0;
@@ -16378,14 +16553,14 @@ void SnapShot::resetTargets(const char *pszInfo)
    }
 }
 
-long SnapShot::copyTargetsFrom(SnapShot &oSrc) 
+int SnapShot::copyTargetsFrom(SnapShot &oSrc) 
 {
    resetTargets("copy");
    nClMaxTargets = oSrc.nClMaxTargets;
    if (!(apClTargets = new TextFile*[nClMaxTargets]))
       return -1;
    nClTargets    = oSrc.nClTargets;
-   for (long i=0; i<nClTargets; i++) {
+   for (int i=0; i<nClTargets; i++) {
       // printf("[cloning %s]\n",oSrc.apClTargets[i]->getFileName());
       if (!(apClTargets[i] = oSrc.apClTargets[i]->clone()))
          return -1;
@@ -16402,8 +16577,10 @@ void SnapShot::setRootDir(char *pszDirName) {
    pClRootName = strdup(pszDirName);
 }
 
-long SnapShot::writeToFile() 
+int SnapShot::writeToFile() 
 {
+   cchar *pszGlblClusterFileStamp = ":cluster sfk,1.0.7,prefix=:";
+
    if (!pClFileName || !pClRootName) 
       return 9+perr("missing filename, or root\n");
 
@@ -16423,7 +16600,7 @@ long SnapShot::writeToFile()
    if (nClNotes > 0)
    {
       fprintf(fout, ":notes-begin\n");
-      for (long i0=0; i0<nClNotes; i0++) {
+      for (int i0=0; i0<nClNotes; i0++) {
          fprintf(fout, "%s\n", apNotes[i0]);
       }
       fprintf(fout, ":notes-end\n\n");
@@ -16431,7 +16608,7 @@ long SnapShot::writeToFile()
 
    // write target index
    fprintf(fout, ":# ----- %d target files -----\n", nClTargets);
-   for (long i1=0; i1<nClTargets; i1++) {
+   for (int i1=0; i1<nClTargets; i1++) {
       TextFile *pTarget = apClTargets[i1];
       if (pTarget->isReadOnly())
          fprintf(fout, ":READ %s\n", pTarget->getFileName());
@@ -16441,7 +16618,7 @@ long SnapShot::writeToFile()
    fprintf(fout, ":# ----- target index end -----\n\n");
    
    // write all targets
-   for (long i2=0; i2<nClTargets; i2++) {
+   for (int i2=0; i2<nClTargets; i2++) {
       TextFile *pTarget = apClTargets[i2];
       fprintf(fout, ":create %s\n", pTarget->getFileName());
       pTarget->dumpTo(fout); // writes line by line, with guranteed LF at end
@@ -16455,7 +16632,7 @@ long SnapShot::writeToFile()
    return 0;
 }
 
-long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch) 
+int SnapShot::readFromFile(int &rbDroppedAny, int bForceBuildMatch) 
 {
    resetTargets("read");
    resetNotes();
@@ -16463,9 +16640,9 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
    if (!pClFileName) return 9+perr("missing filename, or root\n");
 
    char *pszRaw = 0;
-   long lRetryCnt = 0;
-   long lOldLen  = -1;
-   long lOldBail = 0;
+   int lRetryCnt = 0;
+   int lOldLen  = -1;
+   int lOldBail = 0;
    while (true)
    {
       // load snapfile in one block
@@ -16488,7 +16665,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
          }
 
          // if size doesn't change over 3 sec, load although
-         long lNewLen = strlen(pszRaw);
+         int lNewLen = strlen(pszRaw);
          if (lOldLen == lNewLen) {
             if (++lOldBail >= 3) {
                printf("info : probably old-format cluster, loaded.\n");
@@ -16514,15 +16691,15 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
          return 9;
    }
 
-   long lRawSize = strlen(pszRaw);
+   int lRawSize = strlen(pszRaw);
    if (lRawSize < 100) return 9+perr("insufficient bytes from %s, %u\n", pClFileName, lRawSize);
 
    // pass 1: parse control block, build target index
    char *psz1 = pszRaw;
 
-   long nIndexSize = 0;
+   int nIndexSize = 0;
    char **apIndex  = 0;
-   long nIndexUsed = 0;
+   int nIndexUsed = 0;
 
    rbDroppedAny = 0;
    bool bWithinNotes = 0;
@@ -16564,7 +16741,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
             if (psz1) {
                // verify if user forgot to reload the fileset
                psz1 += strlen(",build=");
-               long lFileBuild = atol(psz1);
+               int lFileBuild = atol(psz1);
                if (bForceBuildMatch) {
                   if (lFileBuild != lClLastSavedBuild) {
                      printf("[ ERROR: YOU FORGOT TO RELOAD THE CLUSTER, AND TRY TO SAVE CHANGES !! ]\n");
@@ -16615,8 +16792,8 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
             // build temporary index table
             if (nIndexUsed == nIndexSize) {
                // expand table
-               long nAddSize = (nIndexSize == 0) ? 2 : nIndexSize;
-               long nNewSize = nIndexSize + nAddSize;
+               int nAddSize = (nIndexSize == 0) ? 2 : nIndexSize;
+               int nNewSize = nIndexSize + nAddSize;
                char **apNew  = new char*[nNewSize+10];
                if (nIndexUsed > 0)
                   memcpy(apNew, apIndex, sizeof(char*) * nIndexUsed);
@@ -16624,7 +16801,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
                apIndex    = apNew;
                nIndexSize = nNewSize;
                // printf("index expanded:\n");
-               // for (long i=0; i<nIndexUsed; i++)
+               // for (int i=0; i<nIndexUsed; i++)
                //    printf("   %s\n", apIndex[i]);
             }
             // add next entry, INCLUDING the :edit or :READ statement!
@@ -16651,7 +16828,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
       }
    }  // endwhile psz1
 
-   long lPreFix  = strlen(":edit "); // and :READ
+   int lPreFix  = strlen(":edit "); // and :READ
 
    // pass 2: isolate target contents
    psz1 = pszRaw;
@@ -16681,7 +16858,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
          // is target listed in index?
          bool bInIndex  = 0;
          bool bReadOnly = 0;
-         for (long i=0; i<nIndexUsed; i++)
+         for (int i=0; i<nIndexUsed; i++)
             if (!strcmp(&apIndex[i][lPreFix], pszTargetName)) {
                bInIndex = 1;
                // check if it's read-only
@@ -16732,7 +16909,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
    }
 
    // pass 3: add all files of index not yet in snapfile
-   for (long i5=0; i5<nIndexUsed; i5++) 
+   for (int i5=0; i5<nIndexUsed; i5++) 
    {
       if (strlen(&apIndex[i5][lPreFix])) 
       {
@@ -16766,7 +16943,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
 
    // pass 4: cleanup
    if (apIndex && (nIndexSize > 0)) {
-      for (long i=0; i<nIndexUsed; i++)
+      for (int i=0; i<nIndexUsed; i++)
          delete [] apIndex[i]; // char array
       delete [] apIndex;
    }
@@ -16782,7 +16959,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
    return 0;
 }
 
-void SnapShot::expandTargets(long lSoMuch) {
+void SnapShot::expandTargets(int lSoMuch) {
    // printf("[expand target array from %d to %d]\n",nClMaxTargets,nClMaxTargets+lSoMuch);
    TextFile **apTmp = new TextFile*[nClMaxTargets+lSoMuch];
    if (apClTargets) {
@@ -16793,10 +16970,10 @@ void SnapShot::expandTargets(long lSoMuch) {
    nClMaxTargets += lSoMuch;
 }
 
-long SnapShot::addTarget(char *pszFileName) {
+int SnapShot::addTarget(char *pszFileName) {
    // create new target entry and add
    TextFile *pTarget = new TextFile(pszFileName);
-   long lRC = pTarget->loadFromFile();
+   int lRC = pTarget->loadFromFile();
    if (lRC == 1) {
       delete pTarget;
       return 0;
@@ -16809,13 +16986,14 @@ long SnapShot::addTarget(char *pszFileName) {
    return addTarget(pTarget);
 }
 
-long SnapShot::addTarget(TextFile *pTarget) {
+int SnapShot::addTarget(TextFile *pTarget) {
    // is array still large enough? if not, expand
-   if (nClTargets > nClMaxTargets-2)
+   if (nClTargets > nClMaxTargets-2) {
       if (nClMaxTargets==0)
          expandTargets(100);
       else
          expandTargets(nClMaxTargets);
+   }
    // add new target entry
    apClTargets[nClTargets++] = pTarget;
    // update statistics
@@ -16825,10 +17003,10 @@ long SnapShot::addTarget(TextFile *pTarget) {
 
 void SnapShot::adjustNamePadding() {
    // determine max length over all filenames, calc a padding value
-   long lMaxLen = 20; // always at least this minimum
-   for (long iTarg=0; iTarg<nClTargets; iTarg++) {
+   int lMaxLen = 20; // always at least this minimum
+   for (int iTarg=0; iTarg<nClTargets; iTarg++) {
       char *psz1 = apClTargets[iTarg]->getFileName();
-      long lLen  = strlen(psz1);
+      int lLen  = strlen(psz1);
       if (lLen > lMaxLen)
           lMaxLen = lLen;
    }
@@ -16837,6 +17015,9 @@ void SnapShot::adjustNamePadding() {
    lMaxLen = (lMaxLen / 5) * 5; // force alignment
    nClNamePadding = lMaxLen;
 }
+
+#endif // SFK_DEPRECATED
+
 #endif // USE_SFK_BASE
 
 // used by matchesName only to check .ext dir masks
@@ -16845,14 +17026,14 @@ bool dirExtEndMatch(char *pszHay, char *pszPat)
    // hay1: ".svn/"
    // pat1: ".svn"
    // pat2: ".svn/"
-   long npatlen = strlen(pszPat);
+   int npatlen = strlen(pszPat);
    if (npatlen < 1) return 0; // shouldn't happen
    // case ".svn/" == ".svn/"
    if (pszPat[npatlen-1] == glblPathChar)
       return mystricmp(pszHay, pszPat) ? 0 : 1;
    // pat differs in length to hay,
    // case ".svn/" == ".svn"
-   long nhaylen = strlen(pszHay);
+   int nhaylen = strlen(pszHay);
    if (nhaylen != npatlen+1)
       return 0;
    if (mystrnicmp(pszHay, pszPat, npatlen))
@@ -16863,8 +17044,8 @@ bool dirExtEndMatch(char *pszHay, char *pszPat)
 }
 
 bool matchesName(char *pszStr, char *pszMask,
-   bool *rPartMatch = 0, long nFlags = 0,
-   long *pHitPos = 0, long *pHitLen = 0
+   bool *rPartMatch = 0, int nFlags = 0,
+   int *pHitPos = 0, int *pHitLen = 0
    )
 {
     // printf("\nmname %s %s\n",pszStr,pszMask);
@@ -16888,16 +17069,16 @@ bool matchesName(char *pszStr, char *pszMask,
 
     szMatchBuf[0] = '\0';
 
-    long nMinHitPos = -1;
-    long nMaxHitLen =  0;
+    int nMinHitPos = -1;
+    int nMaxHitLen =  0;
 
     char *pstr1  = pszStr;
     char *pmsk1  = pszMask;
     char *pmsk2  = pmsk1;
     bool  bneg   = 0;
     bool  bimt   = true; // inner match
-    long  nmpos  = 0;
-    long  nlen   = 0;
+    int  nmpos  = 0;
+    int  nlen   = 0;
     bool  bwild2 = 0;
 
     while (*pmsk1) 
@@ -16965,7 +17146,7 @@ bool matchesName(char *pszStr, char *pszMask,
                 return bneg ^ bmatch1;
             }
 
-            long nHitPos = 0;
+            int nHitPos = 0;
 
             // string cursor is pstr1
             bool bmatch2 = false;
@@ -17009,9 +17190,9 @@ bool matchesName(char *pszStr, char *pszMask,
                    // if (bneg) return false;
                    // else continue, no mismatch yet.
                    if (pHitPos) {
-                      long nAbsPos1 = (pstr1-pszStr)+nHitPos;
+                      int nAbsPos1 = (pstr1-pszStr)+nHitPos;
                       if (nMinHitPos < 0) nMinHitPos = nAbsPos1;
-                      long nAbsPos2 = nAbsPos1 + strlen(szMatchBuf);
+                      int nAbsPos2 = nAbsPos1 + strlen(szMatchBuf);
                       nMaxHitLen = nAbsPos2 - nMinHitPos;
                    }
                    // have to step past hit in string.
@@ -17056,15 +17237,15 @@ bool matchesName(char *pszStr, char *pszMask,
     return brc;
 }
 
-long matchesFileMask(char *pszStr, char *pszInfoAbsName=0)
+int matchesFileMask(char *pszStr, char *pszInfoAbsName=0)
 {
-   long lMatched = 0;
+   int lMatched = 0;
    bool bPart    = 0;
    char *pszPart = 0;
    char *pszInfo = pszInfoAbsName ? pszInfoAbsName : pszStr;
 
-   long nPosMasks = 0;
-   long nPosHits  = 0;
+   int nPosMasks = 0;
+   int nPosHits  = 0;
 
    Array &rMasks = glblFileSet.fileMasks();
    for (int i=0; rMasks.isStringSet(i); i++) 
@@ -17102,7 +17283,7 @@ long matchesFileMask(char *pszStr, char *pszInfoAbsName=0)
       if (nPosMasks > 0 && nPosHits < nPosMasks) {
          if (nGlblTraceSel & 2) {
             setTextColor(nGlblTraceExcColor);
-            info.print("file-exclude: %s [no AND match, %ld/%ld]\n", pszInfo, nPosHits, nPosMasks);
+            info.print("file-exclude: %s [no AND match, %d/%d]\n", pszInfo, nPosHits, nPosMasks);
             setTextColor(-1);
          }
          return 0;
@@ -17149,7 +17330,7 @@ bool matchesDirMask(char *pszStr, bool bQuiet)
       char *pszMask = rMasks.getString(i);
       if (pszMask[0] == glblNotChar)
       {
-         mtklog("mdm: check neg mask: %s %s", pszMask, pszStr);
+         mtklog(("mdm: check neg mask: %s %s", pszMask, pszStr));
          // ,5: disable start-of-name comparison AND disable 
          //     the .extension comparison (the latter would
          //     never work as pszStr ends with slash).
@@ -17159,11 +17340,11 @@ bool matchesDirMask(char *pszStr, bool bQuiet)
                info.print("dir-exclude : %s due to \"%s\"\n", skipDotSlash(pszStr), pszMask);
                setTextColor(-1);
             }
-            mtklog("mdm: 0, neg mask hit: %s %s", pszMask, pszStr);
+            mtklog(("mdm: 0, neg mask hit: %s %s", pszMask, pszStr));
             return 0;
          } else {
             if (cs.verbose >= 4) printf("1 = MDSB (msk %s, str %s)\n", pszMask, pszStr);
-            mtklog("mdm: neg mask miss %s %s", pszMask, pszStr);
+            mtklog(("mdm: neg mask miss %s %s", pszMask, pszStr));
          }
       }
       else
@@ -17172,7 +17353,7 @@ bool matchesDirMask(char *pszStr, bool bQuiet)
          if (mystrstriq(pszStr, pszMask+1))
             lRC = 1; // but continue checking for negative masks
       } else {
-         mtklog("mdm: skip wild mask: %s %s (checked later)", pszMask, pszStr);
+         mtklog(("mdm: skip wild mask: %s %s (checked later)", pszMask, pszStr));
          lRC = 1; // mask with wildcards: NOT used here, but in matchesPathMask()
       }
    }
@@ -17181,16 +17362,16 @@ bool matchesDirMask(char *pszStr, bool bQuiet)
       if (lRC) {
          setTextColor(nGlblTraceIncColor);
          info.print("dir-include : %s\n", skipDotSlash(pszStr));
-         mtklog("mdm: include %s", pszStr);
+         mtklog(("mdm: include %s", pszStr));
       } else {
          setTextColor(nGlblTraceExcColor);
          info.print("dir-exclude : %s\n", skipDotSlash(pszStr));
-         mtklog("mdm: exclude %s", pszStr);
+         mtklog(("mdm: exclude %s", pszStr));
       }
       setTextColor(-1);
    }
 
-   mtklog("mdm: %ld for %s", lRC, pszStr);
+   mtklog(("mdm: %d for %s", lRC, pszStr));
 
    return lRC;
 }
@@ -17198,8 +17379,8 @@ bool matchesDirMask(char *pszStr, bool bQuiet)
 // check done per filename: does the file path match?
 bool matchesPathMask(char *pszFilename)
 {
-   long nPosMasks = 0;
-   long nPosHits  = 0;
+   int nPosMasks = 0;
+   int nPosHits  = 0;
 
    // isolate path from filename
    static char szPathBuf[500];
@@ -17225,7 +17406,7 @@ bool matchesPathMask(char *pszFilename)
                info.print("path-exclude: %s [due to %s]\n", pszPath, pszMask);
                setTextColor(-1);
             }
-            mtklog("mpm: 0, neg mask hit: %s", pszFilename);
+            mtklog(("mpm: 0, neg mask hit: %s", pszFilename));
             return 0;
          }
       }
@@ -17247,33 +17428,33 @@ bool matchesPathMask(char *pszFilename)
       if (nPosMasks > 0 && nPosHits < nPosMasks) {
          if (nGlblTraceSel & 2) {
             setTextColor(nGlblTraceExcColor);
-            info.print("path-exclude: %s [no AND match, %ld/%ld]\n", pszPath, nPosHits, nPosMasks);
+            info.print("path-exclude: %s [no AND match, %d/%d]\n", pszPath, nPosHits, nPosMasks);
             setTextColor(-1);
          }
-         mtklog("mpm: 0, no matches: %s", pszFilename);
+         mtklog(("mpm: 0, no matches: %s", pszFilename));
          return 0;
       }
    }
 
    if (!nPosMasks) {
-      mtklog("mpm: 1, no pos masks: %s", pszFilename);
+      mtklog(("mpm: 1, no pos masks: %s", pszFilename));
       return true;
    }
 
    if (nPosHits) {
-      mtklog("mpm: 1, pos hits: %s", pszFilename);
+      mtklog(("mpm: 1, pos hits: %s", pszFilename));
       return true;
    }
 
-   mtklog("mpm: 0, default: %s", pszFilename);
+   mtklog(("mpm: 0, default: %s", pszFilename));
    return false;
 }
 
-void padBuffer(char *pszBuf, long nMaxLen, char c, long nTargLen)
+void padBuffer(char *pszBuf, int nMaxLen, char c, int nTargLen)
 {
-   long nlen = strlen(pszBuf);
+   int nlen = strlen(pszBuf);
    if (nlen < nTargLen) {
-      long ndif = nTargLen-nlen;
+      int ndif = nTargLen-nlen;
       if (nlen+ndif < nMaxLen) {
          memset(pszBuf+nlen, c, ndif);
          pszBuf[nlen+ndif] = '\0';
@@ -17281,11 +17462,11 @@ void padBuffer(char *pszBuf, long nMaxLen, char c, long nTargLen)
    }
 }
 
-long execGrep(Coi *pcoi) 
+int execGrep(Coi *pcoi) 
 {__
    bool isBinaryFile(char *pszFile);
 
-   info.setAddInfo("%lu files, %lu dirs", cs.filesScanned, cs.dirsScanned);
+   info.setAddInfo("%u files, %u dirs", cs.filesScanned, cs.dirsScanned);
    info.setStatus("scan ", pcoi->name(), 0, eKeepAdd);
 
    bool bBinGrep = bGlblBinGrep;
@@ -17318,11 +17499,11 @@ long execGrep(Coi *pcoi)
 
       cs.filesScanned++;
 
-      long nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
+      int nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
       memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
    
-      long nLocalLines = 0;
-      long nMatchLines = 0;
+      int nLocalLines = 0;
+      int nMatchLines = 0;
       bool bDumpedFileName = 0;
       bool btold1 = 0;
 
@@ -17331,16 +17512,16 @@ long execGrep(Coi *pcoi)
          cs.lines++;
          nLocalLines++;
    
-         if (!btold1 && (strlen((char*)abBuf) == nMaxLineLen)) {
+         if (!btold1 && ((int)strlen((char*)abBuf) == nMaxLineLen)) {
             btold1 = 1;
             pwarn("max line length %d reached, splitting input line(s) in file %s\n", nMaxLineLen, pcoi->name());
          }
    
          removeCRLF((char*)abBuf);
    
-         long nMatch = 0;
-         long nGrepPat = glblGrepPat.numberOfEntries();
-         for (long i=0; (nMatch < nGrepPat) && (i<nGrepPat); i++)
+         int nMatch = 0;
+         int nGrepPat = glblGrepPat.numberOfEntries();
+         for (int i=0; (nMatch < nGrepPat) && (i<nGrepPat); i++)
             if (mystrhit((char*)abBuf, glblGrepPat.getString(i), cs.usecase, 0))
                nMatch++;
    
@@ -17386,12 +17567,12 @@ long execGrep(Coi *pcoi)
             // list the line
             bool bdump2 = 0;
             if (bGlblGrepLineNum)
-               { sprintf(szLineBuf2, "   %04lu ", nLocalLines); bdump2=1; }
+               { sprintf(szLineBuf2, "   %04u ", nLocalLines); bdump2=1; }
             else
             if (!cs.pure)
                { sprintf(szLineBuf2, "   "); bdump2=1; }
 
-            if (bdump2)
+            if (bdump2) {
                if (chain.coldata) {
                   szAttrBuf2[0] = '\0';
                   padBuffer(szAttrBuf2, MAX_LINE_LEN, ' ', strlen(szLineBuf2));
@@ -17399,24 +17580,25 @@ long execGrep(Coi *pcoi)
                } else {
                   info.print("%s", szLineBuf2);
                }
+            }
 
             char *pszTmp  = (char*)abBuf;
-            long nAttrPad = strlen(pszTmp);
-            if (nAttrPad > sizeof(szAttrBuf)-10)
-                nAttrPad = sizeof(szAttrBuf)-10;
+            int nAttrPad = strlen(pszTmp);
+            if (nAttrPad > (int)sizeof(szAttrBuf)-10)
+                nAttrPad = (int)sizeof(szAttrBuf)-10;
 
             memset(szAttrBuf, ' ', nAttrPad);
             szAttrBuf[nAttrPad] = '\0';
 
-            for (long k=0; k<nGrepPat; k++) 
+            for (int k=0; k<nGrepPat; k++) 
             {
                char *pszPat = glblGrepPat.getString(k);
-               long nPatLen = strlen(pszPat);
-               long nTmpLen = strlen(pszTmp);
-               long nCur = 0, nRel = 0;
+               int nPatLen = strlen(pszPat);
+               int nTmpLen = strlen(pszTmp);
+               int nCur = 0, nRel = 0;
                while (mystrhit(pszTmp+nCur, pszPat, cs.usecase, &nRel)) 
                {
-                  if (nCur+nRel+nPatLen < sizeof(szAttrBuf)-10)
+                  if (nCur+nRel+nPatLen < (int)sizeof(szAttrBuf)-10)
                      memset(&szAttrBuf[nCur+nRel], 'i', nPatLen);
                   nCur += nRel+nPatLen;
                   if (nCur >= nTmpLen-1)
@@ -17441,7 +17623,7 @@ long execGrep(Coi *pcoi)
          if (chain.coldata) {
             if (cs.countMatchLines) {
                // do not pass file headers, but pure text
-               sprintf(szLineBuf2, "%05ld : %s", nMatchLines, pcoi->name());
+               sprintf(szLineBuf2, "%05d : %s", nMatchLines, pcoi->name());
                setattr(szAttrBuf2, ' ', strlen(szLineBuf2), MAX_LINE_LEN);
             } else {
                sprintf(szLineBuf2, "%s", pcoi->name());
@@ -17452,7 +17634,7 @@ long execGrep(Coi *pcoi)
             chain.addLine(szLineBuf2, szAttrBuf2);
          } else {
             if (cs.countMatchLines)
-               info.print("%05ld : %s\n", nMatchLines, pcoi->name());
+               info.print("%05d : %s\n", nMatchLines, pcoi->name());
             else
                info.print("%s\n", pcoi->name());
          }
@@ -17465,11 +17647,9 @@ long execGrep(Coi *pcoi)
 
 CoiTable glblFileListCache;
 
-long prtFile(char *pszPreInfo, char *pszRelName, Coi *pcoi, char *pszZip, long nFlags, const char *pszFormat, ...)
+int prtFile(char *pszPreInfo, char *pszRelName, Coi *pcoi, char *pszZip, int nFlags, const char *pszFormat, ...)
 {__
    char *pszFilename = pszRelName;
-   num nTime   = pcoi->getTime();
-   num nSize   = pcoi->getSize();
 
    va_list argList;
    va_start(argList, pszFormat);
@@ -17487,8 +17667,8 @@ long prtFile(char *pszPreInfo, char *pszRelName, Coi *pcoi, char *pszZip, long n
       if (cs.listBySize) cOrder = (cs.listBySize < 0) ? 's':'S';
       if (cs.listByName) cOrder = (cs.listByName < 0) ? 'n':'N';
       int nLen = strlen(pszFilename);
-      if (nLen > sizeof(szPrintBuf2)-100)
-          nLen = sizeof(szPrintBuf2)-100;
+      if (nLen > (int)sizeof(szPrintBuf2)-100)
+          nLen = (int)sizeof(szPrintBuf2)-100;
       sprintf(szPrintBuf2, "%05u %s%s%.*s%s", strlen(szPrintBuf1), szPrintBuf1, pq,nLen,pszFilename,pq);
       pcoi->setExtStr(szPrintBuf2);
       if (glblFileListCache.addSorted(*pcoi, cOrder, cs.usecase))
@@ -17557,9 +17737,9 @@ long prtFile(char *pszPreInfo, char *pszRelName, Coi *pcoi, char *pszZip, long n
    // onto terminal, but redirected:
    if (bshowprog) {
       cs.filesScanned++;
-      mtklog("prtfile.bshowprog=%d q=%d nhead=%d",bshowprog,cs.quiet,cs.nohead);
+      mtklog(("prtfile.bshowprog=%d q=%d nhead=%d",bshowprog,cs.quiet,cs.nohead));
       if (!cs.quiet && !cs.nohead) {
-         info.setAddInfo("%lu files", cs.filesScanned);
+         info.setAddInfo("%u files", cs.filesScanned);
          info.setStatus("scan", pszFilename, 0, eKeepAdd);
       }
    }
@@ -17567,12 +17747,12 @@ long prtFile(char *pszPreInfo, char *pszRelName, Coi *pcoi, char *pszZip, long n
    return 0;
 }
 
-char *sizeOrDir(num nSize, long nFlags)
+char *sizeOrDir(num nSize, int nFlags)
 {
    static char szInfo[200];
-   long ndig = (ulong)nGlblListDigits;
+   int ndig = (uint)nGlblListDigits;
    if (ndig < 1) ndig = 1;
-   if (ndig > sizeof(szInfo)-10) ndig = sizeof(szInfo)-10;
+   if (ndig > (int)sizeof(szInfo)-10) ndig = sizeof(szInfo)-10;
    if (nFlags & 1) {
       sprintf(szInfo, "%*.*s",(int)ndig,(int)ndig,"[dir]");
    } else {
@@ -17581,7 +17761,7 @@ char *sizeOrDir(num nSize, long nFlags)
    return szInfo;
 }
 
-long listSingleFile(long lLevel, Coi *pcoi, char *pszParentZip, bool bIsDir, long nSinceReason)
+int listSingleFile(int lLevel, Coi *pcoi, char *pszParentZip, bool bIsDir, int nSinceReason)
 {__
    char *pszFileName = pcoi->name();
    num   nFileTime   = pcoi->getTime();
@@ -17591,10 +17771,8 @@ long listSingleFile(long lLevel, Coi *pcoi, char *pszParentZip, bool bIsDir, lon
    const char *p2 = "";
 
    char *pz = pszParentZip;
-   num nt = nFileTime;
-   num ns = nFileSize;
 
-   long nf = 0; // flags
+   int nf = 0; // flags
    if (bIsDir)
         nf |= 32;
    if (pcoi->isHidden())
@@ -17621,11 +17799,11 @@ long listSingleFile(long lLevel, Coi *pcoi, char *pszParentZip, bool bIsDir, lon
       case 1:
          if (!cs.quiet && (nGlblListMinSize > 0))
          {
-            long lMBytes = (long)(nFileSize / 1000000L);
+            int lMBytes = (int)(nFileSize / 1000000L);
             if (nFileSize >= nGlblListMinSize)
             {
                int nIndent = (int)lLevel;
-               if (nIndent > (long)strlen(pszGlblBlank)) nIndent = strlen(pszGlblBlank);
+               if (nIndent > (int)strlen(pszGlblBlank)) nIndent = strlen(pszGlblBlank);
                if (nIndent > 10) nIndent = 10;
 
                switch (cs.listunit) {
@@ -17636,7 +17814,7 @@ long listSingleFile(long lLevel, Coi *pcoi, char *pszParentZip, bool bIsDir, lon
                      prtFile(ps,pf,pcoi,pz,nf, "%s kb,              %.*s%s%s", numtoa_blank(nFileSize/1000, 10), nIndent, pszGlblBlank, p1,p2);
                      break;
                   default :
-                     prtFile(ps,pf,pcoi,pz,nf, "%5ld mb,              %.*s%s%s", lMBytes, nIndent, pszGlblBlank, p1,p2);
+                     prtFile(ps,pf,pcoi,pz,nf, "%5d mb,               %.*s%s%s", lMBytes, nIndent, pszGlblBlank, p1,p2);
                      break;
                }
             }
@@ -17646,7 +17824,7 @@ long listSingleFile(long lLevel, Coi *pcoi, char *pszParentZip, bool bIsDir, lon
       case 2:
          #ifndef _WIN32
          if (cs.traceFileFlags) {
-            printf("t=%04lx m=%04lx l=%04lx ", pcoi->rawtype, pcoi->rawmode, pcoi->rawnlnk);
+            printf("t=%04x m=%04x l=%04x ", pcoi->rawtype, pcoi->rawmode, pcoi->rawnlnk);
          }
          #endif
          switch (cs.listForm)
@@ -17670,20 +17848,20 @@ long listSingleFile(long lLevel, Coi *pcoi, char *pszParentZip, bool bIsDir, lon
 }
 
 #ifndef USE_SFK_BASE
-long execDupScan(char *pszFile)
+int execDupScan(char *pszFile)
 {
    if (glblDupScan.addFile(pszFile))
       return 0;
 
    char szAddInfo[200];
-   sprintf(szAddInfo, "%ld files", glblDupScan.clSizes.numberOfEntries());
+   sprintf(szAddInfo, "%d files", glblDupScan.clSizes.numberOfEntries());
    info.setStatus("scan", pszFile, szAddInfo);
    return 0;
 }
 #endif // USE_SFK_BASE
 
 // uses szLineBuf, szLineBuf2
-long execAliasList(char *pszFileName, bool *pbIsAlias = 0)
+int execAliasList(char *pszFileName, bool *pbIsAlias = 0)
 {
    FILE *fin = fopen(pszFileName, "r");
    if (!fin) return 1; // ignore
@@ -17693,14 +17871,14 @@ long execAliasList(char *pszFileName, bool *pbIsAlias = 0)
    if (!fgets(szLineBuf, sizeof(szLineBuf)-10, fin))
       { fclose(fin); return 1; } // ignore
 
-   long lRC = 0;
+   int lRC = 0;
 
    if (!strncmp(szLineBuf, pszGlblAliasBatchHead, strlen(pszGlblAliasBatchHead)))
    {
       /* get additional info
       char *psz2 = szLineBuf+strlen(pszGlblAliasBatchHead);
       if (*psz2 == ' ') psz2++;
-      long nCmdLines = atol(psz2);
+      int nCmdLines = atol(psz2);
       */
 
       if (pbIsAlias)
@@ -17715,13 +17893,13 @@ long execAliasList(char *pszFileName, bool *pbIsAlias = 0)
 
       sprintf(szLineBuf2, "%.*s\t= ", (int)nLen, pszFileName);
       if (chain.coldata) {
-         chain.addToCurLine(szLineBuf2, "", 1); // 1: add new line first
+         chain.addToCurLine(szLineBuf2, str(""), 1); // 1: add new line first
       } else {
          printf("%s", szLineBuf2);
       }
 
       // read the actual command lines
-      long nMaxLines = 10;
+      int nMaxLines = 10;
       bool bFirst = 1;
       while (nMaxLines-- > 0)
       {
@@ -17737,7 +17915,7 @@ long execAliasList(char *pszFileName, bool *pbIsAlias = 0)
          #endif
          sprintf(szLineBuf2, "%s%.*s", bFirst ? "":" , ", (int)nLen2, pszCmd);
          if (chain.coldata)
-            chain.addToCurLine(szLineBuf2, "");
+            chain.addToCurLine(szLineBuf2, str(""));
          else
             printf("%s", szLineBuf2);
          bFirst = 0;
@@ -17769,13 +17947,13 @@ void setNetSlashes(char *pdst)
           *pdst = '/';
 }
 
-long execFileStat(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &nTreeMaxTime, long nSinceReason)
+int execFileStat(Coi *pcoi, int lLevel, int &lFiles, int &lDirs, num &lBytes, num &nLocalMaxTime, num &nTreeMaxTime, int nSinceReason)
 {
    char *pszFileName = pcoi->name();
 
-   long bIsDir    = 0;
-   long bCanRead  = 1;
-   long bCanWrite = 1;
+   int bIsDir    = 0;
+   int bCanRead  = 1;
+   int bCanWrite = 1;
    num  nFileTime = 0;
    num  nFileSize = 0;
    getFileStat(pszFileName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize);
@@ -17805,24 +17983,24 @@ long execFileStat(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes
       bool endsWithArcExt(char *pname);
       if (endsWithArcExt(pszFileName))
       {
-         // long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList);
-         long getZipList(char *pszFile, FileList &rFileList);
+         // int getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList);
+         int getZipList(char *pszFile, FileList &rFileList);
          // SFKMD5 md5;
          FileList oFiles;
          // uses szLineBuf2
          char *pszRootZip = pszFileName;
          if (!getZipList(pszRootZip, oFiles)) 
          {
-            long nFiles = oFiles.clNames.numberOfEntries();
-            for (long i=0; i<nFiles; i++) 
+            int nFiles = oFiles.clNames.numberOfEntries();
+            for (int i=0; i<nFiles; i++) 
             {
                char *pRelSubName = oFiles.clNames.getEntry(i, __LINE__);
                num nSize = oFiles.clSizes.getEntry(i, __LINE__);
                num nTime = oFiles.clTimes.getEntry(i, __LINE__);
 
                // construct absolute, double-slashed name of zip file entry
-               long nRootLen  = strlen(pszRootZip);
-               long nSubLen   = strlen(pRelSubName);
+               int nRootLen  = strlen(pszRootZip);
+               int nSubLen   = strlen(pRelSubName);
                char *psubname = new char[nRootLen+nSubLen+10]; // TEMPORARY
                if (!psubname) return 9+perr("out of memory");
                sprintf(psubname, "%s%c%c%s", pszRootZip, glblPathChar, glblPathChar, pRelSubName);
@@ -17859,9 +18037,9 @@ long execFileStat(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes
 }
 
 #ifdef WITH_FN_INST
-long execInst(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num &lBytes) 
+int execInst(char *pszFileName, int lLevel, int &lFiles, int &lDirs, num &lBytes) 
 {
-   extern int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke, int nmode);
+   extern int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke, int nmode);
 
    // source code automatic instrumentation
    if (!strncmp(pszFileName, glblDotSlash, 2))
@@ -17869,7 +18047,7 @@ long execInst(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num &lB
 
    int nmode = bGlblInstEol ? 1 : 0;
 
-   long nRC = sfkInstrument(pszFileName, pszGlblInstInc, pszGlblInstMac, bGlblInstRevoke, bGlblInstRedo, bGlblTouchOnRevoke, nmode);
+   int nRC = sfkInstrument(pszFileName, pszGlblInstInc, pszGlblInstMac, bGlblInstRevoke, bGlblInstRedo, bGlblTouchOnRevoke, nmode);
 
    if (nRC < 9)
       return 0;
@@ -17910,7 +18088,7 @@ const char *apRunTokens[] =
 bool anyFileInRunCmd(char *pszCmd) 
 {
    char abToken[100];
-   for (ulong i=RUNTPR; i<(sizeof(apRunTokens)/sizeof(apRunTokens[0])); i++) 
+   for (uint i=RUNTPR; i<(sizeof(apRunTokens)/sizeof(apRunTokens[0])); i++) 
    {
       strcpy(&abToken[1], apRunTokens[i]);
       if (!abToken[1]) continue;
@@ -17929,7 +18107,7 @@ bool anyFileInRunCmd(char *pszCmd)
 bool anyTextInRunCmd(char *pszCmd) 
 {
    char abToken[100];
-   for (ulong i=RUNTPR*7; i<(sizeof(apRunTokens)/sizeof(apRunTokens[0])); i++) 
+   for (uint i=RUNTPR*7; i<(sizeof(apRunTokens)/sizeof(apRunTokens[0])); i++) 
    {
       strcpy(&abToken[1], apRunTokens[i]);
       if (!abToken[1]) continue;
@@ -17945,14 +18123,14 @@ bool anyTextInRunCmd(char *pszCmd)
    return false;
 }
 
-long onRunExpression(char *psz1, long &lExpLength, bool &bquot, bool &btext)
+int onRunExpression(char *psz1, int &lExpLength, bool &bquot, bool &btext)
 {
    char abToken[100];
-   ulong nPtrs = (sizeof(apRunTokens)/sizeof(apRunTokens[0]));
-   ulong nRows = nPtrs / RUNTPR;
-   for (ulong irow=0; irow<nRows; irow++)
+   uint nPtrs = (sizeof(apRunTokens)/sizeof(apRunTokens[0]));
+   uint nRows = nPtrs / RUNTPR;
+   for (uint irow=0; irow<nRows; irow++)
    {
-      for (ulong icol=0; icol < RUNTPR; icol++)
+      for (uint icol=0; icol < RUNTPR; icol++)
       {
          strcpy(&abToken[1], apRunTokens[irow * RUNTPR +icol]);
          abToken[0] = '#';
@@ -17963,7 +18141,7 @@ long onRunExpression(char *psz1, long &lExpLength, bool &bquot, bool &btext)
             lExpLength = strlen(psz2);
             bquot = (icol >= 4) ? true : false;
             if (strstr(psz2, "text")) btext=1;
-            if (cs.debug) printf("orp %u %u - %s row %ld\n", lExpLength, bquot, psz2, irow);
+            if (cs.debug) printf("orp %u %u - %s row %d\n", lExpLength, bquot, psz2, irow);
             return irow;
          }
          #ifdef SFK_BOTH_RUNCHARS
@@ -17974,7 +18152,7 @@ long onRunExpression(char *psz1, long &lExpLength, bool &bquot, bool &btext)
             lExpLength = strlen(psz2);
             bquot = (icol >= 4) ? true : false;
             if (strstr(psz2, "text")) btext=1;
-            if (cs.debug) printf("orp %u %u - %s row %ld\n", lExpLength, bquot, psz2, irow);
+            if (cs.debug) printf("orp %u %u - %s row %d\n", lExpLength, bquot, psz2, irow);
             return irow;
           }
          }
@@ -17987,7 +18165,8 @@ long onRunExpression(char *psz1, long &lExpLength, bool &bquot, bool &btext)
 
 bool isQuoteChar(char c)
 {
-   switch (c) {
+   switch ((uchar)c) 
+   {
       case '\"': return 1;
       case '\'': return 1;
       case 0x60: return 1;
@@ -17999,7 +18178,7 @@ bool isQuoteChar(char c)
    return false;
 }
 
-long copyFormStr(char *pszDst, long nMaxDst, char *pszSrc, long nSrcLen, ulong nflags=0);
+int copyFormStr(char *pszDst, int nMaxDst, char *pszSrc, int nSrcLen, uint nflags=0);
 
 // turn \+file into +file
 char *unescf(char *pszFile)
@@ -18013,12 +18192,9 @@ char *unescf(char *pszFile)
 // uses  : szLineBuf
 // rc    : 0 if replacements done, 1 if none found,
 //         >= 9 on format error
-long renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, char *pszCmd)
+int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd)
 {
    char *pszInFile   = pcoi->name();
-   char *pszOptRoot  = pcoi->root(1);  // returns 0 if none
-   char *pszOptRef   = pcoi->ref(1);   // returns 0 if none
-
    char *pszFileName = pszInFile;
 
    if (!strncmp(pszFileName, glblDotSlash, 2))
@@ -18043,7 +18219,7 @@ long renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, char *pszCmd)
    #endif
    while (psz1)
    {
-      long lTokenLen = 0;
+      int lTokenLen = 0;
       bool bQuoted   = false;
       switch (onRunExpression(psz1, lTokenLen, bQuoted, bUsingText))
       {
@@ -18145,7 +18321,7 @@ long renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, char *pszCmd)
             // replace file base name, without ".ext"
             // have to use relative filename for this.
             // note: ".afile" has ".afile" as base
-            // note: "afile.long.longext" has ".longext" as ext
+            // note: "afile.int.longext" has ".longext" as ext
             memset(szLineBuf, 0, sizeof(szLineBuf));
             strncpy(szLineBuf, pDstBuf, psz1-pDstBuf);
             // middle
@@ -18175,7 +18351,7 @@ long renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, char *pszCmd)
             // replace file extension
             // have to use relative filename for this.
             // note: ".afile" has ".afile" as base
-            // note: "afile.long.longext" has ".longext" as ext
+            // note: "afile.int.longext" has ".longext" as ext
             // note: "afile." has "" as extension
             memset(szLineBuf, 0, sizeof(szLineBuf));
             strncpy(szLineBuf, pDstBuf, psz1-pDstBuf);
@@ -18250,9 +18426,9 @@ long renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, char *pszCmd)
       if (strchr(pszInFile, ' ')) {
          cs.blankRunFiles++;
          // then count quotes in produced expression
-         long nlen  = strlen(pDstBuf);
-         long nquot = 0;
-         for (long i=0; i<nlen; i++)
+         int nlen  = strlen(pDstBuf);
+         int nquot = 0;
+         for (int i=0; i<nlen; i++)
             if (isQuoteChar(pDstBuf[i]))
                nquot++;
          if (nquot == 0) cs.badNameForm |= 1;
@@ -18266,16 +18442,16 @@ long renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, char *pszCmd)
    return bDoneAny ? 0 : 1;
 }
 
-long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &bFatal);
+int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &bFatal);
 
 // run an sfk command, staying in the current process.
 // cannot be used right now, as this requires that command
 // chaining data is pushed and later popped on a stack.
-long runInternal(char *pcmdraw)
+int runInternal(char *pcmdraw)
 {__
-   mtklog("runint: %s", pcmdraw);
+   mtklog(("runint: %s", pcmdraw));
 
-   long nrc = 9;
+   int nrc = 9;
 
    #ifndef USE_SFK_BASE
 
@@ -18319,17 +18495,15 @@ long runInternal(char *pcmdraw)
    return nrc;
 }
 
-long execRunFile(Coi *pcoi, char *pszOutFile,
-   long lLevel, long &lFiles, long &lDirs, num &lBytes
+int execRunFile(Coi *pcoi, char *pszOutFile,
+   int lLevel, int &lFiles, int &lDirs, num &lBytes
    ) 
 {__
    char *pszFileName = pcoi->name();
-   char *pszOptRoot  = pcoi->root(1);  // returns 0 if none
-   char *pszOptRef   = pcoi->ref(1);   // returns 0 if none
 
-   mtklog("execRunFile: %s", pszFileName);
+   mtklog(("execRunFile: %s", pszFileName));
 
-   long nrc = renderOutMask(szRunCmdBuf, pcoi, cs.runCmd, "run");
+   int nrc = renderOutMask(szRunCmdBuf, pcoi, cs.runCmd, "run");
    if (nrc >= 9) return nrc;
 
    bool bDoneAny = (nrc == 0);
@@ -18341,7 +18515,7 @@ long execRunFile(Coi *pcoi, char *pszOutFile,
    bool btoldcmd = 0; // command was fully printed, but w/o rc
    bool btoldrc  = 0; // rc status was printed
    char szAddInfo[200];
-   long nclines = 0; // no. of collected lines, if any
+   int nclines = 0; // no. of collected lines, if any
 
    if (cs.sim) 
    {
@@ -18360,7 +18534,7 @@ long execRunFile(Coi *pcoi, char *pszOutFile,
          // prepare redirection of command output
          pszTmpFile = pszOutFile ? pszOutFile : ftmp.name();
          if (!pszTmpFile) return 9;
-         long nlen = strlen(szRunCmdBuf);
+         int nlen = strlen(szRunCmdBuf);
          if (nlen > MAX_LINE_LEN-20)
             return 9+perr("command buffer overflow\n");
          // todo: detect > and print warn if -to used
@@ -18372,7 +18546,7 @@ long execRunFile(Coi *pcoi, char *pszOutFile,
 
          // create output directories on demand
          // uses: szLineBuf, abBuf
-         long createOutDirTree(char *pszOutFile);
+         int createOutDirTree(char *pszOutFile);
          if (pszOutFile)
             if (createOutDirTree(pszOutFile))
                return 9;
@@ -18424,7 +18598,7 @@ long execRunFile(Coi *pcoi, char *pszOutFile,
          {
             szLineBuf[sizeof(szLineBuf)-10] = '\0';
             removeCRLF(szLineBuf);
-            chain.addLine(szLineBuf, "");
+            chain.addLine(szLineBuf, str(""));
             nclines++;
          }
          fclose(fin);
@@ -18436,16 +18610,16 @@ long execRunFile(Coi *pcoi, char *pszOutFile,
    if (!cs.quiet && !btoldcmd) {
       if (pszOutFile) {
          if (chain.coldata)
-            sprintf(szAddInfo, "cached %ld lines, rc %ld", nclines, iRC);
+            sprintf(szAddInfo, "cached %d lines, rc %d", nclines, iRC);
          else
-            sprintf(szAddInfo, "rc %ld", iRC);
+            sprintf(szAddInfo, "rc %d", iRC);
          info.setStatus("wrote", pszOutFile, szAddInfo);
          info.printLine(1<<2);
          btoldrc = 1;
       }
       else
       if (chain.coldata) {
-         sprintf(szAddInfo, "%ld lines, rc %ld", nclines, iRC);
+         sprintf(szAddInfo, "%d lines, rc %d", nclines, iRC);
          info.setStatus("run", pszFileName, szAddInfo);
          btoldrc = 1;
       }
@@ -18467,7 +18641,7 @@ long execRunFile(Coi *pcoi, char *pszOutFile,
    }
 
    if (cs.stoprc && iRC >= cs.stoprc) {
-      perr("... rc %ld - stopping due to return code.\n",iRC);
+      perr("... rc %d - stopping due to return code.\n",iRC);
       return 9;
    }
    else
@@ -18481,7 +18655,7 @@ long execRunFile(Coi *pcoi, char *pszOutFile,
    return 0;
 }
 
-long execRunDir(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes) 
+int execRunDir(Coi *pcoi, int lLevel, int &lFiles, int &lDirs, num &lBytes) 
 {
    char *pszFileName = pcoi->name();
 
@@ -18501,7 +18675,7 @@ long execRunDir(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes)
    #endif
    while (psz1)
    {
-      long lTokenLen = 0;
+      int lTokenLen = 0;
       bool bQuoted   = false;
       bool bText     = false;
       switch (onRunExpression(psz1, lTokenLen, bQuoted, bText))
@@ -18582,10 +18756,9 @@ long execRunDir(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes)
    return 0;
 }
 
-long execDirStat(Coi *pcoi, long lLevel, long lFiles, long lDirs, num lBytes, num &nLocalMaxTime, num &ntime2)
+int execDirStat(Coi *pcoi, int lLevel, int lFiles, int lDirs, num lBytes, num &nLocalMaxTime, num &ntime2)
 {__
-   char *pszDir      = pcoi->name();
-   char *pszOptRoot  = pcoi->root(1);  // returns 0 if none
+   char *pszDir = pcoi->name();
 
    StringPipe *pout = 0;
    if (chain.coldata)
@@ -18594,20 +18767,20 @@ long execDirStat(Coi *pcoi, long lLevel, long lFiles, long lDirs, num lBytes, nu
    if (nGlblListMode == 1)
    {
       int nIndent = (int)lLevel;
-      if (nIndent > (long)strlen(pszGlblBlank)) nIndent = strlen(pszGlblBlank);
+      if (nIndent > (int)strlen(pszGlblBlank)) nIndent = strlen(pszGlblBlank);
       if (nIndent > 10) nIndent = 10;
    
       if (!strncmp(pszDir, glblDotSlash, 2))
          pszDir += 2;
    
-      long lMBytes = (lBytes / 1000000UL);
+      int lMBytes = (lBytes / 1000000UL);
 
       if (cs.statonlysum)
       { }
       else
       if (cs.quiet) {
          if (lLevel == 0)
-            oprintf(pout, "%5ld mb %s\n", lMBytes, pszDir);
+            oprintf(pout, "%5d mb %s\n", lMBytes, pszDir);
       } else {
          if (lBytes < 0) // for sfk sel -withdirs ... +stat
          { } // print nothing, there are no stats.
@@ -18620,13 +18793,13 @@ long execDirStat(Coi *pcoi, long lLevel, long lFiles, long lDirs, num lBytes, nu
             if (lLevel <= cs.stathilitelevel) setTextColor(nGlblFileColor);
             switch (cs.listunit) {
                case 'b':
-                  oprintf(pout, "%s, %5ld files, %.*s%s\n", numtoa_blank(lBytes, 12), lFiles, nIndent, pszGlblBlank, pszDir);
+                  oprintf(pout, "%s, %5d files, %.*s%s\n", numtoa_blank(lBytes, 12), lFiles, nIndent, pszGlblBlank, pszDir);
                   break;
                case 'k':
-                  oprintf(pout, "%s kb, %5ld files, %.*s%s\n", numtoa_blank(lBytes/1000, 10), lFiles, nIndent, pszGlblBlank, pszDir);
+                  oprintf(pout, "%s kb, %5d files, %.*s%s\n", numtoa_blank(lBytes/1000, 10), lFiles, nIndent, pszGlblBlank, pszDir);
                   break;
                default :
-                  oprintf(pout, "%5ld mb, %5ld files, %.*s%s\n", lMBytes, lFiles, nIndent, pszGlblBlank, pszDir);
+                  oprintf(pout, "%5ld mb, %5d files, %.*s%s\n", lMBytes, lFiles, nIndent, pszGlblBlank, pszDir);
                   break;
             }
             if (lLevel <= cs.stathilitelevel) setTextColor(-1);
@@ -18661,7 +18834,7 @@ bool isEmptyDir(char *pszIn)
 {
    bool bRC = 1;
 
-   long lSize1       = strlen(pszIn);
+   int lSize1       = strlen(pszIn);
    char *pszPattern  = new char[lSize1+10];
    char *pszBasePath = new char[lSize1+10];
 
@@ -18685,7 +18858,7 @@ bool isEmptyDir(char *pszIn)
    intptr_t myfdh = _findfirst64(pszPattern, &myfdat);
    #else
     #ifndef _INTPTR_T_DEFINED
-     typedef long intptr_t;
+     typedef int intptr_t;
     #endif
    SFKFindData myfdat;
    intptr_t myfdh = _findfirst(pszPattern, &myfdat);
@@ -18759,7 +18932,7 @@ public:
       AutoCoiDirClose (Coi *pcoi) { pClCoi = pcoi; }
      ~AutoCoiDirClose ( ) {
          if (pClCoi->isDirOpen()) {
-            mtklog("auto-close coi %p", pClCoi);
+            mtklog(("auto-close coi %p", pClCoi));
             pClCoi->closeDir();
          }
       }
@@ -18781,21 +18954,21 @@ public:
 // NOTE: walkFiles does NOT accept stack-based AUTOMATIC Coi's!
 //       whatever ptop is passed into here must've been created
 //       with "new", otherwise the reference counting will fail.
-long walkFiles(
-   Coi *ptop, long lLevel,
-   long &nGlobFiles, FileList &rParentDirFiles,
-   long &lDirs, num &lBytes,
+int walkFiles(
+   Coi *ptop, int lLevel,
+   int &nGlobFiles, FileList &rParentDirFiles,
+   int &lDirs, num &lBytes,
    num &nLocalMaxTime, num &nTreeMaxTime
  )
 {__
-   mtklog("walkFiles %s", ptop->name());
+   mtklog(("walkFiles %s", ptop->name()));
 
    // printf("wfl %s\n", ptop->name());
 
    if (bGlblEscape)
       return 0;
 
-   long lRC = 0;
+   int lRC = 0;
 
    // this function accepts
    // -  directory Cois   like c:\\thedir
@@ -18812,7 +18985,7 @@ long walkFiles(
    // if on top level, reset the circle map, to avoid
    // unwanted blockings on multi-root dir commands:
    if (lLevel <= 0) {
-      mtklog(" wfiles1.level0: resetting circle map");
+      mtklog((" wfiles1.level0: resetting circle map"));
       glblCircleMap.reset();
    }
    // check for circular (endless) travels:
@@ -18824,14 +18997,14 @@ long walkFiles(
             pinf("skipping content, already done: %s\n", ptop->name());
          bTravelTop = 0;
       } else {
-         // printf("node %lxh is not set: %s\n", (ulong)ptop->getNode(),ptop->name());
+         // printf("node %xh is not set: %s\n", (uint)ptop->getNode(),ptop->name());
       }
    }
    #endif
 
    if (bTravelTop)
    {
-      mtklog(" wfiles1.travel %s", ptop->name());
+      mtklog((" wfiles1.travel %s", ptop->name()));
       // open dir for traversal
       if (ptop->openDir()) {
          if (cs.verbose > 1)
@@ -18840,7 +19013,7 @@ long walkFiles(
       }
       // fetch first entry
       psub = ptop->nextEntry();
-      mtklog(" wfiles1.get1st of coi %p sub %p", ptop, psub);
+      mtklog((" wfiles1.get1st of coi %p sub %p", ptop, psub));
       // caller (we) MUST RELEASE COI after use!
       // if refcnt is zero then, we also DELETE it.
       if (!psub) {
@@ -18856,7 +19029,7 @@ long walkFiles(
       //       are strictly not allowed as ptop.
       if (ptop->isVirtual() && !ptop->isCached())
       {
-         mtklog("vpar-register %s", ptop->orgName());
+         mtklog(("vpar-register %s", ptop->orgName()));
          glblVCache.put(ptop->orgName(), ptop, "wf");
          // ptop is now MANAGED BY CACHE.
          // cache has incremented the refcnt.
@@ -18865,7 +19038,7 @@ long walkFiles(
       #ifndef _WIN32
       // remember that we traveled this directory:
       if (ptop->haveFileID()) {
-         // printf("node %lxh is stored: %s\n", (ulong)ptop->getNode(),ptop->name());
+         // printf("node %xh is stored: %s\n", (uint)ptop->getNode(),ptop->name());
          glblCircleMap.put(ptop->getFileID());
       }
       #endif
@@ -18875,11 +19048,11 @@ long walkFiles(
       // non-existing filesystem object:
       if (lLevel < 1 || cs.verbose)
          pwarn("cannot read: %s\n", ptop->name());
-      mtklog(" wfiles1.noread %s", ptop->name());
+      mtklog((" wfiles1.noread %s", ptop->name()));
       return 0;
    } else {
       // process dir or file w/o traveling:
-      mtklog(" wfiles1.any %s coi %p", ptop->name(), ptop);
+      mtklog((" wfiles1.any %s coi %p", ptop->name(), ptop));
       psub = ptop;
       // NOTE: WE DO NOT OWN psub NOW.
       // must check later if == ptop.
@@ -18892,10 +19065,10 @@ long walkFiles(
          // hidden or system file or dir,
          // but inclusion of hidden not selected: skip
          if (psub->isAnyDir()) {
-            mtklog(" wfiles2.hidden.dir %s", psub->name());
+            mtklog((" wfiles2.hidden.dir %s", psub->name()));
             cs.numHiddenDirsSkipped++;
          } else {
-            mtklog(" wfiles2.hidden.file %s", psub->name());
+            mtklog((" wfiles2.hidden.file %s", psub->name()));
             cs.numHiddenFilesSkipped++;
          }
      }
@@ -18904,7 +19077,7 @@ long walkFiles(
       if (psub->isAnyDir())
       {
          // subdirectory
-         mtklog(" wfiles2.isdir %s", psub->name());
+         mtklog((" wfiles2.isdir %s", psub->name()));
 
          // allowed to travel?
          bool bTravelSub = 0;
@@ -18922,8 +19095,8 @@ long walkFiles(
          }
 
          FileList oLocDirFiles;
-         long nTreeFileCnt = 0;
-         long nDirDirs  = 0;
+         int nTreeFileCnt = 0;
+         int nDirDirs  = 0;
          num  nDirBytes = 0, nDirLocalMaxTime = 0, nDirTreeMaxTime = 0;
 
          bool bMatch = 1;
@@ -18938,7 +19111,7 @@ long walkFiles(
  
          // normal match: temporary attach '\\' char for exact path comparison
          if (bMatch) {
-            long nlen = strlen(psub->name());
+            int nlen = strlen(psub->name());
             char *pcopy = new char[nlen+10];
             strcpy(pcopy, psub->name());
             strcat(pcopy, glblPathStr);
@@ -18949,11 +19122,11 @@ long walkFiles(
          // general processing: recursion and the like
          if (bMatch)
          {
-            char *pszRoot = glblFileSet.root(1); // returns 0 if none
+            // char *pszRoot = glblFileSet.root(1); // returns 0 if none
 
             if (bTravelSub && cs.subdirs && !(psub->isLink() && cs.skipLinks)) 
             {
-               mtklog(" wfiles2.walksub top=%p sub=%p %s", ptop, psub, psub->name());
+               mtklog((" wfiles2.walksub top=%p sub=%p %s", ptop, psub, psub->name()));
                lRC = walkFiles(psub, lLevel+1, nTreeFileCnt, oLocDirFiles, nDirDirs, nDirBytes,
                                nDirLocalMaxTime, nDirTreeMaxTime);
             } else {
@@ -18964,7 +19137,7 @@ long walkFiles(
 
             if (!cs.stopTree(lRC))
             {
-               if (cs.debug) printf("] esd: %d %s files=%ld ts=%d sd=%d\n", lLevel, psub->name(), nTreeFileCnt, bTravelSub, cs.subdirs);
+               if (cs.debug) printf("] esd: %d %s files=%d ts=%d sd=%d\n", lLevel, psub->name(), nTreeFileCnt, bTravelSub, cs.subdirs);
                lRC = execSingleDir(psub, lLevel+1, nTreeFileCnt, oLocDirFiles, nDirDirs, nDirBytes,
                                    nDirLocalMaxTime, nDirTreeMaxTime);
                if (cs.stopTree(lRC))
@@ -19001,7 +19174,7 @@ long walkFiles(
       }
       else
       if ((lLevel<1) && bGlblNoRootDirFiles && matchesCurrentRoot(ptop->name())) {
-         mtklog(" wfiles2.skip %s", psub->name());
+         mtklog((" wfiles2.skip %s", psub->name()));
          // list -dir +simp +test: walk "." but do not process files,
          // we only want to filter the contained directories.
       }
@@ -19013,9 +19186,9 @@ long walkFiles(
          // normal file: check mask against file name WITHOUT path
          if (bpmmatch && (matchesFileMask(psub->relName(), psub->name()) > 0))
          {
-            mtklog(" wfiles2.match %s", psub->name());
+            mtklog((" wfiles2.match %s", psub->name()));
 
-            char *pszRoot = glblFileSet.root(1); // returns 0 if none
+            // char *pszRoot = glblFileSet.root(1); // returns 0 if none
 
             // TODO: set psub->root here?
             if (cs.justdirs) {
@@ -19043,7 +19216,7 @@ long walkFiles(
             }
             lRC = 0;
          } else {
-            mtklog(" wfiles2.miss  %s pmatch=%d", psub->name(), bpmmatch);
+            mtklog((" wfiles2.miss  %s pmatch=%d", psub->name(), bpmmatch));
          }
       } // endelse dir or file
      } // endelse hidden
@@ -19064,8 +19237,8 @@ long walkFiles(
 
       psub = ptop->nextEntry();
 
-      mtklog(" sub %p = wfiles2.getnext of coi %p", psub, ptop);
-      mtklog(" (%s = wfiles2.getnext of coi %s)", psub ? psub->name():"", ptop ? ptop->name():"");
+      mtklog((" sub %p = wfiles2.getnext of coi %p", psub, ptop));
+      mtklog((" (%s = wfiles2.getnext of coi %s)", psub ? psub->name():"", ptop ? ptop->name():""));
    }
    while (psub);
 
@@ -19077,18 +19250,18 @@ long walkFiles(
    }
 
    if (bTravelTop) {
-      mtklog("top travel done, close coi %p", ptop);
+      mtklog(("top travel done, close coi %p", ptop));
       ptop->closeDir();
    }
 
-   // mtklog("%ld = walkfiles.end", lRC);
+   // mtklog(("%d = walkfiles.end", lRC));
    return lRC;
 }
 
-long dumpBlock(uchar *pCur, long lSize, long nmode)
+int dumpBlock(uchar *pCur, int lSize, int nmode)
 {
    FILE *fout = fGlblOut;
-   long i=0;
+   int i=0;
    switch (nmode) 
    {
       case 2:
@@ -19115,7 +19288,7 @@ long dumpBlock(uchar *pCur, long lSize, long nmode)
             if (pCur[i])
                fprintf(fout, "0x%x,", pCur[i]);
             else
-               fprintf(fout, "0,", pCur[i]);
+               fprintf(fout, "0,");
          }
          break;
 
@@ -19128,7 +19301,7 @@ long dumpBlock(uchar *pCur, long lSize, long nmode)
    return 0;
 }
 
-uchar *binPack(uchar *pIn, ulong nInSize, ulong &rnOutSize)
+uchar *binPack(uchar *pIn, uint nInSize, ulong &rnOutSize)
 {
    ulong nOutSize = 0;
    uchar *pOut = 0;
@@ -19136,11 +19309,12 @@ uchar *binPack(uchar *pIn, ulong nInSize, ulong &rnOutSize)
    uchar *pMax = pIn + nInSize;
    uchar *pCur = 0;
    uchar *pOld = 0;
+   uchar *pNul = 0;
 
    for (uchar npass=1; npass <= 2; npass++)
    {
       if (npass == 1)
-         pOut = 0;
+         pOut = pNul;
       else {
          pMem = new uchar[nOutSize];
          pOut = pMem;
@@ -19235,8 +19409,8 @@ uchar *binPack(uchar *pIn, ulong nInSize, ulong &rnOutSize)
       }
 
       if (npass == 1) {
-         nOutSize = (ulong)(pOut - 0);
-         // printf("packsize %u\n", nOutSize);
+         nOutSize = (ulong)(pOut - pNul);
+         // printf("packsize %lu\n", nOutSize);
       }
    }
 
@@ -19244,7 +19418,7 @@ uchar *binPack(uchar *pIn, ulong nInSize, ulong &rnOutSize)
    return pMem;
 }
 
-uchar *binUnpack(uchar *pIn, ulong nInSize, ulong &rnOutSize)
+uchar *binUnpack(uchar *pIn, uint nInSize, ulong &rnOutSize)
 {
    ulong nOutSize = 0;
    uchar *pOut = 0;
@@ -19252,11 +19426,12 @@ uchar *binUnpack(uchar *pIn, ulong nInSize, ulong &rnOutSize)
    uchar *pMax = pIn + nInSize;
    uchar *pCur = 0;
    uchar *pOld = 0;
+   uchar *pNul = 0;
 
    for (uchar npass=1; npass <= 2; npass++)
    {
       if (npass == 1)
-         pOut = 0;
+         pOut = pNul;
       else {
          pMem = new uchar[nOutSize];
          pOut = pMem;
@@ -19297,8 +19472,8 @@ uchar *binUnpack(uchar *pIn, ulong nInSize, ulong &rnOutSize)
       }
 
       if (npass == 1) {
-         nOutSize = (ulong)(pOut - 0);
-         // printf("unpacksize %u\n", nOutSize);
+         nOutSize = (ulong)(pOut - pNul);
+         // printf("unpacksize %lu\n", nOutSize);
       }
    }
 
@@ -19306,7 +19481,7 @@ uchar *binUnpack(uchar *pIn, ulong nInSize, ulong &rnOutSize)
    return pMem;
 }
 
-long execBinToJava(uchar *pIn, long lInSize, bool bPack, char *pszNameBase, bool bClass, long nRecSize)
+int execBinToJava(uchar *pIn, int lInSize, bool bPack, char *pszNameBase, bool bClass, int nRecSize)
 {
    FILE *fout = fGlblOut;
 
@@ -19327,11 +19502,11 @@ long execBinToJava(uchar *pIn, long lInSize, bool bPack, char *pszNameBase, bool
       );
 
    fprintf(fout, 
-      "\tpublic static int %s_BlockSize = %ld;\n"
+      "\tpublic static int %s_BlockSize = %d;\n"
       "\tstatic String %s_RawBlock[] = {\n"
       ,pszNameBase,lInSize,pszNameBase);
 
-   long lRemain = lInSize;
+   int lRemain = lInSize;
    uchar *pCur  = pIn;
    while (lRemain > nRecSize) {
       dumpBlock(pCur, nRecSize, 2);
@@ -19347,7 +19522,7 @@ long execBinToJava(uchar *pIn, long lInSize, bool bPack, char *pszNameBase, bool
    fprintf(fout,
       "\tpublic static byte[] %s_getBlock() {\n"
       "\t   int iout=0, nblen=%s_BlockSize;\n"
-      "\t   char atmp[] = new char[%ld];\n"
+      "\t   char atmp[] = new char[%d];\n"
       "\t   byte aout[] = new byte[nblen];\n"
       "\t   for (int i=0; i<%s_RawBlock.length; i++) {\n"
       "\t      String stmp = %s_RawBlock[i];\n"
@@ -19375,20 +19550,20 @@ long execBinToJava(uchar *pIn, long lInSize, bool bPack, char *pszNameBase, bool
    return 0;
 }
 
-long execBinToCpp(uchar *pIn, long lInSize, bool bPack, char *pszNameBase, bool bHex)
+int execBinToCpp(uchar *pIn, int lInSize, bool bPack, char *pszNameBase, bool bHex)
 {
-   long lOldInSize = lInSize;
+   int lOldInSize = lInSize;
 
    if (bPack) {
       ulong nPackSize = 0;
       // binPack alloc's mem block with packed data
       pIn = binPack(pIn, lInSize, nPackSize);
-      lInSize = (long)nPackSize;
+      lInSize = (int)nPackSize;
    }
 
    fprintf(fGlblOut,"#define %s_BLOCK_SIZE %u\n\n", pszNameBase, lOldInSize);
    fprintf(fGlblOut,"static unsigned char %s_abRawBlock[%u] = {\n", pszNameBase, lInSize);
-   long lRemain = lInSize;
+   int lRemain = lInSize;
    uchar *pCur  = pIn;
    while (lRemain > 32) {
       dumpBlock(pCur, 32, bHex ? 1 : 0);
@@ -19406,13 +19581,13 @@ fprintf(fGlblOut,
    "//         must have size >= %s_BLOCK_SIZE.\n"
    "// result: 0 if OK, 9 on buffer overflow.\n"
    "// note  : output data is not null terminated.\n"
-   "long %s_getBlock(uchar *pOut, ulong nOutSize)\n",
+   "int %s_getBlock(uchar *pOut, uint nOutSize)\n",
    pszNameBase, pszNameBase
    );
 fprintf(fGlblOut,
    "{\n"
    "   uchar *pCur    = %s_abRawBlock;\n"
-   "   ulong nInSize  = %lu;\n"
+   "   uint nInSize  = %u;\n"
    "   uchar *pMax    = pCur + nInSize;\n"
    "   uchar *pOutMax = pOut + nOutSize;\n"
    "   while (pCur < pMax)\n"
@@ -19461,7 +19636,7 @@ bool equalFileContent(char *pszFile1, char *pszFile2, uchar *psrcmd5=0, uchar *p
 }
 
 // uses szLineBuf. pOutBuf must be >= 16 bytes.
-long getFuzzyTextSum(char *pszFile, uchar *pOutBuf)
+int getFuzzyTextSum(char *pszFile, uchar *pOutBuf)
 {
    // this function reads a text file line by line, and
    // - strips line endings
@@ -19479,9 +19654,9 @@ long getFuzzyTextSum(char *pszFile, uchar *pOutBuf)
    {
       szLineBuf[sizeof(szLineBuf)-10] = '\0';
       removeCRLF(szLineBuf);
-      ulong nLen = strlen(szLineBuf);
+      uint nLen = strlen(szLineBuf);
       // turn all non-/ slashes into /
-      for (ulong i=0; i<nLen; i++)
+      for (uint i=0; i<nLen; i++)
          if (szLineBuf[i] == '\\')
              szLineBuf[i] = '/';
       if (cs.verbose) printf("sum: \"%s\"\n", szLineBuf);
@@ -19490,7 +19665,7 @@ long getFuzzyTextSum(char *pszFile, uchar *pOutBuf)
       md5.update((uchar*)szLineBuf, nLen);
       // xor this with overall checksum
       unsigned char *pmd5 = md5.digest();
-      for (ulong k=0; k<16; k++)
+      for (uint k=0; k<16; k++)
          abSum[k] ^= pmd5[k];
    }
    fclose(fin);
@@ -19498,16 +19673,16 @@ long getFuzzyTextSum(char *pszFile, uchar *pOutBuf)
    return 0;
 }
 
-ulong getLong(uchar ab[], ulong noffs) {
-   return  (((ulong)ab[noffs+3])<<24)
-          |(((ulong)ab[noffs+2])<<16)
-          |(((ulong)ab[noffs+1])<< 8)
-          |(((ulong)ab[noffs+0])<< 0);
+uint getLong(uchar ab[], uint noffs) {
+   return  (((uint)ab[noffs+3])<<24)
+          |(((uint)ab[noffs+2])<<16)
+          |(((uint)ab[noffs+1])<< 8)
+          |(((uint)ab[noffs+0])<< 0);
 }
 
-ulong getShort(uchar ab[], ulong noffs) {
-   return  (((ulong)ab[noffs+1])<< 8)
-          |(((ulong)ab[noffs+0])<< 0);
+uint getShort(uchar ab[], uint noffs) {
+   return  (((uint)ab[noffs+1])<< 8)
+          |(((uint)ab[noffs+0])<< 0);
 }
 
 time_t zipTimeToMainTime(num nZipTime)
@@ -19537,7 +19712,7 @@ time_t zipTimeToMainTime(num nZipTime)
     #define U_TIME_T_MAX ((time_t)0xffffffffUL)
    #endif
 
-   #define DOSTIME_2038_01_18 ((ulong)0x74320000L)
+   #define DOSTIME_2038_01_18 ((uint)0x74320000L)
    if ((nZipTime >= DOSTIME_2038_01_18) && (nTime < (time_t)0x70000000L))
       nTime = U_TIME_T_MAX;
 
@@ -19566,7 +19741,7 @@ time_t zipTimeToMainTime(num nZipTime)
 // -  check them against provided list
 
 // USES: szLineBuf2
-long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList=0)
+int getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList=0)
 {
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) return 9;
@@ -19597,16 +19772,16 @@ long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList=0
       md5.update(abLocHdr, L_LOCAL_HEADER_SIZE);
       nGlblBytes += nRead;
    
-      ulong nCmpSize     = getLong (abLocHdr, L_COMPRESSED_SIZE);
-      ulong nFileNameLen = getShort(abLocHdr, L_FILENAME_LENGTH);
-      ulong nExtraLen    = getShort(abLocHdr, L_EXTRA_FIELD_LENGTH);
-      ulong nGenFlags    = getShort(abLocHdr, L_GENERAL_PURPOSE_BIT_FLAG);
+      uint nCmpSize     = getLong (abLocHdr, L_COMPRESSED_SIZE);
+      uint nFileNameLen = getShort(abLocHdr, L_FILENAME_LENGTH);
+      uint nExtraLen    = getShort(abLocHdr, L_EXTRA_FIELD_LENGTH);
+      // uint nGenFlags = getShort(abLocHdr, L_GENERAL_PURPOSE_BIT_FLAG);
 
       // if bit 3 of general purpose is set,
-      bool bDataDesc = ((nGenFlags & (1<<3)) != 0);
+      // bool bDataDesc = ((nGenFlags & (1<<3)) != 0);
       // then nCmpSize is null, and a data descriptor follows.
 
-      // printf("bDataDesc %lx nCmpSize %lx\n", bDataDesc, nCmpSize);
+      // printf("bDataDesc %x nCmpSize %x\n", bDataDesc, nCmpSize);
 
       // PkZip format seems not to support 64-bit sizes and timestamps.
       // num nTimeStamp = getLong (abLocHdr, L_LAST_MOD_DOS_DATETIME);
@@ -19620,7 +19795,7 @@ long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList=0
       md5.update((uchar*)szLineBuf2, nFileNameLen);
       nGlblBytes += nRead;
    
-      // printf("file: %.*s %ld\n", (int)nFileNameLen, szLineBuf2, nFileNameLen);
+      // printf("file: %.*s %d\n", (int)nFileNameLen, szLineBuf2, nFileNameLen);
 
       szLineBuf2[nFileNameLen] = '\0';
 
@@ -19632,9 +19807,9 @@ long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList=0
       #endif
 
       if (bMakeList)
-         rFileList.addFile(szLineBuf2, "", nTimeStamp, nFileSize);
+         rFileList.addFile(szLineBuf2, str(""), nTimeStamp, nFileSize);
       else {
-         long lRC = rFileList.checkAndMark(szLineBuf2, nFileSize);
+         int lRC = rFileList.checkAndMark(szLineBuf2, nFileSize);
          if (lRC == 1) {
             static bool bInfoDone = 0;
             logError("info   : outdated file \"%s\" in archive \"%s\"", szLineBuf2, pszFile);
@@ -19686,7 +19861,7 @@ long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList=0
 #ifndef NO_ZIP_LIST
 
 #ifdef _WIN32
-long mygetpos(FILE *f, num &rpos, char *pszFile)
+int mygetpos(FILE *f, num &rpos, char *pszFile)
 {
    fpos_t npos1;
    if (fgetpos(f, &npos1))
@@ -19694,7 +19869,7 @@ long mygetpos(FILE *f, num &rpos, char *pszFile)
    rpos = (num)npos1;
    return 0;
 }
-long mysetpos(FILE *f, num pos, char *pszFile)
+int mysetpos(FILE *f, num pos, char *pszFile)
 {
    fpos_t npos1 = (fpos_t)pos;
    if (fsetpos(f, &npos1))
@@ -19702,7 +19877,7 @@ long mysetpos(FILE *f, num pos, char *pszFile)
    return 0;
 }
 #else
-long mygetpos(FILE *f, num &rpos, char *pszFile)
+int mygetpos(FILE *f, num &rpos, char *pszFile)
 {
    fpos_t npos1;
    if (fgetpos(f, &npos1))
@@ -19714,7 +19889,7 @@ long mygetpos(FILE *f, num &rpos, char *pszFile)
    #endif
    return 0;
 }
-long mysetpos(FILE *f, num pos, char *pszFile)
+int mysetpos(FILE *f, num pos, char *pszFile)
 {
    // fetch "status" first
    fpos_t npos1;
@@ -19731,13 +19906,13 @@ long mysetpos(FILE *f, num pos, char *pszFile)
 }
 #endif
 
-long getZipList(char *pszFile, FileList &rFileList)
+int getZipList(char *pszFile, FileList &rFileList)
 {
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) return 9+perr("unable to open: %s\n", pszFile);
    
-   long rc=0;
-   ulong sig;
+   int rc=0;
+   uint sig;
    fseek(fin, -18, SEEK_END);
    fread(&sig, 1, sizeof(sig), fin);
 
@@ -19800,12 +19975,12 @@ long getZipList(char *pszFile, FileList &rFileList)
          if (rc < ZIPFHEAD_SIZE)
             break;
    
-         ulong nNameLen = getShort(abBuf, ZIPFNAMLEN_OFFS);
+         uint nNameLen = getShort(abBuf, ZIPFNAMLEN_OFFS);
          if (nNameLen > MAX_LINE_LEN-10)
             break;
    
          rc = fread(szLineBuf, 1, nNameLen, fin);
-         if (rc < (long)nNameLen)
+         if (rc < (int)nNameLen)
             break;
          szLineBuf[nNameLen] = '\0';
 
@@ -19813,27 +19988,27 @@ long getZipList(char *pszFile, FileList &rFileList)
          setSystemSlashes(szLineBuf);
 
          // directory of file entry?
-         ulong nExtAttr = getLong(abBuf, ZIPFEATTR_OFFS);
+         // uint nExtAttr = getLong(abBuf, ZIPFEATTR_OFFS);
          // NOTE: attributes are NOT given in JAR files.
          // bool  bIsDir   = (nExtAttr & (0040000UL << 16)) ? 1 : 0;
-         // printf("attr %lxh dir=%d %s\n",nExtAttr,bIsDir,szLineBuf);
+         // printf("attr %xh dir=%d %s\n",nExtAttr,bIsDir,szLineBuf);
          bool  bIsDir   = endsWithPathChar(szLineBuf);
 
          // list dirs only if withdirs selected
          if (!bIsDir || cs.withdirs)
          {
-            ulong nCRCSum  = getLong(abBuf, ZIPFCRC_OFFS );
-            ulong nCmpSize = getLong(abBuf, ZIPFCMPS_OFFS);
-            ulong nOrgSize = getLong(abBuf, ZIPFORGS_OFFS);
+            // uint nCRCSum  = getLong(abBuf, ZIPFCRC_OFFS );
+            uint nCmpSize = getLong(abBuf, ZIPFCMPS_OFFS);
+            uint nOrgSize = getLong(abBuf, ZIPFORGS_OFFS);
       
-            ulong nExtLen  = getShort(abBuf, ZIPFEXTL_OFFS);
-            ulong nRemLen  = getShort(abBuf, ZIPFREML_OFFS);
+            uint nExtLen  = getShort(abBuf, ZIPFEXTL_OFFS);
+            uint nRemLen  = getShort(abBuf, ZIPFREML_OFFS);
    
             #define ZIPTIME_OFFS ZIPFCRC_OFFS-4
             num nZipDOSTime = getLong (abBuf, ZIPTIME_OFFS);
             num nTimeStamp  = zipTimeToMainTime(nZipDOSTime);
    
-            rFileList.addFile(szLineBuf, "", nTimeStamp, nOrgSize);
+            rFileList.addFile(szLineBuf, str(""), nTimeStamp, nOrgSize);
       
             if (nCmpSize) {
                if (fseek(fin, nExtLen+nRemLen, SEEK_CUR))
@@ -19851,7 +20026,7 @@ long getZipList(char *pszFile, FileList &rFileList)
       }  // endif
    
       rc = fread(&sig, 1, sizeof(sig), fin);
-      if (rc < sizeof(sig))
+      if (rc < (int)sizeof(sig))
          break;
    }  // endwhile
 
@@ -19863,7 +20038,7 @@ long getZipList(char *pszFile, FileList &rFileList)
 
 #ifndef USE_SFK_BASE
 
-long execMetaFileUpdate(char *pszFile)
+int execMetaFileUpdate(char *pszFile)
 {
    printf("upd: %s\n", pszFile);
    if (!filedb.updateFile(pszFile))
@@ -19871,27 +20046,27 @@ long execMetaFileUpdate(char *pszFile)
    return 0;
 }
 
-long execMetaDirUpdate(char *pszFile)
+int execMetaDirUpdate(char *pszFile)
 {
    filedb.updateDir(pszFile);
    return 0;
 }
 
-long execMetaFileCheck(char *pszSrc)
+int execMetaFileCheck(char *pszSrc)
 {
    cs.files++;
 
    char szAddInfo[200];
-   long nVerOK     = filedb.numberOfVerifies();
-   long nVerFailed = filedb.numberOfVerFailed();
+   int nVerOK     = filedb.numberOfVerifies();
+   int nVerFailed = filedb.numberOfVerFailed();
    if (nVerFailed > 0)
-      sprintf(szAddInfo, "%u files ok, %ld failed, %u mb %u kbs", nVerOK, nVerFailed, (ulong)(nGlblBytes/1000000UL), currentKBPerSec());
+      sprintf(szAddInfo, "%u files ok, %d failed, %u mb %u kbs", nVerOK, nVerFailed, (uint)(nGlblBytes/1000000UL), currentKBPerSec());
    else
-      sprintf(szAddInfo, "%u files %u mb %u kbs", nVerOK, (ulong)(nGlblBytes/1000000UL), currentKBPerSec());
+      sprintf(szAddInfo, "%u files %u mb %u kbs", nVerOK, (uint)(nGlblBytes/1000000UL), currentKBPerSec());
    info.setProgress(cs.files, filedb.numberOfFiles(), "files");
    info.setStatus("verfy", pszSrc, szAddInfo, eKeepProg);
 
-   long nvrc = filedb.verifyFile(pszSrc);
+   int nvrc = filedb.verifyFile(pszSrc);
 
    if (nvrc >= 9)
       perr("check failed: %s - content modified\n", pszSrc);
@@ -19903,7 +20078,7 @@ long execMetaFileCheck(char *pszSrc)
 
 #endif // USE_SFK_BASE
 
-long execMD5write(Coi *pcoi)
+int execMD5write(Coi *pcoi)
 {
    SFKMD5 md5;
    if (getFileMD5(pcoi->name(), md5))
@@ -19919,32 +20094,32 @@ long execMD5write(Coi *pcoi)
    fprintf(fGlblOut," *%s\n",pszRelName); // md5sum similar
 
    glblFileCount.count();
-   sprintf(szLineBuf, "%u files %u mb %u kbs", glblFileCount.value(), (ulong)(nGlblBytes/1000000UL), currentKBPerSec());
+   sprintf(szLineBuf, "%u files %u mb %u kbs", glblFileCount.value(), (uint)(nGlblBytes/1000000UL), currentKBPerSec());
    info.setAddInfoWidth(strlen(szLineBuf));
    info.setStatus("read ", pszRelName, szLineBuf);
 
    return 0;
 }
 
-long execMD5check(char *pIn, char *pszRefDir)
+int execMD5check(char *pIn, char *pszRefDir)
 {
-   long nLine=0;
-   long nError=0;
+   int nLine=0;
+   int nError=0;
    char *pszLine=pIn;
    char *pszNext=0;
-   ulong nListSize = strlen(pIn);
-   if (nListSize==0) nListSize=1;   ulong nOldPerc = 0;
-   long nSkipCnt = 0;
-   long lRC = 0;
+   uint nListSize = strlen(pIn);
+   if (nListSize==0) nListSize=1;
+   int nSkipCnt = 0;
+   int lRC = 0;
 
    // prerun: determine approx. number of targets
-   ulong nLF = 0;
-   for (ulong i=0; i<nListSize; i++)
+   uint nLF = 0;
+   for (uint i=0; i<nListSize; i++)
       if (pIn[i] == '\n')
          nLF++;
 
    if (nGlblMD5Skip > 0) {
-      ulong nCover = 100/(1+nGlblMD5Skip);
+      uint nCover = 100/(1+nGlblMD5Skip);
       if (!cs.quiet)
          printf("spot-checking %02u%% of files (skip=%u).\n", nCover, nGlblMD5Skip);
    }
@@ -19979,15 +20154,15 @@ long execMD5check(char *pIn, char *pszRefDir)
       if (*pszHex == '\\') pszHex++; // support for md5sum files
       char *pszFile = psz+2;  // skip " *"
       // fix filename ending and path chars
-      if (psz = strchr(pszFile, '\r')) *psz = 0;
-      if (psz = strchr(pszFile, '\n')) *psz = 0;
+      if ((psz = strchr(pszFile, '\r'))) *psz = 0;
+      if ((psz = strchr(pszFile, '\n'))) *psz = 0;
       fixPathChars(pszFile);
 
       char szAddInfo[200];
       if (nGlblMD5Skip > 0) {
-         sprintf(szAddInfo, "%u files %u mb %u kbs skip %u", glblFileCount.value(), (ulong)(nGlblBytes/1000000UL), currentKBPerSec(), nGlblMD5Skip);
+         sprintf(szAddInfo, "%u files %u mb %u kbs skip %u", glblFileCount.value(), (uint)(nGlblBytes/1000000UL), currentKBPerSec(), nGlblMD5Skip);
       } else {
-         sprintf(szAddInfo, "%u files %u mb %u kbs", glblFileCount.value(), (ulong)(nGlblBytes/1000000UL), currentKBPerSec());
+         sprintf(szAddInfo, "%u files %u mb %u kbs", glblFileCount.value(), (uint)(nGlblBytes/1000000UL), currentKBPerSec());
       }
       info.setAddInfoWidth(strlen(szAddInfo));
       info.setProgress(nLF, nLine, "files");
@@ -20026,13 +20201,13 @@ long execMD5check(char *pIn, char *pszRefDir)
          break;
    }
    if (nError) {
-      perr("%lu files of %lu failed verification.\n", nError, glblFileCount.value());
-      info.print("info : %lu files checked", glblFileCount.value());
+      perr("%u files of %u failed verification.\n", nError, glblFileCount.value());
+      info.print("info : %u files checked", glblFileCount.value());
    } else {
-      info.print("OK. %lu files checked", glblFileCount.value());
+      info.print("OK. %u files checked", glblFileCount.value());
    }
    if (!cs.quiet)
-      info.print(", %lu mb, %lu sec, %lu kb/sec.\n", (ulong)(nGlblBytes/1000000UL), (ulong)(currentElapsedMSec()/1000), (ulong)currentKBPerSec());
+      info.print(", %u mb, %u sec, %u kb/sec.\n", (uint)(nGlblBytes/1000000UL), (uint)(currentElapsedMSec()/1000), (uint)currentKBPerSec());
    else
       info.print(".\n");
    fflush(stderr);
@@ -20040,7 +20215,7 @@ long execMD5check(char *pIn, char *pszRefDir)
    return lRC;
 }
 
-long execJamIndex(char *pszFile)
+int execJamIndex(char *pszFile)
 {
    // strip ".\" at start, if any
    char *psz1 = pszFile;
@@ -20057,23 +20232,25 @@ long execJamIndex(char *pszFile)
    return 0;
 }
 
-long execSnapAdd(char *pszFile)
+#ifdef SFK_DEPRECATED
+int execSnapAdd(char *pszFile)
 {
    #ifndef USE_SFK_BASE
    // strip ".\" at start, if any
    char *psz1 = pszFile;
    if (!strncmp(psz1, glblDotSlash, 2))
          psz1 += 2;
-   long lRC = glblMemSnap.addTarget(psz1);
+   glblMemSnap.addTarget(psz1);
    // if (lRC != 0) printf("ESA RC %d, continue\n", lRC);
    #endif // USE_SFK_BASE
    return 0; // continue scan!
 }
+#endif // SFK_DEPRECATED
 
 // snapto dump of a single text line
-long dumpJamLine(char *pszLine, long nLineLen, bool bAddLF) // len 0: zero-terminated
+int dumpJamLine(char *pszLine, int nLineLen, bool bAddLF) // len 0: zero-terminated
 {
-   long lRC = 0;
+   int lRC = 0;
 
    if (pGlblJamLineCallBack)
       lRC = pGlblJamLineCallBack(pszLine, nLineLen, bAddLF);
@@ -20089,27 +20266,27 @@ long dumpJamLine(char *pszLine, long nLineLen, bool bAddLF) // len 0: zero-termi
 }
 
 // simple check: if a file contains some nulls, it must be binary.
-bool isBinaryFile(char *pszFile, long nCheckLen=4096)
+bool isBinaryFile(char *pszFile, int nCheckLen=4096)
 {
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) return 0;
 
-   if (nCheckLen > sizeof(abBuf)-10)
-       nCheckLen = sizeof(abBuf)-10;
+   if (nCheckLen > (int)sizeof(abBuf)-10)
+       nCheckLen = (int)sizeof(abBuf)-10;
 
-   long nRead = fread(abBuf, 1, nCheckLen, fin);
+   int nRead = fread(abBuf, 1, nCheckLen, fin);
    fclose(fin);
 
-   for (long i=0; i<nRead; i++)
+   for (int i=0; i<nRead; i++)
       if (abBuf[i] == 0x00)
          return 1;
 
    return 0;
 }
 
-bool isWhitespace(char *psz, long nlen)
+bool isWhitespace(char *psz, int nlen)
 {
-   for (long i=0; psz[i] && (i<nlen); i++)
+   for (int i=0; psz[i] && (i<nlen); i++)
       if (!isspace(psz[i]))
          return 0;
    return 1;
@@ -20139,21 +20316,21 @@ AutoCacheDrop::~AutoCacheDrop( ) {
 }
 #endif // VFILEBASE
 
-void setAddSnapMeta(ulong nmask) { cs.addsnapmeta = nmask; }
+void setAddSnapMeta(uint nmask) { cs.addsnapmeta = nmask; }
 
-long (*pGlblCallFileDir)(Coi *pcoi) = 0;
+int (*pGlblCallFileDir)(Coi *pcoi) = 0;
 
-long execCallFileDir(Coi *pcoi)
+int execCallFileDir(Coi *pcoi)
 {
    if (!pGlblCallFileDir) return 9;
    return pGlblCallFileDir(pcoi);
 }
 
 // snapto collect single file
-long execJamFile(Coi *pcoi)
+int execJamFile(Coi *pcoi)
 {__
-   char *pPrefix = pszGlblJamPrefix ? pszGlblJamPrefix : (char*)":file:";
-   char *pHeadLine = pPrefix;
+   cchar *pPrefix = pszGlblJamPrefix ? pszGlblJamPrefix : ":file:";
+   char *pHeadLine = (char*)pPrefix;
 
    char szHeadBuf[250];
    mclear(szHeadBuf);
@@ -20165,9 +20342,10 @@ long execJamFile(Coi *pcoi)
    AutoCacheDrop odrop(pcoi);
    #endif // VFILEBASE
 
-   mtklog("snap add file, %s", pcoi->name());
-
    bool bIsBinary = pcoi->isBinaryFile();
+   // also sets: isUTF16, isSnapFile
+
+   mtklog(("load: execjam: bin=%d %s", bIsBinary, pcoi->name()));
 
    if (cs.addsnapmeta)
    {
@@ -20181,7 +20359,7 @@ long execJamFile(Coi *pcoi)
       char szCodeInfo[50]; mclear(szCodeInfo);  // code=utf16le
       char szWebInfo[50];  mclear(szWebInfo);   // webrc=404_error_page
 
-      long nMetaLen = 0;
+      int nMetaLen = 0;
 
       if (baddtime) {
          num nFileTime = pcoi->getTime();
@@ -20205,7 +20383,7 @@ long execJamFile(Coi *pcoi)
       #ifdef VFILEBASE
       char *pwebrc = pcoi->header("webrc");
       if (pwebrc) {
-         long nwebrc = atol(pwebrc);
+         int nwebrc = atol(pwebrc);
          if (nwebrc >= 400) {
             sprintf(szWebInfo, " content=%s_error_page", pwebrc);
             nMetaLen += strlen(szWebInfo);
@@ -20213,10 +20391,10 @@ long execJamFile(Coi *pcoi)
       }
       #endif // VFILEBASE
 
-      long nPreLen  = strlen(pPrefix);
+      int nPreLen  = strlen(pPrefix);
       if (nPreLen > 50) nPreLen = 50;
 
-      long nPadLen  = 78 - nPreLen - nMetaLen;
+      int nPadLen  = 78 - nPreLen - nMetaLen;
       if (nPadLen < 0) nPadLen = 0;
 
       // construct padded headline with meta informations
@@ -20226,7 +20404,7 @@ long execJamFile(Coi *pcoi)
       pHeadLine = szHeadBuf;
    }
 
-   long lRC  = 0;
+   int lRC  = 0;
 
    if (cs.addsnapraw)
    {
@@ -20236,11 +20414,11 @@ long execJamFile(Coi *pcoi)
          // skip all binaries
          if (glblFileCount.countSkip(pcoi->name())) {
             if (pGlblJamStatCallBack) {
-               long nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (ulong)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
-               mtklog("%ld = jam.stat.callback.5", nrc);
+               int nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (uint)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+               mtklog(("%d = jam.stat.callback.5", nrc));
                lRC |= nrc;
             } else {
-               info.setAddInfo("%lu files, %lu lines, %lu mb", (ulong)glblFileCount.value(), (ulong)cs.lines, (ulong)(nGlblBytes/1000000UL));
+               info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(nGlblBytes/1000000UL));
                info.setStatus("skip", pcoi->name(), 0, eKeepAdd);
             }
          }
@@ -20269,21 +20447,21 @@ long execJamFile(Coi *pcoi)
          {
             // replace (unexpected) NULL or EOF characters by '.'
             // also counting the lines
-            for (long i=0; i<nRead; i++)
+            for (int i=0; i<nRead; i++)
                switch (abBuf[i]) {
                   case 0: case 0x1A: abBuf[i] = '.'; break;
                   case '\n': cs.lines++; break;
                }
          } else {
             // just count the lines
-            for (long i=0; i<nRead; i++)
+            for (int i=0; i<nRead; i++)
                if (abBuf[i] == '\n')
                   cs.lines++;
          }
 
          num nWrite = myfwrite(abBuf, nRead, fGlblOut);
          if (nWrite != nRead) {
-            perr("failed to fully write %ld bytes, possibly disk full\n", (long)nWrite);
+            perr("failed to fully write %d bytes, possibly disk full\n", (int)nWrite);
             pcoi->close();
             return 9;
          }
@@ -20294,11 +20472,11 @@ long execJamFile(Coi *pcoi)
          if (glblFileCount.checkTime())
          {
             if (pGlblJamStatCallBack) {
-               long nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (ulong)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
-               mtklog("%ld = jam.stat.callback.4", nrc);
+               int nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (uint)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+               mtklog(("%d = jam.stat.callback.4", nrc));
                lRC |= nrc;
             } else {
-               info.setAddInfo("%lu files, %lu mb", (ulong)glblFileCount.value(), (ulong)(nGlblBytes/1000000UL));
+               info.setAddInfo("%u files, %u mb", (uint)glblFileCount.value(), (uint)(nGlblBytes/1000000UL));
                info.setStatus("snap", pcoi->name(), 0, eKeepAdd);
             }
          }
@@ -20309,15 +20487,15 @@ long execJamFile(Coi *pcoi)
 
       pcoi->close();
 
-      lRC |= dumpJamLine("", 0, 1);
+      lRC |= dumpJamLine(str(""), 0, 1);
    }
    else
    if (bIsBinary || cs.rewrap)
    {
       if (cs.rewrap) {
-         mtklog("rewrap file, %d",cs.incbin);
+         mtklog(("rewrap file, %d",cs.incbin));
       } else {
-         mtklog("binary file, %d",cs.incbin);
+         mtklog(("binary file, %d",cs.incbin));
       }
 
       // should the binary (or forced wrap) file be included?
@@ -20334,15 +20512,21 @@ long execJamFile(Coi *pcoi)
             bProcess = 1;
       }
 
+      // optional check if target accepts file
+      if (bProcess && pGlblJamCheckCallBack) {
+         if (pGlblJamCheckCallBack(pcoi->name()))
+            bProcess = 0;
+      }
+
       // if not, skip
       if (!bProcess) {
          if (glblFileCount.countSkip(pcoi->name())) {
             if (pGlblJamStatCallBack) {
-               long nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (ulong)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
-               mtklog("%ld = jam.stat.callback.1", nrc);
+               int nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (uint)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+               mtklog(("%d = jam.stat.callback.1", nrc));
                lRC |= nrc;
             } else {
-               info.setAddInfo("%lu files, %lu lines, %lu mb", (ulong)glblFileCount.value(), (ulong)cs.lines, (ulong)(nGlblBytes/1000000UL));
+               info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(nGlblBytes/1000000UL));
                info.setStatus("skip", pcoi->name(), 0, eKeepAdd);
             }
          }
@@ -20367,7 +20551,7 @@ long execJamFile(Coi *pcoi)
          return lRC;
 
       // trailer
-      lRC |= dumpJamLine("", 0, 1);
+      lRC |= dumpJamLine(str(""), 0, 1);
    }
    else
    if (pGlblJamFileCallBack)
@@ -20381,19 +20565,25 @@ long execJamFile(Coi *pcoi)
    }
    else
    {
+    // optional check if target accepts file
+    if (pGlblJamCheckCallBack) {
+       if (pGlblJamCheckCallBack(pcoi->name()))
+          return 1; // skipped
+    }
+
     // add file content, check for illegal entries
     if (pcoi->open("rb"))
       { pwarn("cannot read: %s%s\n", pcoi->name(),pcoi->lasterr()); return 0; }
 
-    long nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
+    int nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
     memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
-    long nLocalLines = 0;
+    int nLocalLines = 0;
     bool bWrapMode = (cs.wrapcol > 0) ? 1 : 0;
-    long nLineLen  = 0;
+    int nLineLen  = 0;
     bool bPassSnap = 0;
+    bool bNoTrailer = 0;
 
-    // while (myfgets((char*)abBuf, nMaxLineLen, fin)) // yes, exact len
-    while (pcoi->readLine((char*)abBuf, nMaxLineLen) > 0)
+    while (pcoi->readLine((char*)abBuf, nMaxLineLen) > 0) // yes, exact len
     {
       cs.lines++;
       nLocalLines++;
@@ -20405,9 +20595,13 @@ long execJamFile(Coi *pcoi)
       // reading a snapfile or clusterfile content?
       if (startsLikeSnapFile((char*)abBuf))
       {
+         mtklog(("load: issnap, inspec=%d", bGlblInSpecificProcessing));
+
          // if not reading specific file list, skip this cluster
-         if (!bGlblInSpecificProcessing)
+         if (!bGlblInSpecificProcessing) {
+            bNoTrailer = 1;
             break;
+         }
 
          // but in single file mode, adapt it's content
          nLocalLines++; // skip == 1 check below, we use the file's internal header
@@ -20433,7 +20627,7 @@ long execJamFile(Coi *pcoi)
          abBuf[0] = '\'';
       }
 
-      if (bWrapMode && ((long)strlen((char*)abBuf) > cs.wrapcol))
+      if (bWrapMode && ((int)strlen((char*)abBuf) > cs.wrapcol))
       {
          // auto-wrap input line into many smaller output lines
          char *psz1 = (char*)abBuf;
@@ -20441,7 +20635,7 @@ long execJamFile(Coi *pcoi)
          while (*psz1)
          {
             pszOld = psz1;
-            long icnt = 0;
+            int icnt = 0;
             char *pszGap = 0;
             // step until overflow or eod, remember last whitespace
             while (*psz1 && (icnt < cs.wrapcol)) {
@@ -20481,11 +20675,11 @@ long execJamFile(Coi *pcoi)
       if (glblFileCount.checkTime())
       {
          if (pGlblJamStatCallBack) {
-            long nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (ulong)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
-            mtklog("%ld = jam.stat.callback.2", nrc);
+            int nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (uint)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+            mtklog(("%d = jam.stat.callback.2", nrc));
             lRC |= nrc;
          } else {
-            info.setAddInfo("%lu files, %lu lines, %lu mb", (ulong)glblFileCount.value(), (ulong)cs.lines, (ulong)(nGlblBytes/1000000UL));
+            info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(nGlblBytes/1000000UL));
             info.setStatus("snap", pcoi->name(), 0, eKeepAdd);
          }
       }
@@ -20497,18 +20691,19 @@ long execJamFile(Coi *pcoi)
 
     pcoi->close();
 
-    // trailer
-    lRC |= dumpJamLine("", 0, 1);
+    if (!bNoTrailer)
+       lRC |= dumpJamLine(str(""), 0, 1);
+    
    } // endelse binary
 
    if (glblFileCount.count()) 
    {
       if (pGlblJamStatCallBack) {
-         long nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (ulong)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
-         mtklog("%ld = jam.stat.callback.3", nrc);
+         int nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (uint)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+         mtklog(("%d = jam.stat.callback.3", nrc));
          lRC |= nrc;
       } else {
-         info.setAddInfo("%lu files, %lu lines, %lu mb", (ulong)glblFileCount.value(), (ulong)cs.lines, (ulong)(nGlblBytes/1000000UL));
+         info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(nGlblBytes/1000000UL));
          info.setStatus("snap", pcoi->name(), 0, eKeepAdd);
       }
    }
@@ -20521,12 +20716,12 @@ StringTable glblRefSrc;
 StringTable glblRefDstNames;
 uchar abGlblRefChars[256];   // map of chars used in destination names
 
-long execRefColDst(Coi *pcoi)
+int execRefColDst(Coi *pcoi)
 {
    char *pszFile = pcoi->name();
 
    char szAddInfo[200];
-   sprintf(szAddInfo, "%lu targets", glblRefDst.numberOfEntries(0)+1);
+   sprintf(szAddInfo, "%u targets", glblRefDst.numberOfEntries(0)+1);
    info.setStatus("scan", pszFile, szAddInfo);
 
    if (cs.rootrelname)
@@ -20569,7 +20764,7 @@ long execRefColDst(Coi *pcoi)
 
    glblRefDst.addString(0, szLineBuf);
    glblRefDst.addLong(1, 0, __LINE__);
-   for (long i=0; i<nGlblRefMaxSrc; i++)
+   for (int i=0; i<nGlblRefMaxSrc; i++)
       glblRefDst.addNull(2+i);
 
    return 0;
@@ -20589,12 +20784,12 @@ bool isFileNameChar(char c) {
    return false;
 }
 
-long execRefColSrc(char *pszFile)
+int execRefColSrc(char *pszFile)
 {
    cs.refsrccnt++;
 
    char szAddInfo[200];
-   sprintf(szAddInfo, "%lu sources", cs.refsrccnt);
+   sprintf(szAddInfo, "%u sources", cs.refsrccnt);
    info.setStatus("scan", pszFile, szAddInfo);
 
    // remember also list of source files
@@ -20607,12 +20802,12 @@ long execRefColSrc(char *pszFile)
    return 0;
 }
 
-long execRefProcSrc(char *pszFile, char *pszOptRoot, long icur, long ntotal)
+int execRefProcSrc(char *pszFile, char *pszOptRoot, int icur, int ntotal)
 {
    if (userInterrupt())
       return 9;
 
-   info.setAddInfo("%ld files of %ld",icur,ntotal);
+   info.setAddInfo("%d files of %d",icur,ntotal);
    info.setProgress(ntotal, icur, "files");
    info.setStatus("scan", pszFile, 0, eKeepAdd|eKeepProg);
 
@@ -20636,7 +20831,7 @@ long execRefProcSrc(char *pszFile, char *pszOptRoot, long icur, long ntotal)
       delete [] pInFile; 
       return 0; 
    }
-   unsigned long nRead = fread(pInFile, 1, nFileSize, fin);
+   unsigned int nRead = fread(pInFile, 1, nFileSize, fin);
    fclose(fin);
    if (nRead != nFileSize) {
       perr("cannot read: %s (%d %d)\n", pszFile, nRead, nFileSize);
@@ -20656,8 +20851,8 @@ long execRefProcSrc(char *pszFile, char *pszOptRoot, long icur, long ntotal)
    {
       // strip source file content from all characters
       // that have not appeared in target filenames.
-      ulong i1=0, i2=0;
-      ulong clast = 0xFFFF;
+      uint i1=0, i2=0;
+      uint clast = 0xFFFF;
       for (; i1<nFileSize; i1++)
       {
          uchar c = (uchar)pInFile[i1];
@@ -20690,7 +20885,7 @@ long execRefProcSrc(char *pszFile, char *pszOptRoot, long icur, long ntotal)
    }
    else
    {
-      for (ulong i=0; i<nFileSize; i++) 
+      for (uint i=0; i<nFileSize; i++) 
       {
          char c = pInFile[i];
          if (c == '\0')
@@ -20707,7 +20902,7 @@ long execRefProcSrc(char *pszFile, char *pszOptRoot, long icur, long ntotal)
    }
 
    // for all dst entries
-   for (long idst=0; idst<glblRefDst.numberOfEntries(0); idst++)
+   for (int idst=0; idst<glblRefDst.numberOfEntries(0); idst++)
    {
       char *pszDstRaw = glblRefDst.getString(0, idst);
       char *pszDst    = pszDstRaw;
@@ -20734,10 +20929,10 @@ long execRefProcSrc(char *pszFile, char *pszOptRoot, long icur, long ntotal)
       }
 
       char *pszHit = 0;
-      if (pszHit = strstr(pInFile, pszDst))
+      if ((pszHit = strstr(pInFile, pszDst)))
       {
          // increment reference count for target
-         long iCnt = glblRefDst.getLong(1, idst, __LINE__);
+         int iCnt = glblRefDst.getLong(1, idst, __LINE__);
          glblRefDst.setLong(1, idst, iCnt+1, __LINE__);
 
          // remember (some) source infos referencing this target
@@ -20768,8 +20963,8 @@ long execRefProcSrc(char *pszFile, char *pszOptRoot, long icur, long ntotal)
             if (!pszRel) return 9;
          }
 
-         long nBruttoLen = pszPost-pszPre+1;
-         if (nBruttoLen != strlen(pszDst))
+         int nBruttoLen = pszPost-pszPre+1;
+         if (nBruttoLen != (int)strlen(pszDst))
             sprintf(szLineBuf2, "%s\t%s\t[by text \"%s\" within \"%.*s\"]", pszRel, pszDstRaw, pszDst, (int)nBruttoLen, pszPre);
          else
             sprintf(szLineBuf2, "%s\t%s\t[by text \"%.*s\"]", pszRel, pszDstRaw, (int)nBruttoLen, pszPre);
@@ -20786,7 +20981,7 @@ long execRefProcSrc(char *pszFile, char *pszOptRoot, long icur, long ntotal)
       }
       else {
          // printf("nohit %s: \n", pszFile);
-         // sfkmem_hexdump(pInFile, (long)nFileSize);
+         // sfkmem_hexdump(pInFile, (int)nFileSize);
       }
    }
 
@@ -20799,7 +20994,7 @@ long execRefProcSrc(char *pszFile, char *pszOptRoot, long icur, long ntotal)
 
 bool nameListedIn(StringTable &rasrc, char *pszName)
 {
-   for (long isrcx=0; isrcx<rasrc.numberOfEntries(); isrcx++) {
+   for (int isrcx=0; isrcx<rasrc.numberOfEntries(); isrcx++) {
       char *pszSrcX = rasrc.getEntry(isrcx, __LINE__);
       if (!strcmp(pszName, pszSrcX))
          return true;
@@ -20807,7 +21002,7 @@ bool nameListedIn(StringTable &rasrc, char *pszName)
    return false;
 }
 
-long listDependencies(StringTable &rasrc, char *pszMixed, long nLevel, bool bPrintRoot, bool &rprinted)
+int listDependencies(StringTable &rasrc, char *pszMixed, int nLevel, bool bPrintRoot, bool &rprinted)
 {
    // pszMixed format:
    // EITHER root\tignore\t[remark]
@@ -20816,8 +21011,8 @@ long listDependencies(StringTable &rasrc, char *pszMixed, long nLevel, bool bPri
    char *p2 = strchr(p1, '\t');
    char szRoot[200];
    if (p2) {
-      long nroot = p2-p1;
-      if (nroot > sizeof(szRoot)-4) return 9+perr("buffer overflow #ld01 %ld %ld\n",sizeof(szRoot)-4,nroot);
+      int nroot = p2-p1;
+      if (nroot > (int)sizeof(szRoot)-4) return 9+perr("buffer overflow #ld01 %d %d\n",sizeof(szRoot)-4,nroot);
       strncpy(szRoot, p1, nroot); szRoot[nroot] = '\0';
    } else {
       strcopy(szRoot, pszMixed);
@@ -20847,25 +21042,24 @@ long listDependencies(StringTable &rasrc, char *pszMixed, long nLevel, bool bPri
    char szAnySrc[200];
 
    // recurse into dependencies of root
-   long ncalled = 0;
-   for (long idst=0; idst<glblRefDst.numberOfEntries(0); idst++)
+   for (int idst=0; idst<glblRefDst.numberOfEntries(0); idst++)
    {
       // scan ANY target
       char *pszDst  = glblRefDst.getString(0, idst);
-      long  nRefCnt = glblRefDst.getLong(1, idst, __LINE__);
+      int  nRefCnt = glblRefDst.getLong(1, idst, __LINE__);
       if (nRefCnt <= 0) continue;
 
-      long nDump = nRefCnt;
+      int nDump = nRefCnt;
       if (nDump > nGlblRefMaxSrc)
          nDump = nGlblRefMaxSrc;
 
       // enumerate sources for ANY target
-      for (long isrc=0; isrc<nDump; isrc++) 
+      for (int isrc=0; isrc<nDump; isrc++) 
       {
          char *pszMixed = glblRefDst.getString(2+isrc, idst);
-         if (!pszMixed) return 9+perr("internal: unexpected NULL in RefDst %ld %ld %ld\n",isrc,idst,nDump);
+         if (!pszMixed) return 9+perr("internal: unexpected NULL in RefDst %d %d %d\n",isrc,idst,nDump);
 
-         // static long ntell=0;
+         // static int ntell=0;
          // while (ntell++ < 100)
          //    printf("mixed: %s\n", pszMixed);
 
@@ -20873,8 +21067,8 @@ long listDependencies(StringTable &rasrc, char *pszMixed, long nLevel, bool bPri
          // INDEPENDENTLY from our current szRoot.
          p1 = pszMixed;
          p2 = strchr(p1, '\t'); if (!p2) return 9;
-         long nsrc = p2-p1;
-         if (nsrc > sizeof(szAnySrc)-4) return 9+perr("buffer overflow #ld02 %ld %ld\n",sizeof(szAnySrc)-4,nsrc);
+         int nsrc = p2-p1;
+         if (nsrc > (int)sizeof(szAnySrc)-4) return 9+perr("buffer overflow #ld02 %d %d\n",sizeof(szAnySrc)-4,nsrc);
          strncpy(szAnySrc, p1, nsrc); szAnySrc[nsrc] = '\0';
 
          // now holding szAnySrc -> pszDst dependency.
@@ -20901,7 +21095,7 @@ long listDependencies(StringTable &rasrc, char *pszMixed, long nLevel, bool bPri
    return 0;
 }
 
-long execDeblank(char *pszPath)
+int execDeblank(char *pszPath)
 {
    // replace blanks in (last part of) path by '_'
    strncpy(szLineBuf, pszPath, MAX_LINE_LEN);
@@ -20961,21 +21155,21 @@ long execDeblank(char *pszPath)
    return 0;
 }
 
-long sendLine(SOCKET hSock, char *psz, bool bQuiet=0);
-long readLine(SOCKET hSock, char *pszLineBuf = szLineBuf, long nMode=0);
+int sendLine(SOCKET hSock, cchar *psz, bool bQuiet=0);
+int readLine(SOCKET hSock, char *pszLineBuf = szLineBuf, int nMode=0);
 
 #ifdef WITH_TCP
 
-long execFTPList(char *pszName)
+int execFTPList(char *pszName)
 {
    // list a single file OR directory.
 
    if (!strcmp(pszName, "."))
       return 0;
 
-   long bIsDir    = 0;
-   long bCanRead  = 1;
-   long bCanWrite = 1;
+   int bIsDir    = 0;
+   int bCanRead  = 1;
+   int bCanWrite = 1;
    num  nFTimePre = 0;
    num  nFileSize = 0;
    getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFTimePre, nFileSize);
@@ -20987,7 +21181,7 @@ long execFTPList(char *pszName)
    mytime_t nSysTime    = getSystemTime();       // may be 0xFFFF
    struct tm *pSysTime  = 0;
    struct tm *pFileTime = 0;
-   ulong nSysYear = 0;
+   uint nSysYear = 0;
 
    #ifdef SFK_W64
    pSysTime  = _localtime64(&nSysTime);    // may be NULL
@@ -21011,7 +21205,7 @@ long execFTPList(char *pszName)
          if (pszFlat) strcopy(abTimeStamp, pszFlat);
       }
       else
-      if (nSysYear == (ulong)pFileTime->tm_year)
+      if (nSysYear == (uint)pFileTime->tm_year)
          strftime(abTimeStamp, sizeof(abTimeStamp)-10, "%b %d %H:%M", pFileTime);
       else
          strftime(abTimeStamp, sizeof(abTimeStamp)-10, "%b %d %Y", pFileTime);
@@ -21049,7 +21243,7 @@ long execFTPList(char *pszName)
    return 0;
 }
 
-long execFTPNList(char *pszFileName)
+int execFTPNList(char *pszFileName)
 {
    return sendLine(hGlblTCPOutSocket, pszFileName, 1);
 }
@@ -21057,22 +21251,21 @@ long execFTPNList(char *pszFileName)
 StringTable glblFTPRemList;
 StringTable glblFTPLocList;
 
-long execFTPLocList(char *pszFileName)
+int execFTPLocList(char *pszFileName)
 {
    return glblFTPLocList.addEntry(pszFileName);
 }
 
 #endif
 
-long execSingleFile(Coi *pcoi, long lLevel, long &lFiles, long nDirFileCnt, long &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
+int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
 {__
-   mtklog("execSingleFile %s root %s", pcoi->name(), pcoi->root());
+   mtklog(("execSingleFile %s root %s", pcoi->name(), pcoi->root()));
 
    // printf(" esf %s\n", pcoi->name());
 
    char *pszFile     = pcoi->name();
    char *pszOptRoot  = pcoi->root(1);  // raw, returns 0 if none
-   char *pszOptRef   = pcoi->ref(1);   // raw, returns 0 if none
 
    if (userInterrupt())
       return 9;
@@ -21115,7 +21308,7 @@ long execSingleFile(Coi *pcoi, long lLevel, long &lFiles, long nDirFileCnt, long
    {
       bool bbin = pcoi->isBinaryFile();
       bool binc = 1;
-      char *ptxt1 = "", *ptxt2 = "";
+      cchar *ptxt1 = "", *ptxt2 = "";
 
       if (cs.textfiles && bbin)
          { binc=0; ptxt1="binary"; ptxt2="text"; }
@@ -21160,7 +21353,7 @@ long execSingleFile(Coi *pcoi, long lLevel, long &lFiles, long nDirFileCnt, long
    }
 
    // -sincedir: process only files newer than in reference dir
-   long nSinceReason = 0;
+   int nSinceReason = 0;
    if (pszGlblSinceDir)
    {
       // build relative name of file to be processed
@@ -21172,7 +21365,7 @@ long execSingleFile(Coi *pcoi, long lLevel, long &lFiles, long nDirFileCnt, long
       joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszGlblSinceDir, pszRel);
       if (cs.verbose > 1)
          printf("CMP src %s ref %s\n",pszFile,szRefNameBuf);
-      mtklog("CMP src %s ref %s",pszFile,szRefNameBuf);
+      mtklog(("CMP src %s ref %s",pszFile,szRefNameBuf));
       // BEWARE OF MIXUP:
       //    sfk list -sincedir foo bar
       //       means for the user: FOO (szRefNameBuf) is the SOURCE.
@@ -21211,7 +21404,7 @@ long execSingleFile(Coi *pcoi, long lLevel, long &lFiles, long nDirFileCnt, long
             bDiffSize = 1;
 
          // compare times
-         long nDiffReason = 0;
+         int nDiffReason = 0;
          if (!bGlblIgnoreTime) {
             if (!(nDiffReason = ofsSrc.differs(ofsDst, 0))) { // NOT same if older src
                if (nGlblTraceSel & 2) {
@@ -21295,7 +21488,7 @@ long execSingleFile(Coi *pcoi, long lLevel, long &lFiles, long nDirFileCnt, long
    char *pszOutFile = 0;
    if (cs.tomask)
    {
-      long nrc = renderOutMask(szOutNameBuf, pcoi, cs.tomask, cs.curcmd);
+      int nrc = renderOutMask(szOutNameBuf, pcoi, cs.tomask, cs.curcmd);
       // only rc 0 accepted: there MUST be replacements
       if (nrc >= 9) return nrc;
       if (nrc > 0) {
@@ -21316,7 +21509,9 @@ long execSingleFile(Coi *pcoi, long lLevel, long &lFiles, long nDirFileCnt, long
       case eFunc_Scantab   : return execScantab(pszFile);    break;
       case eFunc_Entab     : return execEntab(pszFile);      break;
       case eFunc_JamIndex  : return execJamIndex(pszFile);   break;
+      #ifdef SFK_DEPRECATED
       case eFunc_SnapAdd   : return execSnapAdd(pszFile);    break;
+      #endif
       case eFunc_FileStat  : return execFileStat(pcoi, lLevel, lFiles, lDirs, lBytes, nLocalMaxTime, ntime2, nSinceReason);  break;
       case eFunc_Grep      : return execGrep(pcoi);          break;
       case eFunc_Mirror    : return execFileMirror(pszFile, nLocalMaxTime, ntime2, nDirFileCnt); break;
@@ -21355,7 +21550,7 @@ long execSingleFile(Coi *pcoi, long lLevel, long &lFiles, long nDirFileCnt, long
 
 char szMirStatBuf[200];
 void showMirrorStatus(const char *pszAction, const char *pszStatus,
-   char *pszObject, bool bIsFile, long nCount, bool bLF=0)
+   char *pszObject, bool bIsFile, int nCount, bool bLF=0)
 {
    // if pszObject is a filename with path, show just path.
 
@@ -21366,7 +21561,7 @@ void showMirrorStatus(const char *pszAction, const char *pszStatus,
    }
    if (nLen > 40) { pszObject += (nLen-40); nLen = 40; }
 
-   sprintf(szMirStatBuf, "% 4lu %4.4s %4.4s %03lu %.*s ",
+   sprintf(szMirStatBuf, "% 4u %4.4s %4.4s %03u %.*s ",
       glblFileCount.value(),
       pszAction, pszStatus,
       nCount, nLen, pszObject
@@ -21406,7 +21601,7 @@ bool isNetDriveRoot(char *psz)
 }
 
 // uses szLineBuf, abBuf
-long createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot=0)
+int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot=0)
 {
    // create all needed target directories
    joinPath(szLineBuf, MAX_LINE_LEN, pszDstRoot, pszDirTree);
@@ -21489,7 +21684,7 @@ long createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot=0)
 // uses: szLineBuf, abBuf
 // note: does NOT add to glblCreatedDirs
 //       does not count created dirs.
-long createOutDirTree(char *pszOutFile)
+int createOutDirTree(char *pszOutFile)
 {
    // isolate path from filename
    // c:\foo\bar.txt -> c:\foo
@@ -21561,9 +21756,9 @@ long createOutDirTree(char *pszOutFile)
    return 0;
 }
 
-long execDirFreeze(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalMaxTime, num &nTreeMaxTime)
+int execDirFreeze(char *pszName, int lLevel, FileList &oDirFiles, num &nLocalMaxTime, num &nTreeMaxTime)
 {
-   long nLocFiles = oDirFiles.clNames.numberOfEntries();
+   int nLocFiles = oDirFiles.clNames.numberOfEntries();
 
    // in: pszGlblSrcRoot, DstRoot, pszName
    if (!strncmp(pszName, glblDotSlash, 2))
@@ -21624,14 +21819,14 @@ long execDirFreeze(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalM
             showMirrorStatus("zip ", "----", pszName, 0, nLocFiles);
       }
 
-      long lRC = 0;
-      if (lRC = system(szLineBuf))
+      int lRC = 0;
+      if ((lRC = system(szLineBuf)))
       {
          // zip RC 12, 3072: nothing to do
          if (lRC == 12 || lRC == 3072)
          {
             // if (nLocFiles > 0) {
-            //    logError("warning: there seem to be %lu files, but ZIP says \"nothing to do\" in dir:", nLocFiles);
+            //    logError("warning: there seem to be %u files, but ZIP says \"nothing to do\" in dir:", nLocFiles);
             //    logError("warning: %s", pszName);
             // }
             // return 0;
@@ -21664,7 +21859,7 @@ long execDirFreeze(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalM
       // this is valid only if there are no files w/in dir.
       if (nLocFiles > 0) {
          nGlblFzMisArcFiles += nLocFiles;
-         logError("warning: there seem to be %lu files, but ZIP created no archive for dir:", nLocFiles);
+         logError("warning: there seem to be %u files, but ZIP created no archive for dir:", nLocFiles);
          logError("warning: %s", pszName);
       }
       // logError("error: no archive created:\n   %s", szLineBuf);
@@ -21690,7 +21885,7 @@ long execDirFreeze(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalM
 
    // getZipMD5 matched the input filenamelist against the directory
    // within the zipfile. check if anything's remaining:
-   long nNames = oDirFiles.clNames.numberOfEntries();
+   int nNames = oDirFiles.clNames.numberOfEntries();
    for (i=0; i<nNames; i++) {
       char *psz = oDirFiles.clNames.getEntry(i, __LINE__);
       if (psz[0] != 0) {
@@ -21714,7 +21909,7 @@ long execDirFreeze(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalM
    return 0;
 }
 
-long execFileMirror(char *pszName, num &nLocalMaxTime, num &ntime2, long nDirFileCnt)
+int execFileMirror(char *pszName, num &nLocalMaxTime, num &ntime2, int nDirFileCnt)
 {
    if (glblFileSet.getDirCommand() == eCmd_CopyDir)
       return execFileXCopy(pszName, nLocalMaxTime, ntime2, nDirFileCnt);
@@ -21724,7 +21919,7 @@ long execFileMirror(char *pszName, num &nLocalMaxTime, num &ntime2, long nDirFil
    return 9+perr("no command supplied for directory\n");
 }
 
-long execDirMirror(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalMaxTime, num &ntime2)
+int execDirMirror(char *pszName, int lLevel, FileList &oDirFiles, num &nLocalMaxTime, num &ntime2)
 {
    if (glblFileSet.getDirCommand() == eCmd_CopyDir)
       return execDirXCopy(pszName, lLevel, oDirFiles, nLocalMaxTime, ntime2);
@@ -21734,7 +21929,7 @@ long execDirMirror(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalM
    return 9+perr("no command supplied for directory\n");
 }
 
-long execFileFreeze(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, long nDirFileCnt)
+int execFileFreeze(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, int nDirFileCnt)
 {
    // doesn't actually freeze the single file, but
 
@@ -21750,9 +21945,9 @@ long execFileFreeze(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, long n
    fprintf(fGlblMD5Org," *%s\n",pszName); // md5sum similar
 
    // get file stats
-   long bIsDir    = 0;
-   long bCanRead  = 1;
-   long bCanWrite = 1;
+   int bIsDir    = 0;
+   int bCanRead  = 1;
+   int bCanWrite = 1;
    num  nFileTime = 0;
    num  nFileSize = 0;
    if (getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize)) {
@@ -21784,13 +21979,13 @@ long execFileFreeze(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, long n
    return 0;
 }
 
-long execDirXCopy(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalMaxTime, num &nTreeMaxTime)
+int execDirXCopy(char *pszName, int lLevel, FileList &oDirFiles, num &nLocalMaxTime, num &nTreeMaxTime)
 {
-   long nLocFiles = oDirFiles.clNames.numberOfEntries();
+   int nLocFiles = oDirFiles.clNames.numberOfEntries();
 
    // copy current dir or whole subtree?
    bool bAnyMasksGiven = glblFileSet.dirMasks().isStringSet(0,0);
-   char *pszMode = "";
+   cchar *pszMode = "";
    num  nMaxTime = nLocalMaxTime;
 
    if (bAnyMasksGiven)
@@ -21867,17 +22062,17 @@ long execDirXCopy(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalMa
    }
 
    // VERIFY if all files do really exist in the target tree:
-   long nFiles = oDirFiles.clNames.numberOfEntries();
-   for (long i=0; i<nFiles; i++) 
+   int nFiles = oDirFiles.clNames.numberOfEntries();
+   for (int i=0; i<nFiles; i++) 
    {
       char *pszInFileName = oDirFiles.clNames.getEntry(i, __LINE__);
       num nInFileSize = oDirFiles.clSizes.getEntry(i, __LINE__);
 
       sprintf(szLineBuf, "%s%s", pszGlblDstRoot, pszInFileName);
 
-      long bIsDir    = 0;
-      long bCanRead  = 1;
-      long bCanWrite = 1;
+      int bIsDir    = 0;
+      int bCanRead  = 1;
+      int bCanWrite = 1;
       num  nFileTime = 0;
       num  nFileSize = 0;
       if (getFileStat(szLineBuf, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize)) {
@@ -21896,7 +22091,7 @@ long execDirXCopy(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalMa
    return 0;
 }
 
-long execFileXCopy(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, long nDirFileCnt)
+int execFileXCopy(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, int nDirFileCnt)
 {
    // this doesn't actually copy, but
 
@@ -21920,9 +22115,9 @@ long execFileXCopy(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, long nD
    fprintf(fGlblMD5Arc," *%s\n",pszName); // md5sum similar
 
    // get file stats
-   long bIsDir    = 0;
-   long bCanRead  = 1;
-   long bCanWrite = 1;
+   int bIsDir    = 0;
+   int bCanRead  = 1;
+   int bCanWrite = 1;
    num  nFileTime = 0;
    num  nFileSize = 0;
    if (getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize)) {
@@ -21954,12 +22149,12 @@ long execFileXCopy(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, long nD
    return 0;
 }
 
-long execSingleDir(Coi *pcoi, long lLevel, long &nTreeFiles, FileList &oDirFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
+int execSingleDir(Coi *pcoi, int lLevel, int &nTreeFiles, FileList &oDirFiles, int &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
 {
    char *pszName     = pcoi->name();
    char *pszOptRoot  = pcoi->root(1);  // raw, returns 0 if none
 
-   if (cs.debug) printf("]  esdir: %s files=%ld\n", pszName, nTreeFiles);
+   if (cs.debug) printf("]  esdir: %s files=%d\n", pszName, nTreeFiles);
 
    if (userInterrupt())
       return 9;
@@ -22029,7 +22224,7 @@ long execSingleDir(Coi *pcoi, long lLevel, long &nTreeFiles, FileList &oDirFiles
          return 0; // skip
    }
 
-   long lRC = 0;
+   int lRC = 0;
    switch (nGlblFunc) 
    {
       case eFunc_FileStat:
@@ -22058,7 +22253,7 @@ long execSingleDir(Coi *pcoi, long lLevel, long &nTreeFiles, FileList &oDirFiles
 
       case eFunc_Grep:
            if (cs.subdirs) {
-              info.setAddInfo("%lu files, %lu dirs", cs.filesScanned, cs.dirsScanned);
+              info.setAddInfo("%u files, %u dirs", cs.filesScanned, cs.dirsScanned);
               info.setStatus("scan ", pszName, 0, eKeepAdd);
               cs.dirsScanned++;
            }
@@ -22086,7 +22281,7 @@ long execSingleDir(Coi *pcoi, long lLevel, long &nTreeFiles, FileList &oDirFiles
    return lRC;
 }
 
-long checkMask(char *pszMask) {
+int checkMask(char *pszMask) {
    if (isWildStr(pszMask))
       return 1;
    if (   strchr(pszMask, glblWildChar)
@@ -22099,7 +22294,7 @@ long checkMask(char *pszMask) {
    return 1;
 }
 
-long execTextJoinLines(char *pIn) {
+int execTextJoinLines(char *pIn) {
    // join a text file with lines broken by mailing
 
    // 1. pre-scan for line length maximum
@@ -22153,9 +22348,9 @@ long execTextJoinLines(char *pIn) {
    return 0;
 }
 
-long hexToBin(char *pszHex, uchar *pBin, ulong nBinLen)
+int hexToBin(char *pszHex, uchar *pBin, uint nBinLen)
 {
-   long nBinRem = (long)nBinLen; // remaining out buffer
+   int nBinRem = (int)nBinLen; // remaining out buffer
    char szBuf[10];
    memset(szBuf, 0, sizeof(szBuf));
    while (*pszHex && (nBinRem > 0)) {
@@ -22174,7 +22369,6 @@ long hexToBin(char *pszHex, uchar *pBin, ulong nBinLen)
 
 uchar *memFind(uchar *pNeedle, num nNeedleSize, uchar *pHayStack, num nHaySize)
 {
-   num nRemain = nHaySize;
    uchar *pCur = pHayStack;
    uchar *pMax = pHayStack + nHaySize - nNeedleSize; // inclusive
    uchar c1    = *pNeedle;
@@ -22196,20 +22390,20 @@ uchar *memFind(uchar *pNeedle, num nNeedleSize, uchar *pHayStack, num nHaySize)
    return 0;
 }
 
-long  nGlblDumpCtx  = 0; // additional context bytes for dump
-long  nBinRepExp    = 0; // no. of replacement expressions
+int  nGlblDumpCtx   = 0; // additional context bytes for dump
+int  nBinRepExp     = 0; // no. of replacement expressions
 uchar **apRepSrcExp = 0; // source expressions
-long  *apRepSrcLen  = 0; // length of source expressions
+int  *apRepSrcLen   = 0; // length of source expressions
 uchar **apRepDstExp = 0; // dest. expressions
-long  *apRepDstLen  = 0; // length of dest. expressions
-long  *apRepFlags   = 0; // 0:is it text or binary, 1:was it found
+int  *apRepDstLen   = 0; // length of dest. expressions
+int  *apRepFlags    = 0; // 0:is it text or binary, 1:was it found
 num   *apRepOffs    = 0; // current offset in file to continue search
 
-long execReplaceFix(Coi *pcoi)
+int execReplaceFix(Coi *pcoi)
 {__
    char *pszFile = pcoi->name();
 
-   // mtklog("erf: execReplaceFix %s", pszFile);
+   // mtklog(("erf: execReplaceFix %s", pszFile));
 
    if (!pcoi->existsFile())
       return 1+perr("unable to read: %s - skipping\n", pszFile);
@@ -22221,9 +22415,9 @@ long execReplaceFix(Coi *pcoi)
    FileInfo finf;
    if (finf.init(pszFile, 56, nFileSize)) return 9;
 
-   long diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset);
+   int diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset);
 
-   long lRC = 0;
+   int lRC = 0;
 
    if (cs.sim) {  // with hexfind, sim MUST be set
       if (pcoi->open("rb"))
@@ -22238,18 +22432,17 @@ long execReplaceFix(Coi *pcoi)
    bool bFileChanged = 0;
 
    // reset hit flags etc.
-   for (ulong i5=0; i5<nBinRepExp; i5++) {
+   for (int i5=0; i5<nBinRepExp; i5++) {
       apRepFlags[i5] &= (0xFF ^ (1 << 1));
       apRepOffs[i5] = 0;
    }
 
    num nBlockPos  =  0;
-   num nScanPos   =  0;
    num nBlockSize =  0;
    num nReplaced  =  0;
    bool bTold     =  0;
-   long nPerc     =  0;
-   long nLastPerc =  0;
+   int nPerc      =  0;
+   int nLastPerc  =  0;
    num  nLastOff  = -1;
 
    while (true)
@@ -22257,7 +22450,7 @@ long execReplaceFix(Coi *pcoi)
       if (userInterrupt())
          { lRC=2; break; }
 
-      nPerc = (long)(nBlockPos * 100 / nFileSize);
+      nPerc = (int)(nBlockPos * 100 / nFileSize);
 
       if (pcoi->seek(nBlockPos, SEEK_SET))
       {
@@ -22269,7 +22462,7 @@ long execReplaceFix(Coi *pcoi)
 
       num nRead = pcoi->read(abBuf, sizeof(abBuf)-1000);
 
-      // mtklog("erf: read %ld from %ld",(long)nRead,(long)nBlockPos);
+      // mtklog(("erf: read %d from %d",(int)nRead,(int)nBlockPos));
 
       if (nRead <= 0) {
          if (nBlockPos == nFileSize)
@@ -22281,7 +22474,7 @@ long execReplaceFix(Coi *pcoi)
           #ifndef VFILEMAX
          if (pcoi->isZipSubEntry()) {
             setTextColor(nGlblWarnColor);
-            printf("... stopped reading at %ld bytes (demo limit).\n",(long)(nBlockPos-54));
+            printf("... stopped reading at %d bytes (demo limit).\n",(int)(nBlockPos-54));
             setTextColor(-1);
          }
          else
@@ -22296,15 +22489,15 @@ long execReplaceFix(Coi *pcoi)
       bool bTouched = 0;
 
       // over all search expressions
-      for (ulong iexp=0; iexp<nBinRepExp; iexp++) 
+      for (int iexp=0; iexp<nBinRepExp; iexp++) 
       {
          uchar *pExp = apRepSrcExp[iexp];
-         long   nExpLen = apRepSrcLen[iexp];
-         long   nExpFlags = apRepFlags[iexp];
+         int   nExpLen = apRepSrcLen[iexp];
+         int   nExpFlags = apRepFlags[iexp];
 
          // in case of rep simulation or hexfind, the destination
          // expression length is NOT the same as ExpLen, but ZERO.
-         long   nDstLen = apRepDstLen[iexp];
+         int   nDstLen = apRepDstLen[iexp];
 
          // decide if comparison shall be done case-insensitive.
          bool   bBinary  = (nExpFlags & (1<<0)) ? 1 : 0;
@@ -22325,7 +22518,7 @@ long execReplaceFix(Coi *pcoi)
             num nRemain = nBlockSize - (pSubCur - abBuf);
 
             // if (!bBinary) { 
-            //    mtklog("erf: find text \"%s\" len=%ld noff=%ld case=%d in:",pExp,nExpLen,(long)nOffs,bUseCase); 
+            //    mtklog(("erf: find text \"%s\" len=%d noff=%d case=%d in:",pExp,nExpLen,(int)nOffs,bUseCase)); 
             //    mtkdump("erf: ",pSubCur,nRemain);
             // }
 
@@ -22376,7 +22569,7 @@ long execReplaceFix(Coi *pcoi)
                      // dirty, but should work fine:
                      // mark the place of found expression by inverting
                      // the bytes in right-side (non-dumped) memory.
-                     for (long k=0; k<nExpLen; k++)
+                     for (int k=0; k<nExpLen; k++)
                         pHit[k] ^= (uchar)0xFFU;
                   }
                   num nListOff = nBlockPos + nHitLow;
@@ -22387,8 +22580,8 @@ long execReplaceFix(Coi *pcoi)
                   num nAbsOff = nHitRaw+nBlockPos;
                   sprintf(szOffBuf1, "at offset 0x%.20s", numtohex(nAbsOff));
                   if (cs.reldist && nLastOff >= 0) {
-                     long nRelOff = (long)(nAbsOff - nLastOff);
-                     sprintf(szOffBuf2, " reldist %lu (0x%lx)", nRelOff, nRelOff);
+                     int nRelOff = (int)(nAbsOff - nLastOff);
+                     sprintf(szOffBuf2, " reldist %u (0x%x)", nRelOff, nRelOff);
                   }
                   chain.print('f', 1, "%s : %s %s%s",pszFile,cs.sim?"hit":"change",szOffBuf1,szOffBuf2);
                   // setTextColor(-1);
@@ -22420,7 +22613,7 @@ long execReplaceFix(Coi *pcoi)
       
          if (cs.sim) {
             if (finf.timeToTell()) {
-               printf("%02ld%% %s%s : %s hits \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced));
+               printf("%02d%% %s%s : %s hits \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced));
                fflush(stdout);
                bTold = 1;
             }
@@ -22439,7 +22632,7 @@ long execReplaceFix(Coi *pcoi)
                lRC=1; break;
             }
             if (!cs.quiet) {
-               printf("%02ld%% %s%s : %s changes \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced));
+               printf("%02d%% %s%s : %s changes \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced));
                fflush(stdout);
                bTold = 1;
             }
@@ -22452,7 +22645,7 @@ long execReplaceFix(Coi *pcoi)
           nBlockPos -= (nBlockSize / 4);
 
       if (!cs.quiet && (nPerc != nLastPerc)) {
-         printf("%02ld%% %s%s : %s %s \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced),cs.sim?"hits":"changes");
+         printf("%02d%% %s%s : %s %s \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced),cs.sim?"hits":"changes");
          bTold = 1;
       }
       nLastPerc = nPerc;
@@ -22467,9 +22660,9 @@ long execReplaceFix(Coi *pcoi)
    }
 
    // collect stats: all patterns found?
-   long nTotPats = nBinRepExp;
-   long nHitPats = 0;
-   for (ulong i2=0; i2<nBinRepExp; i2++) 
+   int nTotPats = nBinRepExp;
+   int nHitPats = 0;
+   for (int i2=0; i2<nBinRepExp; i2++) 
    {
       if (apRepFlags[i2] & (1 << 1))
          nHitPats++;
@@ -22478,7 +22671,7 @@ long execReplaceFix(Coi *pcoi)
          printf("%s : pattern not found: ",pszFile);
          if (apRepFlags[i2] & (1 << 0)) {
             uchar *pBin = apRepSrcExp[i2];
-            for (ulong i9=0; i9<apRepSrcLen[i2]; i9++)
+            for (int i9=0; i9<apRepSrcLen[i2]; i9++)
                printf("%02X",pBin[i9]);
             printf(" [binary]\n");
          } else {
@@ -22486,7 +22679,7 @@ long execReplaceFix(Coi *pcoi)
          }
       }
    }
-   long nNotPats = nTotPats - nHitPats;
+   int nNotPats = nTotPats - nHitPats;
 
    if (bTold)
       finf.printBlankLine(78);
@@ -22497,9 +22690,9 @@ long execReplaceFix(Coi *pcoi)
       { } // don't list files we wouldn't change
       else
       {
-         char *pszPre = finf.prefix();
-         char *pszShort = finf.shortName();
-         chain.print(' ', 1, "[%03ld/%ld/%ld] %s%s",(long)nReplaced,(long)nHitPats,(long)nNotPats,pszPre,pszShort);
+         cchar *pszPre   = finf.prefix();
+         cchar *pszShort = finf.shortName();
+         chain.print(' ', 1, "[%03d/%d/%d] %s%s",(int)nReplaced,(int)nHitPats,(int)nNotPats,pszPre,pszShort);
       }
    }
 
@@ -22515,7 +22708,7 @@ void tellMemLimitInfo() {
    }
 }
 
-long execReplaceVar(Coi *pcoi)
+int execReplaceVar(Coi *pcoi)
 {__
    char *pszFile = pcoi->name();
 
@@ -22529,9 +22722,9 @@ long execReplaceVar(Coi *pcoi)
    FileInfo finf;
    if (finf.init(pszFile, 56)) return 9;
 
-   long diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset);
+   int diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset);
 
-   long lRC = 0;
+   int lRC = 0;
 
    if (nFileSize > nGlblMemLimit) {
       perr("file too large to load: %s, %s mbytes", pszFile, numtoa(nFileSize/1000000));
@@ -22552,18 +22745,15 @@ long execReplaceVar(Coi *pcoi)
    bool bFileChanged = 0;
 
    // reset hit flags etc.
-   for (ulong i5=0; i5<nBinRepExp; i5++) {
+   for (int i5=0; i5<nBinRepExp; i5++) {
       apRepFlags[i5] &= (0xFF ^ (1 << 1));
       apRepOffs[i5] = 0;
    }
 
-   num nBlockPos  = 0;
-   num nScanPos   = 0;
-   num nBlockSize = nFileSize;
    num nReplaced  = 0;
    bool bTold     = 0;
-   long nPerc     = 0;
-   long nLastPerc = 0;
+   int nPerc      = 0;
+   int nLastPerc  = 0;
    bool bTouched  = 0;
 
    num nMaxSizeCur  = nFileSize; // temporary output buffer used size
@@ -22576,9 +22766,9 @@ long execReplaceVar(Coi *pcoi)
 
    // NO RETURN W/O DELETE FROM HERE
 
-   long npasses = cs.sim ? 1 : 2;
+   int npasses = cs.sim ? 1 : 2;
 
-   for (long npass=0; npass<npasses; npass++)
+   for (int npass=0; npass<npasses; npass++)
    {
       if (userInterrupt())
          { lRC=2; break; }
@@ -22606,15 +22796,15 @@ long execReplaceVar(Coi *pcoi)
       }
 
       // over all search expressions
-      for (ulong iexp=0; iexp<nBinRepExp; iexp++) 
+      for (int iexp=0; iexp<nBinRepExp; iexp++) 
       {
          if (userInterrupt())
             { lRC=2; break; }
 
          // get source pattern
          uchar *pSrc    = apRepSrcExp[iexp];
-         long   nSrcLen = apRepSrcLen[iexp];
-         long   nSrcFlags = apRepFlags[iexp];
+         int   nSrcLen = apRepSrcLen[iexp];
+         int   nSrcFlags = apRepFlags[iexp];
 
          // decide if comparison shall be done case-insensitive.
          bool   bBinary  = (nSrcFlags & (1<<0)) ? 1 : 0;
@@ -22623,10 +22813,10 @@ long execReplaceVar(Coi *pcoi)
 
          // get destination pattern
          uchar *pDst    = apRepDstExp[iexp];
-         long   nDstLen = apRepDstLen[iexp];
+         int   nDstLen = apRepDstLen[iexp];
 
          // get size diff for current pattern
-         long   nSizeDiff = nDstLen - nSrcLen;
+         int   nSizeDiff = nDstLen - nSrcLen;
 
          bLocalExpand = (nSizeDiff > 0) ? 1 : 0;
 
@@ -22659,14 +22849,14 @@ long execReplaceVar(Coi *pcoi)
             } else {
                // 2nd pass: apply replacement
                num nHitRem = nMemSize - (pHit - pMem);
-               // printf("apply replace, %ld\n", nSizeDiff);
-               // printf("old: %.20s delta %ld size %ld\n", pHit, nSizeDiff, (long)(nHitRem-nSizeDiff));
+               // printf("apply replace, %d\n", nSizeDiff);
+               // printf("old: %.20s delta %d size %d\n", pHit, nSizeDiff, (int)(nHitRem-nSizeDiff));
                // sfkmem_hexdump(pHit-10, 32);
                if (bLocalExpand)
                   memmove(pHit+nSizeDiff, pHit, nHitRem+0); // memory EXPANDS by nSizeDiff.
                else
                   memmove(pHit, pHit-nSizeDiff, nHitRem+nSizeDiff);
-               // printf("     move %p %p %lu bytes\n",pHit+nSizeDiff, pHit, (long)(nHitRem-nSizeDiff));
+               // printf("     move %p %p %u bytes\n",pHit+nSizeDiff, pHit, (int)(nHitRem-nSizeDiff));
                if (nDstLen) memcpy(pHit, pDst, nDstLen);
                // printf("new: %.20s\n", pHit);
                // sfkmem_hexdump(pHit-10, 32);
@@ -22694,9 +22884,9 @@ long execReplaceVar(Coi *pcoi)
             pInMax = pMem + nMemSize;
 
             // tell progress:
-            if (nMemSize) nPerc = (long)((pInCur-pMem) * 100 / nMemSize);
+            if (nMemSize) nPerc = (int)((pInCur-pMem) * 100 / nMemSize);
             if (!cs.quiet && (nPerc != nLastPerc) && finf.timeToTell()) {
-               printf("%02ld%% %s%s : %s %s \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced),cs.sim?"hits":"changes");
+               printf("%02d%% %s%s : %s %s \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced),cs.sim?"hits":"changes");
                bTold = 1;
                nLastPerc = nPerc;
             }
@@ -22714,7 +22904,7 @@ long execReplaceVar(Coi *pcoi)
    
       if (cs.sim) {
          if (finf.timeToTell()) {
-            printf("%02ld%% %s%s : %s hits \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced));
+            printf("%02d%% %s%s : %s hits \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced));
             fflush(stdout);
             bTold = 1;
          }
@@ -22731,7 +22921,7 @@ long execReplaceVar(Coi *pcoi)
             lRC=1;
          }
          if (!cs.quiet) {
-            printf("%02ld%% %s%s : %s changes \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced));
+            printf("%02d%% %s%s : %s changes \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nReplaced));
             fflush(stdout);
             bTold = 1;
          }
@@ -22760,9 +22950,9 @@ long execReplaceVar(Coi *pcoi)
    if (lRC) return lRC;
 
    // collect stats: all patterns found?
-   long nTotPats = nBinRepExp;
-   long nHitPats = 0;
-   for (long i2=0; i2<nBinRepExp; i2++) 
+   int nTotPats = nBinRepExp;
+   int nHitPats = 0;
+   for (int i2=0; i2<nBinRepExp; i2++) 
    {
       if (apRepFlags[i2] & (1 << 1))
          nHitPats++;
@@ -22771,7 +22961,7 @@ long execReplaceVar(Coi *pcoi)
          printf("%s : pattern not found: ",pszFile);
          if (apRepFlags[i2] & (1 << 0)) {
             uchar *pBin = apRepSrcExp[i2];
-            for (ulong i9=0; i9<apRepSrcLen[i2]; i9++)
+            for (int i9=0; i9<apRepSrcLen[i2]; i9++)
                printf("%02X",pBin[i9]);
             printf(" [binary]\n");
          } else {
@@ -22779,7 +22969,7 @@ long execReplaceVar(Coi *pcoi)
          }
       }
    }
-   long nNotPats = nTotPats - nHitPats;
+   int nNotPats = nTotPats - nHitPats;
 
    if (bTold)
       finf.printBlankLine(78);
@@ -22790,11 +22980,11 @@ long execReplaceVar(Coi *pcoi)
       { } // don't list files we wouldn't change
       else
       {
-         char *pszPre    = finf.prefix();
-         char *pszShort  = finf.shortName();
+         cchar *pszPre   = finf.prefix();
+         cchar *pszShort = finf.shortName();
          num   nSizeDiff = nMemSize - nFileSize;
          const char *pszSign = (nSizeDiff > 0) ? "+":"";
-         printf("[%03ld/%ld/%ld] %s%s", (long)nReplaced,(long)nHitPats,(long)nNotPats,pszPre,pszShort);
+         printf("[%03d/%d/%d] %s%s", (int)nReplaced,(int)nHitPats,(int)nNotPats,pszPre,pszShort);
          if (nSizeDiff) {
             setTextColor(nGlblTimeColor);
             printf("   %s%s bytes\n",pszSign,numtoa(nSizeDiff));
@@ -22808,22 +22998,22 @@ long execReplaceVar(Coi *pcoi)
    return 0;
 }
 
-long aGlblIndentStats[10];
+int aGlblIndentStats[10];
 
-long execScantab(char *pszFile)
+int execScantab(char *pszFile)
 {
    cs.files++;
 
-   long i=0;
+   int i=0;
 
-   long aind[100];
+   int aind[100];
    memset(aind, 0, sizeof(aind));
 
-   long amul[10]; // multiples of n counters
+   int amul[10]; // multiples of n counters
    memset(amul, 0, sizeof(amul));
 
-   long nMaxMulIndex = 0;
-   long nMaxMulCnt   = 0;
+   int nMaxMulIndex = 0;
+   int nMaxMulCnt   = 0;
    bool bHaveTabs    = 0;
    
    // collect indent stats
@@ -22845,7 +23035,7 @@ long execScantab(char *pszFile)
 
       szLineBuf[sizeof(szLineBuf)-10] = '\0';
       removeCRLF(szLineBuf);
-      long nLen = (long)strlen(szLineBuf);
+      int nLen = (int)strlen(szLineBuf);
 
       // any tabs contained?
       if (!bHaveTabs && strchr(szLineBuf, '\t')) {
@@ -22855,7 +23045,7 @@ long execScantab(char *pszFile)
       }
 
       // analyze single line
-      long nBlanks = 0;
+      int nBlanks = 0;
       for (i=0; i<nLen; i++) {
          if (szLineBuf[i] == ' ') {
             if (++nBlanks >= 60)
@@ -22913,26 +23103,26 @@ long execScantab(char *pszFile)
    }
 
    if (cs.verbose)
-      oprintf("indent %ld: %s\n", nMaxMulIndex, pszFile);
+      oprintf("indent %d: %s\n", nMaxMulIndex, pszFile);
 
    // dump indent stats
    if (cs.verbose >= 2) 
    {
       // for (i=1; i<100; i++)
       //   if (aind[i] > 0)
-      //      printf("%2.2ld : %3.3ld times\n", i, aind[i]);
+      //      printf("%2.2d : %3.3d times\n", i, aind[i]);
       // printf("\n");
    
       printf("   ");
       for (i=3; i<=8; i++)
-         printf("%2.2ld/%3.3ld ", i, amul[i]);
+         printf("%2.2d/%3.3d ", i, amul[i]);
       printf("\n");
    }
 
    return 0;
 }
 
-long execDelFile(char *pszName)
+int execDelFile(char *pszName)
 {
    cs.filesScanned++;
    bool bwaswp = 0;
@@ -22959,7 +23149,7 @@ long execDelFile(char *pszName)
    return 0;
 }
 
-long execDelDir(char *pszName, long lLevel, long &lGlobFiles, FileList &oDirFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
+int execDelDir(char *pszName, int lLevel, int &lGlobFiles, FileList &oDirFiles, int &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
 {
    if (!cs.withdirs)
       return 0;
@@ -22968,7 +23158,7 @@ long execDelDir(char *pszName, long lLevel, long &lGlobFiles, FileList &oDirFile
 
    // every execDelFile with RC==0 (deleted successfully)
    // lead to an entry in the oDirFiles list.
-   long nNumberOfDeletedFiles = oDirFiles.clNames.numberOfEntries();
+   int nNumberOfDeletedFiles = oDirFiles.clNames.numberOfEntries();
 
    // alternatively, if the user supplied "*" as file mask,
    // delete all empty dirs.
@@ -23012,9 +23202,9 @@ long execDelDir(char *pszName, long lLevel, long &lGlobFiles, FileList &oDirFile
    return 0;
 }
 
-long execVersion(Coi *pcoi)
+int execVersion(Coi *pcoi)
 {__
-   long nrc = 0;
+   int nrc = 0;
 
    uchar *pdata = 0;
    num    nsize = 0;
@@ -23037,21 +23227,21 @@ long execVersion(Coi *pcoi)
       if (nmax <= 0) return 9+perr("int. #28281250");
 
       StringMap omap;
-      if (parseVersion((char*)pver, (long)nmax, omap)) return -1;
+      if (parseVersion((char*)pver, (int)nmax, omap)) return -1;
 
-      char *pnam = omap.get("name"  , "");
-      char *ptyp = omap.get("type"  , "");
-      char *pos  = omap.get("os"    , "");
-      char *pnum = omap.get("vernum", "");
-      char *pfix = omap.get("fix"   , "");
-      char *ptit = omap.get("title" , "");
-      char *pdat = omap.get("date"  , "");
-      char *pinf = omap.get("info"  , "");
+      char *pnam = omap.get(str("name"  ), str(""));
+      char *ptyp = omap.get(str("type"  ), str(""));
+      char *pos  = omap.get(str("os"    ), str(""));
+      char *pnum = omap.get(str("vernum"), str(""));
+      char *pfix = omap.get(str("fix"   ), str(""));
+      char *ptit = omap.get(str("title" ), str(""));
+      char *pdat = omap.get(str("date"  ), str(""));
+      char *pinf = omap.get(str("info"  ), str(""));
 
       // create integer from version string
       char *psz1 = pnum;
-      long nVer = 0;
-      long nDot = 3;
+      int nVer = 0;
+      int nDot = 3;
       while (*psz1) {
          char c = *psz1++;
          if (c == '.')
@@ -23081,15 +23271,15 @@ long execVersion(Coi *pcoi)
    return nrc;
 }
 
-void detabLine(char *pszIn, char *pszOut, ulong lMaxOut, long nTabSize)
+void detabLine(char *pszIn, char *pszOut, uint lMaxOut, int nTabSize)
 {
-   ulong nInsert=0, iout=0;
+   uint nInsert=0, iout=0;
    for (int icol=0; (pszIn[icol]!=0) && (iout<lMaxOut-1); icol++)
    {
       char c1 = pszIn[icol];
       if (c1 == '\t') {
          nInsert = nTabSize - (iout % nTabSize);
-         for (ulong i2=0; i2<nInsert; i2++)
+         for (uint i2=0; i2<nInsert; i2++)
             pszOut[iout++] = ' ';
       } else {
          pszOut[iout++] = c1;
@@ -23098,7 +23288,7 @@ void detabLine(char *pszIn, char *pszOut, ulong lMaxOut, long nTabSize)
    pszOut[iout] = '\0';
 }
 
-long execDetab(char *pszFile, char *pszOutFile)
+int execDetab(char *pszFile, char *pszOutFile)
 {
    bool bHaveOut = (pszOutFile != 0);
    if (!bHaveOut) pszOutFile = pszFile;
@@ -23148,7 +23338,7 @@ long execDetab(char *pszFile, char *pszOutFile)
 
    char *pCur     = pInFile;
    int bBail      = 0;
-   long nTabsDone = 0;
+   int nTabsDone = 0;
    while (!bBail && *pCur)
    {
       char *pNext = strchr(pCur, '\n');
@@ -23195,13 +23385,13 @@ long execDetab(char *pszFile, char *pszOutFile)
 
    delete [] pInFile;
 
-   info.setAddInfo("% 5ld tabs", nTabsDone);
+   info.setAddInfo("% 5d tabs", nTabsDone);
    info.printLine(1<<2);
 
    return 0;
 }
 
-long execEntab(char *pszFile)
+int execEntab(char *pszFile)
 {
    char *pInFile = loadFile(pszFile);
    if (!pInFile) return 9;
@@ -23232,7 +23422,7 @@ long execEntab(char *pszFile)
       if (psz) *psz = 0;
 
       // entab a single line
-      int nInsert=0, iout=0, nblank=0, i;
+      int i=0;
       for (int icol=0; pCur[icol]; icol++)
       {
          char c1 = pCur[icol];
@@ -23241,9 +23431,9 @@ long execEntab(char *pszFile)
             continue;
          }
          // calc posn of next tab stop
-         long itab  = ((icol / cs.tabSize) + 1) * cs.tabSize;
+         int itab  = ((icol / cs.tabSize) + 1) * cs.tabSize;
          // calc distance to this next tab stop
-         long ndist = itab-icol;
+         int ndist = itab-icol;
          // if this distance is >= 2 chars
          if (ndist >= 1)
          {
@@ -23276,11 +23466,11 @@ long execEntab(char *pszFile)
    return 0;
 }
 
-long diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset)
+int diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset)
 {__
-   mtklog("diffdump %ld bytes, %p %p",(long)nlen,p1,p2);
+   mtklog(("diffdump %d bytes, %p %p",(int)nlen,p1,p2));
    mtkdump("p1 ",p1,nlen);
-   mtklog(" ");
+   mtklog((" "));
    mtkdump("p2 ",p2,nlen);
 
    num nSubOff = 0;
@@ -23288,7 +23478,7 @@ long diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset)
    while (nRemain > 0)
    {
       num nBlockLen = nRemain;
-      long *appos = 0;
+      int *appos = 0;
 
       if (bGlblHexDumpWide) 
       {
@@ -23299,7 +23489,7 @@ long diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset)
       strcpy(szAttrBuf,
         "i                                   i                                   i                                   i                 ");
       //                          0  1   2   3   4
-      static long aPosWide[] = {  1, 38, 55, 73, 110 };
+      static int aPosWide[] = {  1, 38, 55, 73, 110 };
       appos = aPosWide;
       if (nBlockLen > 16) nBlockLen = 16;
       }
@@ -23312,7 +23502,7 @@ long diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset)
       strcpy(szAttrBuf,
         "i                 i                   i                 i                 ");
       //                          0  1   2   3   4
-      static long aPosBase[] = {  1, 20, 29, 39, 58 };
+      static int aPosBase[] = {  1, 20, 29, 39, 58 };
       appos = aPosBase;
       if (nBlockLen > 8) nBlockLen = 8;
       }
@@ -23326,16 +23516,16 @@ long diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset)
          // create hex info
          uchar uc1 = p1[nSubOff+i];
          uchar uc2 = p2[nSubOff+i];
-         long iof1 = appos[0] + i * 2 + ((i>=4)?1:0) + ((i>=8)?1:0) + ((i>=12)?1:0);
-         long iof2 = appos[3] + i * 2 + ((i>=4)?1:0) + ((i>=8)?1:0) + ((i>=12)?1:0);
+         int iof1 = appos[0] + i * 2 + ((i>=4)?1:0) + ((i>=8)?1:0) + ((i>=12)?1:0);
+         int iof2 = appos[3] + i * 2 + ((i>=4)?1:0) + ((i>=8)?1:0) + ((i>=12)?1:0);
          sprintf(szLineBuf+iof1, "%02X", uc1);
          sprintf(szLineBuf+iof2, "%02X", uc2);
          szLineBuf[iof1+2] = ' ';
          szLineBuf[iof2+2] = ' ';
 
          // create printable info
-         long iof3 = appos[1] + i;  // ipos
-         long iof4 = appos[2] + i;  // ipos
+         int iof3 = appos[1] + i;  // ipos
+         int iof4 = appos[2] + i;  // ipos
 
          if(isprint(uc1)) {
             szLineBuf[iof3] = (char)uc1;
@@ -23363,8 +23553,8 @@ long diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset)
       // if in binfind mode, show just left part, appending offset
       if (cs.repDumpHalve) 
       {
-         long iofm = appos[2];
-         long iofo = appos[4];
+         int iofm = appos[2];
+         int iofo = appos[4];
          strcpy(szLineBuf+iofm, szLineBuf+iofo);
          strcpy(szAttrBuf+iofm, szAttrBuf+iofo);
       }
@@ -23381,13 +23571,13 @@ long diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset)
    return 0;
 }
 
-long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
+int execHexdump(char *pszFile, uchar *pBuf, uint nBufSize)
 {
    num ntotal = 0;
 
    FILE *fin = 0;
    uchar *pBufCur = pBuf;
-   long nBufRem = (long)nBufSize;
+   int nBufRem = (int)nBufSize;
    if (!pBuf) {
       fin = fopen(pszFile, "rb");
       if (!fin) {
@@ -23418,16 +23608,16 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
       }
    }
 
-   long lOutLen2=0, lIndex=0, lIndex2=0;
-   long lRelPos=0;
+   int lOutLen2=0, lIndex=0, lIndex2=0;
+   int lRelPos=0;
    uchar *pTmp = 0;
    uchar ucTmp;
    uchar abBlockBuf[100];
 
-   long nbpl  = bGlblHexDumpWide ?  32 : 16; // bytes per line
-   long itext = bGlblHexDumpWide ?  75 : 39; // text begin
-   long ioffs = bGlblHexDumpWide ? 108 : 56; // offset begin
-   long ieol  = ioffs + 20;
+   int nbpl  = bGlblHexDumpWide ?  32 : 16; // bytes per line
+   int itext = bGlblHexDumpWide ?  75 : 39; // text begin
+   int ioffs = bGlblHexDumpWide ? 108 : 56; // offset begin
+   int ieol  = ioffs + 20;
 
    num  nTotalMax = 0;
    if (nGlblHexDumpLen > 0)
@@ -23441,7 +23631,7 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
 
    while (1)
    {
-      long nread = 0;
+      int nread = 0;
       if (pBuf) {
          if (nBufRem <= 0)
             break;
@@ -23456,7 +23646,7 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
       if (nread <= 0) break;
       pTmp = abBlockBuf;
 
-      long lOutLen = nread;
+      int lOutLen = nread;
 
       szLineBuf[0] = '\0';
       bool bshort  = 0;
@@ -23467,7 +23657,7 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
             break; // fall through
 
          case 1: { // pure
-            for (long i=0; i<lOutLen; i++)
+            for (int i=0; i<lOutLen; i++)
                mystrcatf(szLineBuf,MAX_LINE_LEN,"%02X",pTmp[i]);
             strcat(szLineBuf,"\n");
             bshort = 1;
@@ -23475,7 +23665,7 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
          }
 
          case 2: { // source, hex
-            for (long i=0; i<lOutLen; i++)
+            for (int i=0; i<lOutLen; i++)
                mystrcatf(szLineBuf,MAX_LINE_LEN,"0x%02X,",pTmp[i]);
             strcat(szLineBuf,"\n");
             bshort = 1;
@@ -23483,19 +23673,19 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
          }
 
          case 3: { // source, dec
-            for (long i=0; i<lOutLen; i++)
-               mystrcatf(szLineBuf,MAX_LINE_LEN,"%lu,",(ulong)pTmp[i]);
+            for (int i=0; i<lOutLen; i++)
+               mystrcatf(szLineBuf,MAX_LINE_LEN,"%u,",(uint)pTmp[i]);
             strcat(szLineBuf,"\n");
             bshort = 1;
             break;
          }
 
          case 4: { // flat, filtering control characters, skipping binary
-            for (long i=0; i<lOutLen; i++) {
+            for (int i=0; i<lOutLen; i++) {
                uchar c = pTmp[i];
                if (!c) {
-                  long nRemain = lOutLen - i;
-                  mystrcatf(szLineBuf,MAX_LINE_LEN," [binary, skipping %lu bytes]\n", nRemain);
+                  int nRemain = lOutLen - i;
+                  mystrcatf(szLineBuf,MAX_LINE_LEN," [binary, skipping %u bytes]\n", nRemain);
                   break; 
                }
                else
@@ -23512,7 +23702,7 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
       if (bshort) {
          // dump short form created above
          if (chain.coldata)
-            chain.addLine(szLineBuf, "", 0);
+            chain.addLine(szLineBuf, str(""), 0);
          else
             printf("%s",szLineBuf);
          // then continue with next chunk
@@ -23532,7 +23722,7 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
       char *pszHexOff = numtohex(ntotal, 8);
       strcpy(&szLineBuf[ioffs], pszHexOff);
       // adds zero terminator after offset info!
-      long ieol = strlen(szLineBuf);
+      int ieol = strlen(szLineBuf);
       szAttrBuf[ieol] = '\0';
 
       lOutLen2 = lOutLen;
@@ -23590,7 +23780,7 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
    return 0;
 }
 
-long testfwrite(char *pszFile, num nSize)
+int testfwrite(char *pszFile, num nSize)
 {
    if (nSize <= 0 || nSize > 1048576 * 500)
       return 9+perr("illegal size");
@@ -23642,13 +23832,13 @@ DWORD CALLBACK cbCopyFileProgress(
    num nDone  =  (((num)TotalBytesTransferred.HighPart) << 32)
                | (((num)TotalBytesTransferred.LowPart ) <<  0);
 
-   info.setAddInfo("%lu / %lu mb", (ulong)(nDone/1000000UL), (ulong)(nTotal/1000000UL));
+   info.setAddInfo("%u / %u mb", (uint)(nDone/1000000UL), (uint)(nTotal/1000000UL));
    info.setProgress(nTotal, nDone, "bytes");
 
    return 0; // PROGRESS_CONTINUE;
 }
 
-long copyFileWin(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, ulong nflagsin)
+int copyFileWin(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, uint nflagsin)
 {
    char *pszTell = chain.usefiles ? pszDst : pszSrc;
    if (cs.listTargets) pszTell = pszDst;
@@ -23674,17 +23864,17 @@ long copyFileWin(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, nu
    bool brc = CopyFileExA(pszSrc, pszDst, cbCopyFileProgress, 0, &bcancel, nSysFlags);
 
    if (!brc) {
-      ulong nerr = GetLastError();
+      uint nerr = GetLastError();
       switch (nerr) {
          case ERROR_ACCESS_DENIED:
-            perr("copy failed, access denied (rc=%lu): %s\n", nerr, pszDst);
+            perr("copy failed, access denied (rc=%u): %s\n", nerr, pszDst);
             pinf("make sure you have full access rights. maybe you have to be administrator.\n");
             break;
          case ERROR_REQUEST_ABORTED:
             pwarn("copy stopped by user.\n");
             break;
          default:
-            perr("copy failed, rc=%lu: %s\n", nerr, pszDst);
+            perr("copy failed, rc=%u: %s\n", nerr, pszDst);
             break;
       }
    } else {
@@ -23696,7 +23886,7 @@ long copyFileWin(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, nu
 }
 #endif // _WIN32
 
-long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, ulong nflags)
+int copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, uint nflags)
 {
    char *pszTell = chain.usefiles ? pszDst : pszSrc;
    if (cs.listTargets) pszTell = pszDst;
@@ -23709,7 +23899,7 @@ long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num n
       return 0;
    }
 
-   long lRC = 0;
+   int lRC = 0;
    uchar abMD5Src[20];
    bool  bmdsrcset = 0;
    memset(abMD5Src, 0, sizeof(abMD5Src));
@@ -23717,7 +23907,7 @@ long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num n
    bool bDoneFile = 0;
 
    // try to copy the file, upto 3 times
-   for (long ntry=1; ntry<=3; ntry++)
+   for (int ntry=1; ntry<=3; ntry++)
    {
       info.setAction("read ", pszSrc, "00");
    
@@ -23745,9 +23935,9 @@ long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num n
      
       num nTime1=0, nTime2=0, nReadTime=0, nWriteTime=0;
       num nReadBytes=0, nWriteBytes=0;
-      ulong nkbsread=0, nkbswrite=0;
+      uint nkbsread=0, nkbswrite=0;
       SFKMD5 md5in;
-      long nBlock = 0;
+      int nBlock = 0;
       while (!userInterrupt())
       {
          nTime1 = getCurrentTime();
@@ -23824,7 +24014,7 @@ long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num n
       // remember source sum in case of late verify:
       if (cs.verifyLate) {
          num nsumlo=0, nsumhi=0;
-         for (long i=0,b=64-8; i<8; i++) {
+         for (int i=0,b=64-8; i<8; i++) {
             nsumhi = nsumhi | (((num)pmd5in[0+i]&0xFF) << b);
             nsumlo = nsumlo | (((num)pmd5in[8+i]&0xFF) << b);
             b -= 8;
@@ -23842,7 +24032,7 @@ long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num n
    
          // run target verify
          uchar abmd5[20];
-         long nrcsub = getFileMD5NoCache(pszDst, abmd5, 1);
+         int nrcsub = getFileMD5NoCache(pszDst, abmd5, 1);
    
          if (userInterrupt(1))
          {
@@ -23906,7 +24096,7 @@ char *relName(char *pszRoot, char *pszAbs)
    #endif // VFILEBASE
    if (!pszRoot || !strlen(pszRoot))
        return pszAbs;
-   long nsrclen = strlen(pszRoot);
+   int nsrclen = strlen(pszRoot);
    if (!strcmp(pszRoot, "."))
        return pszAbs;
    if (!strcmp(pszRoot, pszAbs))
@@ -23971,7 +24161,7 @@ char *rootRelativeName(char *pszFileName, char *pszOptRoot)
 #ifndef USE_SFK_BASE
 
 // experimental
-long execDirCopy(char *pszSrc, FileList &oDirFiles)
+int execDirCopy(char *pszSrc, FileList &oDirFiles)
 {
    // copy metadata of directory
    char *pszDstRaw = pszGlblCopyDst;
@@ -23982,7 +24172,7 @@ long execDirCopy(char *pszSrc, FileList &oDirFiles)
    char *pszRelSrc = relName(pszGlblCopySrc, pszSrc);
 
    cs.dirsScanned++;
-   sprintf(szLineBuf, "%lu files %lu dirs", cs.filesScanned, cs.dirsScanned);
+   sprintf(szLineBuf, "%u files %u dirs", cs.filesScanned, cs.dirsScanned);
    if (strlen(szLineBuf) > 20)
       info.setAddInfoWidth(strlen(szLineBuf));
    info.setStatus("scan ", pszRelSrc, szLineBuf);
@@ -23990,7 +24180,7 @@ long execDirCopy(char *pszSrc, FileList &oDirFiles)
    // build full target name: d:/tmp/subdir
    joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszDstRaw, pszRelSrc);
    // strip trailing / if any
-   long nRefLen = strlen(szRefNameBuf);
+   int nRefLen = strlen(szRefNameBuf);
    if ((nRefLen > 0) && (szRefNameBuf[nRefLen-1] == glblPathChar))
       szRefNameBuf[nRefLen-1] = '\0';
 
@@ -24045,27 +24235,27 @@ long execDirCopy(char *pszSrc, FileList &oDirFiles)
       // this check is not at all beautiful, but it works
       // without restructuring the whole tree processing.
       #ifdef SFK_CCDIRTIME
-      long ipos = glblCreatedDirs.find(szRefNameBuf);
+      int ipos = glblCreatedDirs.find(szRefNameBuf);
       if (ipos >= 0) {
          // the dir was recently created: ignore it's new timestamp
          glblCreatedDirs.removeEntry(ipos);
          bOnlyOnNewSrc = 0;
       }
       #endif
-      long ndif = ofsSrc.differs(ofsDst, bOnlyOnNewSrc);
+      int ndif = ofsSrc.differs(ofsDst, bOnlyOnNewSrc);
       if (!ndif) {
          if (cs.verbose > 1)
             info.print("%s : no time / attrib change\n", szRefNameBuf);
          return 0;   // skip
       }
       if (cs.verbose > 0)
-         info.print("%s : copying attribs, ndif %ld\n", szRefNameBuf, ndif);
-      // sprintf(szReason, "%ld", ndif);
+         info.print("%s : copying attribs, ndif %d\n", szRefNameBuf, ndif);
+      // sprintf(szReason, "%d", ndif);
    }
 
    bool bDone = 0;
    if (bGlblUseCopyCache) {
-      long lRes = glblCopyCache.process(pszSrc, szRefNameBuf, 0, 0);
+      int lRes = glblCopyCache.process(pszSrc, szRefNameBuf, 0, 0);
       if (lRes == 0)
          bDone = 1;
    }
@@ -24089,12 +24279,12 @@ long execDirCopy(char *pszSrc, FileList &oDirFiles)
    return 0;
 }
 
-long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc=0, char *pszShDst=0);
+int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc=0, char *pszShDst=0);
 
 // experimental
 // USES:
 //    szAttrBuf, szRefNameBuf, szLineBuf1/2 (indirectly)
-long execFileCopy(Coi *pcoi)
+int execFileCopy(Coi *pcoi)
 {
    char *pszSrc      = pcoi->name();
    char *pszOptRoot  = pcoi->root(1); // null if not set
@@ -24110,7 +24300,7 @@ long execFileCopy(Coi *pcoi)
          // autodetect: include source root into target name?
          if (cs.rootabsname || (pszOptRoot && !isAbsolutePath(pszOptRoot)))
             // source root is NOT absolute, or -abs specified: take it
-            pszSrcRaw = "";
+            pszSrcRaw = str("");
          else
             // source root IS absolute (e.g. C:\\) so strip it
             pszSrcRaw = pszOptRoot; // if null, produces error below
@@ -24201,9 +24391,9 @@ long execFileCopy(Coi *pcoi)
 }
 
 // does NOT create target subdirs. this is expected to be done by caller.
-long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
+int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
 {__
-   mtklog("fcopysub: %s -> %s",pszSrc,pszDst);
+   mtklog(("fcopysub: %s -> %s",pszSrc,pszDst));
 
    char szReason[50];
    szReason[0] = '\0';
@@ -24223,14 +24413,14 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
 
    bool  bJustCopyTime = 0;
    bool  bSrcIsOlder = 0;
-   ulong nflags = 0;
+   uint nflags = 0;
 
    FileStat ofsSrc;
    FileStat ofsDst;
    bool  bSrcUnreadable = 0;
    if (ofsSrc.readFrom(pszSrc)) {
       // filename exists in source, but file is unreadable:
-      mtklog("copy: src unreadable");
+      mtklog(("copy: src unreadable"));
       if (filedb.canRead() && pszShSrc) {
          // proceed, as we may use the shadow
          bSrcUnreadable = 1; // but don't issue same error twice
@@ -24245,7 +24435,7 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
       if (!ofsDst.readFrom(pszDst)) 
       {
          bool bSameIOS = cs.syncOlder ? 0 : 1;  // same if older src?
-         long ndif = ofsSrc.differs(ofsDst, bSameIOS, &bSrcIsOlder);
+         int ndif = ofsSrc.differs(ofsDst, bSameIOS, &bSrcIsOlder);
          if (bSrcIsOlder) nflags |= (1<<3);
          if (!ndif && !bGlblIgnoreTime) {
             // only with copy, NOT with sync it may happen
@@ -24280,7 +24470,7 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
             }
             else
             if (!ndif && bGlblIgnoreTime) {
-               long ndif2 = ofsSrc.differs(ofsDst, 0); // NOT same if older src
+               int ndif2 = ofsSrc.differs(ofsDst, 0); // NOT same if older src
                if (!ndif2 && cs.sim) {
                   // critical: have file with same size and time, but dif. content
                   // this can be reached only through -ignoretime deep verify.
@@ -24292,13 +24482,13 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
                }
             }
             if (cs.verbose)
-               info.print("[%s : differs, rc %ld%s]\n", pszDst, ndif,
+               info.print("[%s : differs, rc %d%s]\n", pszDst, ndif,
                   bJustCopyTime ? ", same content":", diff. content");
          } else {
             if (cs.verbose)
-               info.print("[%s : differs, rc %ld]\n", pszDst, ndif);
+               info.print("[%s : differs, rc %d]\n", pszDst, ndif);
          }
-         // sprintf(szReason, "%ld", ndif);
+         // sprintf(szReason, "%d", ndif);
       }
    }
 
@@ -24327,7 +24517,7 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
       // prepare copy of file
       if (filedb.canRead()) {
          // try to check source file if it's still intact
-         long nvrc = filedb.verifyFile(pszSrc, pszShSrc, bSrcUnreadable);
+         int nvrc = filedb.verifyFile(pszSrc, pszShSrc, bSrcUnreadable);
          if (nvrc >= 9)
             return 0+perr("check failed: %s - content changed, skipping copy\n", pszSrc);
          else
@@ -24343,7 +24533,7 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
          else
          if (nvrc > 5) {
             // unexpected, issue general message
-            return 0+perr("check failed: %s - skipping copy (%ld)\n", pszSrc, nvrc);
+            return 0+perr("check failed: %s - skipping copy (%d)\n", pszSrc, nvrc);
          } else {
             // rc < 5 is just informal, e.g. time difference
             nflags |= 1; // checksum verified
@@ -24353,7 +24543,7 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
       // copy the actual file
       bool bDone = 0;
       if (!cs.sim && bGlblUseCopyCache) {
-         long lRes = glblCopyCache.process(pszSrc, pszDst, pszShDst, nflags);
+         int lRes = glblCopyCache.process(pszSrc, pszDst, pszShDst, nflags);
          if (lRes == 0)
             bDone = 1;
          if (lRes >= 9)
@@ -24392,7 +24582,7 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
 // experimental
 // USES:
 //    szAttrBuf, szRefNameBuf, szLineBuf1/2 (indirectly)
-long execFileCleanup(char *pszSrc)
+int execFileCleanup(char *pszSrc)
 {
    cs.filesScanned++;
 
@@ -24420,19 +24610,19 @@ long execFileCleanup(char *pszSrc)
    {
       // old trash file, or backsync candidate?
       num nFileAge = getFileAge(pszDst);
-      long nAgeDays = nFileAge / (24 * 3600);
+      int nAgeDays = nFileAge / (24 * 3600);
 
       if (!cs.delStaleFiles && (nAgeDays < nGlblActiveFileAgeLimit))
       {
-         long nRemain = nGlblActiveFileAgeLimit - nAgeDays;
+         int nRemain = nGlblActiveFileAgeLimit - nAgeDays;
          if (nRemain < 6)
             setTextColor(nGlblErrColor);
          else
             setTextColor(nGlblWarnColor);
          if (cs.verbose)
-            info.print("stale: %s / %s - %ld days until deletion\n",pszDst,pszSrc,nRemain);
+            info.print("stale: %s / %s - %d days until deletion\n",pszDst,pszSrc,nRemain);
          else
-            info.print("stale: %s - %ld days until deletion\n",pszDst,nRemain);
+            info.print("stale: %s - %d days until deletion\n",pszDst,nRemain);
          setTextColor(-1);
          cs.filesStale++;
       }
@@ -24499,14 +24689,14 @@ long execFileCleanup(char *pszSrc)
       if (ofsSrc.readFrom(pszDst))  // SWAPPED
          return 9;
       if (!ofsDst.readFrom(pszSrc)) {  // SWAPPED
-         long ndif = ofsSrc.differs(ofsDst, 1); // same if older src
+         int ndif = ofsSrc.differs(ofsDst, 1); // same if older src
          if (!ndif) {
             if (cs.verbose)
                info.print("no diff, skip: %s\n", pszSrc);
             return 0;   // skip
          }
          if (cs.verbose)
-            info.print("[%s : differs, rc %ld]\n", pszDst, ndif);
+            info.print("[%s : differs, rc %d]\n", pszDst, ndif);
          // the target file was changed after copy
          cs.filesNewerInDst++;
          if (bGlblShowSyncDiff)
@@ -24518,7 +24708,7 @@ long execFileCleanup(char *pszSrc)
 }
 
 // experimental
-long execDirCleanup(char *pszSrc, FileList &oDirFiles)
+int execDirCleanup(char *pszSrc, FileList &oDirFiles)
 {
    // copy metadata of directory
    char *pszDstRaw = pszGlblCopyDst;
@@ -24529,7 +24719,7 @@ long execDirCleanup(char *pszSrc, FileList &oDirFiles)
    char *pszRelSrc = relName(pszGlblCopySrc, pszSrc);
 
    cs.dirsScanned++;
-   sprintf(szLineBuf, "%lu files %lu dirs", cs.filesScanned, cs.dirsScanned);
+   sprintf(szLineBuf, "%u files %u dirs", cs.filesScanned, cs.dirsScanned);
    if (strlen(szLineBuf) > 20)
       info.setAddInfoWidth(strlen(szLineBuf));
    info.setStatus("scan ", pszRelSrc, szLineBuf);
@@ -24538,7 +24728,7 @@ long execDirCleanup(char *pszSrc, FileList &oDirFiles)
    joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszDstRaw, pszRelSrc);
 
    // strip trailing / if any
-   long nRefLen = strlen(szRefNameBuf);
+   int nRefLen = strlen(szRefNameBuf);
    if ((nRefLen > 0) && (szRefNameBuf[nRefLen-1] == glblPathChar))
       szRefNameBuf[nRefLen-1] = '\0';
 
@@ -24557,9 +24747,9 @@ long execDirCleanup(char *pszSrc, FileList &oDirFiles)
          setTextColor(-1);
          if (!cs.sim && cs.yes) {
             #ifdef _WIN32
-            long nrc = _rmdir(pszDst);
+            int nrc = _rmdir(pszDst);
             #else
-            long nrc = rmdir(pszDst);
+            int nrc = rmdir(pszDst);
             #endif
             if (nrc)
                perr("failed to delete: %s\n", pszDst);
@@ -24576,7 +24766,7 @@ long execDirCleanup(char *pszSrc, FileList &oDirFiles)
 
 #endif // USE_SFK_BASE
 
-long execFormConv(char *pszFile, char *pszOutFile)
+int execFormConv(char *pszFile, char *pszOutFile)
 {
    bool bHaveOut = (pszOutFile != 0);
    if (!bHaveOut) pszOutFile = pszFile;
@@ -24606,7 +24796,7 @@ long execFormConv(char *pszFile, char *pszOutFile)
 
    char *pCur   = pInFile;
    int   bBail  = 0;
-   ulong nLines = 0;
+   uint nLines = 0;
    bool  berr   = 0;
    while (!bBail && *pCur)
    {
@@ -24628,8 +24818,8 @@ long execFormConv(char *pszFile, char *pszOutFile)
       if (psz) *psz = 0;
 
       // now we have a clean line. write in target format.
-      long nlen = strlen(pCur);
-      if (myfwrite((uchar*)pCur, nlen, fOut) != nlen)
+      int nlen = strlen(pCur);
+      if ((int)myfwrite((uchar*)pCur, nlen, fOut) != nlen)
          {  berr=1; break; }
 
       if (nGlblConvTarget & eConvFormat_LF) {
@@ -24659,7 +24849,7 @@ long execFormConv(char *pszFile, char *pszOutFile)
    return 0;
 }
 
-long checkArgCnt(long argc, long lMinCnt) {
+int checkArgCnt(int argc, int lMinCnt) {
    if (argc < lMinCnt)
       return 9+perr("missing arguments. type \"sfk\" without parms for help.\n");
    return 0;
@@ -24674,9 +24864,9 @@ bool isWriteable(char *pszTmpFile) {
 
 // uses szLineBuf2, and szLineBuf indirectly, for result.
 // RC: number of hits
-long listPathAny(char *pszCmd, bool bSilent)
+int listPathAny(char *pszCmd, bool bSilent)
 {
-   long nhits = 0;
+   int nhits = 0;
 
    #ifdef _WIN32
 
@@ -24716,7 +24906,7 @@ long listPathAny(char *pszCmd, bool bSilent)
 }
 
 // uses szLineBuf, also for result!
-char *findPathLocation(char *pszCmd, bool bExcludeWorkDir)
+char *findPathLocation(cchar *pszCmd, bool bExcludeWorkDir)
 {
    #ifdef _WIN32
    if (!bExcludeWorkDir) {
@@ -24774,7 +24964,7 @@ char *findPathLocation(char *pszCmd, bool bExcludeWorkDir)
 }
 
 // uses szLineBuf
-long checkXCopy(char *pszTmpFile, char *pszMask)
+int checkXCopy(char *pszTmpFile, cchar *pszMask)
 {
    char *pszCmd = findPathLocation("xcopy.exe");
    if (!pszCmd) return 9;
@@ -24782,7 +24972,7 @@ long checkXCopy(char *pszTmpFile, char *pszMask)
 
    sprintf(szLineBuf, "%s /? >%s 2>&1", pszGlblXCopyCmd, pszTmpFile);
    if (cs.debug) printf("%s\n", szLineBuf);
-   long lRC = system(szLineBuf);
+   int lRC = system(szLineBuf);
    if (lRC) return lRC;
 
    // read status output of tool, search for mask
@@ -24807,7 +24997,7 @@ long checkXCopy(char *pszTmpFile, char *pszMask)
 #endif
 
 // uses szLineBuf
-long checkZipVersion(char *pszTmpFile)
+int checkZipVersion(char *pszTmpFile)
 {
    char *pszCmd = findPathLocation("zip" EXE_EXT);
    if (!pszCmd) return 9+perr("no zip" EXE_EXT " found within PATH.\n");
@@ -24817,9 +25007,9 @@ long checkZipVersion(char *pszTmpFile)
    // to really tell it's version. zip 2.0 however will
    // try to compress stdin, therefore the <nul.
    sprintf(szLineBuf, "%s -v " STR_FROM_NUL " >%s 2>&1", pszGlblZipCmd, pszTmpFile);
-   long lRC = system(szLineBuf);
+   int lRC = system(szLineBuf);
    if (lRC) {
-      perr("ZIP RC: %ld - %s probably too old\n", lRC, pszGlblZipCmd);
+      perr("ZIP RC: %d - %s probably too old\n", lRC, pszGlblZipCmd);
       return lRC;
    }
  
@@ -24847,17 +25037,17 @@ long checkZipVersion(char *pszTmpFile)
       return 0; // OK: Zip 3.x or higher
 
    if (nGlblZipVersionHi < 2)
-      return 9+perr("%s version too old (%ld.%ld)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo);
+      return 9+perr("%s version too old (%d.%d)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo);
 
    if (nGlblZipVersionLo >= 31)
       return 0; // OK: Zip 2.31
 
    // else below 2.31: too old
-   return 9+perr("%s version too old (%ld.%ld)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo);
+   return 9+perr("%s version too old (%d.%d)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo);
 }
 
 // uses szLineBuf
-long checkUnzipVersion(char *pszTmpFile)
+int checkUnzipVersion(char *pszTmpFile)
 {
    char *pszCmd = findPathLocation("unzip" EXE_EXT);
    if (!pszCmd) return 9+perr("no unzip" EXE_EXT " found within PATH.\n");
@@ -24865,9 +25055,9 @@ long checkUnzipVersion(char *pszTmpFile)
  
    // the following command will cause a proper unzip 5.52 to tell it's version.
    sprintf(szLineBuf, "%s -v " STR_FROM_NUL " >%s 2>&1", pszGlblUnzipCmd, pszTmpFile);
-   long lRC = system(szLineBuf);
+   int lRC = system(szLineBuf);
    if (lRC) {
-      perr("UNZIP RC: %ld - %s probably too old\n", lRC, pszGlblUnzipCmd);
+      perr("UNZIP RC: %d - %s probably too old\n", lRC, pszGlblUnzipCmd);
       return lRC;
    }
  
@@ -24895,14 +25085,14 @@ long checkUnzipVersion(char *pszTmpFile)
       return 0; // OK: Unzip 6.x or higher
 
    if (nGlblUnzipVersionHi < 5)
-      return 9+perr("%s version too old (%ld.%ld)\n", pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
+      return 9+perr("%s version too old (%d.%d)\n", pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
       // NOK, stone-old unzip 4.x
 
    if (nGlblUnzipVersionLo >= 52)
       return 0; // OK: Unzip 5.52
 
    // else below 5.52: too old
-   return 9+perr("%s version too old (%ld.%ld)\n", pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
+   return 9+perr("%s version too old (%d.%d)\n", pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
 }
 
 char *localPath(char *pAbsFile)
@@ -24925,7 +25115,7 @@ void setBlocking(SOCKET &hSock, bool bYesNo)
    ioctlsocket(hSock, FIONBIO, &ulParm);
 }
 
-bool hasData(SOCKET &hSock, long lTimeoutMS)
+bool hasData(SOCKET &hSock, int lTimeoutMS)
 {
    #ifdef _WIN32
    struct timeval tv;
@@ -24955,12 +25145,12 @@ bool hasData(SOCKET &hSock, long lTimeoutMS)
 
 // by default, recv() returns as much bytes as there are.
 // this function forces receival of full length block.
-long receiveBlock(SOCKET hSock, uchar *pBlock, ulong nLen, char *pszInfo)
+int receiveBlock(SOCKET hSock, uchar *pBlock, uint nLen, cchar *pszInfo)
 {
-   long nRemain = nLen;
-   long nCursor = 0;
+   int nRemain = nLen;
+   int nCursor = 0;
    while (nRemain > 0) {
-      long nRead = recv(hSock, (char*)pBlock+nCursor, nRemain, 0);
+      int nRead = recv(hSock, (char*)pBlock+nCursor, nRemain, 0);
       if (nRead <= 0) {
          if (pszInfo) // else silent mode
             perr("failed to receive %s, %s\n", pszInfo, netErrStr());
@@ -24973,25 +25163,25 @@ long receiveBlock(SOCKET hSock, uchar *pBlock, ulong nLen, char *pszInfo)
 }
 
 // uses szLineBuf
-long sendLine(SOCKET hSock, char *psz, bool bQuiet)
+int sendLine(SOCKET hSock, cchar *psz, bool bQuiet)
 {
    strncpy(szLineBuf, psz, MAX_LINE_LEN-10);
    szLineBuf[MAX_LINE_LEN-10] = '\0';
    strcat(szLineBuf, "\r\n");
    // if (!bQuiet && !cs.quiet) printf("< %s", szLineBuf);
    if (cs.verbose) printf("< %s", szLineBuf);
-   long nSent = send(hSock, szLineBuf, strlen(szLineBuf), 0);
-   if (nSent != strlen(szLineBuf)) return 9;
+   int nSent = send(hSock, szLineBuf, strlen(szLineBuf), 0);
+   if (nSent != (int)strlen(szLineBuf)) return 9;
    return 0;
 }
 
-long readLineRaw(SOCKET hSock, char *pszLineBuf)
+int readLineRaw(SOCKET hSock, char *pszLineBuf)
 {
-   long nCursor = 0;
-   long nRemain = MAX_LINE_LEN;
+   int nCursor = 0;
+   int nRemain = MAX_LINE_LEN;
    pszLineBuf[0] = '\0';
    while (nRemain > 10) {
-      long nRead = recv(hSock, pszLineBuf+nCursor, 1, 0);
+      int nRead = recv(hSock, pszLineBuf+nCursor, 1, 0);
       if (nRead == 0) return 1; // eod
       if (nRead < 0)  return 9; // connection close
       nCursor += nRead;
@@ -25003,25 +25193,25 @@ long readLineRaw(SOCKET hSock, char *pszLineBuf)
    return 0;
 }
 
-long readLineSub(SOCKET hSock, char *pszLineBuf, long nMode)
+int readLineSub(SOCKET hSock, char *pszLineBuf, int nMode)
 {
    bool bAddToRemList = (nMode & 1) ? 1 : 0;
-   bool bQuiet        = (nMode & 2) ? 1 : 0;
+   // bool bQuiet        = (nMode & 2) ? 1 : 0;
    bool bDirListMode  = (nMode & 4) ? 1 : 0;
 
   while (1)
   {
-   long nCursor = 0;
-   long nRemain = MAX_LINE_LEN;
+   int nCursor = 0;
+   int nRemain = MAX_LINE_LEN;
    pszLineBuf[0] = '\0';
    // switching from readLine mode to readBinary is tricky,
    // therefore read char by char to exactly get the point
    // of CRLF, from which on we may switch to binary.
    while (nRemain > 10) {
       // recv blocks until at least 1 byte is available.
-      long nRead = recv(hSock, pszLineBuf+nCursor, 1, 0);
+      int nRead = recv(hSock, pszLineBuf+nCursor, 1, 0);
       if (nRead <= 0) {
-         // perr("readLine failed %ld %ld", nCursor, nRead);
+         // perr("readLine failed %d %d", nCursor, nRead);
          return 9;
       }
       nCursor += nRead;
@@ -25050,7 +25240,7 @@ long readLineSub(SOCKET hSock, char *pszLineBuf, long nMode)
       // any other record: print printable parts
       bool bskiprec = !strncmp(szLineBuf, "SKIP ", 5);
       // dump only if verbose, or on some error codes.
-      long ncode = atol(szLineBuf);
+      int ncode = atol(szLineBuf);
       // dump all error codes from 500, except:
       bool blistcode = (ncode >= 500);
       switch (ncode) {
@@ -25059,8 +25249,8 @@ long readLineSub(SOCKET hSock, char *pszLineBuf, long nMode)
       }
       if (!bskiprec && (cs.verbose || blistcode))
       {
-         long nLen = strlen(szLineBuf);
-         for (long i=0; i<nLen; i++)
+         int nLen = strlen(szLineBuf);
+         for (int i=0; i<nLen; i++)
             if (isprint(pszLineBuf[i]))
                printf("%c", pszLineBuf[i]);
          printf("\n");
@@ -25074,18 +25264,15 @@ long readLineSub(SOCKET hSock, char *pszLineBuf, long nMode)
 }
 
 // see also forward decl. for default parms
-long readLine(SOCKET hSock, char *pszLineBuf, long nMode)
+int readLine(SOCKET hSock, char *pszLineBuf, int nMode)
 {
-   bool bAddToRemList = (nMode & 1) ? 1 : 0;
-   bool bQuiet = (nMode & 2) ? 1 : 0;
-
-   long lRC = readLineSub(hSock, pszLineBuf, nMode);
+   int lRC = readLineSub(hSock, pszLineBuf, nMode);
 
    // sft101: optional skip records to enforce socket flushing
    if (!strncmp(szLineBuf, "SKIP ", 5)) 
    {
       // read intermediate skip record
-      ulong nLen = (ulong)atol(szLineBuf+5);
+      uint nLen = (uint)atol(szLineBuf+5);
       if (nLen > sizeof(abBuf)-10) nLen = sizeof(abBuf)-10;
       if (nLen) receiveBlock(hSock, abBuf, nLen, "SKIP");
 
@@ -25109,48 +25296,48 @@ bool isPathTraversal(char *pszFile, bool bDeep)
 }
 
 // uses abBuf
-long readLong(SOCKET hSock, ulong &rOut, char *pszInfo)
+int readLong(SOCKET hSock, uint &rOut, cchar *pszInfo)
 {
    if (receiveBlock(hSock, abBuf, 4, pszInfo)) return 9;
-   ulong nLen =   (((ulong)abBuf[3])<<24)
-                | (((ulong)abBuf[2])<<16)
-                | (((ulong)abBuf[1])<< 8)
-                | (((ulong)abBuf[0])<< 0);
+   uint nLen =   (((uint)abBuf[3])<<24)
+                | (((uint)abBuf[2])<<16)
+                | (((uint)abBuf[1])<< 8)
+                | (((uint)abBuf[0])<< 0);
    rOut = nLen;
    return 0;
 }
 
 // uses abBuf
-long sendLong(SOCKET hSock, ulong nOut, char *pszInfo)
+int sendLong(SOCKET hSock, uint nOut, cchar *pszInfo)
 {
    abBuf[3] = ((uchar)(nOut >> 24));
    abBuf[2] = ((uchar)(nOut >> 16));
    abBuf[1] = ((uchar)(nOut >>  8));
    abBuf[0] = ((uchar)(nOut >>  0));
-   long nSent = send(hSock, (char*)abBuf, 4, 0);
+   int nSent = send(hSock, (char*)abBuf, 4, 0);
    if (nSent != 4) return 9+perr("failed to send %s, %s\n", pszInfo, netErrStr());
    return 0;
 }
 
 // uses abBuf
-long readNum(SOCKET hSock, num &rOut, char *pszInfo)
+int readNum(SOCKET hSock, num &rOut, cchar *pszInfo)
 {
    if (receiveBlock(hSock, abBuf, 8, pszInfo)) return 9;
    num nOut = 0;
-   for (long i=0; i<8; i++) {
+   for (int i=0; i<8; i++) {
       nOut <<= 8;
-      nOut |= (ulong)abBuf[i];
+      nOut |= (uint)abBuf[i];
    }
    rOut = nOut;
    return 0;
 }
 
-long readNum(uchar *pbuf, long &roff, num &rOut, char *pszInfo)
+int readNum(uchar *pbuf, int &roff, num &rOut, cchar *pszInfo)
 {
    num nOut = 0;
-   for (long i=0; i<8; i++) {
+   for (int i=0; i<8; i++) {
       nOut <<= 8;
-      nOut |= (ulong)pbuf[roff+i];
+      nOut |= (uint)pbuf[roff+i];
    }
    roff += 8;
    rOut = nOut;
@@ -25158,19 +25345,19 @@ long readNum(uchar *pbuf, long &roff, num &rOut, char *pszInfo)
 }
 
 // uses abBuf
-long sendNum(SOCKET hSock, num nOut, char *pszInfo)
+int sendNum(SOCKET hSock, num nOut, cchar *pszInfo)
 {
    // this may fail with num's >= 2 up 63.
-   for (long i=7; i>=0; i--) {
+   for (int i=7; i>=0; i--) {
       abBuf[i] = (uchar)(nOut & 0xFF);
       nOut >>= 8;
    }
-   long nSent = send(hSock, (char*)abBuf, 8, 0);
+   int nSent = send(hSock, (char*)abBuf, 8, 0);
    if (nSent != 8) return 9+perr("failed to send %s, %s\n", pszInfo, netErrStr());
    return 0;
 }
 
-long sendFileRaw(SOCKET hSock, char *pszFile, bool bQuiet=0, uchar *pmd5=0)
+int sendFileRaw(SOCKET hSock, char *pszFile, bool bQuiet=0, uchar *pmd5=0)
 {
    num nLen = getFileSize(pszFile);
    if (nLen < 0) return 9+perr("cannot get size of %s\n", pszFile);
@@ -25221,24 +25408,24 @@ long sendFileRaw(SOCKET hSock, char *pszFile, bool bQuiet=0, uchar *pmd5=0)
 }
 
 // send SKIP record to force socket flush on linux systems.
-long sendSkipBlock(SOCKET hSock)
+int sendSkipBlock(SOCKET hSock)
 {
    // so far, no extra dummy data is appended.
-   long nSkipSize = 0;
+   int nSkipSize = 0;
    if (nSkipSize) {
-      if (sizeof(abBuf) < (nSkipSize+10000))
+      if ((int)sizeof(abBuf) < (nSkipSize+10000))
          return 9+perr("internal #201\n");
       memset(abBuf, 0xEE, nSkipSize);
       abBuf[nSkipSize-1] = '\n';
    }
    // the LF at the end of record should flush the socket.
-   sprintf((char*)abBuf, "SKIP %ld\r\n", nSkipSize);
+   sprintf((char*)abBuf, "SKIP %d\r\n", nSkipSize);
    int nLen = strlen((char*)abBuf)+nSkipSize;
    send(hSock, (char*)abBuf, nLen, 0);
    return 0;
 }
 
-long preScanFile(char *pszFile, uchar *pmd5out, ulong &nattrout)
+int preScanFile(char *pszFile, uchar *pmd5out, uint &nattrout)
 {
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) return 9;
@@ -25257,10 +25444,10 @@ long preScanFile(char *pszFile, uchar *pmd5out, ulong &nattrout)
    fclose(fin);
 
    uchar *pmd5 = md5.digest();
-   for (ulong k=0; k<16; k++)
+   for (uint k=0; k<16; k++)
       pmd5out[k] = pmd5[k];
 
-   ulong nattrib = bbinary ? 1 : 0;
+   uint nattrib = bbinary ? 1 : 0;
 
    nattrout = nattrib;
 
@@ -25269,14 +25456,14 @@ long preScanFile(char *pszFile, uchar *pmd5out, ulong &nattrout)
 
 bool bdebug = 0;
 
-long sendRaw(char *pszFile, FILE *fin, SOCKET hSock, num nLen, SFKMD5 &md5)
+int sendRaw(char *pszFile, FILE *fin, SOCKET hSock, num nLen, SFKMD5 &md5)
 {
    num nLen2 = 0;
    while (nLen2 < nLen)
    {
-      long nrem = nLen - nLen2;
+      int nrem = nLen - nLen2;
 
-      long nreqlen = sizeof(abBuf)-10;
+      int nreqlen = sizeof(abBuf)-10;
       if (nreqlen > nrem) nreqlen = nrem;
 
       int nRead = fread(abBuf, 1, nreqlen, fin);
@@ -25296,7 +25483,7 @@ long sendRaw(char *pszFile, FILE *fin, SOCKET hSock, num nLen, SFKMD5 &md5)
 }
 
 // INCLUDES ackReceive past file send.
-long putFileBySFT(SOCKET hSock, Coi *pcoi, long nSFTVer, bool bQuiet=0, bool bIgnoreAck=0, bool bBlockMode=0)
+int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgnoreAck=0, bool bBlockMode=0)
 {
    char *pszFile = pcoi->name();
 
@@ -25308,7 +25495,7 @@ long putFileBySFT(SOCKET hSock, Coi *pcoi, long nSFTVer, bool bQuiet=0, bool bIg
    bool bdoneprog = 0;
 
    // sft <= 101: 8_size 16_md5_pre
-   ulong nMetaSize = 8+16;
+   uint nMetaSize = 8+16;
 
    // sft >= 102: 8_size 8_time 8_flags NO md5_pre
    if (nSFTVer >= 102) nMetaSize = 24;
@@ -25356,7 +25543,7 @@ long putFileBySFT(SOCKET hSock, Coi *pcoi, long nSFTVer, bool bQuiet=0, bool bIg
 
    if (nSFTVer < 102) {
       // meta 2: 16 bytes md5 BEFORE content
-      long nSent = send(hSock, (char*)abmd5, 16, 0);
+      int nSent = send(hSock, (char*)abmd5, 16, 0);
       if (nSent != 16) return 9+perr("failed to send md5, %s\n", netErrStr());
    }
 
@@ -25371,7 +25558,7 @@ long putFileBySFT(SOCKET hSock, Coi *pcoi, long nSFTVer, bool bQuiet=0, bool bIg
       if (sendFileRaw(hSock, pszFile, bQuiet, abmd5))
          return 9;
       // 16 bytes md5 AFTER content
-      long nSent = send(hSock, (char*)abmd5, 16, 0);
+      int nSent = send(hSock, (char*)abmd5, 16, 0);
       if (nSent != 16)
          return 9+perr("failed to send md5, %s\n", netErrStr()); 
    }
@@ -25396,7 +25583,7 @@ long putFileBySFT(SOCKET hSock, Coi *pcoi, long nSFTVer, bool bQuiet=0, bool bIg
 
          // wait for SREAD, SSUM or SCLOSE.
          mclear(szCmd);
-         long nRead = recv(hSock, szCmd, sizeof(szCmd)-10, 0);
+         int nRead = recv(hSock, szCmd, sizeof(szCmd)-10, 0);
          if (nRead <= 0) { 
             fclose(fin);
             return 9+perr("unexpected EOD or close, %s\n", netErrStr()); 
@@ -25410,10 +25597,10 @@ long putFileBySFT(SOCKET hSock, Coi *pcoi, long nSFTVer, bool bQuiet=0, bool bIg
 
             if (sendRaw(pszFile, fin, hSock, nsendreq, md5)) {
                fclose(fin);
-               return 9+perr("failed to send requested %ld bytes\n",(long)nsendreq);
+               return 9+perr("failed to send requested %d bytes\n",(int)nsendreq);
             }
 
-            if (bdebug) printf("< sent %ld\n", (long)nsendreq);
+            if (bdebug) printf("< sent %d\n", (int)nsendreq);
 
             nLen2 += nsendreq;
 
@@ -25434,7 +25621,7 @@ long putFileBySFT(SOCKET hSock, Coi *pcoi, long nSFTVer, bool bQuiet=0, bool bIg
          {
             // 16 bytes md5 AFTER content
             if (bdebug) printf("< sending sum\n");
-            long nSent = send(hSock, (char*)md5.digest(), 16, 0);
+            int nSent = send(hSock, (char*)md5.digest(), 16, 0);
             if (nSent != 16) { 
                fclose(fin); 
                return 9+perr("failed to send md5, %s\n", netErrStr());
@@ -25506,7 +25693,7 @@ long putFileBySFT(SOCKET hSock, Coi *pcoi, long nSFTVer, bool bQuiet=0, bool bIg
 
 // MODE 1: receive until END OF DATA (nMaxBytes < 0)
 // MODE 2: receive until nMaxBytes   (nMaxBytes > 0)
-long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0, uchar *pmd5=0)
+int receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0, uchar *pmd5=0)
 {
    FILE *fout = fopen(pszFile, "wb");
    if (!fout) return 9+perr("cannot write to \"%s\"\n", pszFile);
@@ -25517,7 +25704,7 @@ long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0, u
    num nTellStep = 10;
    num nTellNext = 0;
    num nRemain = nMaxBytes;
-   long nRead = 0;
+   int nRead = 0;
 
    // raw ftp uses variable length mode
    bool bvarmode = (nMaxBytes < 0);
@@ -25526,7 +25713,7 @@ long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0, u
    {
       if (!bvarmode && (nLen2 >= nMaxBytes))
          break;
-      long nBlockLen = sizeof(abBuf)-10;
+      int nBlockLen = sizeof(abBuf)-10;
       if (!bvarmode && (nBlockLen > nRemain))
          nBlockLen = nRemain;
       if ((nRead = recv(hSock, (char*)abBuf, nBlockLen, 0)) <= 0)
@@ -25534,7 +25721,7 @@ long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0, u
       nLen2 += nRead;
       nRemain -= nRead;
 
-      if (myfwrite(abBuf, nRead, fout) != nRead) {
+      if ((int)myfwrite(abBuf, nRead, fout) != nRead) {
          esys("fwrite", "failed to write %s   \n", pszFile);
          // but no special rc, continue with other files.
          break;
@@ -25565,19 +25752,19 @@ long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0, u
 }
 
 // INCLUDES ack send past file transfer
-long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool bBlockMode=0)
+int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer, bool bQuiet=0, bool bBlockMode=0)
 {
    // read variable-length header with meta info
    uchar abHead[512+10]; mclear(abHead);
 
-   ulong nMetaSize = 0;
+   uint nMetaSize = 0;
    if (readLong(hSock, nMetaSize, "metalen")) return 9;
    if (nMetaSize > sizeof(abHead)-10)
       return 9+perr("unsupported SFT protocol version\n");
    if (receiveBlock(hSock, abHead, nMetaSize, "head")) return 9;
 
    // take from header what we need
-   long ioff = 0;
+   int ioff = 0;
 
    // meta 1: 8bytes_size [time flags]
    num nLen = 0, nTime = 0, nFlags = 0;
@@ -25631,23 +25818,23 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
       num nMaxBytes  = nLen;
       num nTellStep  =   10;
       num nTellNext  =    0;
-      long nRead     =    0;
+      int nRead     =    0;
 
       char szCmd[200];
 
       while (nRemain > 0)
       {
          // request next block from server
-         long nBlockLen = sizeof(abBuf)-10;
+         int nBlockLen = sizeof(abBuf)-10;
 
          if (nBlockLen > nRemain)
             nBlockLen = nRemain;
 
-         if (bdebug) printf("< sread %ld, remain=%ld\n",nBlockLen,(long)nRemain);
+         if (bdebug) printf("< sread %d, remain=%d\n",nBlockLen,(int)nRemain);
 
-         sprintf(szCmd, "SREAD %ld\n", nBlockLen);
-         long nsent = send(hSock, szCmd, strlen(szCmd), 0);
-         if (nsent != strlen(szCmd)) {
+         sprintf(szCmd, "SREAD %d\n", nBlockLen);
+         int nsent = send(hSock, szCmd, strlen(szCmd), 0);
+         if (nsent != (int)strlen(szCmd)) {
             fclose(fout);
             return 9+perr("failed to send SREAD for \"%s\" %s\n", pszFile, netErrStr());
          }
@@ -25661,7 +25848,7 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
          nLen2 += nRead;
          nRemain -= nRead;
 
-         if (myfwrite(abBuf, nRead, fout) != nRead) {
+         if ((int)myfwrite(abBuf, nRead, fout) != nRead) {
             fclose(fout);
             return 9+perr("failed to fully write, probably disk full: \"%s\"\n", pszFile);
          }
@@ -25687,8 +25874,8 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
          printf("> %s received, %s bytes.       \n", pszFile, numtoa(nLen2));
 
       sprintf(szCmd, "SSUM\n");
-      long nsent = send(hSock, szCmd, strlen(szCmd), 0);
-      if (nsent != strlen(szCmd))
+      int nsent = send(hSock, szCmd, strlen(szCmd), 0);
+      if (nsent != (int)strlen(szCmd))
          return 9+perr("failed to receive checksum, %s\n", netErrStr());
 
       if (bdebug) printf("> wait for sum\n");
@@ -25699,7 +25886,7 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
 
       sprintf(szCmd, "SCLOSE\n");
       nsent = send(hSock, szCmd, strlen(szCmd), 0);
-      if (nsent != strlen(szCmd))
+      if (nsent != (int)strlen(szCmd))
          return 9+perr("failed to send close, %s\n", netErrStr());
 
    }  // endif nSFTVer
@@ -25723,7 +25910,7 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
             #endif
          }
          ofs.writeTo(pszFile, __LINE__);
-         // printf("time set: %ld %s\n",(long)nTime,pszFile);
+         // printf("time set: %d %s\n",(int)nTime,pszFile);
       }
    }
 
@@ -25752,17 +25939,17 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
    }
 
    // send short confirmation, so client can safely close socket.
-   long nSent = send(hSock, (char*)"OK\n\n", 4, 0);
-   if (nSent != 4) return 9+perr("failed to send reply, %ld, %s\n", nSent, netErrStr());
+   int nSent = send(hSock, (char*)"OK\n\n", 4, 0);
+   if (nSent != 4) return 9+perr("failed to send reply, %d, %s\n", nSent, netErrStr());
 
    return 0;
 }
 
-long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT, long &nOutSFTVer, char *pszPW)
+int ftpLogin(char *pszHost, uint nPort, SOCKET &hSock, bool &bSFT, int &nOutSFTVer, char *pszPW)
 {
    prepareTCP();
 
-   long nSFTVer = 102; // may be downgraded below
+   int nSFTVer = 102; // may be downgraded below
  
    struct hostent *pTarget;
    struct sockaddr_in sock;
@@ -25777,7 +25964,7 @@ long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT, long &nOutS
    sock.sin_port = htons((unsigned short)nPort);
 
    if ((connect(hSock, (struct sockaddr *)&sock, sizeof(sock))) == -1) {
-      perr("cannot connect to %s:%lu, %s\n", pszHost, nPort, netErrStr());
+      perr("cannot connect to %s:%u, %s\n", pszHost, nPort, netErrStr());
       return 9;
    }
 
@@ -25787,10 +25974,10 @@ long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT, long &nOutS
    if (readLine(hSock)) return 9; // 220
    char *psz1 = strstr(szLineBuf, ". sft ");
    if (psz1) {
-      long nSFTVer = atol(psz1+6);
+      int nSFTVer = atol(psz1+6);
       if (nSFTVer >= 100) {
          bSFT = 1;
-         printf("> server speaks sft %ld. mget, mput enabled.\n", nSFTVer);
+         printf("> server speaks sft %d. mget, mput enabled.\n", nSFTVer);
          nOutSFTVer = nSFTVer;
       } else {
          printf("> unexpected sft info \"%s\"\n", psz1);
@@ -25802,15 +25989,15 @@ long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT, long &nOutS
 
    if (bSFT) {
       // login at sfk ftpserv: password after '@'
-      if (!pszPW) pszPW = "";
-      snprintf(szBuf1, sizeof(szBuf1)-10, "PASS sft%ld@%s", nSFTVer, pszPW);
+      if (!pszPW) pszPW = str("");
+      snprintf(szBuf1, sizeof(szBuf1)-10, "PASS sft%d@%s", nSFTVer, pszPW);
       if (sendLine(hSock, szBuf1)) return 9;
    } else {
       // login at any ftp server: either password or dummy info
       if (pszPW)
          snprintf(szBuf1, sizeof(szBuf1)-10, "PASS %s", pszPW);
       else
-         snprintf(szBuf1, sizeof(szBuf1)-10, "PASS sft%ld@", nSFTVer);
+         snprintf(szBuf1, sizeof(szBuf1)-10, "PASS sft%d@", nSFTVer);
       if (sendLine(hSock, szBuf1)) return 9;
    }
    if (readLine(hSock)) return 9; // 230 login done
@@ -25822,9 +26009,9 @@ long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT, long &nOutS
    return 0;
 }
 
-long connectSocket(char *pszHost, ulong nPort, struct sockaddr_in &ClntAdr, SOCKET &hSock, char *pszInfo);
+int connectSocket(char *pszHost, uint nPort, struct sockaddr_in &ClntAdr, SOCKET &hSock, cchar *pszInfo);
 
-long setPassive(SOCKET &hSock, struct sockaddr_in &SoAdr, SOCKET &hData)
+int setPassive(SOCKET &hSock, struct sockaddr_in &SoAdr, SOCKET &hData)
 {
    if (hData != INVALID_SOCKET)
       return 0; // already done, reuse hData
@@ -25843,7 +26030,7 @@ long setPassive(SOCKET &hSock, struct sockaddr_in &SoAdr, SOCKET &hData)
    }
    char szIP[50];
    sprintf(szIP, "%d.%d.%d.%d",n[0],n[1],n[2],n[3]);
-   ulong nPort = (((ulong)n[4])<<8)|((ulong)n[5]);
+   uint nPort = (((uint)n[4])<<8)|((uint)n[5]);
    if (connectSocket(szIP, nPort, SoAdr, hData, "pasv data")) return 9;
 
    return 0;
@@ -25868,7 +26055,7 @@ bool canSkipFile(SOCKET hSock, char *pszFileName, num ndsttime, bool bput)
          num nowntime = ndsttime;
          num ndiff = bput ? (nfartime - nowntime) : (nowntime - nfartime);
          if (cs.verbose)
-            printf("time: local=%lu far=%lu diff=%ld\n",(ulong)nowntime,(ulong)nfartime,(long)ndiff);
+            printf("time: local=%u far=%u diff=%d\n",(uint)nowntime,(uint)nfartime,(int)ndiff);
          if (ndiff >= 0)
             bskip = 1;
       }
@@ -25876,11 +26063,11 @@ bool canSkipFile(SOCKET hSock, char *pszFileName, num ndsttime, bool bput)
    return bskip;
 }
 
-long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool bChained)
+int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszAuthPW, bool bChained)
 {
    SOCKET hSock = 0;
    bool bSFT = 0;
-   long nSFTVer = 0;
+   int nSFTVer = 0;
    if (ftpLogin(pszHost, nPort, hSock, bSFT, nSFTVer, pszAuthPW)) return 9;
 
    struct sockaddr_in DataAdr;
@@ -25983,7 +26170,6 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          char szParmBuf[300]; mclear(szParmBuf);
 
          bool bupdate = 0; // bSFT;
-         bool bbail   = 0;
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
@@ -26002,13 +26188,13 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          if (cs.sim && !cs.nohead)
             printx("$[simulating:]\n");
 
-         long lFiles=0, lDirs=0, lRC=0;
+         int lFiles=0, lDirs=0;
          num nBytes=0;
          glblFTPLocList.resetEntries();
          walkAllTrees(eFunc_FTPLocList, lFiles, lDirs, nBytes);
 
          // now ALL local files are listed in glblFTPLocList
-         long i=0, nSent=0, nSkipped=0, nFailed=0, nskip=0;
+         int i=0, nSent=0, nSkipped=0, nFailed=0, nskip=0;
          for (; i<glblFTPLocList.numberOfEntries(); i++) 
          {
             char *pszFile = glblFTPLocList.getEntry(i, __LINE__);
@@ -26065,9 +26251,9 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          if (i < glblFTPLocList.numberOfEntries())
             bLoop = 0; // fatal, server probably closed connection
          if (nFailed > 0)
-            printf("%ld files sent, %ld failed.\n", nSent, nFailed);
+            printf("%d files sent, %d failed.\n", nSent, nFailed);
          else
-            printf("%ld files %ssent.\n", nSent, cs.sim?"would be ":"");
+            printf("%d files %ssent.\n", nSent, cs.sim?"would be ":"");
 
          if (cs.sim && !cs.nohead)
             printx("$[add -yes to execute.]\n");
@@ -26082,7 +26268,6 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          // simulate is always default.
 
          bool bupdate = 0; // bSFT;
-         bool bbail   = 0;
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
@@ -26091,16 +26276,16 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          skipWhite(&pparms);
          cs.sim = !cs.yes;
 
-         long nfiles = chain.numberOfInFiles();
-         long ifile  = 0;
+         int nfiles = chain.numberOfInFiles();
+         int ifile  = 0;
 
          if (nfiles < 1)
             { printf("ftp: have no filenames from previous commands.\n"); break; }
          if (cs.sim && !cs.nohead)
             printx("$[simulating:]\n");
 
-         long nskip = 0;
-         long ndone = 0;
+         int nskip = 0;
+         int ndone = 0;
          for (ifile=0; ifile<nfiles; ifile++) 
          {
             Coi *pcoi = chain.getFile(ifile);
@@ -26149,15 +26334,15 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          if (!cs.quiet) {
             if (cs.sim) {
                if (bupdate)
-                  printf("would send %ld files, skip %ld unchanged.\n", ndone, nskip);
+                  printf("would send %d files, skip %d unchanged.\n", ndone, nskip);
                else
-                  printf("would send %ld files.\n", ndone);
+                  printf("would send %d files.\n", ndone);
             }
             else
             if (nskip)
-               printf("%ld files sent, %ld unchanged skipped.\n", ndone, nskip);
+               printf("%d files sent, %d unchanged skipped.\n", ndone, nskip);
             else
-               printf("%ld files sent.\n", ndone);
+               printf("%d files sent.\n", ndone);
          }
          if (cs.sim && !cs.nohead) {
             printx("$[add -yes to execute.]\n");
@@ -26201,7 +26386,6 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          char szParmBuf[300]; mclear(szParmBuf);
 
          bool bupdate = 0; // bSFT;
-         bool bbail   = 0;
 
          char *pparms = szLineBuf+strlen("mget");
          skipWhite(&pparms);
@@ -26235,7 +26419,7 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          }
 
          if (cs.debug)
-            printf("> received %ld filenames\n",glblFTPRemList.numberOfEntries());
+            printf("> received %d filenames\n",glblFTPRemList.numberOfEntries());
 
          char *apcol[20];
          memset(apcol, 0, sizeof(apcol));
@@ -26246,13 +26430,13 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          //    0       1  2   3          4    5   6   7      8
          // -rw-rw-rw- 1 ftp ftp        30353 20061231235959 readme.txt
          //    0       1  2   3          4    5              6
-         long i=0, nRecv=0, nSkipped=0, nFailed=0, nskip=0;
+         int i=0, nRecv=0, nSkipped=0, nFailed=0, nskip=0;
          for (; i<glblFTPRemList.numberOfEntries(); i++) 
          {
             char *pszFileRaw = glblFTPRemList.getEntry(i, __LINE__);
 
             // parse raw line
-            long ncol = 0;
+            int ncol = 0;
             strcopy(szRefNameBuf, pszFileRaw);
             char *psz1 = szRefNameBuf;
             while (ncol < 15) {
@@ -26277,7 +26461,7 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
             if (pszMonTS && isdigit(*pszMonTS))
                  bHaveFlatTime = 1;
 
-            long iName = 8;
+            int iName = 8;
             if (bHaveFlatTime) {
                if (ncol < 7)
                   {  pwarn("wrong format: %s - skipping\n", pszFileRaw); continue; }
@@ -26363,8 +26547,8 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
                         #ifdef _WIN32
                         ofs.src.nHaveWFT = 0; // no windows filetime
                         #endif
-                        long lRCT = ofs.writeTo(pszFile, __LINE__);
-                        printf("] filetime set: %s, %ld\n", timeAsString(nFileTime), lRCT);
+                        int lRCT = ofs.writeTo(pszFile, __LINE__);
+                        printf("] filetime set: %s, %d\n", timeAsString(nFileTime), lRCT);
                      }
                   }
                }
@@ -26379,9 +26563,9 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          if (i < glblFTPRemList.numberOfEntries())
             bLoop = 0; // fatal, server probably closed connection
          if (nFailed > 0)
-            printf("%ld files received, %ld failed.\n", nRecv, nFailed);
+            printf("%d files received, %d failed.\n", nRecv, nFailed);
          else
-            printf("%ld files %sreceived.\n", nRecv, cs.sim?"would be ":"");
+            printf("%d files %sreceived.\n", nRecv, cs.sim?"would be ":"");
 
          if (cs.sim && !cs.nohead)
             printx("$[add -yes to execute.]\n");
@@ -26398,7 +26582,6 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          char szDstBuf[400];  mclear(szDstBuf);
 
          bool bupdate = 0; // bSFT;
-         bool bbail   = 0;
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
@@ -26413,16 +26596,16 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
             break;
          }
 
-         long nfiles = chain.numberOfInFiles();
-         long ifile  = 0;
+         int nfiles = chain.numberOfInFiles();
+         int ifile  = 0;
 
          if (nfiles < 1)
             { printf("ftp: have no filenames from previous commands.\n"); break; }
          if (cs.sim && !cs.nohead)
             printx("$[simulating:]\n");
 
-         long nskip = 0;
-         long ndone = 0;
+         int nskip = 0;
+         int ndone = 0;
          for (ifile=0; ifile<nfiles; ifile++) 
          {
             // the reference coi, e.g. mydir/foo.txt
@@ -26480,15 +26663,15 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
          if (!cs.quiet) {
             if (cs.sim) {
                if (bupdate)
-                  printf("would receive %ld files, skip %ld unchanged.\n", ndone, nskip);
+                  printf("would receive %d files, skip %d unchanged.\n", ndone, nskip);
                else
-                  printf("would receive %ld files.\n", ndone);
+                  printf("would receive %d files.\n", ndone);
             }
             else
             if (nskip)
-               printf("%ld files received, %ld unchanged skipped.\n", ndone, nskip);
+               printf("%d files received, %d unchanged skipped.\n", ndone, nskip);
             else
-               printf("%ld files received.\n", ndone);
+               printf("%d files received.\n", ndone);
          }
          if (cs.sim && !cs.nohead) {
             printx("$[add -yes to execute.]\n");
@@ -26518,15 +26701,15 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
    return 0;
 }
 
-long makeServerSocket(
-   ulong  &nNewPort,                // i/o parm
+int makeServerSocket(
+   uint  &nNewPort,                // i/o parm
    struct sockaddr_in &ServerAdr,   // i/o parm
    SOCKET &hServSock,
-   char  *pszInfo,
-   ulong  nAltPort=0                // e.g. 2121 for ftp
+   cchar  *pszInfo,
+   uint  nAltPort=0                // e.g. 2121 for ftp
    )
 {
-   ulong nPort = nNewPort;
+   uint nPort = nNewPort;
 
    socklen_t nSockAdrSize = sizeof(sockaddr_in);
 
@@ -26536,7 +26719,7 @@ long makeServerSocket(
 
    hServSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hServSock == INVALID_SOCKET)
-      return 9+perr("cannot create %s (%lu)\n", pszInfo, nPort);
+      return 9+perr("cannot create %s (%u)\n", pszInfo, nPort);
 
    int nOnVal = 1;
    setsockopt(hServSock, SOL_SOCKET, SO_REUSEADDR, (char *)&nOnVal, sizeof(nOnVal));
@@ -26545,7 +26728,7 @@ long makeServerSocket(
 
    if (nrc == SOCKET_ERROR && nAltPort > 0)
    {
-      pinf("cannot bind on port %lu, using alternative port %ld.\n", nPort, nAltPort);
+      pinf("cannot bind on port %u, using alternative port %d.\n", nPort, nAltPort);
       nPort = nAltPort;
       ServerAdr.sin_port = htons((unsigned short)nPort);
       nrc = bind(hServSock, (struct sockaddr *)&ServerAdr, sizeof(sockaddr_in));
@@ -26553,7 +26736,7 @@ long makeServerSocket(
 
    if (nrc == SOCKET_ERROR)
    {
-      perr("cannot bind %s (%lu)\n", pszInfo, nPort);
+      perr("cannot bind %s (%u)\n", pszInfo, nPort);
       fprintf(stderr, "info : maybe a different app is running, or firewall blocks access.\n");
       fprintf(stderr, "info : you may retry with a different port, e.g. -port=30199.\n");
       return 9; 
@@ -26564,21 +26747,21 @@ long makeServerSocket(
       return 9+perr("getsockname failed, %d\n", netErrno());
 
    bool bTell = (nPort == 0);
-   nPort    = (ulong)ntohs(ServerAdr.sin_port);
+   nPort    = (uint)ntohs(ServerAdr.sin_port);
    nNewPort = nPort;
    if (bTell)
-      printf("< local port %lu (%lu, %lu)\n", nPort, (nPort>>8), nPort&0xFF);
+      printf("< local port %u (%u, %u)\n", nPort, (nPort>>8), nPort&0xFF);
 
    // make accept non-blocking:
    setBlocking(hServSock, 0);
 
    if (listen(hServSock, 4) == SOCKET_ERROR)
-      return 9+perr("cannot listen on %s (%lu)\n", pszInfo, nPort);
+      return 9+perr("cannot listen on %s (%u)\n", pszInfo, nPort);
 
    return 0;
 }
 
-long connectSocket(char *pszHost, ulong nPort, struct sockaddr_in &ClntAdr, SOCKET &hSock, char *pszInfo)
+int connectSocket(char *pszHost, uint nPort, struct sockaddr_in &ClntAdr, SOCKET &hSock, cchar *pszInfo)
 {
    hSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hSock == INVALID_SOCKET)
@@ -26592,14 +26775,14 @@ long connectSocket(char *pszHost, ulong nPort, struct sockaddr_in &ClntAdr, SOCK
    ClntAdr.sin_family = AF_INET;
    ClntAdr.sin_port = htons((unsigned short)nPort);
    if (cs.verbose)
-      printf("< connect to %s:%lu\n", pszHost, nPort);
+      printf("< connect to %s:%u\n", pszHost, nPort);
    if ((connect(hSock, (struct sockaddr *)&ClntAdr, sizeof(struct sockaddr_in))) == -1)
       return 9+perr("cannot establish connection for %s\n", pszInfo);
 
    return 0;
 }
 
-long udpAnyServ(ulong nPort, char *pszForward, long nForward, bool bEcho)
+int udpAnyServ(uint nPort, char *pszForward, int nForward, bool bEcho)
 {
    prepareTCP();
 
@@ -26613,20 +26796,25 @@ long udpAnyServ(ulong nPort, char *pszForward, long nForward, bool bEcho)
    int bon = 1;
    setsockopt(nsock, SOL_SOCKET, SO_REUSEADDR, (const char *)&bon, sizeof(bon));
 
+   int iPackets = 0;
+
+   // when passing on chain data to another command,
+   // do this by default on every single received package.
+   if (chain.coldata && !cs.stopcnt)
+      cs.stopcnt = 1;
+
    do
    {
       if (bind(nsock, (struct sockaddr *)&oOwnAddr, sizeof(oOwnAddr)) != 0)
       {
-         perr("cannot bind UDP socket to port %ld (%d %s).\n", nPort, netErrno(), netErrStr());
+         perr("cannot bind UDP socket to port %d (%d %s).\n", nPort, netErrno(), netErrStr());
          break;
       }
 
       listen(nsock, 10);
 
-      // if (listen(nsock, 10))
-      //    {  perr("listen failed (%d %s).\n", netErrno(), netErrStr()); break; }
-
-      printf("[waiting on port %ld for data.]\n", nPort);
+      if (!cs.quiet)
+         printf("[waiting on port %d for data.]\n", nPort);
 
       struct timeval tv;
       fd_set fdvar;
@@ -26649,10 +26837,10 @@ long udpAnyServ(ulong nPort, char *pszForward, long nForward, bool bEcho)
             socklen_t nadrlen = sizeof(inAddr);
             #endif
 
-            long nRead = recvfrom(nsock, (char*)abBuf, sizeof(abBuf)-100, 0, (struct sockaddr *)&inAddr, &nadrlen);
+            int nRead = recvfrom(nsock, (char*)abBuf, sizeof(abBuf)-100, 0, (struct sockaddr *)&inAddr, &nadrlen);
 
             if (!cs.nohead && !cs.quiet)
-               printf("[received %ld bytes:]\n",nRead);
+               printf("[received %d bytes:]\n",nRead);
             execHexdump(0, abBuf, nRead);
 
             if (bEcho)
@@ -26673,15 +26861,20 @@ long udpAnyServ(ulong nPort, char *pszForward, long nForward, bool bEcho)
                saDstAddr.sin_port        = htons((int)nForward);
 
                if (!cs.nohead && !cs.quiet)
-                  printf("[forwarding to %s:%ld]\n", pszForward, nForward);
+                  printf("[forwarding to %s:%d]\n", pszForward, nForward);
                sendto(nsock, (char*)abBuf, nRead, 0, (struct sockaddr*)&saDstAddr, sizeof(saDstAddr));
             }
+
+            if (cs.stopcnt > 0 && ++iPackets >= cs.stopcnt)
+               break;
          }
          else
          {
             doSleep(1);
          }
       }
+
+      closesocket(nsock);
    }
    while (0);
 
@@ -26729,7 +26922,7 @@ int dumpUDPResponses(int nsocket)
    return 0;
 }
 
-long udpClient(char *phost, long ndstport, long nlisten, long nownport, uchar *abMsg, long nMsg, num nTimeout)
+int udpClient(char *phost, int ndstport, int nlisten, int nownport, uchar *abMsg, int nMsg, num nTimeout)
 {
    prepareTCP();
 
@@ -26748,7 +26941,7 @@ long udpClient(char *phost, long ndstport, long nlisten, long nownport, uchar *a
    {
       if (!nlisten) nlisten = 1;
       if (bind(nsocket, (struct sockaddr *)&saOwnAddr, sizeof(saOwnAddr)) != 0)
-         return 9+perr("UDP socket failed to bind to port %ld, %s\n", nownport, netErrStr());
+         return 9+perr("UDP socket failed to bind to port %d, %s\n", nownport, netErrStr());
    }
 
    // send data to target server
@@ -26767,7 +26960,8 @@ long udpClient(char *phost, long ndstport, long nlisten, long nownport, uchar *a
 
    if (!cs.nohead && !cs.quiet)
       chain.print("[sent %d bytes, %s]\n", n, netErrStr());
-   if (cs.quiet < 2)
+
+   if (!cs.quiet)
       execHexdump(0, abMsg, nMsg);
 
    // receive and dump replies
@@ -26779,7 +26973,7 @@ long udpClient(char *phost, long ndstport, long nlisten, long nownport, uchar *a
       struct timeval tv;
       fd_set fdvar;
    
-      for (long ndone=0; nlisten<0 || ndone<nlisten;)
+      for (int ndone=0; nlisten<0 || ndone<nlisten;)
       {
          tv.tv_sec  = 0;
          tv.tv_usec = 0;
@@ -26808,7 +27002,7 @@ long udpClient(char *phost, long ndstport, long nlisten, long nownport, uchar *a
    return 0;
 }
 
-long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
+int tcpAnyServ(uint nPort, char *pszForward, int nForward)
 {
    prepareTCP();
 
@@ -26821,18 +27015,18 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
    SOCKET hFront    = INVALID_SOCKET;
    if (makeServerSocket(nPort, ServerAdr, hServer, "server main port")) return 9;
 
-   printf("waiting on port %lu for connections", nPort);
-   if (pszForward) printf(", to forward to %s:%ld", pszForward, nForward);
+   printf("waiting on port %u for connections", nPort);
+   if (pszForward) printf(", to forward to %s:%d", pszForward, nForward);
    if (cs.timeOutAutoSelect)
       printf(".\n");
    else
-      printf(". timeout is %ld milliseconds.\n", cs.timeOutMSec);
+      printf(". timeout is %d milliseconds.\n", cs.timeOutMSec);
 
    // http autodetect:
    bool bFirstReq = 1;
    bool bHttp     = 0;
 
-   long lRC = 0;
+   int lRC = 0;
    while (!userInterrupt())
    {
       hBack = accept(hServer, (struct sockaddr *)&ClientAdr, &nSoLen);
@@ -26862,10 +27056,10 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
             FrontAdr.sin_port = htons((unsigned short)nForward);
          }
          if ((connect(hFront, (struct sockaddr *)&FrontAdr, sizeof(FrontAdr))) == -1) {
-            perr("cannot connect to %s:%lu, %s\n", pszForward, nForward, netErrStr());
+            perr("cannot connect to %s:%u, %s\n", pszForward, nForward, netErrStr());
             return 9;
          }
-         printf("[forward-connected to %s:%ld]       \n",pszForward,nForward);
+         printf("[forward-connected to %s:%d]       \n",pszForward,nForward);
          setBlocking(hFront, 0);
       } else {
          printf("[got connection]\n");
@@ -26877,7 +27071,7 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
       while (!userInterrupt())
       {
          // any data from back?
-         long nRead = recv(hBack, (char*)abBuf, sizeof(abBuf)-10, 0);
+         int nRead = recv(hBack, (char*)abBuf, sizeof(abBuf)-10, 0);
          // NOTE: non-blocking receives may return -1 inbetween,
          //       but the connection stays open.
          if (nRead > 0) 
@@ -26889,7 +27083,7 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
                // isolate first line of first request
                char *psz = strchr((char*)abBuf, '\n');
                if (psz) {
-                  long nlen = psz-(char*)abBuf;
+                  int nlen = psz-(char*)abBuf;
                   memcpy(szLineBuf, abBuf, nlen);
                   szLineBuf[nlen] = '\0';
                   if (   (!strncmp(szLineBuf, "GET ", 4) || !strncmp(szLineBuf, "POST ", 5))
@@ -26904,39 +27098,39 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
             }
             if (nGlblHexDumpForm == 4 && memchr(abBuf, '\0', nRead)) {
                // pure form: skip binary record
-               printf("[received request from back: binary, %ld bytes]\n",nRead);
+               printf("[received request from back: binary, %d bytes]\n",nRead);
             } else {
-               printf("[received request from back with %ld bytes:]\n",nRead);
+               printf("[received request from back with %d bytes:]\n",nRead);
                execHexdump(0, abBuf, nRead);
             }
             nLastTime = getCurrentTime();
             // forward to front
             if (pszForward) {
-               long nSend = send(hFront, (char*)abBuf, nRead, 0);
+               int nSend = send(hFront, (char*)abBuf, nRead, 0);
                // ignore no. of actually sent bytes
                if (nSend == nRead)
-                  printf("[forwarded %ld bytes]\n", nSend);
+                  printf("[forwarded %d bytes]\n", nSend);
                else
-                  pwarn("[forwarded %ld bytes of %ld - incomplete]\n", nSend, nRead);
+                  pwarn("[forwarded %d bytes of %d - incomplete]\n", nSend, nRead);
             }
          }
 
          // any data from front?
          if (pszForward)
          {
-            long nRead = recv(hFront, (char*)abBuf, sizeof(abBuf)-10, 0);
+            int nRead = recv(hFront, (char*)abBuf, sizeof(abBuf)-10, 0);
             if (nRead > 0) {
                if (nGlblHexDumpForm == 4 && memchr(abBuf, '\0', nRead)) {
                   // pure form: dump start of binary, but not all
-                  long nHexLimit = 1000;
+                  int nHexLimit = 1000;
                   if (nRead > nHexLimit) {
-                     printf("[received reply from front with binary, %ld bytes. dumping first %ld:]\n", nRead, nHexLimit);
-                     long nCurForm = nGlblHexDumpForm;
+                     printf("[received reply from front with binary, %d bytes. dumping first %d:]\n", nRead, nHexLimit);
+                     int nCurForm = nGlblHexDumpForm;
                      nGlblHexDumpForm = 0;
                      execHexdump(0, abBuf, nHexLimit);
                      nGlblHexDumpForm = nCurForm;
                   } else {
-                     printf("[received reply from front with binary, %ld bytes:]\n", nRead);
+                     printf("[received reply from front with binary, %d bytes:]\n", nRead);
                      execHexdump(0, abBuf, nRead);
                   }
                } else {
@@ -26945,27 +27139,27 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
                }
                nLastTime = getCurrentTime();
                // backward reply
-               long nSend = send(hBack, (char*)abBuf, nRead, 0);
+               int nSend = send(hBack, (char*)abBuf, nRead, 0);
                if (nSend == nRead)
-                  printf("[backwarded %ld bytes]\n", nSend);
+                  printf("[backwarded %d bytes]\n", nSend);
                else
-                  pwarn("[backwarded %ld bytes of %ld - incomplete]\n", nSend, nRead);
+                  pwarn("[backwarded %d bytes of %d - incomplete]\n", nSend, nRead);
             }
          }
 
          // no data at all over timeout?
          if (getCurrentTime() > nLastTime + cs.timeOutMSec) {
-            printf("[timeout, no data over %ld msec]\n", cs.timeOutMSec);
+            printf("[timeout, no data over %d msec]\n", cs.timeOutMSec);
             break;
          }
 
          {
             doSleep(500);
-            char *pszCircle = ". ";
-            static long nCircle = 0;
+            cchar *pszCircle = ". ";
+            static int nCircle = 0;
             num nElapse = getCurrentTime() - nLastTime;
             if (!cs.quiet) {
-               printf("[%c waiting for input, %ld/%ld sec]\r",pszCircle[(nCircle++)%2],(long)(nElapse/1000),cs.timeOutMSec/1000);
+               printf("[%c waiting for input, %d/%d sec]\r",pszCircle[(nCircle++)%2],(int)(nElapse/1000),cs.timeOutMSec/1000);
                fflush(stdout);
             }
          }
@@ -26990,7 +27184,7 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
    return 0;
 }
 
-char *pUploadForm =
+cchar *pUploadForm =
    "<p>"
    "<form method=\"POST\" enctype=\"multipart/form-data\" action=\"zz-sfk-upload.cgi\">\n"
    "<table><tr><td>\n"
@@ -27000,12 +27194,12 @@ char *pUploadForm =
    "</td></tr></table>\n"
    "</form>\n";
 
-long recvHead(SOCKET hBack, char *pbuf, long nrem)
+int recvHead(SOCKET hBack, char *pbuf, int nrem)
 {
    bool bbail = 0;
-   long nhead = 0;
+   int nhead = 0;
    while (1) {
-      long nread = recv(hBack, pbuf+nhead, 1, 0);
+      int nread = recv(hBack, pbuf+nhead, 1, 0);
       if (nread <= 0) { bbail=1; break; }
       nhead++;
       // scan for \r\n\r\n
@@ -27020,7 +27214,7 @@ long recvHead(SOCKET hBack, char *pbuf, long nrem)
 }
 
 // used mainly by file upload of http server
-long senderr(SOCKET hSock, char *pszFormat, ...)
+int senderr(SOCKET hSock, cchar *pszFormat, ...)
 {__
    va_list argList;
    va_start(argList, pszFormat);
@@ -27043,7 +27237,7 @@ long senderr(SOCKET hSock, char *pszFormat, ...)
    // instead of the error message.
 
    setBlocking(hSock, 0);
-   long nread = 0;
+   int nread = 0;
    while ((nread = recv(hSock, (char*)abBuf, sizeof(abBuf)-10, 0)) > 0)
       if (getCurrentTime() - nstart > 3000)
          break;
@@ -27055,7 +27249,7 @@ long senderr(SOCKET hSock, char *pszFormat, ...)
    return 0;
 }
 
-long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
+int httpServ(uint nPort, uint nPort2, bool bDeep, bool bNoList, bool bRW)
 {__
    prepareTCP();
 
@@ -27075,18 +27269,18 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
 
    if (strlen(pownip)) {
       if (namount == 1) {
-         printf("Waiting on port %lu. Try http://%s/ in your browser.\n", nPort, pownip, nPort);
+         printf("Waiting on port %u. Try http://%s/ in your browser.\n", nPort, pownip, nPort);
       } else {
-         printf("Waiting on port %lu. Try http://%s in your browser.\n", nPort, pownip, nPort);
+         printf("Waiting on port %u. Try http://%s in your browser.\n", nPort, pownip, nPort);
       }
    } else {
-      printf("Waiting on port %lu.\n", nPort);
+      printf("Waiting on port %u.\n", nPort);
    }
  
    char szClientIP[50]; mclear(szClientIP);
    char szStatus[200];  mclear(szStatus);
 
-   long lRC = 0;
+   int lRC = 0;
    while (!userInterrupt())
    {
       hBack = accept(hServer, (struct sockaddr *)&ClientAdr, &nSoLen);
@@ -27114,13 +27308,13 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
       do
       {
          // read header line by line
-         long nhead = recvHead(hBack, (char*)abBuf, sizeof(abBuf)-10);
+         int nhead = recvHead(hBack, (char*)abBuf, sizeof(abBuf)-10);
          if (nhead < 0) break;
 
          // GET /favicon.ico HTTP/1.1
          char *preq = (char*)abBuf;
 
-         mtklog("http: req: \"%.200s\"", preq);
+         mtklog(("http: req: \"%.200s\"", preq));
 
          if (strBegins(preq, "POST /zz-sfk-upload.cgi ")) 
          {
@@ -27151,7 +27345,7 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
                if (bfirst)
                   { bfirst=0; printf("> %s\n",psz1); }
 
-               mtklog("http: post.head: %s", psz1);
+               mtklog(("http: post.head: %s", psz1));
 
                if (   striBegins(psz1, "content-type")
                    && mystrstri(psz1, "multipart/form-data")
@@ -27163,9 +27357,9 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
                   psz3 += strlen("boundary=");
                   char *psz4 = psz3;
                   skipToWhite(&psz4);
-                  long nlen = psz4-psz3;
+                  int nlen = psz4-psz3;
                   if (nlen > MAX_LINE_LEN-100)
-                     { senderr(hBack, "content-boundary too long"); break; }
+                     { senderr(hBack, "content-boundary too long"); break; } 
                   snprintf(szLineBuf3, MAX_LINE_LEN, "\r\n--%.*s--\r\n", (int)nlen, psz3);
                }
                if (striBegins(psz1, "content-length")) {
@@ -27185,15 +27379,15 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
             if (!szLineBuf3[0]) { senderr(hBack, "missing boundary header"); break; }
             if (nContLen < 0)   { senderr(hBack, "missing content length"); break; }
 
-            mtklog("http: post.bound \"%s\"", szLineBuf3);
-            mtklog("http: post.clen %ld", (long)nContLen);
+            mtklog(("http: post.bound \"%s\"", szLineBuf3));
+            mtklog(("http: post.clen %d", (int)nContLen));
 
             // get first part header
-            long nhead2 = recvHead(hBack, (char*)abBuf, sizeof(abBuf)-10);
+            int nhead2 = recvHead(hBack, (char*)abBuf, sizeof(abBuf)-10);
             if (nhead2 < 0) break;
             abBuf[nhead2] = '\0';
 
-            mtklog("http: post.firsthead: \"%.300s\"", abBuf);
+            mtklog(("http: post.firsthead: \"%.300s\"", abBuf));
 
             char *pname = strstr(preq, "filename=\"");
             if (!pname) { senderr(hBack, "missing filename"); break; }
@@ -27202,14 +27396,12 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
             if (!psz3) { senderr(hBack, "missing quote"); break; }
             *psz3 = '\0';
 
-            mtklog("http: post.filename \"%s\"", pname);
+            mtklog(("http: post.filename \"%s\"", pname));
 
             // c:\the\dir\foo.txt -> foo.txt
-            char *pnameraw = pname;
             if (strrchr(pname, '/'))  pname = strrchr(pname, '/') + 1;
             if (strrchr(pname, '\\')) pname = strrchr(pname, '\\') + 1;
             strcopy(szFile, localPath(pname));
-            // printf("> %s -> %s\n",pnameraw,pname);
 
             // receive file data
             if (isPathTraversal(szFile, 0))
@@ -27220,7 +27412,7 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
                { senderr(hBack, "cannot write: %s",szFile); break; }
 
             char *pbnd = szLineBuf3;
-            long  nbnd = strlen(pbnd);
+            int  nbnd = strlen(pbnd);
 
             // mtkdump("http: post.bnd: ",pbnd,nbnd);
 
@@ -27228,34 +27420,34 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
 
             // requires overlapping read with boundary search
             char *pbuf    = (char*)abBuf;
-            long  nused   = 0;
-            long  nbufmax = sizeof(abBuf)-10;
+            int  nused   = 0;
+            int  nbufmax = sizeof(abBuf)-10;
 
             SFKMD5 md5;
 
             while (nTotal < nContLen)
             {
-               long nbufrem =  nbufmax  - nused;
+               int nbufrem =  nbufmax  - nused;
                num  ntotrem = (nContLen - nTotal) - nused;
 
                if (ntotrem < 0) {
-                  senderr(hBack, "int. error during POST read, %ld %ld %ld",(long)nContLen,(long)nTotal,(long)nused);
+                  senderr(hBack, "int. error during POST read, %d %d %d",(int)nContLen,(int)nTotal,(int)nused);
                   break;
                }
 
-               if (nbufrem > ntotrem) nbufrem = (long)ntotrem;
+               if (nbufrem > ntotrem) nbufrem = (int)ntotrem;
 
                // if (nbufrem < 1000) { mtkdump("http: buf: ", pbuf, nused); }
 
-               mtklog("http: post.wait: rem=%ld used=%ld total=%ld clen=%ld", nbufrem, nused, (long)nTotal, (long)nContLen);
+               mtklog(("http: post.wait: rem=%d used=%d total=%d clen=%d", nbufrem, nused, (int)nTotal, (int)nContLen));
 
-               long nread = recv(hBack, pbuf+nused, nbufrem, 0);
+               int nread = recv(hBack, pbuf+nused, nbufrem, 0);
                if (nread <= 0) break;
 
                nused += nread;
                pbuf[nused] = '\0'; // safety
 
-               mtklog("http:  post.read: len=%ld used=%ld total=%ld", nread, nused, (long)nTotal);
+               mtklog(("http:  post.read: len=%d used=%d total=%d", nread, nused, (int)nTotal));
 
                // another boundary?
                char *phit = 0; // (char*)memFind((uchar*)pbnd, nbnd, (uchar*)pbuf, nused);
@@ -27265,7 +27457,7 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
                       phit = pbuf+nused-nbnd;
 
                if (phit) {
-                  long nlen = phit - pbuf;
+                  int nlen = phit - pbuf;
                   myfwrite((uchar*)pbuf, nlen, fout);
                   md5.update((uchar*)pbuf, nlen);
                   nTotal += nlen;
@@ -27274,24 +27466,24 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
                   if (!pend) pend = ppost;
                   // printf("sub: \"%s\"\n", phit);
                   ppost = pend;
-                  long nlen2 = ppost - pbuf;
-                  long nrem2 = nused - nlen2;
+                  int nlen2 = ppost - pbuf;
+                  int nrem2 = nused - nlen2;
                   memmove(pbuf, ppost, nrem2);
                   nused = nrem2;
-                  mtklog("http:  post.hitblock: take %ld, move %ld",nlen,nused);
+                  mtklog(("http:  post.hitblock: take %d, move %d",nlen,nused));
                   break;
                }
 
                // normal processing: write halve of buffer
-               long nlen = nused / 2;
+               int nlen = nused / 2;
 
-               mtklog("http:  post.nblk: take %ld",nlen);
+               mtklog(("http:  post.nblk: take %d",nlen));
 
                myfwrite((uchar*)pbuf, nlen, fout);
                md5.update((uchar*)pbuf, nlen);
                nTotal += nlen;
                char *ppost = pbuf + nlen;
-               long nrem2 = nused - nlen;
+               int nrem2 = nused - nlen;
                memmove(pbuf, ppost, nrem2);
                nused = nrem2;
             }
@@ -27300,13 +27492,13 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
 
             char szmd5[100];
             uchar *pmd5 = md5.digest();
-            for (long i=0; i<16; i++)
+            for (int i=0; i<16; i++)
                sprintf(szmd5+i*2, "%02x", pmd5[i]);
 
             snprintf(szStatus, sizeof(szStatus)-10, "saved : %s (%s bytes) md5=%s",szFile,numtoa(nTotal),szmd5);
             printf("> %s\n", szStatus);
 
-            mtklog("http: post: %s", szStatus);
+            mtklog(("http: post: %s", szStatus));
 
             strcpy((char*)abBuf, "GET / HTTP/1.1\r\n\r\n");
 
@@ -27333,7 +27525,7 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
          if (*psz1=='/') psz1++;
          char *psz2 = psz1;
          skipToWhite(&psz2);
-         long nlen = psz2 - psz1;
+         int nlen = psz2 - psz1;
          if (nlen > SFK_MAX_PATH) nlen = SFK_MAX_PATH;
          memcpy(szFile, psz1, nlen);
          szFile[nlen] = '\0';
@@ -27369,7 +27561,7 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
                   sendLine(hBack, szLineBuf2);
                }
    
-               long lFiles=0,lDirs=0;
+               int lFiles=0,lDirs=0;
                num  nBytes=0;
                bGlblFTPListFlatTS = 1;
                bGlblFTPListAsHTML = 1;
@@ -27405,7 +27597,7 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
 
          sendLine(hBack, "HTTP/1.1 200 OK");
 
-         char *pctype = "application/octet-stream";
+         cchar *pctype = "application/octet-stream";
 
          if (bbin) {
             if (strstr(szFile, ".jp"))  pctype = "image/jpg";
@@ -27432,15 +27624,15 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
                break; 
             }
    
-            long nread = 0;
+            int nread = 0;
             num  ndone = 0;
             while ((nread = pcoi->read(abBuf, sizeof(abBuf)-1000)) > 0)
             {
-               if (cs.verbose>1) printf("< [%ld bytes data]\n", (long)nread);
-               long nsent = send(hBack, (char*)abBuf, nread, 0);
+               if (cs.verbose>1) printf("< [%d bytes data]\n", (int)nread);
+               int nsent = send(hBack, (char*)abBuf, nread, 0);
                ndone += nsent;
                if (nsent != nread)
-                  { perr("failed to send data (%ld/%ld) %s\n",nsent,nread,netErrStr()); break; }
+                  { perr("failed to send data (%d/%d) %s\n",nsent,nread,netErrStr()); break; }
             }
    
             pcoi->close();
@@ -27473,7 +27665,7 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
    return 0;
 }
 
-long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, char *pszRunPW, bool bDeep, ulong nPort2)
+int ftpServ(uint nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, char *pszRunPW, bool bDeep, uint nPort2)
 {
    prepareTCP();
 
@@ -27491,12 +27683,11 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
    SOCKET hClient   = INVALID_SOCKET;
    SOCKET hPasServ  = INVALID_SOCKET;
    SOCKET hData     = INVALID_SOCKET;
-   ulong  nPasPort  = 0;
+   uint  nPasPort  = 0;
 
-   char *ppreip = "";
-   char *pownip = "";
-   char *pposip = ". ";
-   struct in_addr addr;
+   cchar *ppreip = "";
+   cchar *pownip = "";
+   cchar *pposip = ". ";
 
    int   namount = 0;
    pownip = ownIPList(namount, 0);
@@ -27510,18 +27701,18 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
          pposip = ".\n";
    }
 
-   long nDefSFTVer = 102;
+   int nDefSFTVer = 102;
 
    if (makeServerSocket(nPort, ServerAdr, hServer, "server main port", nPort2)) return 9;
 
-   printf("SFK Instant FTP %ld. For help, type \"sfk ftpserv -help\".\n", nDefSFTVer);
+   printf("SFK Instant FTP %d. For help, type \"sfk ftpserv -help\".\n", nDefSFTVer);
    if (bRW)
-      printf("waiting on port %lu%s%s%swrite allowed, %lu MB limit per file. ", nPort, ppreip, pownip, pposip, nGlblTCPMaxSizeMB);
+      printf("waiting on port %u%s%s%swrite allowed, %u MB limit per file. ", nPort, ppreip, pownip, pposip, nGlblTCPMaxSizeMB);
    else
-      printf("waiting on port %lu%s%s%sonly read allowed. ", nPort, ppreip, pownip, pposip);
-   printf("%ld sec timeout.\n",cs.timeOutMSec / 1000);
+      printf("waiting on port %u%s%s%sonly read allowed. ", nPort, ppreip, pownip, pposip);
+   printf("%d sec timeout.\n",cs.timeOutMSec / 1000);
 
-   long lRC = 0;
+   int lRC = 0;
    while (!userInterrupt())
    {
       hClient = accept(hServer, (struct sockaddr *)&ClientAdr, &nSoLen);
@@ -27535,7 +27726,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
       setBlocking(hClient, 1);
 
       // default for SFT version, may be downgraded:
-      long nSFTVer = nDefSFTVer;
+      int nSFTVer = nDefSFTVer;
 
       // list IP of client machine
       struct in_addr addr;
@@ -27544,7 +27735,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
       printf("> connect from %s\n", premip);
 
       // login, pseudo-authentication
-      sprintf(szLineBuf2, "220 sfk instant ftp, %ld sec timeout. sft %ld.", cs.timeOutMSec / 1000, nSFTVer);
+      sprintf(szLineBuf2, "220 sfk instant ftp, %d sec timeout. sft %d.", cs.timeOutMSec / 1000, nSFTVer);
       if (sendLine(hClient, szLineBuf2)) { closesocket(hClient); continue; }
       if (readLine(hClient)) { closesocket(hClient); continue; } // > USER username
 
@@ -27564,9 +27755,9 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
       mclear(szClientPW);
       removeCRLF(szLineBuf);
       if (!strncmp(szLineBuf, "PASS sft", 8)) {
-         long nClientSFT = atol(szLineBuf+8);
+         int nClientSFT = atol(szLineBuf+8);
          if (cs.quiet < 2)
-            printf("> client speaks sft: %ld\n", nClientSFT);
+            printf("> client speaks sft: %d\n", nClientSFT);
          char *pszPW = strchr(szLineBuf+8, '@');
          if (pszPW) strcopy(szClientPW, pszPW+1);
          // auto-adapt to client SFT version
@@ -27598,10 +27789,10 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
          printf("> client connected.\n");
 
       // read client commands
-      long nbail = 0;
+      int nbail = 0;
       while (nbail < 3)
       {
-         long lTimeout = cs.timeOutMSec;
+         int lTimeout = cs.timeOutMSec;
          num t1 = getCurrentTime();
          while (getCurrentTime() < t1 + lTimeout)
          {
@@ -27614,7 +27805,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
          if (userInterrupt())
             break;
          if (getCurrentTime() >= t1 + lTimeout) {
-            sprintf(szLineBuf2, "500 inactivity timeout (%ld sec)", lTimeout/1000);
+            sprintf(szLineBuf2, "500 inactivity timeout (%d sec)", lTimeout/1000);
             sendLine(hClient, szLineBuf2);
             if (cs.quiet == 1)
                printf("> client disconnected (timeout).\n");
@@ -27661,7 +27852,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                 pszFile++;
             if (!isPathTraversal(pszFile, bDeep)) {
                num nFileTime = getFileTime(localPath(pszFile));
-               // printf("time: %ld %s localPath: %s\n",(long)nFileTime,timeAsString(nFileTime, 1),localPath(pszFile));
+               // printf("time: %d %s localPath: %s\n",(int)nFileTime,timeAsString(nFileTime, 1),localPath(pszFile));
                if (nFileTime <= 0)
                   sprintf(szLineBuf2, "550 no such file");
                else
@@ -27698,14 +27889,21 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                if (makeServerSocket(nPasPort, PasServAdr, hPasServ, "passive server port"))
                   break;
             }
-            sprintf(szLineBuf2, "227 Entering Passive Mode (127,0,0,1,%u,%u)",(nPasPort>>8),(nPasPort&0xFF));
+            int   ihowmany = 1; // force first ip
+            char *pszOwnIP = ownIPList(ihowmany);
+            char *psz = 0;
+            while (psz = strchr(pszOwnIP, '.'))
+               *psz = ',';
+            if (cs.quiet < 1)
+               printf("< reply pasv with ip %s\n", pszOwnIP);
+            sprintf(szLineBuf2, "227 Entering Passive Mode (%s,%u,%u)",pszOwnIP,(nPasPort>>8),(nPasPort&0xFF));
             if (sendLine(hClient, szLineBuf2)) break;
             if (hData != INVALID_SOCKET)
                closesocket(hData);
 
             if (cs.quiet < 2)
                printf("> wait for accept\n");
-            long k=0;
+            int k=0;
             for (k=0; k<6; k++)
             {
                nSoLen = sizeof(sockaddr_in);
@@ -27741,7 +27939,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
             }
             char szIP[50];
             sprintf(szIP, "%d.%d.%d.%d",n[0],n[1],n[2],n[3]);
-            ulong nPort = (((ulong)n[4])<<8)|((ulong)n[5]);
+            uint nPort = (((uint)n[4])<<8)|((uint)n[5]);
             if (connectSocket(szIP, nPort, DataAdr, hData, "active data")) break;
             if (sendLine(hClient, "200 Okay")) break;
          }
@@ -27756,7 +27954,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
             // path is ignored. list only current dir.
             strcpy(szLineBuf2, szLineBuf);
             if (sendLine(hClient, "150 Listing Directory")) break;
-            long lFiles=0, lDirs=0, lRC=0;
+            int lFiles=0, lDirs=0, lRC=0;
             num nBytes=0;
             // if (strlen(szLineBuf2) > 8)
             //    sendLine(hData, "Path ignored - listing only current dir.");
@@ -27766,7 +27964,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
             lRC = walkAllTrees(eFunc_FTPList, lFiles, lDirs, nBytes);
             closesocket(hData); hData = INVALID_SOCKET;
             if (cs.quiet < 2)
-               printf("dir done, RC %ld, %ld files.\n", lRC, lFiles);
+               printf("dir done, RC %d, %d files.\n", lRC, lFiles);
             if (sendLine(hClient, "226 Closing data connection")) break; // 226, 250
          }
          else
@@ -27780,13 +27978,13 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
             // path is ignored. list only current dir.
             strcpy(szLineBuf2, szLineBuf);
             if (sendLine(hClient, "150 Listing Directory")) break;
-            long lFiles=0, lDirs=0, lRC=0;
+            int lFiles=0, lDirs=0, lRC=0;
             num nBytes=0;
             hGlblTCPOutSocket = hData;
             lRC = walkAllTrees(eFunc_FTPNList, lFiles, lDirs, nBytes);
             closesocket(hData); hData = INVALID_SOCKET;
             if (cs.quiet < 2)
-               printf("dir done, RC %ld, %ld files.\n", lRC, lFiles);
+               printf("dir done, RC %d, %d files.\n", lRC, lFiles);
             if (sendLine(hClient, "226 Closing data connection")) break; // 226, 250
          }
          else
@@ -27808,9 +28006,9 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
             } else {
                if (cs.quiet < 2)
                   printf("send file: \"%s\"\n", pszFile);
-               long lRC = sendFileRaw(hData, localPath(pszFile));
+               int lRC = sendFileRaw(hData, localPath(pszFile));
                if (cs.quiet < 2)
-                  printf("send file done, RC %ld\n", lRC);
+                  printf("send file done, RC %d\n", lRC);
             }
             closesocket(hData); hData = INVALID_SOCKET;
             if (sendLine(hClient, "226 Closing data connection")) break; // 226, 250
@@ -27835,9 +28033,9 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                   if (sendLine(hClient, "150 Receiving File")) break;
                   if (cs.quiet < 2)
                      printf("recv file: \"%s\"\n", pszFile);
-                  long lRC = receiveFileRaw(hData, localPath(pszFile), -1);
+                  int lRC = receiveFileRaw(hData, localPath(pszFile), -1);
                   if (cs.quiet < 2)
-                     printf("recv file done, RC %ld\n", lRC);
+                     printf("recv file done, RC %d\n", lRC);
                }
             }
             closesocket(hData); hData = INVALID_SOCKET;
@@ -27882,9 +28080,9 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                // doesn't verify it. should there be errors, then they're shown at client only.
                Coi *pcoi = new Coi(pszLocFile, 0);
                CoiAutoDelete odel(pcoi, 0); // no decref
-               long lRC = putFileBySFT(hClient, pcoi, nSFTVer, 0, 1, bBlockMode); // not quiet, ignore ack
+               int lRC = putFileBySFT(hClient, pcoi, nSFTVer, 0, 1, bBlockMode); // not quiet, ignore ack
                if (cs.quiet < 2 && lRC > 0)
-                  printf("send sft file done, RC %ld\n", lRC);
+                  printf("send sft file done, RC %d\n", lRC);
             }
          }
          else
@@ -27909,9 +28107,9 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                   sendLine(hClient, "200 OK, send data");
                   if (cs.quiet < 2)
                      printf("> recv sft file: \"%s\"\n", pszFile);
-                  long lRC = getFileBySFT(hClient, pszLocFile, nSFTVer);
+                  int lRC = getFileBySFT(hClient, pszLocFile, nSFTVer);
                   if (cs.quiet < 2 && lRC > 0)
-                     printf("recv sft file done, RC %ld\n", lRC);
+                     printf("recv sft file done, RC %d\n", lRC);
                   if (lRC) break; // block potential content remainder
                }
             }
@@ -27924,7 +28122,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
             // path is ignored. list only current dir.
             strcpy(szLineBuf2, szLineBuf);
             if (sendLine(hClient, "150 Listing Directory")) break;
-            long lFiles=0, lDirs=0, lRC=0;
+            int lFiles=0, lDirs=0, lRC=0;
             num nBytes=0;
             if (strlen(szLineBuf2) > 7)
             {
@@ -27932,10 +28130,10 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                #ifdef DEEP_FTP
                char *pszTree = szLineBuf2 + 5;
                // strip trailing slash
-               long nlen = strlen(pszTree);
+               int nlen = strlen(pszTree);
                if (nlen > 0 && pszTree[nlen-1]=='/' || pszTree[nlen-1]=='\\')
                   pszTree[nlen-1] = '\0';
-               long nLocalDirs  = 0, nLocalFiles = 0;
+               int nLocalDirs  = 0, nLocalFiles = 0;
                num  nLocalBytes = 0;
                FileList oDirFiles;
                num nLocalMaxTime = 0, nTreeMaxTime = 0;
@@ -27943,7 +28141,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                Coi *pcoi = 0;
                #ifdef VFILEBASE
                if (pcoi = glblVCache.get(pszTree)) {
-                  mtklog("wat: ... reusing root from vcache");
+                  mtklog(("wat: ... reusing root from vcache"));
                }
                else
                #endif // VFILEBASE
@@ -27972,7 +28170,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                lRC = walkAllTrees(eFunc_FTPList, lFiles, lDirs, nBytes);
             }
             if (cs.quiet < 2)
-               printf("dir done, RC %ld, %ld files.\n", lRC, lFiles);
+               printf("dir done, RC %d, %d files.\n", lRC, lFiles);
             if (sendLine(hClient, "226 Listing Done")) break; // 226, 250
          }
          else
@@ -27994,7 +28192,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                // if (sendLine(hClient, "150 Running Command")) break;
                char *pszCmd = szLineBuf2+5;
                lRC = system(pszCmd);
-               sprintf(szLineBuf2, "200 Run Done, RC %ld", lRC);
+               sprintf(szLineBuf2, "200 Run Done, RC %d", lRC);
                if (sendLine(hClient, szLineBuf2)) break; // 226, 250
             }
          }
@@ -28002,7 +28200,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
          if (!strncmp(szLineBuf, "SKIP ", 5)) { nbail=0;
             // dummy record follows, to enforce line flush.
             // should be far smaller than abBuf.
-            ulong nLen = (ulong)atol(szLineBuf+5);
+            uint nLen = (uint)atol(szLineBuf+5);
             if (nLen > sizeof(abBuf)-10) nLen = sizeof(abBuf)-10;
             if (nLen) receiveBlock(hClient, abBuf, nLen, "SKIP");
             // no ack sending
@@ -28038,11 +28236,11 @@ class TestDB
 public:
    TestDB   (char *pszFile);
   ~TestDB   ( );
-   long     load     (bool bSilent);
-   long     write    ( );
+   int     load     (bool bSilent);
+   int     write    ( );
    void     shutdown ( );
 
-   long     update   (char *pszInKey, char *pszInVal);
+   int     update   (char *pszInKey, char *pszInVal);
    char    *getValue (char *pszInKey);
 
 private:
@@ -28063,20 +28261,20 @@ void TestDB::shutdown() {
 }
 
 // uses szLineBuf
-long TestDB::load(bool bSilent) {
+int TestDB::load(bool bSilent) {
    FILE *fin = fopen(pszClFile, "r");
    if (!fin) {
       if (!bSilent)
          perr("unable to load %s\n", pszClFile); 
       return 9; 
    }
-   long nLine = 0;
+   int nLine = 0;
    while (fgets(szLineBuf, sizeof(szLineBuf)-10, fin)) {
       nLine++;
       removeCRLF(szLineBuf);
       char *psz = strchr(szLineBuf, ':');
       if (!psz) {
-         perr("wrong record format in %s line %ld\n", pszClFile, nLine); 
+         perr("wrong record format in %s line %d\n", pszClFile, nLine); 
          fclose(fin);
          return 9; 
       }
@@ -28090,11 +28288,11 @@ long TestDB::load(bool bSilent) {
    return 0;
 }
 
-long TestDB::write() {
+int TestDB::write() {
    FILE *fout = fopen(pszClFile, "w");
    if (!fout) return 9+perr("unable to write %s\n", pszClFile);
-   long nRec = clKeys.numberOfEntries();
-   for (long i=0; i<nRec; i++) {
+   int nRec = clKeys.numberOfEntries();
+   for (int i=0; i<nRec; i++) {
       char *pszKey = clKeys.getEntry(i, __LINE__);
       char *pszVal = clVals.getEntry(i, __LINE__);
       if (!pszKey || !pszVal) { fclose(fout); return 9; }
@@ -28104,9 +28302,9 @@ long TestDB::write() {
    return 0;
 }
 
-long TestDB::update(char *pszInKey, char *pszInVal) {
-   long nRec = clKeys.numberOfEntries();
-   for (long i=0; i<nRec; i++) {
+int TestDB::update(char *pszInKey, char *pszInVal) {
+   int nRec = clKeys.numberOfEntries();
+   for (int i=0; i<nRec; i++) {
       char *pszKey = clKeys.getEntry(i, __LINE__);
       char *pszVal = clVals.getEntry(i, __LINE__);
       if (!pszKey || !pszVal) return 9;
@@ -28122,8 +28320,8 @@ long TestDB::update(char *pszInKey, char *pszInVal) {
 }
 
 char *TestDB::getValue(char *pszInKey) {
-   long nRec = clKeys.numberOfEntries();
-   for (long i=0; i<nRec; i++) {
+   int nRec = clKeys.numberOfEntries();
+   for (int i=0; i<nRec; i++) {
       char *pszKey = clKeys.getEntry(i, __LINE__);
       char *pszVal = clVals.getEntry(i, __LINE__);
       if (!pszKey || !pszVal) return 0;
@@ -28155,18 +28353,18 @@ static bool skipto(char **ppsz, char c) {
    return (*psz != 0);
 }
 
-long copyFormStr(char *pszDst, long nMaxDst, char *pszSrc, long nSrcLen, ulong nflags)
+int copyFormStr(char *pszDst, int nMaxDst, char *pszSrc, int nSrcLen, uint nflags)
 {
    // flags: bit 0: convert also \, to ,
 
-   // printf("copyFormStr \"%.*s\" %ld\n",(int)nSrcLen,pszSrc,nflags);
+   // printf("copyFormStr \"%.*s\" %d\n",(int)nSrcLen,pszSrc,nflags);
 
    char *pszin = pszSrc;
-   long iout = 0;
+   int iout = 0;
    while (*pszin && (nSrcLen > 0))
    {
       if (iout >= nMaxDst-10)
-         return 9+perr("format string too long: \"%s\"\n", pszSrc);
+         return 9+perr("format string too long: \"%s\"\n", pszSrc); 
 
       if (!cs.spat)
          { } // skip all following interpretations
@@ -28174,7 +28372,7 @@ long copyFormStr(char *pszDst, long nMaxDst, char *pszSrc, long nSrcLen, ulong n
       if (nSrcLen>=4 && !strncmp(pszin, "\\x", 2)) {
          // \xnn - any character with hex code nn
          pszin+=2; nSrcLen-=2; // skip \x
-         long nhex = getTwoDigitHex(pszin);
+         int nhex = getTwoDigitHex(pszin);
          if (nhex <= 0) return 9+perr("illegal value for \\xnn in format string. use 01 to FF, e.g. \\x09\n");
          pszin+=2; nSrcLen-=2; // skip nn
          pszDst[iout++] = (char)nhex;
@@ -28218,7 +28416,7 @@ public:
    Symbol   (char *pszName, Phraser *parent);
    void     collect(char *pszContent);
    char    *name() { return szClName; }
-   char    *solve(char *pout, long nmaxout, long nlevel);
+   char    *solve(char *pout, int nmaxout, int nlevel);
 private:
    char     szClName[100];
    char     szClOpt[100];
@@ -28232,18 +28430,18 @@ class Phraser
 {
 public:
    Phraser  ();
-   long     load(char *pszFile);
+   int     load(char *pszFile);
    char    *solve(char *psz);
-   long     add(Symbol *p);
+   int     add(Symbol *p);
    Symbol  *get(char *pszName);
    void     reset();
 private:
-   void     fetch(char *pbuf, char *psrc, long nlen);
+   void     fetch(char *pbuf, char *psrc, int nlen);
    char     *pszClFilename;
    char     szClBuf1[200];
    char     szClOut[10000];
    Symbol   *psym[1000];
-   long     nsym;
+   int     nsym;
 };
 
 Symbol::Symbol(char *pszName, Phraser *parent)
@@ -28270,7 +28468,7 @@ void Symbol::collect(char *pszContent)
    strcat(szClCont, pszContent);
    // replace escaped ,, by internal replacement code
    char *psz = szClCont;
-   while (psz = strstr(psz, ",,")) {
+   while ((psz = strstr(psz, ",,"))) {
       *psz++ = 0x01;
       memmove(psz, psz+1, strlen(psz)); // incl. zero term.
    }
@@ -28278,7 +28476,7 @@ void Symbol::collect(char *pszContent)
       printf("   %s now holds \"%s\"\n", szClName, szClCont);
 }
 
-char *Symbol::solve(char *pout, long nmaxout, long nlevel)
+char *Symbol::solve(char *pout, int nmaxout, int nlevel)
 {
    if (cs.debug)
       printf(" %s solves \"%s\"\n", szClName, szClCont);
@@ -28301,7 +28499,7 @@ char *Symbol::solve(char *pout, long nmaxout, long nlevel)
       // then random-select phrase
 
       // count phrases
-      long nwords = 0;
+      int nwords = 0;
       char *psz1 = pcont;
       for (clast=0; *psz1; psz1++) {
          if (*psz1 == ',' && clast != '\\')
@@ -28311,8 +28509,8 @@ char *Symbol::solve(char *pout, long nmaxout, long nlevel)
       nwords++;
 
       // select a phrase
-      long itarg = rand() % nwords;
-      long iword = 0;
+      int itarg = rand() % nwords;
+      int iword = 0;
       psz1 = pcont;
       while (psz1 && *psz1) 
       {
@@ -28340,7 +28538,7 @@ char *Symbol::solve(char *pout, long nmaxout, long nlevel)
       }
    }
 
-   long iout = strlen(pout);
+   int iout = strlen(pout);
 
    if (!strchr(pcont, '$')) {
       // solve terminal
@@ -28387,18 +28585,18 @@ char *Symbol::solve(char *pout, long nmaxout, long nlevel)
    }
 
    // post-process output:
-   // printf("%02ld appended \"%s\" at offs %ld\n",nlevel,pout+iout,iout);
+   // printf("%02d appended \"%s\" at offs %d\n",nlevel,pout+iout,iout);
 
    // apply options, if any
-   long nlen = strlen(pout);
+   int nlen = strlen(pout);
    if (strstr(szClOpt, "upper") || strstr(szClOpt, "anycase"))
    {
       // random-vary word casing
-      long ncase = 0;
+      int ncase = 0;
       if (strstr(szClOpt, "anycase")) ncase = rand() % 4;
       if (strstr(szClOpt, "upper2"))  ncase = rand() % 2;
-      // printf("%02ld MIXCASE %ld %c of %.30s\n",nlevel,ncase,pout[iout],pout+iout);
-      long i=0;
+      // printf("%02d MIXCASE %d %c of %.30s\n",nlevel,ncase,pout[iout],pout+iout);
+      int i=0;
       switch (ncase) {
          case 0: pout[iout] = toupper(pout[iout]); break;
          case 1:
@@ -28448,14 +28646,14 @@ Phraser::Phraser()
 
 void Phraser::reset()
 {
-   for (long i=0; i<nsym; i++)
+   for (int i=0; i<nsym; i++)
       delete psym[i];
    nsym = 0;
 }
 
-long Phraser::add(Symbol *p)
+int Phraser::add(Symbol *p)
 {
-   if (nsym > (sizeof(psym)/sizeof(Symbol*))-5)
+   if (nsym > (int)(sizeof(psym)/sizeof(Symbol*))-5)
       return 9+perr("too many symbols\n");
    psym[nsym++] = p;
    return 0;
@@ -28463,7 +28661,7 @@ long Phraser::add(Symbol *p)
 
 Symbol *Phraser::get(char *pszName)
 {
-   for (long i=0; i<nsym; i++) {
+   for (int i=0; i<nsym; i++) {
       if (!psym[i])
          return 0;
       if (!strcmp(psym[i]->name(), pszName))
@@ -28472,21 +28670,21 @@ Symbol *Phraser::get(char *pszName)
    return 0;
 }
 
-void Phraser::fetch(char *pbuf, char *psrc, long nlen) {
-   if (nlen > sizeof(szClBuf1)-4)
+void Phraser::fetch(char *pbuf, char *psrc, int nlen) {
+   if (nlen > (int)sizeof(szClBuf1)-4)
       {  perr("buffer overflow.1\n"); exit(9); }
    strncpy(pbuf, psrc, nlen);
    pbuf[nlen] = '\0';
 }
 
-long Phraser::load(char *pszFile)
+int Phraser::load(char *pszFile)
 {
    FILE *fin = fopen(pszFile, "r");
    if (!fin) return 9+perr("cannot read: %s\n", pszFile);
 
    char *pszSymb = 0;
    Symbol *ps = 0;
-   long nstate = 1, nline = 0;
+   int nstate = 1, nline = 0;
    while (fgets(szLineBuf, sizeof(szLineBuf)-10, fin))
    {
       // symbol: word1 word2 $symbol word4
@@ -28502,13 +28700,13 @@ long Phraser::load(char *pszFile)
       while (psz1 && *psz1)
       {
          if (cs.debug)
-            printf("state %ld on \"%s\"\n", nstate, psz1);
+            printf("state %d on \"%s\"\n", nstate, psz1);
          char *psz2 = psz1;
          switch (nstate) 
          {
             case 1:  // expect new symbol name
                if (!skipto(&psz2, ':'))
-                  return 9+perr("syntax error: missing \"symbol:\" in line %ld\n", nline);
+                  return 9+perr("syntax error: missing \"symbol:\" in line %d\n", nline);
                fetch(szClBuf1, psz1, psz2-psz1);
                pszSymb = szClBuf1;
                psz1 = psz2+1;
@@ -28522,7 +28720,7 @@ long Phraser::load(char *pszFile)
                if (add(ps)) return 9;
             case 4:
                if (!skipspace(&psz2))
-                  return 9+perr("syntax error in line %ld\n",nline);
+                  return 9+perr("syntax error in line %d\n",nline);
                ps->collect(psz2);
                psz1 = 0;
                nstate = 3;
@@ -28531,7 +28729,7 @@ long Phraser::load(char *pszFile)
             case 3:  // either additional content, or new symbol name
                if (*psz2 == ' ') {
                   // additional content
-                  ps->collect("\n");
+                  ps->collect(str("\n"));
                   nstate = 4;
                   continue;
                } else {
@@ -28557,7 +28755,7 @@ char *Phraser::solve(char *pszName)
    // convert ,, replacement code back to printable ,
    if (pres) {
       char *psz = pres;
-      while (psz = strchr(psz, 0x01))
+      while ((psz = strchr(psz, 0x01)))
          *psz++ = ',';
    }
    return pres;
@@ -28565,15 +28763,15 @@ char *Phraser::solve(char *pszName)
 
 #endif // USE_SFK_BASE
 
-long encodeUrl(char *pszSrcIn, char *pszDstIn, long nMaxDst)
+int encodeUrl(char *pszSrcIn, char *pszDstIn, int nMaxDst)
 {
     char *pszSrc = pszSrcIn;
     char *pszDst = pszDstIn;
 
-    // mtklog("ENCODE \"%s\"\n",pszSrc);
+    // mtklog(("ENCODE \"%s\"\n",pszSrc));
 
     static const char *pszUnsafe = "\"<>%\\^[]`+$,@:;/!#?=&";
-    long nrem = nMaxDst-2;
+    int nrem = nMaxDst-2;
     for (; *pszSrc; pszSrc++)
     {
         uchar uc = (uchar)*pszSrc;
@@ -28584,7 +28782,7 @@ long encodeUrl(char *pszSrcIn, char *pszDstIn, long nMaxDst)
         {
             if (nrem < 4) {
                 *pszDst = '\0'; 
-                // mtklog("OFLOW: \"%s\", \"%s\"", pszSrcIn, pszDstIn);
+                // mtklog(("OFLOW: \"%s\", \"%s\"", pszSrcIn, pszDstIn));
                 return 9+perr("encodeUrl buffer overflow\n"); 
             }
             sprintf(pszDst, "%%%02X", uc);
@@ -28600,7 +28798,7 @@ long encodeUrl(char *pszSrcIn, char *pszDstIn, long nMaxDst)
     return 0;
 }
 
-long decodeUrl(char *pszInOut, long nMaxDst)
+int decodeUrl(char *pszInOut, int nMaxDst)
 {
     char *psz = pszInOut;
     while (*psz) {
@@ -28646,7 +28844,7 @@ void encodeSub64(uchar in[3], uchar out[4], int nlen)
 
 // rc  0: ok
 // rc >0: error
-long encode64(uchar *psrc, int nsrc, uchar *pdst, int nmaxdst, int nlinechars)
+int encode64(uchar *psrc, int nsrc, uchar *pdst, int nmaxdst, int nlinechars)
 {
    uchar in[3], out[4];
    int i=0, nlen=0, nchars = 0;
@@ -28716,7 +28914,7 @@ uchar mapchar(char ch)
 }
 
 // result: number of bytes decoded, or -1 on error
-long decode64(uchar *psrc, int nsrc, uchar *pdst, int nmaxdst)
+int decode64(uchar *psrc, int nsrc, uchar *pdst, int nmaxdst)
 {
    uchar in[4], out[3], v;
    int i=0, nlen=0;
@@ -28755,15 +28953,15 @@ long decode64(uchar *psrc, int nsrc, uchar *pdst, int nmaxdst)
 }
 
 // convert "*pattern" or "pattern*" to pattern with left/right flags isolated.
-long copyMatchPattern(char *pszDst, long nMaxDst, char *pszSrc, long &rSrcLen,
+int copyMatchPattern(char *pszDst, int nMaxDst, char *pszSrc, int &rSrcLen,
    bool &rFromLeft, bool &rToRight, bool &rForceRepeat
    )
 {
    rFromLeft = 0;
    rToRight  = 0;
-   long icopyoff  = 0;
-   long nSrcLen   = rSrcLen;
-   long ncopylen  = nSrcLen;
+   int icopyoff  = 0;
+   int nSrcLen   = rSrcLen;
+   int ncopylen  = nSrcLen;
    if (cs.wpat && pszSrc[0] == '*') {
       rFromLeft = 1;
       rForceRepeat = 1;
@@ -28771,12 +28969,12 @@ long copyMatchPattern(char *pszDst, long nMaxDst, char *pszSrc, long &rSrcLen,
       ncopylen--;
    }
    if (cs.wpat && ncopylen > 0 && pszSrc[nSrcLen-1] == '*') {
-      long nslash = 0;
+      int nslash = 0;
       if (cs.spat) {
          // the '*' might be escaped, as in \\\\\*
          // if there is an EVEN (or zero) no. of slashes before '*',
          // then '*' really is an active wildcard.
-         for (long k=nSrcLen-2; k>=0; k--) {
+         for (int k=nSrcLen-2; k>=0; k--) {
             if (pszSrc[k] == '\\')
                nslash++;
             else
@@ -28796,10 +28994,10 @@ long copyMatchPattern(char *pszDst, long nMaxDst, char *pszSrc, long &rSrcLen,
    return 0;
 }
 
-long reperr(char *pszMsg, char *pszObj, long nLine=-1)
+int reperr(cchar *pszMsg, cchar *pszObj, int nLine=-1)
 {
    if (nLine >= 0)
-      perr("%s: %s [line %ld]\n", pszMsg, pszObj, nLine);
+      perr("%s: %s [line %d]\n", pszMsg, pszObj, nLine);
    else
       perr("%s: %s\n", pszMsg, pszObj);
    pinf("patterns must look like _src_dst_ or \"/from/ to /\"\n");
@@ -28815,7 +29013,7 @@ long reperr(char *pszMsg, char *pszObj, long nLine=-1)
 
 // io: szLineBuf. also uses szLineBuf2.
 // io: szAttrBuf. also uses szAttrBuf2.
-long applyReplace(char *pszPat, long &rHitCnt, bool blstart, bool blend)
+int applyReplace(char *pszPat, int &rHitCnt, bool blstart, bool blend)
 {
    // _src_dest_
    char szSrc[200];
@@ -28836,11 +29034,11 @@ long applyReplace(char *pszPat, long &rHitCnt, bool blstart, bool blend)
       psz1++;
    if (!*psz1) return 9+perr("illegal replacement string \"%s\"\n", pszPat);
    char *pszDst2 = psz1;
-   long nSrcLen = pszSrc2-pszSrc1;
+   int nSrcLen = pszSrc2-pszSrc1;
    int nDstLen = pszDst2-pszDst1;
    if (nSrcLen < 1) return 9+perr("source pattern is empty\n");
-   if (nSrcLen > sizeof(szSrc)-10) return 9+perr("source pattern too large \"%.*s\"\n", nSrcLen, pszSrc1);
-   if (nDstLen > sizeof(szDst)-10) return 9+perr("destination pattern too large \"%.*s\"\n", nDstLen, pszDst1);
+   if (nSrcLen > (int)sizeof(szSrc)-10) return 9+perr("source pattern too large \"%.*s\"\n", nSrcLen, pszSrc1);
+   if (nDstLen > (int)sizeof(szDst)-10) return 9+perr("destination pattern too large \"%.*s\"\n", nDstLen, pszDst1);
    psz1++; // step past final cbnd
    if (*psz1) {
       perr("wrong replacement string syntax \"%s\"\n", pszPat);
@@ -28865,19 +29063,19 @@ long applyReplace(char *pszPat, long &rHitCnt, bool blstart, bool blend)
    // convert \\ \t \n \r \x in destination
    if (copyFormStr(szDst, sizeof(szDst)-10, pszDst1, nDstLen))
       return 9;
-   // if (cs.debug) printf("replace dst \"%.*s\" => \"%s\" len %ld => %ld\n",(int)nDstLen,pszDst1,szDst,nDstLen,strlen(szDst));
+   // if (cs.debug) printf("replace dst \"%.*s\" => \"%s\" len %d => %d\n",(int)nDstLen,pszDst1,szDst,nDstLen,strlen(szDst));
    nDstLen = strlen(szDst); // adapt to \t, \x conversions
 
-   long nflags = cs.usecase ? eMatchCase : 0;
-   long ifirst=0, ihitlen=0;
+   int nflags = cs.usecase ? eMatchCase : 0;
+   int ifirst=0, ihitlen=0;
 
    if (cs.debug)
       printf("aprep: fromleft %d toright %d szsrc %s\n", bFromLeft, bToRight, szSrc);
 
    // apply replacements
    psz1 = szLineBuf;
-   long ibase   = 0; // used ONLY for single line end replacing
-   long ntmplen = strlen(szLineBuf); // ditto
+   int ibase   = 0; // used ONLY for single line end replacing
+   int ntmplen = strlen(szLineBuf); // ditto
    while (1)
    {
       ifirst=0; ihitlen=0;
@@ -28911,20 +29109,20 @@ long applyReplace(char *pszPat, long &rHitCnt, bool blstart, bool blend)
       nSrcLen = ihitlen;
 
       // left part, before hit
-      long nLenLeft = psz1-szLineBuf;
+      int nLenLeft = psz1-szLineBuf;
       strncpy(szLineBuf2, szLineBuf, nLenLeft);
       szLineBuf2[nLenLeft] = '\0';
       strncpy(szAttrBuf2, szAttrBuf, nLenLeft);
       szAttrBuf2[nLenLeft] = '\0';
-      if (cs.debug) printf("rleft \"%s\" ifirst %ld\n",szLineBuf2,ifirst);
+      if (cs.debug) printf("rleft \"%s\" ifirst %d\n",szLineBuf2,ifirst);
 
       // replace middle part, check output length
-      long nLenRep  = strlen(szDst);
+      int nLenRep  = strlen(szDst);
       char *pszSrcRite = psz1+nSrcLen;
-      long nLenRite = strlen(pszSrcRite);
+      int nLenRite = strlen(pszSrcRite);
       if (nLenLeft + nLenRep + nLenRite >= MAX_LINE_LEN) {
          perr("buffer overflow during replace");
-         pinf("input lines might be too long, or too many changes per line.\n");
+         pinf("input lines might be too long, or too many changes per line.\n"); 
          pinf("if input is stream text, you may try filter -wrap +filter ...\n");
          return 9;
       }
@@ -28975,15 +29173,16 @@ static char szGlblFormEvalBuf[MAX_LINE_LEN+100];
 // evaluate inner content of "$(column+100)"
 int evalFormBlock(char *pfrom, char *pto,
    StringTable &oCol,
-   long nSrcLine,
-   long nDstLine
+   int nSrcLine,
+   int nDstLine
    )
 {
    char szword[100]; szword[0] = '\0';
    char szform[100]; szform[0] = '\0';
 
-   long ncurval = 0; bool bcurval = 0;
-   long nmixval = 0; bool bmixval = 0;
+   int ncurval = 0;
+   int nmixval = 0;
+
    char ccurop  = '\0';
    bool bquoted = 0;
 
@@ -29021,7 +29220,7 @@ int evalFormBlock(char *pfrom, char *pto,
          }
          if (pszf > psz1) {
             int nlen = pszf-psz1;
-            if (nlen > sizeof(szform)-10)
+            if (nlen > (int)sizeof(szform)-10)
                return 11+perr("format overflow: %s", psz1);
             memcpy(szform, psz1, nlen);
             szform[nlen] = '\0';
@@ -29055,7 +29254,7 @@ int evalFormBlock(char *pfrom, char *pto,
       while (isalnum(*psz2)) psz2++;
 
       int nlen = psz2-psz1;
-      if (nlen < 1 || nlen > sizeof(szword)-10)
+      if (nlen < 1 || nlen > (int)sizeof(szword)-10)
          return 8;
       memcpy(szword, psz1, nlen);
       szword[nlen] = '\0';
@@ -29065,7 +29264,7 @@ int evalFormBlock(char *pfrom, char *pto,
       if (strBegins(szword, "col"))
       {
          // parse column number
-         long ncol = atol(szword+3);
+         int ncol = atol(szword+3);
          if (ncol < 1 || ncol-1 >= oCol.numberOfEntries()) {
             // non-existing column: leave empty
             // TODO: optionally issue a notice
@@ -29119,7 +29318,7 @@ int evalFormBlock(char *pfrom, char *pto,
 
    // auto-convert result?
    if (ntype == 2)
-      sprintf(pOutBuf, "%ld", nmixval);
+      sprintf(pOutBuf, "%d", nmixval);
 
    // copy and reformat result
    if (szform[0]) {
@@ -29137,7 +29336,7 @@ int evalFormBlock(char *pfrom, char *pto,
 #endif
 
 // io: szLineBuf. also uses szLineBuf2.
-long applyForm(char *pszPat, bool bBlockSep, long nLineNum, long nOutLineNum)
+int applyForm(char *pszPat, bool bBlockSep, int nLineNum, int nOutLineNum)
 {
    StringTable oCol;
 
@@ -29176,7 +29375,7 @@ long applyForm(char *pszPat, bool bBlockSep, long nLineNum, long nOutLineNum)
    // oCol now holds all columns. apply mask.
    psz1 = pszPat;
    szLineBuf[0] = '\0';
-   long iOut = 0;
+   int iOut = 0;
    char *psz3 = 0;
    char szFormat1[100];
    char szFormat2[100];
@@ -29205,8 +29404,8 @@ long applyForm(char *pszPat, bool bBlockSep, long nLineNum, long nOutLineNum)
 
       if (psz2 && *psz2)
       {
-         long nFormLen = psz2-psz1-1;
-         if (nFormLen > sizeof(szFormat1)-10)
+         int nFormLen = psz2-psz1-1;
+         if (nFormLen > (int)sizeof(szFormat1)-10)
             break;
          strncpy(szFormat1, psz1+1, nFormLen);
          szFormat1[nFormLen] = '\0';
@@ -29224,7 +29423,7 @@ long applyForm(char *pszPat, bool bBlockSep, long nLineNum, long nOutLineNum)
             while (*psz2 && isdigit(*psz2))
                *psz3++ = *psz2++;
             *psz3 = '\0';
-            long ncol = atol(szLineBuf2);
+            int ncol = atol(szLineBuf2);
             if (ncol < 1 || ncol-1 >= oCol.numberOfEntries()) {
                static bool btold = 0;
                if (!btold) {
@@ -29253,7 +29452,7 @@ long applyForm(char *pszPat, bool bBlockSep, long nLineNum, long nOutLineNum)
             // insert input line number, counting from 1
             psz2 += 4;
             char szNum[30];
-            sprintf(szNum, "%lu", (ulong)nLineNum);
+            sprintf(szNum, "%u", (uint)nLineNum);
             char *pszcol = szNum;
             if (bquoted) strcat(szLineBuf, "\"");
             if (strlen(szFormat1)) {
@@ -29271,7 +29470,7 @@ long applyForm(char *pszPat, bool bBlockSep, long nLineNum, long nOutLineNum)
             // insert output line number, counting from 1
             psz2 += strlen("count");
             char szNum[30];
-            sprintf(szNum, "%lu", (ulong)nOutLineNum);
+            sprintf(szNum, "%u", (uint)nOutLineNum);
             char *pszcol = szNum;
             if (bquoted) strcat(szLineBuf, "\"");
             if (strlen(szFormat1)) {
@@ -29314,13 +29513,13 @@ long applyForm(char *pszPat, bool bBlockSep, long nLineNum, long nOutLineNum)
          {
             // insert output line number, counting from 1
             psz2 += strlen("(count");
-            long nCntOffset = atol(psz2);
+            int nCntOffset = atol(psz2);
             psz2 = strchr(psz2, ')');
             if (!psz2)
                return 9+perr("(count not closed by ')'");
             psz2++;
             char szNum[30];
-            sprintf(szNum, "%ld", (long)(nOutLineNum+nCntOffset));
+            sprintf(szNum, "%d", (int)(nOutLineNum+nCntOffset));
             char *pszcol = szNum;
             if (bquoted) strcat(szLineBuf, "\"");
             if (strlen(szFormat1)) {
@@ -29363,7 +29562,7 @@ long applyForm(char *pszPat, bool bBlockSep, long nLineNum, long nOutLineNum)
          }
          else
          if (cs.spat && !strncmp(psz1, "\\x", 2)) {
-            long n = getTwoDigitHex(psz1+2);
+            int n = getTwoDigitHex(psz1+2);
             if (n <= 0) return 9+perr("wrong syntax or not supported: %s\n", psz1);
             szLineBuf[iOut++] = (char)n;
             psz1 += 4;
@@ -29380,8 +29579,8 @@ long applyForm(char *pszPat, bool bBlockSep, long nLineNum, long nOutLineNum)
 struct FilterParms 
 {
    char  **argv;
-   long  iPat;
-   long  nPat;
+   int  iPat;
+   int  nPat;
    bool  bVerb;
    bool  bLNum;
    bool  bCnt;
@@ -29391,10 +29590,10 @@ struct FilterParms
    bool  bSkipBinaries;
    bool  bFilenames;
    bool  bPassHitFiles;
-   long  nTotalRC;
+   int  nTotalRC;
    char *pBlockMark;
-   long  nprecon;
-   long  npostcon;
+   int  nprecon;
+   int  npostcon;
    char  cprecolor;
    char  cpostcolor;
    char *pPreConMark;
@@ -29463,7 +29662,7 @@ char *FilterContextLines::getLine(int iPreIndex)
    return 0;
 }
 
-int getContextParms(char *psz, long &rlines, char &rcolor, char **ppConMark, int nlimit=0)
+int getContextParms(char *psz, int &rlines, char &rcolor, char **ppConMark, int nlimit=0)
 {
    rlines = atol(psz);
    if (nlimit > 0 && rlines > nlimit) {
@@ -29479,7 +29678,7 @@ int getContextParms(char *psz, long &rlines, char &rcolor, char **ppConMark, int
       char *pszs = ++psz;
       while (isalpha(*psz)) psz++;
       int nlen = psz - pszs;
-      if (nlen > sizeof(szcol)-10) return 0;
+      if (nlen > (int)sizeof(szcol)-10) return 0;
       memcpy(szcol, pszs, nlen);
       szcol[nlen] = '\0';
       if (szcol[0])
@@ -29495,8 +29694,8 @@ int getContextParms(char *psz, long &rlines, char &rcolor, char **ppConMark, int
    return 0;
 }
 
-long setFilterParms(
-   char *argv[], long argc, long iPat, long &nPat,
+int setFilterParms(
+   char *argv[], int argc, int iPat, int &nPat,
    struct FilterParms &rparms,
    char  **pszInFile,
    int   *iDir = 0,     // if dir parms are found
@@ -29504,7 +29703,7 @@ long setFilterParms(
    )
 {
    // valid options w/o parameters
-   char *pszValFilt1[] = {
+   cchar *pszValFilt1[] = {
       "-+","-ls+","-le+","++","+ls+",
       "-!", "-ls!", "-le!", // accept win specific form
       "-:", "-ls:", "-le:", // and ux specific as well
@@ -29513,19 +29712,19 @@ long setFilterParms(
    };
 
    // valid options with one or more parameters
-   char *pszValFilt2[] = {
+   cchar *pszValFilt2[] = {
       "1-pat", "1-notpat",
       "3-inc", "3-ex", "3-cut", "1-addmark",
    };
 
    // valid processing options w/o parms
-   char *pszValOpt1[] = {
+   cchar *pszValOpt1[] = {
       "-encode-", "-decode-",
       "-ansitodos", "-todos", "-dostoansi",
    };
 
    // valid processing options with one parameter
-   char *pszValOpt2[] = {
+   cchar *pszValOpt2[] = {
       "-rep","-lsrep","-lerep",
       "-sep","-blocksep","-form","-noop",
       "-where","-lswhere","-lewhere",
@@ -29570,13 +29769,13 @@ long setFilterParms(
          continue; 
       }
 
-      long i=0;
+      int i=0;
 
       // check for filter options w/o parms
-      for (i=0; i<sizeof(pszValFilt1)/sizeof(char*); i++)
+      for (i=0; i<(int)(sizeof(pszValFilt1)/sizeof(char*)); i++)
          if (!strncmp(pszOpt, pszValFilt1[i], strlen(pszValFilt1[i])))
             break;
-      if (i < sizeof(pszValFilt1)/sizeof(char*)) {
+      if (i < (int)(sizeof(pszValFilt1)/sizeof(char*))) {
          if (bHadProc) {
             perr("selection options (%s) are not allowed after processing options.\n", pszOpt);
             perr("say +filter %s instead.\n", pszOpt);
@@ -29587,9 +29786,9 @@ long setFilterParms(
       }
 
       // check for filter options w/ parms
-      long nParms = 0;
-      for (i=0; i<sizeof(pszValFilt2)/sizeof(char*); i++) {
-         char *psz = pszValFilt2[i];
+      int nParms = 0;
+      for (i=0; i<(int)(sizeof(pszValFilt2)/sizeof(char*)); i++) {
+         cchar *psz = pszValFilt2[i];
          // 1st char is no. of parms
          if (strBegins(pszOpt, psz+1)) {
             nParms = *psz - '0';
@@ -29627,17 +29826,17 @@ long setFilterParms(
       }
 
       // check for processing opts w/o parms
-      for (i=0; i<sizeof(pszValOpt1)/sizeof(char*); i++)
+      for (i=0; i<(int)(sizeof(pszValOpt1)/sizeof(char*)); i++)
          if (!strncmp(pszOpt, pszValOpt1[i], strlen(pszValOpt1[i])))
             break;
-      if (i < sizeof(pszValOpt1)/sizeof(char*))
+      if (i < (int)(sizeof(pszValOpt1)/sizeof(char*)))
          { bHadProc=1; continue; }
       
       // check for processing opts w/ one parm
-      for (i=0; i<sizeof(pszValOpt2)/sizeof(char*); i++)
+      for (i=0; i<(int)(sizeof(pszValOpt2)/sizeof(char*)); i++)
          if (isxopt(pszOpt, pszValOpt2[i]))
             break;
-      if (i < sizeof(pszValOpt2)/sizeof(char*)) {
+      if (i < (int)(sizeof(pszValOpt2)/sizeof(char*))) {
          iPat2++;  // skip additional parameter
          if (iPat2 >= argc) {
             perr("missing parameter after %s\n",pszOpt);
@@ -29705,7 +29904,7 @@ long setFilterParms(
       if (isChainStart(pszOpt, argv, argc, iPat2, iChain)) {
          nPat = iPat2 - iPat;
          if (cs.verbose)
-            printf("[filter npats=%ld before %s]\n", nPat, pszOpt);
+            printf("[filter npats=%d before %s]\n", nPat, pszOpt);
          // tell caller that there is another chain cmd:
          // was done in isChainStart via iChain
          return 0; // pdp will process chaining further
@@ -29738,27 +29937,25 @@ KeyMap glblFilterDups;
 #define FILT_MAXTESTMASKS 50
 struct FilterTestStat {
    char *apPosMasks  [FILT_MAXTESTMASKS+4];
-   long  anPosHits   [FILT_MAXTESTMASKS+4];
+   int  anPosHits   [FILT_MAXTESTMASKS+4];
    char *apNegMasks  [FILT_MAXTESTMASKS+4];
-   long  anNegHits   [FILT_MAXTESTMASKS+4];
+   int  anNegHits   [FILT_MAXTESTMASKS+4];
 }  ftest;
 
 // io: szLineBuf. also uses szLineBuf2.
 // io: szAttrBuf. also uses szAttrBuf2.
 // rc: 0 if line is included, 1 if excluded, >1 on error.
-long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
-   long &rIncCnt, long &rExCnt, char *pCurFile, long nCurLineNum
+int selectTextLine(char *argv[], int iPat, int nPat, bool bVerb,
+   int &rIncCnt, int &rExCnt, char *pCurFile, int nCurLineNum
    )
 {
    bool bHasPositive = 0;
    bool bHasNegative = 0;
    bool bHavePosFilt = 0;
    bool bHaveNegFilt = 0;
-   bool bDumpLF = 1;
-   long nOptState = 0;
-   long nHitIndex = 0;
-   long nHitLen   = 0;
-   bool bUseColor = bGlblUseColor;
+   int nOptState = 0;
+   int nHitIndex = 0;
+   int nHitLen   = 0;
    bool bCase = cs.usecase;
    bool bForceExclude = 0;
    bool bForceInclude = 0;
@@ -29773,9 +29970,9 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
          bHavePosFilt = 1;
          if (bVerb) fprintf(stderr, " %s\"%s\"", (i>0)?"OR ":"OPTIONAL ", pszPat+2);
          // if (mystrhit(szLineBuf, pszPat+2, bCase, &nHitIndex)) {
-         long nflags = bCase ? eMatchCase : 0;
-         long nlen = strlen(szLineBuf);
-         for (long ibase=0; ibase<nlen;)
+         int nflags = bCase ? eMatchCase : 0;
+         int nlen = strlen(szLineBuf);
+         for (int ibase=0; ibase<nlen;)
          {
             if (cs.test && i<FILT_MAXTESTMASKS)
                ftest.apPosMasks[i] = pszPat;
@@ -29796,7 +29993,7 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
          bHavePosFilt = 1;
          if (bVerb) fprintf(stderr, " %sLINE START \"%s\"", (i>0)?"OR ":"",pszPat+4);
          // if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase)) {
-         long nflags = (bCase ? eMatchCase : 0) | eMatchHead;
+         int nflags = (bCase ? eMatchCase : 0) | eMatchHead;
          if (matchstr(szLineBuf, pszPat+4, nflags, nHitIndex, nHitLen)) {
             bHasPositive = 1;
             if (nHitIndex+nHitLen < MAX_LINE_LEN)
@@ -29807,12 +30004,12 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
       if (!strncmp(pszPat, "-le+", 4)) {
          if (nOptState) { nOptState=2; break; }
          bHavePosFilt = 1;
-         long nPatLen = strlen(pszPat)-4;
-         long nBufLen = strlen(szLineBuf);
-         long nIndex  = nBufLen-nPatLen;
+         int nPatLen = strlen(pszPat)-4;
+         int nBufLen = strlen(szLineBuf);
+         int nIndex  = nBufLen-nPatLen;
          if (nIndex < 0) nIndex = 0;
          if (bVerb) fprintf(stderr, " %sLINE END \"%s\"", (i>0)?"OR ":"",pszPat+4);
-         long nflags = (bCase ? eMatchCase : 0) | eMatchTail;
+         int nflags = (bCase ? eMatchCase : 0) | eMatchTail;
          if (matchstr(szLineBuf, pszPat+4, nflags, nHitIndex, nHitLen)) {
             bHasPositive = 1;
             if (nHitIndex+nHitLen < MAX_LINE_LEN)
@@ -29825,10 +30022,10 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
          bHavePosFilt = 1;
          if (bVerb) fprintf(stderr, " %s\"%s\"", (i>0)?"AND ":"", pszPat+2);
          // if (mystrhit(szLineBuf, pszPat+2, bCase, &nHitIndex)) {
-         long nflags = bCase ? eMatchCase : 0;
-         long nlen = strlen(szLineBuf);
+         int nflags = bCase ? eMatchCase : 0;
+         int nlen = strlen(szLineBuf);
          bool bLocalPos = 0;
-         for (long ibase=0; ibase<nlen;)
+         for (int ibase=0; ibase<nlen;)
          {
             if (!matchstr(szLineBuf+ibase, pszPat+2, nflags, nHitIndex, nHitLen))
                break;
@@ -29848,7 +30045,7 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
          bHavePosFilt = 1;
          if (bVerb) fprintf(stderr, " LINE MUST START \"%s\"", pszPat+4);
          // if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase)) {
-         long nflags = (bCase ? eMatchCase : 0) | eMatchHead;
+         int nflags = (bCase ? eMatchCase : 0) | eMatchHead;
          if (matchstr(szLineBuf, pszPat+4, nflags, nHitIndex, nHitLen)) {
             bHasPositive = 1;
             if (nHitIndex+nHitLen < MAX_LINE_LEN)
@@ -29867,7 +30064,7 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
          bHaveNegFilt = 1;
          if (bVerb) fprintf(stderr, " NOT \"%s\"", pszPat+2);
          // if (mystrhit(szLineBuf, pszPat+2, bCase, &nHitIndex))
-         long nflags = bCase ? eMatchCase : 0;
+         int nflags = bCase ? eMatchCase : 0;
          if (matchstr(szLineBuf, pszPat+2, nflags, nHitIndex, nHitLen)) {
             bHasNegative = 1;
             if (cs.test && (i<FILT_MAXTESTMASKS))
@@ -29881,7 +30078,7 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
          bHaveNegFilt = 1;
          if (bVerb) fprintf(stderr, " NOT \"%s\"", pszPat+4);
          // if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase)) {
-         long nflags = (bCase ? eMatchCase : 0) | eMatchHead;
+         int nflags = (bCase ? eMatchCase : 0) | eMatchHead;
          if (matchstr(szLineBuf, pszPat+4, nflags, nHitIndex, nHitLen)) {
             bHasNegative = 1;
             break;
@@ -29892,13 +30089,13 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
       {
          if (nOptState) { nOptState=2; break; }
          bHaveNegFilt = 1;
-         long nPatLen = strlen(pszPat)-4;
-         long nBufLen = strlen(szLineBuf);
-         long nIndex  = nBufLen-nPatLen;
+         int nPatLen = strlen(pszPat)-4;
+         int nBufLen = strlen(szLineBuf);
+         int nIndex  = nBufLen-nPatLen;
          if (nIndex < 0) nIndex = 0;
          if (bVerb) fprintf(stderr, " NOT \"%s\"", pszPat+4);
          // if (!mystrncmp(&szLineBuf[nIndex], pszPat+4, nPatLen, bCase)) {
-         long nflags = (bCase ? eMatchCase : 0) | eMatchTail;
+         int nflags = (bCase ? eMatchCase : 0) | eMatchTail;
          if (matchstr(szLineBuf, pszPat+4, nflags, nHitIndex, nHitLen)) {
             bHasNegative = 1;
             break;
@@ -29948,8 +30145,7 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
          if (strcmp(plito, "to"))
             return 9+perr("filter -inc: missing \"to\" keyword");
          bool bStripBnd = (strlen(pszPat) >= 5 && pszPat[4] == '-');
-         long nflags = bCase ? eMatchCase : 0;
-         long nlen = strlen(szLineBuf);
+         int nflags = bCase ? eMatchCase : 0;
          if (!strcmp(pfrom, "*") || !strcmp(pto, "*")) 
          {
             // -inc single block mode with one open end
@@ -30018,7 +30214,7 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
                else
                if (!cs.nocheck) {
                   perr("filter -inc: found end of block without start: %s", szLineBuf);
-                  pinf("file %s line %ld\n",pCurFile,nCurLineNum);
+                  pinf("file %s line %d\n",pCurFile,nCurLineNum);
                   pinf("add option -nocheck to ignore unexpected block endings.\n");
                   return 9;
                }
@@ -30039,8 +30235,7 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
          if (strcmp(plito, "to"))
             return 9+perr("filter %s: missing \"to\" keyword", pszPat);
          bool bStripBnd = !strcmp(pszPat, "-cut-");
-         long nflags = bCase ? eMatchCase : 0;
-         long nlen = strlen(szLineBuf);
+         int nflags = bCase ? eMatchCase : 0;
          if (!strcmp(pfrom, "*") || !strcmp(pto, "*")) 
          {
             // -cut single block mode with one open end
@@ -30108,7 +30303,7 @@ long selectTextLine(char *argv[], long iPat, long nPat, bool bVerb,
                else
                if (!cs.nocheck) {
                   perr("filter %s found end of block without start: %s", pszPat, szLineBuf);
-                  pinf("file %s line %ld\n",pCurFile,nCurLineNum);
+                  pinf("file %s line %d\n",pCurFile,nCurLineNum);
                   pinf("add option -nocheck to ignore unexpected block endings.\n");
                   return 9;
                }
@@ -30151,8 +30346,8 @@ static char szJoinBuf[MAX_LINE_LEN+100];
 
 // io: szLineBuf. also uses szLineBuf2.
 // io: szAttrBuf. also uses szAttrBuf2.
-long processTextLine(char *argv[], long iPat, long nPat,
-   long &nReplaced, bool &bUseColor, long nLineNum, long nOutLineNum
+int processTextLine(char *argv[], int iPat, int nPat,
+   int &nReplaced, bool &bUseColor, int nLineNum, int nOutLineNum
    )
 {
    bool bCase = cs.usecase;
@@ -30174,7 +30369,6 @@ long processTextLine(char *argv[], long iPat, long nPat,
 
          bool blstart = strstr(pszPat, "lswithin") ? 1 : 0;
          bool blend   = strstr(pszPat, "lewithin") ? 1 : 0;
-         bool bshow   = !strstr(pszPat, "-noshow");
 
          char *psz     = argv[iPat+i+1];
          char *pRepCmd = argv[iPat+i+2];
@@ -30187,16 +30381,16 @@ long processTextLine(char *argv[], long iPat, long nPat,
          bool bFromLeft = 0;
          bool bToRight  = 0;
          bool bForceRep = 0;
-         long nPatLen   = strlen(psz);
+         int nPatLen   = strlen(psz);
          if (copyMatchPattern(szPatBuf, MAX_LINE_LEN, psz, nPatLen, bFromLeft, bToRight, bForceRep))
             return 9;
          // -> sets szPatBuf, nPatLen, bFromLeft, bToRight.
-         long nflags = bCase ? eMatchCase : 0;
+         int nflags = bCase ? eMatchCase : 0;
          // determine if current line matches the [ls/le]within expression
-         long nlen = strlen(szLineBuf);
-         for (long ibase=0; ibase<nlen;)
+         int nlen = strlen(szLineBuf);
+         for (int ibase=0; ibase<nlen;)
          {
-            long ifirst=0, ihitlen=0;
+            int ifirst=0, ihitlen=0;
             if (!matchstr(szLineBuf+ibase, szPatBuf, nflags, ifirst, ihitlen))
                break; // no further hit
             if (blstart && (ibase+ifirst) != 0)
@@ -30229,11 +30423,11 @@ long processTextLine(char *argv[], long iPat, long nPat,
 
             // rebuild line text
             char *pleft = szSaveBuf;
-            long  nleft = ibase+ifirst;
+            int  nleft = ibase+ifirst;
             char *pmid  = szLineBuf;
-            long  nmid  = strlen(pmid);
+            int  nmid  = strlen(pmid);
             char *prite = szSaveBuf+nleft+ihitlen;
-            long  nrite = strlen(prite);
+            int  nrite = strlen(prite);
 
             if (nleft+nmid+nrite > MAX_LINE_LEN-10)
                return 9+perr("buffer overflow on %s ...", pszPat);
@@ -30288,16 +30482,16 @@ long processTextLine(char *argv[], long iPat, long nPat,
          bool bFromLeft = 0;
          bool bToRight  = 0;
          bool bForceRep = 0;
-         long nPatLen   = strlen(psz);
+         int nPatLen   = strlen(psz);
          if (copyMatchPattern(szLineBuf2, MAX_LINE_LEN, psz, nPatLen, bFromLeft, bToRight, bForceRep))
             return 9;
          // -> sets szLineBuf2, nPatLen, bFromLeft, bToRight.
-         long nflags = bCase ? eMatchCase : 0;
+         int nflags = bCase ? eMatchCase : 0;
          // determine if current line matches the [ls/le]where expression
-         long nlen = strlen(szLineBuf);
-         for (long ibase=0; ibase<nlen;)
+         int nlen = strlen(szLineBuf);
+         for (int ibase=0; ibase<nlen;)
          {
-            long ifirst=0, ihitlen=0;
+            int ifirst=0, ihitlen=0;
             if (!matchstr(szLineBuf+ibase, szLineBuf2, nflags, ifirst, ihitlen))
                break; // no further hit
             if (blstart && (ibase+ifirst) != 0)
@@ -30338,7 +30532,7 @@ long processTextLine(char *argv[], long iPat, long nPat,
          if (applyReplace(pszRep, nReplaced, blstart, blend)) return 9;
       }
       else
-      if (isopt(pszPat, "-noop")) // skip a parameter
+      if (isopt(pszPat, str("-noop"))) // skip a parameter
       {
          // next argument contains something that should be skipped
          if (i >= nPat-1) return 9+perr("-noop must be followed by a parameter (which is ignored)\n");
@@ -30352,7 +30546,7 @@ long processTextLine(char *argv[], long iPat, long nPat,
          bool blend   = isxopt(pszPat, "-lehigh");
 
          // -highlight red "POST * HTTP/"
-         char *pcol = "";
+         char *pcol = str("");
          i++;
          if (i >= nPat) return 9+perr("missing argument after %s\n", pszPat);
          pcol = argv[iPat+i];
@@ -30366,16 +30560,16 @@ long processTextLine(char *argv[], long iPat, long nPat,
          bool bFromLeft = 0;
          bool bToRight  = 0;
          bool bForceRep = 0;
-         long nPatLen   = strlen(psz);
+         int nPatLen   = strlen(psz);
          if (copyMatchPattern(szLineBuf2, MAX_LINE_LEN, psz, nPatLen, bFromLeft, bToRight, bForceRep))
             return 9;
          // -> sets szLineBuf2, nPatLen, bFromLeft, bToRight.
-         long nflags = bCase ? eMatchCase : 0;
+         int nflags = bCase ? eMatchCase : 0;
          // mark ALL hits within current line
-         long nlen = strlen(szLineBuf);
-         for (long ibase=0; ibase<nlen;)
+         int nlen = strlen(szLineBuf);
+         for (int ibase=0; ibase<nlen;)
          {
-            long ifirst=0, ihitlen=0;
+            int ifirst=0, ihitlen=0;
             if (!matchstr(szLineBuf+ibase, szLineBuf2, nflags, ifirst, ihitlen))
                break; // no further hit
             if (blstart && (ibase+ifirst) != 0)
@@ -30410,9 +30604,9 @@ long processTextLine(char *argv[], long iPat, long nPat,
          // "-sep -form" user error is checked in setFilterParms.
          // "\t" is NOT replaced by sprintf (belongs to preprocessor),
          // so we have to replace it by native 0x09 here.
-         long iout=0;
+         int iout=0;
          char *pszin=pszStrForm;
-         while (*pszin && (iout < sizeof(aMaskSep)-10)) 
+         while (*pszin && (iout < (int)sizeof(aMaskSep)-10)) 
          {
             if (cs.spat && !strncmp(pszin, "\\\\", 2))
                { aMaskSep[iout++] = '\\'; pszin += 2; continue; }
@@ -30426,7 +30620,7 @@ long processTextLine(char *argv[], long iPat, long nPat,
             if (cs.spat && !strncmp(pszin, "\\x", 2)) {
                // \xnn - any character with hex code nn
                pszin += 2; // skip \x
-               long nhex = getTwoDigitHex(pszin);
+               int nhex = getTwoDigitHex(pszin);
                if (nhex <= 0) return 9+perr("illegal value for \\xnn in -sep. use 01 to FF, e.g. \\x09\n");
                pszin += 2; // skip nn
                aMaskSep[iout++] = (char)nhex;
@@ -30461,13 +30655,13 @@ long processTextLine(char *argv[], long iPat, long nPat,
          continue;
       }
       else
-      if (isopt(pszPat, "-encode-perc")) {
+      if (isopt(pszPat, str("-encode-perc"))) {
          if (encodeUrl(szLineBuf, szLineBuf2, MAX_LINE_LEN))
             return 9;
          strcpy(szLineBuf, szLineBuf2);
       }
       else
-      if (isopt(pszPat, "-decode-perc")) {
+      if (isopt(pszPat, str("-decode-perc"))) {
          decodeUrl(szLineBuf, MAX_LINE_LEN); // ignore rc
       }
       else
@@ -30502,13 +30696,13 @@ FileCloser::~FileCloser() {
 
 // dump szLineBuf/szAttrBuf to output.
 // also uses szLineBuf2/3 and szAttrBuf2/3.
-long dumpFilterLine
+int dumpFilterLine
  (
    bool     bReWrite,
    SFKMD5    &md5out,
    StringTable &oOut,   // used by rewrite
-   long       &nLine,
-   long        &nCnt,   // output line counter
+   int       &nLine,
+   int        &nCnt,   // output line counter
    char    *paddmark,
    char     *abLFBuf,
    bool bDumpedFileName
@@ -30530,11 +30724,11 @@ long dumpFilterLine
       char *psz1 = szLineBuf2;
       if (bLNum) { sprintf(psz1, "%03u ",nLine); psz1 += strlen(psz1); }
       if (bCnt ) { sprintf(psz1, "%03u ",nCnt ); psz1 += strlen(psz1); }
-      long nRem = MAX_LINE_LEN - (psz1 - szLineBuf2);
+      int nRem = MAX_LINE_LEN - (psz1 - szLineBuf2);
       mystrcopy(psz1, pszLine, nRem-10);
       if (oOut.addEntry(szLineBuf2))
          return 9+perr("out of memory\n");
-      long nLineLen2 = strlen(szLineBuf2);
+      int nLineLen2 = strlen(szLineBuf2);
       if (!nLineLen2)
          md5out.update((uchar*)abLFBuf, 1);
       else
@@ -30553,7 +30747,7 @@ long dumpFilterLine
       // now holding one large output line in pszLine / pszAttr.
       if (cs.wrapcol > 0)
       {
-         long nWrapCol = cs.wrapcol;
+         int nWrapCol = cs.wrapcol;
          if (bLNum) nWrapCol -= 4;
          if (bCnt ) nWrapCol -= 4;
 
@@ -30563,7 +30757,7 @@ long dumpFilterLine
          while (*psz1)
          {
             pszOld = psz1;
-            long icnt = 0;
+            int icnt = 0;
             char *pszGap = 0;
             // step until overflow or eod, remember last whitespace
             while (*psz1 && (icnt < nWrapCol)) {
@@ -30582,8 +30776,8 @@ long dumpFilterLine
                if (pszGap)
                   psz1 = pszGap+1;
             }
-            ulong noff = pszOld - pszLine;
-            ulong nlen = psz1 - pszOld;
+            uint noff = pszOld - pszLine;
+            uint nlen = psz1 - pszOld;
 
             // isolate section
             memcpy(szLineBuf2, pszLine+noff, nlen);
@@ -30612,7 +30806,7 @@ long dumpFilterLine
                   chain.addToCurLine(szLineBuf3, szAttrBuf3);
                }
 
-               if (paddmark) { chain.addLine(paddmark, ""); nCnt++; }
+               if (paddmark) { chain.addLine(paddmark, str("")); nCnt++; }
             } else {
                if (bFilenames && bDumpedFileName)
                   printf("   ");
@@ -30653,7 +30847,7 @@ long dumpFilterLine
                chain.addToCurLine(szLineBuf3, szAttrBuf3);
             }
 
-            if (paddmark) { chain.addLine(paddmark, ""); nCnt++; }
+            if (paddmark) { chain.addLine(paddmark, str("")); nCnt++; }
          } else {
             if (bFilenames && bDumpedFileName)
                printf("   ");
@@ -30683,20 +30877,18 @@ void mirrorAttrBuf(char ccolin)
 }
 
 // caller supplies either pszInFile or fin.
-long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char *pszOutFile)
+int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *pszOutFile)
 {__
    // only for display etc., not for fopen:
    char *pszInFile = pcoi ? pcoi->name() : 0;
 
-   mtklog("execFilter %s skipbin=%d", pszInFile ? pszInFile : "", gfilter.bSkipBinaries);
+   mtklog(("execFilter %s skipbin=%d", pszInFile ? pszInFile : "", gfilter.bSkipBinaries));
 
-   char  **argv   = gfilter.argv;
-   long  iPat     = gfilter.iPat;
-   long  nPat     = gfilter.nPat;
-   bool  bVerb    = gfilter.bVerb;
-   bool  bReWrite = gfilter.bReWrite;
+   char  **argv     = gfilter.argv;
+   int  iPat        = gfilter.iPat;
+   int  nPat        = gfilter.nPat;
+   bool  bReWrite   = gfilter.bReWrite;
    bool  bFilenames = gfilter.bFilenames;
-   bool  bDoClose = 0;
 
    bool bHaveOut = (pszOutFile != 0);
    if (!bHaveOut && pcoi && pcoi->isWriteable())
@@ -30709,7 +30901,6 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
    // INPUT FILE CLOSES AUTOMATICALLY.
    FileCloser fcin(pcoi); // does nothing if pcoi == NULL
 
-   FILE *fsave = 0; // used with -saveto
    if (pszGlblSaveTo) bReWrite = 1;
 
    if (pcoi) 
@@ -30745,26 +30936,24 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
    SFKMD5 md5in;
    SFKMD5 md5out;
 
-   long nMaxLineLen = sizeof(szLineBuf)-10;
-   long nLine = 0, nCnt = 1;
-   long nHitPosition = 0;
-   long nMatchingLines = 0;
-   long nReplaced = 0;
+   int nMaxLineLen = sizeof(szLineBuf)-10;
+   int nLine = 0, nCnt = 1;
+   int nMatchingLines = 0;
+   int nReplaced = 0;
    bool bUseColor = bGlblUseColor;
-   bool bCase = cs.usecase;
    bool bDumpedFileName = 0;
    bool bCollectedFileName = 0;   
    bool bSave = 0;
    bool bSaveChainOut = 0;
-   long lRC = 0;
+   int lRC = 0;
    bool bSnapFile = 0;
    bool bGrabSubFileName = 0;
-   long nSubFiles = 0;
+   int nSubFiles = 0;
    num  nInputBytes = 0;
-   long ncheckcnt = 0;
-   long ninccnt = 0;  // block include counter
-   long nexcnt  = 0;  // block exclude counter
-   long nPostConCnt = 0; // post context down counter
+   int ncheckcnt = 0;
+   int ninccnt = 0;  // block include counter
+   int nexcnt  = 0;  // block exclude counter
+   int nPostConCnt = 0; // post context down counter
 
    char abLFBuf[5];
    abLFBuf[0] = '\n';
@@ -30784,24 +30973,24 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
       memset(szAttrBuf, ' ', MAX_LINE_LEN-10);
       szAttrBuf[MAX_LINE_LEN-10] = '\0';
 
-      long nRead = 0;
+      int nRead = 0;
 
       if (pInData) {
          // take line from stringpipe
          if (pInData->eod()) {
-            mtklog("filt: indata.eod");
+            mtklog(("filt: indata.eod"));
             break;
          }
          char *pattr = 0;
          char *psz = pInData->read(&pattr);
-         // mtklog("filt: indata.read \"%.100s\"", psz);
+         // mtklog(("filt: indata.read \"%.100s\"", psz));
          mystrcopy(szLineBuf, psz, MAX_LINE_LEN);
          strcat(szLineBuf, "\n"); // force LF
-         long nlen = strlen(szLineBuf);
+         int nlen = strlen(szLineBuf);
          if (pattr) {
             mystrcopy(szAttrBuf, pattr, MAX_LINE_LEN);
-            // attrib lines are guaranteed to be as long as text
-            if ((long)strlen(szAttrBuf) < nlen-1) {
+            // attrib lines are guaranteed to be as int as text
+            if ((int)strlen(szAttrBuf) < nlen-1) {
                memset(szAttrBuf, ' ', nlen);
                szAttrBuf[nlen] = '\0';
             }
@@ -30816,7 +31005,7 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
          // nRead includes CRLF
       }
       if (!nRead) {
-         mtklog("filt: nread=0 EOD");
+         mtklog(("filt: nread=0 EOD"));
          break; // EOD
       }
 
@@ -30853,8 +31042,8 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
             bDumpedFileName = 0; // dump this name on first match
             nSubFiles++;
             if (cs.verbose) {
-               long nMB = (long)(nInputBytes / 1000000);
-               info.setAddInfo("%ld mb, %ld subfiles", nMB, nSubFiles);
+               int nMB = (int)(nInputBytes / 1000000);
+               info.setAddInfo("%d mb, %d subfiles", nMB, nSubFiles);
                info.setStatus("scan", szSubFile, 0, eKeepAdd);
             }
             if (!cs.usesnapfiltname)
@@ -30867,7 +31056,7 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
          }
       }
 
-      long nLineLen = strlen(szLineBuf);
+      int nLineLen = strlen(szLineBuf);
       if (!nLineLen)
          md5in.update((uchar*)abLFBuf, 1); // include empty lines
       else
@@ -30883,11 +31072,10 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
             fprintf(stderr, "[read stdin, find:");
       }
 
-      long noldinc = ninccnt;
-      long noldex  = nexcnt;
-      bool beoblk  = 0; // end of inclusion block reached
+      int noldinc = ninccnt;
+      int noldex  = nexcnt;
 
-      long nsc = selectTextLine(argv, iPat, nPat, bVerb,
+      int nsc = selectTextLine(argv, iPat, nPat, bVerb,
          ninccnt, nexcnt, pszInFile ? pszInFile : (char*)"", nLine);
       if (nsc > 1) { lRC = nsc; break; }
 
@@ -30903,7 +31091,7 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
             // but do NOT set paddmark.
             nsc = 0;
             strcopy(szLineBuf, gfilter.pBlockMark);
-            long nlen = strlen(szLineBuf);
+            int nlen = strlen(szLineBuf);
             memset(szAttrBuf, 'i', nlen);
             szAttrBuf[nlen] = '\0';
          }
@@ -30976,7 +31164,7 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
                   return 9;
             }
 
-            for (long i=gfilter.nprecon; i>=1; i--) 
+            for (int i=gfilter.nprecon; i>=1; i--) 
             {
                char *pszPreLine = gfiltPreContext.getLine(i);
                if (!pszPreLine) continue;
@@ -31081,7 +31269,7 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
          if (cs.sim) {
             // simulating write
             info.setStatus("write", pszOutFile);
-            info.setAddInfo("% 5ld changes", nReplaced);
+            info.setAddInfo("% 5d changes", nReplaced);
             info.printLine(1<<2);
          } else {
             // if different output is specified, create directory structure.
@@ -31089,14 +31277,14 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
                if (createOutDirTree(pszOutFile))
                   return 9;
             info.setStatus("write", pszOutFile);
-            info.setAddInfo("% 5ld changes", nReplaced);
+            info.setAddInfo("% 5d changes", nReplaced);
             info.printLine(1<<2);
    
             FILE *fout = fopen(pszOutFile, "w");
             if (!fout) return 9+perr("failed to write to: %s\n", pszOutFile);
    
-            long nLines = oOut.numberOfEntries();
-            for (long i=0; i<nLines; i++)
+            int nLines = oOut.numberOfEntries();
+            for (int i=0; i<nLines; i++)
                fprintf(fout, "%s\n", oOut.getEntry(i, __LINE__));
             fclose(fout);
          }
@@ -31111,13 +31299,13 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
 
    if (!cs.nocheck) {
       if (ninccnt > 0) {
-         perr("%ld filter -inc block(s) open at end of: %s", ninccnt, pszInFile ? pszInFile : "");
+         perr("%d filter -inc block(s) open at end of: %s", ninccnt, pszInFile ? pszInFile : "");
          pinf("one or more blocks starts were not followed by a block end.\n");
          pinf("add option -nocheck to ignore missing block endings.\n");
          lRC = 5;
       }
       if (nexcnt > 0) {
-         perr("%ld filter -cut block(s) open at end of: %s", nexcnt, pszInFile ? pszInFile : "");
+         perr("%d filter -cut block(s) open at end of: %s", nexcnt, pszInFile ? pszInFile : "");
          pinf("one or more block starts were not followed by a block end\n");
          pinf("add option -nocheck to ignore missing block endings.\n");
          lRC = 5;
@@ -31140,7 +31328,7 @@ num nGlblCDWriteTime   = 0;
 num nGlblCDReadBytes   = 0;
 num nGlblCDReadTime    = 0;
 
-long writeDiskSlice(char *pszPath, num nSliceBytes, uchar *pBuf, long nBufSize)
+int writeDiskSlice(char *pszPath, num nSliceBytes, uchar *pBuf, int nBufSize)
 {
    // 1. write slice
    num nTime1 = getCurrentTime();
@@ -31148,15 +31336,15 @@ long writeDiskSlice(char *pszPath, num nSliceBytes, uchar *pBuf, long nBufSize)
    if (!fout) return 9+perr("unable to open test file %s\n", pszPath);
    srand(1);
    num nRemain = nSliceBytes;
-   long nBlockSize = nBufSize-10;
+   int nBlockSize = nBufSize-10;
    while (nRemain > 0)
    {
-      long nWriteSize = nBlockSize;
+      int nWriteSize = nBlockSize;
       if (nWriteSize > nRemain)
           nWriteSize = nRemain;
-      for (long i=0; i<nWriteSize; i++)
+      for (int i=0; i<nWriteSize; i++)
          pBuf[i] = (uchar)rand();
-      long nWriteSize2 = myfwrite(pBuf, nWriteSize, fout);
+      int nWriteSize2 = myfwrite(pBuf, nWriteSize, fout);
       if (nWriteSize2 != nWriteSize) {
          fclose(fout);
          return 9+esys("fwrite", "unable to fully write test file %s\n", pszPath);
@@ -31172,7 +31360,7 @@ long writeDiskSlice(char *pszPath, num nSliceBytes, uchar *pBuf, long nBufSize)
    return 0;
 }
 
-long readDiskSlice(char *pszPath, num nSliceBytes, uchar *pBuf, long nBufSize)
+int readDiskSlice(char *pszPath, num nSliceBytes, uchar *pBuf, int nBufSize)
 {
    // 2. read and check slice
    num nTime1 = getCurrentTime();
@@ -31180,20 +31368,20 @@ long readDiskSlice(char *pszPath, num nSliceBytes, uchar *pBuf, long nBufSize)
    if (!fin) return 9+perr("unable to re-read test file %s\n", pszPath);
    srand(1); // reproduce same pseudo-random sequence
    num nRemain = nSliceBytes;
-   long nBlockSize = nBufSize-10;
+   int nBlockSize = nBufSize-10;
    num nHits = 0;
    while (nRemain > 0) 
    {
-      long nReadSize = nBlockSize;
+      int nReadSize = nBlockSize;
       if (nReadSize > nRemain)
           nReadSize = nRemain;
-      long nReadSize2 = fread(pBuf, 1, nReadSize, fin);
+      int nReadSize2 = fread(pBuf, 1, nReadSize, fin);
       if (nReadSize2 != nReadSize) {
          fclose(fin);
          return 9+perr("unable to re-read test file %s\n", pszPath);
       }
       nRemain -= nReadSize;
-      for (long i=0; i<nReadSize; i++)
+      for (int i=0; i<nReadSize; i++)
          if (pBuf[i] != (uchar)rand())
             nHits++;
    }
@@ -31212,7 +31400,7 @@ long readDiskSlice(char *pszPath, num nSliceBytes, uchar *pBuf, long nBufSize)
 }
 
 // uses szLineBuf
-long checkDisk(char *pszPath, long nRangeMB)
+int checkDisk(char *pszPath, int nRangeMB)
 {
    num nTotal=0, nFree=0;
    char szFSName[200];
@@ -31233,10 +31421,10 @@ long checkDisk(char *pszPath, long nRangeMB)
       nNetto  = nBrutto;
    }
 
-   printf("Testing Volume %s, FileSystem %s, over %lu mbytes.\n", szVolID, szFSName, (ulong)(nNetto/1000000));
+   printf("Testing Volume %s, FileSystem %s, over %u mbytes.\n", szVolID, szFSName, (uint)(nNetto/1000000));
 
    if (nNetto > nFree)
-      return 9+perr("test range too large: volume has only %ld free mbytes\n", nFree);
+      return 9+perr("test range too large: volume has only %d free mbytes\n", nFree);
 
    num nSliceBytes = nNetto / 100;
    printf("Writing 100 temporary files of %s mbytes each. Press ESC to stop.\n", numtoa(nSliceBytes/1000000));
@@ -31247,7 +31435,7 @@ long checkDisk(char *pszPath, long nRangeMB)
 
    // for USB stick write performance, we MUST use the largest I/O blocks possible.
    // a large buffer makes I/O about 10 times(!) faster.
-   long nWorkBufSize = 1048675 * 50; // yes, 50 megabytes
+   int nWorkBufSize = 1048675 * 50; // yes, 50 megabytes
    uchar *pWorkBuf = new uchar[nWorkBufSize];
    if (!pWorkBuf)
       return 9+perr("out of memory, cannot allocate working buffer.\n");
@@ -31258,41 +31446,41 @@ long checkDisk(char *pszPath, long nRangeMB)
 
    num nWritten = 0;
    num nTimeW1  = getCurrentTime();
-   long i;
+   int i;
    for (i=0; i<100; i++)
    {
       if (userInterrupt())
          break;
 
-      sprintf(szLineBuf, "%s%stmp-test-%02lu.dat", pszPath, endsWithPathChar(pszPath)?"":glblPathStr, i);
-      long lRC = writeDiskSlice(szLineBuf, nSliceBytes, pWorkBuf, nWorkBufSize);
+      sprintf(szLineBuf, "%s%stmp-test-%02u.dat", pszPath, endsWithPathChar(pszPath)?"":glblPathStr, i);
+      int lRC = writeDiskSlice(szLineBuf, nSliceBytes, pWorkBuf, nWorkBufSize);
 
       if (lRC) abStat[i] = 'E';
       else     abStat[i] = '_';
 
       if (i < 49) {
-         printf("%03lu%% > %.50s < \r", i+1, abStat);
+         printf("%03u%% > %.50s < \r", i+1, abStat);
          fflush(stdout);
       }
       if (i == 49) {
-         printf("%03lu%% > %.50s < - 1st half written.\n", i+1, abStat);
+         printf("%03u%% > %.50s < - 1st half written.\n", i+1, abStat);
       }
       if (i > 49 && i < 99) {
-         printf("%03lu%% > %.50s < \r", i+1, &abStat[50]);
+         printf("%03u%% > %.50s < \r", i+1, &abStat[50]);
          fflush(stdout);
       }
       if (i == 99) {
-         printf("%03lu%% > %.50s < - 2nd half written.\n", i+1, abStat);
+         printf("%03u%% > %.50s < - 2nd half written.\n", i+1, abStat);
       }
 
       nWritten += nSliceBytes;
    }
-   long nCheck  = i;
+   int nCheck  = i;
    num nTimeW2  = getCurrentTime();
    num nWElapse = nTimeW2-nTimeW1;
 
-   ulong nkbswrite = (ulong)(nWritten / (nWElapse?nWElapse:1));
-   printf("Write done at %lu kbytes/sec.%.40s\n", nkbswrite, pszGlblBlank);
+   uint nkbswrite = (uint)(nWritten / (nWElapse?nWElapse:1));
+   printf("Write done at %u kbytes/sec.%.40s\n", nkbswrite, pszGlblBlank);
 
    memset(pWorkBuf, 0xFF, nWorkBufSize);
 
@@ -31311,27 +31499,27 @@ long checkDisk(char *pszPath, long nRangeMB)
       // if (userInterrupt())
       //   break;
 
-      sprintf(szLineBuf, "%s%stmp-test-%02lu.dat", pszPath, endsWithPathChar(pszPath)?"":glblPathStr, i);
-      long lRC = readDiskSlice(szLineBuf, nSliceBytes, pWorkBuf, nWorkBufSize);
+      sprintf(szLineBuf, "%s%stmp-test-%02u.dat", pszPath, endsWithPathChar(pszPath)?"":glblPathStr, i);
+      int lRC = readDiskSlice(szLineBuf, nSliceBytes, pWorkBuf, nWorkBufSize);
 
       if (lRC) abStat[i] = 'E';
       else     abStat[i] = '_';
 
       if (i < 49) {
-         printf("%03lu%% > %.50s < \r", i+1, abStat);
+         printf("%03u%% > %.50s < \r", i+1, abStat);
          fflush(stdout);
       }
       if (i == 49) {
          nFirstHits = nGlblCheckDiskHits;
-         printf("%03lu%% > %.50s < - %s \n", i+1, abStat, nFirstHits ? "1st half contains Errors." : "1st half OK.");
+         printf("%03u%% > %.50s < - %s \n", i+1, abStat, nFirstHits ? "1st half contains Errors." : "1st half OK.");
       }
       if (i > 49 && i < 99) {
-         printf("%03lu%% > %.50s < \r", i+1, &abStat[50]);
+         printf("%03u%% > %.50s < \r", i+1, &abStat[50]);
          fflush(stdout);
       }
       if (i == 99) {
          nSecondHits = nGlblCheckDiskHits - nFirstHits;
-         printf("%03lu%% > %.50s < - %s \n", i+1, abStat, nSecondHits ? "2nd half contains Errors." : "2nd half OK.");
+         printf("%03u%% > %.50s < - %s \n", i+1, abStat, nSecondHits ? "2nd half contains Errors." : "2nd half OK.");
       }
 
       nReadBytes += nSliceBytes;
@@ -31339,8 +31527,8 @@ long checkDisk(char *pszPath, long nRangeMB)
    num nTimeR2  = getCurrentTime();
    num nRElapse = nTimeR2-nTimeR1;
 
-   ulong nkbsread = (ulong)(nReadBytes / (nRElapse?nRElapse:1));
-   printf("Read done at %lu kbytes/sec.%.40s\n", nkbsread, pszGlblBlank);
+   uint nkbsread = (uint)(nReadBytes / (nRElapse?nRElapse:1));
+   printf("Read done at %u kbytes/sec.%.40s\n", nkbsread, pszGlblBlank);
 
    // NO RETURN UNTIL HERE.
 
@@ -31348,12 +31536,12 @@ long checkDisk(char *pszPath, long nRangeMB)
    pWorkBuf = 0;
 
    // cleanup: delete all files without errors.
-   long nKept = 0;
+   int nKept = 0;
    for (i=0; i<100; i++)
    {
       if (abStat[i] != 'E') {
-         sprintf(szLineBuf, "%s%stmp-test-%02lu.dat", pszPath, endsWithPathChar(pszPath)?"":glblPathStr, i);
-         printf("%02lu%% cleanup test files ... \r", i);
+         sprintf(szLineBuf, "%s%stmp-test-%02u.dat", pszPath, endsWithPathChar(pszPath)?"":glblPathStr, i);
+         printf("%02u%% cleanup test files ... \r", i);
          fflush(stdout);
          remove(szLineBuf);
       } else {
@@ -31364,7 +31552,7 @@ long checkDisk(char *pszPath, long nRangeMB)
    if (nGlblCheckDiskHits) {
       printf("%s mb of file system checked, errors detected:\n", numtoa(nReadBytes/1000000));
       printf("%s bytes failed to re-read after write.\n", numtoa(nGlblCheckDiskHits));
-      printf("%lu test files with bad sectors are left over, to cover the bad areas.\n", nKept);
+      printf("%u test files with bad sectors are left over, to cover the bad areas.\n", nKept);
    } else {
       printf("%s mb of file system successfully written and re-read.\n", numtoa(nReadBytes/1000000));
    }
@@ -31375,14 +31563,14 @@ long checkDisk(char *pszPath, long nRangeMB)
 #endif // USE_SFK_BASE
 
 #ifdef _WIN32
-long putClipboard(char *pszStr)
+int putClipboard(char *pszStr)
 {
    if (!OpenClipboard(0)) // GetDesktopWindow()))
       return 9+perr("clipboard #1\n");
    if (!EmptyClipboard())
       return 9+perr("clipboard #2\n");
 
-   long nStrLen = strlen(pszStr);
+   int nStrLen = strlen(pszStr);
 
    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, nStrLen+10);
    if (hMem == NULL) return 9+perr("clipboard #3\n");
@@ -31410,9 +31598,9 @@ long putClipboard(char *pszStr)
 }
 #endif
 
-long execJoin(char *pszFirstInput, char *pszDst, bool bTest, char *pszMD5Write)
+int execJoin(char *pszFirstInput, char *pszDst, bool bTest, char *pszMD5Write)
 {
-   long nWorkMB = 100;
+   int nWorkMB = 100;
    num nWorkBufSize = nWorkMB * 1000000;
    uchar *pWorkBuf = new uchar[nWorkBufSize+1000];
    if (!pWorkBuf) return 9+perr("out of memory, cannot allocate working buffer.\n");
@@ -31463,11 +31651,11 @@ long execJoin(char *pszFirstInput, char *pszDst, bool bTest, char *pszMD5Write)
    num ntotal = 0;
    SFKMD5 md5;
 
-   long nin = 1;
+   int nin = 1;
    bool bbail = 0;
    while (!bbail)
    {
-      sprintf(szLineBuf2, "%s.part%ld", pszBaseName, nin);
+      sprintf(szLineBuf2, "%s.part%d", pszBaseName, nin);
       char *pszSrc = szLineBuf2;
 
       FILE *fpart = fopen(pszSrc, "rb");
@@ -31483,7 +31671,7 @@ long execJoin(char *pszFirstInput, char *pszDst, bool bTest, char *pszMD5Write)
          num nTotalMB = ntotal / 1000000;
 
          if (pszMD5Write) {
-            printf("verifying part %ld, %s mb done [Esc to skip] \r", nin-1, numtoa(nTotalMB));
+            printf("verifying part %d, %s mb done [Esc to skip] \r", nin-1, numtoa(nTotalMB));
             fflush(stdout);
             if (userInterrupt(1)) {
                printf("verify skipped.                               \n");
@@ -31492,22 +31680,22 @@ long execJoin(char *pszFirstInput, char *pszDst, bool bTest, char *pszMD5Write)
                break;
             }
          } else {
-            printf("reading part %ld, %s mb done \r", nin-1, numtoa(nTotalMB));
+            printf("reading part %d, %s mb done \r", nin-1, numtoa(nTotalMB));
             fflush(stdout);
          }
 
-         long nread = myfread(pWorkBuf, nWorkBufSize, fpart);
+         int nread = myfread(pWorkBuf, nWorkBufSize, fpart);
 
-         if (cs.debug) printf("read.blck: %ld maxbuf=%ld  \n", nread, nWorkBufSize);
+         if (cs.debug) printf("read.blck: %d maxbuf=%d  \n", nread, (int)nWorkBufSize);
 
          if (nread <= 0)
             break; // EOD
 
          if (!bTest)
          {
-            long nwrite = myfwrite(pWorkBuf, nread, fout);
+            int nwrite = myfwrite(pWorkBuf, nread, fout);
 
-            if (cs.debug) printf("writ.blck: %ld   \n", nwrite);
+            if (cs.debug) printf("writ.blck: %d   \n", nwrite);
 
             if (nwrite != nread) {
                delete [] pWorkBuf;
@@ -31522,7 +31710,7 @@ long execJoin(char *pszFirstInput, char *pszDst, bool bTest, char *pszMD5Write)
          ntotal += nread;
       }
 
-      if (cs.debug) printf("clos.read: %s totalDone=%ld   \n", pszSrc, ntotal);
+      if (cs.debug) printf("clos.read: %s totalDone=%d   \n", pszSrc, (int)ntotal);
 
       fclose(fpart);
    }
@@ -31539,15 +31727,15 @@ long execJoin(char *pszFirstInput, char *pszDst, bool bTest, char *pszMD5Write)
 
    if (bTest) {
       if (!pszMD5Write)
-         printf("tested join of %ld files, %s total bytes.\n", nin-1, numtoa(ntotal));
+         printf("tested join of %d files, %s total bytes.\n", nin-1, numtoa(ntotal));
    } else {
-      printf("%s created from %ld files, %s total bytes.\n", pszDst, nin-1, numtoa(ntotal));
+      printf("%s created from %d files, %s total bytes.\n", pszDst, nin-1, numtoa(ntotal));
    }
 
    char szMD5Read[100];
 
    uchar *pmd5 = md5.digest();
-   for (long i=0; i<16; i++)
+   for (int i=0; i<16; i++)
       sprintf(&szMD5Read[i*2], "%02x", pmd5[i]);
    printf("md5 = %s   %s ", szMD5Read, pszMD5Write ? "[verify]" : "");
 
@@ -31575,7 +31763,7 @@ bool isHelpOpt(char *psz) {
 }
 
 // process -opt=value AND -opt value
-bool haveParmOption(char *argv[], int argc, int &iDir, char *pszOptBase, char **pszOutParm)
+bool haveParmOption(char *argv[], int argc, int &iDir, cchar *pszOptBase, char **pszOutParm)
 {
    *pszOutParm = 0;  // if this stays NULL it tells ERROR status.
 
@@ -31675,8 +31863,10 @@ void shutdownAllGlobalData()
 
    // cleanup for all commands
    #ifndef USE_SFK_BASE
+   #ifdef SFK_DEPRECATED
    glblMemSnap.shutdown();
    glblFileSnap.shutdown();
+   #endif
    #endif
 
    glblFileSet.shutdown();
@@ -31713,7 +31903,9 @@ void shutdownAllGlobalData()
    #endif
 
    #ifdef SFK_WINPOPUP_SUPPORT
+   #ifdef SFK_DEPRECATED
    winCleanupGUI();
+   #endif
    #endif
 
    #ifdef VFILEBASE
@@ -31741,37 +31933,37 @@ void cleanupTmpCmdData()
 #ifndef USE_SFK_BASE
 
 // register syntax test
-void subregtest(char *pszcmd, char *pszTest) {
+void subregtest(cchar *pszcmd, cchar *pszTest) {
    // if not running the syntest cmd, do nothing:
    if (strcmp(pszcmd, "syntest"))
       return;
    if (!bGlblSyntaxTest) // avoid recursion
-      glblSynTests.addEntry(pszTest); 
+      glblSynTests.addEntry((char*)pszTest);
 }
 
 #define regtest(x) subregtest(pszCmd, x)
 
 // run user interface tests, by calling main() again
-long runSyntaxTests(char *penv[])
+int runSyntaxTests(char *penv[])
 {
    bGlblSyntaxTest = 1;
    bool bVerbose = (cs.verbose > 0);
    cs.verbose = 0;
    char **myargv = new char*[100];
    char *pszBuf  = new char[MAX_LINE_LEN+10];
-   long myargc = 0;
-   long lrc=0, npassed=0, nfailed=0;
-   for (long i=0; i<glblSynTests.numberOfEntries(); i++) 
+   int myargc = 0;
+   int lrc=0, npassed=0, nfailed=0;
+   for (int i=0; i<glblSynTests.numberOfEntries(); i++) 
    {
       myargc = 0;
-      myargv[myargc++] = "sfk";
-      myargv[myargc++] = "-stest";
+      myargv[myargc++] = str("sfk");
+      myargv[myargc++] = str("-stest");
       char *psz1 = glblSynTests.getEntry(i, __LINE__);
       if (!psz1) break;
       mystrcopy(pszBuf, psz1, MAX_LINE_LEN);
       // linux syntax fixes
       psz1 = pszBuf;
-      while (psz1 = strchr(psz1, '$'))
+      while ((psz1 = strchr(psz1, '$')))
          *psz1++ = glblRunChar;
       // process line
       psz1 = pszBuf;
@@ -31783,7 +31975,7 @@ long runSyntaxTests(char *penv[])
             myargv[myargc++] = psz1;
             // activate masked blanks (_)
             char *psz3 = psz1;
-            while (psz3 = strchr(psz3, '_'))
+            while ((psz3 = strchr(psz3, '_')))
                *psz3++ = ' ';
             // continue on next parm
             psz1 = psz2;
@@ -31798,8 +31990,8 @@ long runSyntaxTests(char *penv[])
       bool bFatal = 0;
       lrc = submain(myargc, myargv, penv, pszCmd, iDir, bFatal);
       if (lrc || bVerbose) {
-         printf("rc %ld : ", lrc);
-         for (long k=0; k<myargc; k++)
+         printf("rc %d : ", lrc);
+         for (int k=0; k<myargc; k++)
             printf("%s ",myargv[k]);
          printf("\n");
       }
@@ -31813,26 +32005,26 @@ long runSyntaxTests(char *penv[])
       bGlblStdInAny = 0;
    }
    if (nfailed > 0)
-      printf("%ld syntax checks failed (%ld passed).\n",nfailed,npassed);
+      printf("%d syntax checks failed (%d passed).\n",nfailed,npassed);
    else
-      printf(": OK : %ld syntax checks passed.\n",npassed);
+      printf(": OK : %d syntax checks passed.\n",npassed);
    delete [] pszBuf;
    delete [] myargv;
    return (nfailed > 0) ? 9 : 0;
 }
 
-long blockChain(char *pszCmd)
+int blockChain(char *pszCmd)
 {
    if (chain.usefiles || chain.usedata || chain.colfiles || chain.coldata)
       return 9+perr("command \"%s\" does not support chaining.\n", pszCmd);
    return 0;
 }
 
-long blockChain(char *pszCmd, int iDir, int argc, char *argv[], long nSilent=0)
+int blockChain(char *pszCmd, int iDir, int argc, char *argv[], int nSilent=0)
 {
    char *pszNext  = 0;
    bool  bforce   = 0;
-   long nNextType = findNextChainType(iDir, argv, argc, &pszNext, bforce);
+   int nNextType = findNextChainType(iDir, argv, argc, &pszNext, bforce);
    if (nNextType == 0)
       return 0;
    if (!(nSilent & 1)) {
@@ -31862,7 +32054,7 @@ SFKMainStat::~SFKMainStat( ) {
 }
 
 // sort and count
-long groupChainText(char *pcmd, bool brev, bool bcnt, long ndig)
+int groupChainText(char *pcmd, bool brev, bool bcnt, int ndig)
 {
    // use a KeyMap of Index-Based StringMaps:
    KeyMap omap;
@@ -31870,8 +32062,8 @@ long groupChainText(char *pcmd, bool brev, bool bcnt, long ndig)
    omap.setreverse(brev);
 
    // collect text lines into groups
-   for (long i=0; i<chain.indata->numberOfEntries(); i++) {
-      char *pattr = "";
+   for (int i=0; i<chain.indata->numberOfEntries(); i++) {
+      char *pattr = str("");
       char *ptext = chain.indata->getEntry(i, __LINE__, &pattr);
       num   nidx  = 0;
       AttribStringMap *pgrp = (AttribStringMap*)omap.get(ptext);
@@ -31879,14 +32071,14 @@ long groupChainText(char *pcmd, bool brev, bool bcnt, long ndig)
          // create new string group under search key
          pgrp = new AttribStringMap();
          if (!pgrp) return 9+perr("out of memory");
-         mtklog("pgrp-put %p under \"%s\"", pgrp, ptext);
+         mtklog(("pgrp-put %p under \"%s\"", pgrp, ptext));
          if (omap.put(ptext, pgrp))
             return 9+perr("failed to sort, probably out of memory");
       } else {
          // add to existing group, at next index
          nidx = pgrp->size(); // next index == size
       }
-      if (!pattr) pattr = "";
+      if (!pattr) pattr = str("");
       if (pgrp->put(nidx, ptext, pattr))
          return 9+perr("failed to sort, probably out of memory");
    }
@@ -31895,21 +32087,21 @@ long groupChainText(char *pcmd, bool brev, bool bcnt, long ndig)
    StringMap oout;
 
    // dump group contents
-   for (long i=0; i<omap.size(); i++) 
+   for (int i=0; i<omap.size(); i++) 
    {
       char *pgrpkey = 0;
       AttribStringMap *pgrp = (AttribStringMap*)omap.iget(i, &pgrpkey);
       if (!pgrp) return 9+perr("int. #168281033");
       if (bcnt) 
       {
-         long nsize = pgrp->size();
-         sprintf(szLineBuf, "%0*lu\t", (int)ndig, nsize);
-         long nlen = strlen(szLineBuf);
+         int nsize = pgrp->size();
+         sprintf(szLineBuf, "%0*u\t", (int)ndig, nsize);
+         int nlen = strlen(szLineBuf);
 
          memset(szAttrBuf, 'p', nlen);
          szAttrBuf[nlen] = '\0';
 
-         long nrem = MAX_LINE_LEN - nlen;
+         int nrem = MAX_LINE_LEN - nlen;
          // get first entry of group
          char *pattr = 0, *pkey = 0;
          char *ptext = pgrp->iget(0, &pkey, &pattr);
@@ -31929,11 +32121,11 @@ long groupChainText(char *pcmd, bool brev, bool bcnt, long ndig)
          //    printColorText(szLineBuf, szAttrBuf, 1); // with lf
       }
       else
-      for (long k=0; k<pgrp->size(); k++) {
+      for (int k=0; k<pgrp->size(); k++) {
          char *pkey = 0, *pattr = 0;
          char *pval = pgrp->iget(k, &pkey, &pattr);
          if (!pval) return 9+perr("int. #168281034");
-         if (!pattr) pattr = "";
+         if (!pattr) pattr = str("");
          if (chain.colany())
             chain.addLine(pval, pattr);
          else
@@ -31943,11 +32135,11 @@ long groupChainText(char *pcmd, bool brev, bool bcnt, long ndig)
 
    if (bcnt) {
       // dump sorted output
-      for (long k=0; k<oout.size(); k++) {
+      for (int k=0; k<oout.size(); k++) {
          char *pkey=0;
          char *pattr = oout.iget(k, &pkey);
          if (!pkey) return 9+perr("int. #168281039");
-         if (!pattr) pattr = "";
+         if (!pattr) pattr = str("");
          if (chain.colany())
             chain.addLine(pkey, pattr);
          else
@@ -31956,10 +32148,10 @@ long groupChainText(char *pcmd, bool brev, bool bcnt, long ndig)
    }
 
    // cleanup
-   for (long i=0; i<omap.size(); i++) 
+   for (int i=0; i<omap.size(); i++) 
    {
       AttribStringMap *pgrp = (AttribStringMap*)omap.iget(i);
-      mtklog("pgrp-del %p", pgrp);
+      mtklog(("pgrp-del %p", pgrp));
       if (pgrp) delete pgrp;
    }
 
@@ -31967,13 +32159,13 @@ long groupChainText(char *pcmd, bool brev, bool bcnt, long ndig)
 }
 
 #ifdef VFILENET
-long execWGet(Coi *psrc, char *pDstDir, ulong nmode)
+int execWGet(Coi *psrc, char *pDstDir, uint nmode)
 {__
    char *pSrcName = psrc->name();
 
    bool bpath2path = (nmode & 2) ? 1 : 0;
 
-   long nMaxDst= 500;
+   int nMaxDst= 500;
    char szDstBuf[500+10]; mclear(szDstBuf);
 
    if (pDstDir) {
@@ -31982,7 +32174,7 @@ long execWGet(Coi *psrc, char *pDstDir, ulong nmode)
    }
 
    char *pcat = szDstBuf + strlen(szDstBuf);
-   long  nrem = nMaxDst  - strlen(szDstBuf);
+   int  nrem = nMaxDst  - strlen(szDstBuf);
 
    num nSize = psrc->getSize(); // if any
 
@@ -32014,7 +32206,7 @@ long execWGet(Coi *psrc, char *pDstDir, ulong nmode)
       if (createOutDirTree(pDstName))
          return 9;
 
-   Coi *pdst = new Coi(pDstName, "wb");
+   Coi *pdst = new Coi(pDstName, 0);
    if (!pdst) return 9+perr("out of memory");
    CoiAutoDelete odel2(pdst, 0); // no decref
 
@@ -32251,7 +32443,7 @@ int main(int argc, char *argv[], char *penv[])
       // then rebuild parameter set, autoselecting the command
       paliasv = new char*[argc+10];
       naliasc = argc+1;
-      for (long i=0; i<argc; i++)
+      for (int i=0; i<argc; i++)
         paliasv[i+1] = argv[i];
       paliasv[0] = "sfk";
       // remap parameter set
@@ -32275,12 +32467,12 @@ int main(int argc, char *argv[], char *penv[])
    argc -= (iDirPre-1);
    argv += (iDirPre-1);
 
-   char *pszCmd = "?";
+   char *pszCmd = str("?");
    int   iDir   = 0;
 
    if (argc < 2) {
       // no parms: show main help
-      pszCmd = "dump-main-help";
+      pszCmd = str("dump-main-help");
       // and fall through
    } else {
       pszCmd = argv[1];
@@ -32293,7 +32485,7 @@ int main(int argc, char *argv[], char *penv[])
 
    // see also end of main, loop processing
    bool  bFatal = 0;
-   long  lRC    = 0;
+   int  lRC    = 0;
 
    // special case like "sfk +toterm":
    if (argc == 2 && pszCmd[0] == '+')
@@ -32307,14 +32499,12 @@ int main(int argc, char *argv[], char *penv[])
    #define STEP_CHAIN(iDirNext,bMod)          \
       if (iDirNext)                           \
       {                                       \
-         char *pszCmdOld = pszCmd;            \
          pszCmd = argv[iDirNext];             \
          if (pszCmd[0] == '+')                \
             pszCmd++;                         \
          iDir   = iDirNext+1;                 \
          nparm  = argc-iDir;                  \
          bChainCycle = 1;                     \
-         bool bHaveMore = (iDirNext < argc);  \
          if (!bMod) {                         \
             chain.colfiles = 0;               \
             chain.coldata  = 0;               \
@@ -32326,7 +32516,7 @@ int main(int argc, char *argv[], char *penv[])
          }                                    \
          resetStats();                        \
          if (lRC >= 9) {                      \
-            pinf("chaining stops before %s, rc=%ld\n", pszCmd, lRC); \
+            pinf("chaining stops before %s, rc=%d\n", pszCmd, lRC); \
             bDone = 1;                        \
             break;                            \
          } else {                             \
@@ -32339,10 +32529,10 @@ int main(int argc, char *argv[], char *penv[])
    // print overall informal messages
    if (!gs.nonotes) {
       if (gs.utf16read)
-         printx("<time>%ld utf-16 file(s) decoded%s.<def>\n", gs.utf16read, gs.verbose ? "":" (-verbose for more)");
+         printx("<time>%d utf-16 file(s) decoded%s.<def>\n", gs.utf16read, gs.verbose ? "":" (-verbose for more)");
       else
       if (gs.utf16found && gs.verbose)
-         printx("<time>%ld utf-16 file(s) found. (see \"sfk help utf\")<def>\n", gs.utf16found);
+         printx("<time>%d utf-16 file(s) found. (see \"sfk help utf\")<def>\n", gs.utf16found);
    }
 
    #ifdef VFILEBASE
@@ -32350,11 +32540,11 @@ int main(int argc, char *argv[], char *penv[])
       num nmax  = glblVCache.bytesMax();
       num ndrop = glblVCache.filesDropped();
       printx(
-         "<time>peak cache usage = %ld mb. "
-         "the memlimit was %sreached (%ld drops).<def>\n",
-         (long)(nmax / 1000000),
+         "<time>peak cache usage = %d mb. "
+         "the memlimit was %sreached (%d drops).<def>\n",
+         (int)(nmax / 1000000),
          (ndrop > 0) ? "":"not ",
-         (long)ndrop
+         (int)ndrop
          );
    }
    #endif // VFILEBASE
@@ -32362,10 +32552,10 @@ int main(int argc, char *argv[], char *penv[])
    // print error and warning stats
    if (nGlblErrors) {
       setTextColor(nGlblErrColor);
-      printf("%ld errors", nGlblErrors);
+      printf("%d errors", nGlblErrors);
       if (nGlblWarnings) {
          setTextColor(nGlblWarnColor);
-         printf(", %ld warnings", nGlblWarnings);
+         printf(", %d warnings", nGlblWarnings);
          setTextColor(nGlblErrColor);
       }
       if (bGlblSysErrOccured && !bGlblSysErrDetail) {
@@ -32380,7 +32570,7 @@ int main(int argc, char *argv[], char *penv[])
    else
    if (nGlblWarnings) {
       setTextColor(nGlblWarnColor);
-      printf("%ld warnings occurred.\n", nGlblWarnings);
+      printf("%d warnings occurred.\n", nGlblWarnings);
       setTextColor(-1);
    }
 
@@ -32406,7 +32596,7 @@ int main(int argc, char *argv[], char *penv[])
       lRC = nGlblShellRC;
 
    if (gs.showrc)
-      printf("sfk rc: %ld\n", lRC);
+      printf("sfk rc: %d\n", lRC);
 
    if (bGlblPauseOnEnd) {
       printf("Press ENTER to continue.\n");
@@ -32419,7 +32609,7 @@ int main(int argc, char *argv[], char *penv[])
 // #undef  _
 // #define _ printf("[%d]\n",__LINE__);
 
-char *askBlackList[] = {
+cchar *askBlackList[] = {
    "how","do","i","in","for","the","a","to",
    "use","using","of","by","many","every",
    "only","part","bytes","within","all",
@@ -32432,14 +32622,14 @@ char *askBlackList[] = {
    0 // EOD
 };
 
-char *askReduxList[] = {
+cchar *askReduxList[] = {
    "1bigger", "1directory", "3converting", "4splitting",
    "4comparison", "2converter", "4conversion",
    "2colored", "7tabulation", "2sorted",
    0 // EOD
 };
 
-char *askSynList[][2] = {
+cchar *askSynList[][2] = {
    { "search", "find" },
    { "determine", "find" },
    { "check", "find" },
@@ -32476,7 +32666,7 @@ char *filterAskPattern(char *prawpat, char *ppre1, char *ppre2)
    // strip all 1-char words
    if (strlen(prawpat) < 2) return 0;
 
-   long i=0;
+   int i=0;
 
    strcopy(szLineBuf, prawpat);
    for (i=0; askBlackList[i]; i++)
@@ -32485,7 +32675,7 @@ char *filterAskPattern(char *prawpat, char *ppre1, char *ppre2)
 
    // word reduction:
    char *p   = szLineBuf;
-   long nlen = strlen(p);
+   int nlen = strlen(p);
 
    // force all lowercase
    for (i=0; i<nlen; i++)
@@ -32505,10 +32695,10 @@ char *filterAskPattern(char *prawpat, char *ppre1, char *ppre2)
 
    // reduce by list
    for (i=0; askReduxList[i]; i++) {
-      char *ppat = askReduxList[i];
-      long  nred = (*ppat++) - '0';
+      cchar *ppat = askReduxList[i];
+      int   nred = (*ppat++) - '0';
       if (!mystricmp(szLineBuf, ppat)) {
-         long ncpy = strlen(ppat)-nred;
+         int ncpy = strlen(ppat)-nred;
          memcpy(szLineBuf, ppat, ncpy);
          szLineBuf[ncpy] = '\0';
          break;
@@ -32517,8 +32707,8 @@ char *filterAskPattern(char *prawpat, char *ppre1, char *ppre2)
 
    // reduce synonyms
    for (i=0; askSynList[i][0]; i++) {
-      char *pfrom = askSynList[i][0];
-      char *pto   = askSynList[i][1];
+      cchar *pfrom = askSynList[i][0];
+      cchar *pto   = askSynList[i][1];
       if (!mystricmp(p, pfrom))
       {  strcpy(p, pto); break; }
    }
@@ -32555,11 +32745,11 @@ char *filterAskPattern(char *prawpat, char *ppre1, char *ppre2)
    return szLineBuf;
 }
 
-long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &bFatal)
+int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &bFatal)
 {
    int   nparm  = argc - iDir; // number of parameters (after command name)
    bool  bDone  = 0;
-   long  lRC    = 0;
+   int  lRC    = 0;
    bool  btest  = bGlblSyntaxTest;
 
    // help text collection support:
@@ -32590,7 +32780,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    cs.curcmd = pszCmd;
 
    if (bChainCycle && cs.verbose) {
-      printf("[chain process index %ld, \"%s\", cmd=%s, nparm=%ld, \"%s\" uf=%d %ld ud=%d %ld cf %d cd %d]\n",
+      printf("[chain process index %d, \"%s\", cmd=%s, nparm=%d, \"%s\" uf=%d %d ud=%d %d cf %d cd %d]\n",
          iDir,argv[iDir-1],pszCmd,nparm,(iDir<argc)?argv[iDir]:"[eod]",
          chain.usefiles, chain.usefiles ? chain.numberOfInFiles() : 0,
          chain.usedata , chain.usedata  ? chain.indata->numberOfEntries() : 0,
@@ -32604,7 +32794,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    bChainCycle = 0;
    bexec       = 0;
 
-   long lFiles=0, lDirs=0; // deprecated stats
+   int lFiles=0, lDirs=0; // deprecated stats
    num  nBytes=0;          // deprecated stats
 
    if (!strcmp(pszCmd, "dumphelp") || !strcmp(pszCmd, "ask"))
@@ -32884,7 +33074,6 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       bool bTime=0, bSize=0, bPure=0;
 
-      char *pszParm    = 0;
       char *toFileName = 0;
 
       for (; iDir < argc; iDir++) 
@@ -33108,7 +33297,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
       }
 
-      long nsort=0, msort=0;
+      int nsort=0, msort=0;
       if (cs.listByTime) { nsort++; msort |= 1; }
       if (cs.listBySize) { nsort++; msort |= 2; }
       if (cs.listByName) { nsort++; msort |= 4; }
@@ -33122,7 +33311,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       int iDirNext = 0;
       bool bAnyDirParms = 0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext, &bAnyDirParms)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext, &bAnyDirParms))) return lRC;
       if (btest) return 0;
 
       // plausi checks
@@ -33162,27 +33351,27 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       info.clear();
 
       if (cs.listBySize) {
-         long nCnt  = glblFileListCache.numberOfEntries();
-         long iFrom = 0;
+         int nCnt  = glblFileListCache.numberOfEntries();
+         int iFrom = 0;
          if (!cs.listBySizeAll && (nCnt > abs(cs.listBySize))) {
             iFrom = nCnt - abs(cs.listBySize);
             if (!cs.nohead)
-                printx("<file>[listing %ld of %ld files by size:]<def>\n", (long)(abs(cs.listBySize)), nCnt);
+                printx("<file>[listing %d of %d files by size:]<def>\n", (int)(abs(cs.listBySize)), nCnt);
          }
-         for (long i=iFrom; i<nCnt; i++) {
+         for (int i=iFrom; i<nCnt; i++) {
             Coi *pcoi = glblFileListCache.getEntry(i, __LINE__);
             // get text line prefixed by metatext length
             char *pszFull = pcoi->getExtStr();
             if (!pszFull) return 9+perr("internal 141271931\n");
             int nMetaLen = atol(pszFull);
-            if (nMetaLen > (long)strlen(pszFull)) return 9+perr("internal 61212\n");
+            if (nMetaLen > (int)strlen(pszFull)) return 9+perr("internal 61212\n");
             if (strlen(pszFull) < 6) return 9+perr("internal 61213\n");
             char *pszText = pszFull+6;
             if (chain.colfiles)
                chain.addFile(*pcoi);
             else
             if (chain.coldata)
-               chain.addLine(pszText, "");
+               chain.addLine(pszText, str(""));
             else
             {
                if (nMetaLen) {
@@ -33196,15 +33385,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       if (cs.listByTime) {
-         long nCnt  = glblFileListCache.numberOfEntries();
-         long iFrom = 0;
+         int nCnt  = glblFileListCache.numberOfEntries();
+         int iFrom = 0;
          if (!cs.listByTimeAll && (nCnt > abs(cs.listByTime))) {
             iFrom = nCnt - abs(cs.listByTime);
             if (!cs.nohead)
-                printx("<file>[listing %ld of %ld files by date:]<def>\n", (long)(abs(cs.listByTime)), nCnt);
+                printx("<file>[listing %d of %d files by date:]<def>\n", (int)(abs(cs.listByTime)), nCnt);
          }
-         long noldday = -1;
-         long i=iFrom;
+         int noldday = -1;
+         int i=iFrom;
          if (i > 0) i--; // one precycle to find previous entry's day
          for (; i<nCnt; i++) {
             Coi *pcoi = glblFileListCache.getEntry(i, __LINE__);
@@ -33216,7 +33405,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             #else
             pLocTime = localtime(&nTime2);      // may be NULL
             #endif
-            long nday = pLocTime->tm_yday;      // 0..365
+            int nday = pLocTime->tm_yday;      // 0..365
             if (i < iFrom) {
                noldday = nday;
                continue; // empty precycle
@@ -33225,14 +33414,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             char *pszFull = pcoi->getExtStr();
             if (!pszFull) return 9+perr("internal 141271933\n");
             int nMetaLen = atol(pszFull);
-            if (nMetaLen > (long)strlen(pszFull)) return 9+perr("internal 61211\n");
+            if (nMetaLen > (int)strlen(pszFull)) return 9+perr("internal 61211\n");
             if (strlen(pszFull) < 6) return 9+perr("internal 61214\n");
             char *pszText = pszFull+6;
             if (chain.colfiles)
                chain.addFile(*pcoi);
             else
             if (chain.coldata)
-               chain.addLine(pszText, "");
+               chain.addLine(pszText, str(""));
             else
             {
                if (nMetaLen) {
@@ -33251,27 +33440,27 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       if (cs.listByName) {
-         long nCnt  = glblFileListCache.numberOfEntries();
-         long iFrom = 0;
+         int nCnt  = glblFileListCache.numberOfEntries();
+         int iFrom = 0;
          if (!cs.listByNameAll && (nCnt > abs(cs.listByName))) {
             iFrom = nCnt - abs(cs.listByName);
             if (!cs.nohead)
-                printx("<file>[listing %ld of %ld files by name:]<def>\n", (long)(abs(cs.listByName)), nCnt);
+                printx("<file>[listing %d of %d files by name:]<def>\n", (int)(abs(cs.listByName)), nCnt);
          }
-         for (long i=iFrom; i<nCnt; i++) {
+         for (int i=iFrom; i<nCnt; i++) {
             Coi *pcoi = glblFileListCache.getEntry(i, __LINE__);
             // get text line prefixed by metatext length
             char *pszFull = pcoi->getExtStr();
             if (!pszFull) return 9+perr("internal 141271934\n");
             int nMetaLen = atol(pszFull);
-            if (nMetaLen > (long)strlen(pszFull)) return 9+perr("internal 61220\n");
+            if (nMetaLen > (int)strlen(pszFull)) return 9+perr("internal 61220\n");
             if (strlen(pszFull) < 6) return 9+perr("internal 61221\n");
             char *pszText = pszFull+6;
             if (chain.colfiles)
                chain.addFile(*pcoi);
             else
             if (chain.coldata)
-               chain.addLine(pszText, "");
+               chain.addLine(pszText, str(""));
             else
             {
                if (nMetaLen) {
@@ -33287,7 +33476,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (bStat) // FIX 153R3: do not also check quiet, nohead
       {
          num   nbytes = nGlblBytes;
-         char *punit  = "bytes";
+         cchar *punit  = "bytes";
          num   ndiv   = 1;
 
          if (nbytes > 1000000)
@@ -33299,21 +33488,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          char nbuf1[50], nbuf2[50];
 
          if (ndiv > 1)
-            printf("%ld files, %ld dirs, %s %s, %s bytes",cs.files,cs.dirs,numtoa(nbytes/ndiv,1,nbuf1),punit,numtoa(nbytes,1,nbuf2));
+            printf("%d files, %d dirs, %s %s, %s bytes",cs.files,cs.dirs,numtoa(nbytes/ndiv,1,nbuf1),punit,numtoa(nbytes,1,nbuf2));
          else
-            printf("%ld files, %ld dirs, %s bytes",cs.files,cs.dirs,numtoa(nbytes,1,nbuf1));
+            printf("%d files, %d dirs, %s bytes",cs.files,cs.dirs,numtoa(nbytes,1,nbuf1));
 
          if (cs.numHiddenFiles || cs.numHiddenDirs) {
             printf(", ");
             setTextColor(nGlblWarnColor, 1);
-            printf("%ld hidden files, %ld dirs.\n", cs.numHiddenFiles, cs.numHiddenDirs);
+            printf("%d hidden files, %d dirs.\n", cs.numHiddenFiles, cs.numHiddenDirs);
             setTextColor(-1);
          }
          else
          if (cs.numHiddenFilesSkipped || cs.numHiddenDirsSkipped) {
             printf(".\n");
             setTextColor(nGlblWarnColor, 1);
-            printf("skipped %ld hidden files, %ld hidden dirs.\n", cs.numHiddenFilesSkipped, cs.numHiddenDirsSkipped);
+            printf("skipped %d hidden files, %d hidden dirs.\n", cs.numHiddenFilesSkipped, cs.numHiddenDirsSkipped);
             setTextColor(-1);
          }
          else {
@@ -33326,7 +33515,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          bool btold = 0;
          if (cs.addedFilesSkipped > 0) {
             setTextColor(nGlblTimeColor, 1);
-            printf("skipped %ld added files. ", cs.addedFilesSkipped);
+            printf("skipped %d added files. ", cs.addedFilesSkipped);
             btold = 1;
          }
          if (cs.sincetime)
@@ -33356,13 +33545,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             setTextColor(nGlblWarnColor, 1);
          else
             setTextColor(nGlblTimeColor, 1);
-         printf("found %ld matching and %ld missing reference dirs (try -incref or -verbose)\n",nGlblMatchingRefDirs,nGlblMissingRefDirs);
+         printf("found %d matching and %d missing reference dirs (try -incref or -verbose)\n",nGlblMatchingRefDirs,nGlblMissingRefDirs);
          setTextColor(-1);
       }
 
       if (!cs.quiet) {
          if (cs.noFiles)
-            printf("%lu non-regular files skipped.\n", cs.noFiles);
+            printf("%u non-regular files skipped.\n", cs.noFiles);
       }
 
       // step to next chain command (if any),
@@ -33435,7 +33624,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!pszGlblOutFile)
          return 9+perr("missing output filename\n");
 
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3))) return lRC;
       if (btest) return 0;
 
       fGlblOut = fopen(pszGlblOutFile, "w");
@@ -33621,7 +33810,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3)) return lRC;
       lRC = walkAllTrees(eFunc_MetaUpd, lFiles, lDirs, nBytes);
 
-      long nSignsWritten = 0;
+      int nSignsWritten = 0;
       if (filedb.canUpdate())
          if (filedb.save(nSignsWritten))
             return 9;
@@ -33786,7 +33975,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // read file(s), dump md5s underneath
       szLineBuf2[0] = '\0';
-      long nFiles = 0;
+      int nFiles = 0;
       for (; iFile < iFileMax; iFile++)
       {
          nFiles++;
@@ -33841,7 +34030,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       if (cs.verbose)
-         printf("done in %ld msec\n", (long)(getCurrentTime() - nstart));
+         printf("done in %d msec\n", (int)(getCurrentTime() - nstart));
 
       STEP_CHAIN(iChainNext, 1);
 
@@ -33994,7 +34183,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          //  "       -rawest     like -raw but does not even convert unexpected null\n"
          //  "                   or EOF (0x1A) characters within text data.\n"
              "       -nosub      or -norec does not include subdirectories (subfolders).\n"
-             "       -wrap[=n]   auto-wrap long lines [near column n], e.g. -wrap=80.\n"
+             "       -wrap[=n]   auto-wrap long lines [near column n], e.g. -wrap=80.\n" 
              "       -stat       show time stats at end.\n"
              ,glblPathChar);
       printx("\n"
@@ -34045,7 +34234,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (!strncmp(argv[iDir],"-prefix=",strlen("-prefix="))) {
             char *psz = argv[iDir]+strlen("-prefix=");
             if (strlen(psz) > 40)
-               return 9+perr("prefix too long, only up to 40 characters are allowed.");
+               return 9+perr("prefix too long, only up to 40 characters are allowed."); 
             pszGlblJamPrefix = psz;
          }
          else
@@ -34082,7 +34271,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // collect dir and mask parms
       bGlblAllowAllPlusPosFile = 1;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3))) return lRC;
       if (btest) return 0;
 
       fGlblOut = fopen(pszGlblOutFile, poutmode);
@@ -34105,12 +34294,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       fclose(fGlblOut);
 
-      ulong nmbytes = (ulong)(nGlblBytes/1000000UL);
-      ulong nkbytes = (ulong)(nGlblBytes/1000UL);
-      ulong nkbsec  = currentKBPerSec();
-      ulong nmbsec  = nkbsec / 1000UL;
-      ulong nmsec   = (ulong)(getCurrentTime() - nGlblStartTime);
-      ulong nsec    = nmsec / 1000UL;
+      uint nmbytes = (uint)(nGlblBytes/1000000UL);
+      uint nkbytes = (uint)(nGlblBytes/1000UL);
+      uint nkbsec  = currentKBPerSec();
+      uint nmbsec  = nkbsec / 1000UL;
+      uint nmsec   = (uint)(getCurrentTime() - nGlblStartTime);
+      uint nsec    = nmsec / 1000UL;
 
       info.clear();
 
@@ -34148,7 +34337,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (iDir >= argc-1) return 9+perr("missing arguments\n");
 
       char *pszInFile  = argv[iDir+0];
-      for (long k=iDir+1; k<argc; k++)
+      for (int k=iDir+1; k<argc; k++)
          if (isChainStart(pszCmd, argv, argc, k, 0))
             return 9+perr("%s does not support chaining (%s).\n",pszCmd,argv[k]);
       char *pszOutFile = argv[iDir+1];
@@ -34176,7 +34365,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    if (!strcmp(pszCmd, "scantab2")) 
    {
       cs.scanTabs = 1;
-      if (lRC = processDirParms(pszCmd, argc, argv, 2, 3)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, 2, 3))) return lRC;
       lRC = walkAllTrees(eFunc_Detab, lFiles, lDirs, nBytes);
       printf("%d files of %d contain tabs.\n", cs.tabFiles, cs.files);
       bDone = 1;
@@ -34241,7 +34430,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       memset(aGlblIndentStats, 0, sizeof(aGlblIndentStats));
       cs.scanTabs = 1;
       int iDirNext = 0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))) return lRC;
       if (btest) return 0;
 
       lRC = walkAllTrees(eFunc_Scantab, lFiles, lDirs, nBytes);
@@ -34254,14 +34443,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (cs.scanIndent) 
       {
          // create sorted indent stats
-         long i,k;
-         long asize[20], acnt[20];
+         int i,k;
+         int asize[20], acnt[20];
          memset(asize, 0, sizeof(asize));
          memset(acnt , 0, sizeof(acnt));
          // transform
          for (i=0; i<=8; i++) {
-            long nsize = i;
-            long ncnt  = aGlblIndentStats[i];
+            int nsize = i;
+            int ncnt  = aGlblIndentStats[i];
             asize[i] = nsize;
             acnt[i]  = ncnt;
          }
@@ -34269,7 +34458,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          for (i=0; i<10; i++)
             for (k=i+1; k<10; k++)
                if (acnt[k] > acnt[i] || (asize[i] == 0)) {
-                  long n   = acnt[i];
+                  int n   = acnt[i];
                   acnt[i]  = acnt[k];
                   acnt[k]  = n;
                        n   = asize[i];
@@ -34280,17 +34469,17 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          for (i=0; i<=10; i++) {
             if (acnt[i] > 0) {
                if (!bTold) {
-                  printf(" %ld files have indent %ld", acnt[i], asize[i]);
+                  printf(" %d files have indent %d", acnt[i], asize[i]);
                   bTold = 1;
                }
                else
                if (asize[i] > 0) {
-                  printf(", %ld/%ld", acnt[i], asize[i]);
+                  printf(", %d/%d", acnt[i], asize[i]);
                   bTold = 1;
                }
                else
                if (bTold) // list unknowns only if others listed before
-                  printf(", %ld/unknown", acnt[i]);
+                  printf(", %d/unknown", acnt[i]);
             }
          }
       }
@@ -34352,14 +34541,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       cs.scanTabs = 0;
 
       int iDirNext = 0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext))) return lRC;
       if (btest) return 0;
 
       cs.sim = !cs.yes;
 
       if (chain.usedata) {
          // detab stream line
-         for (long i=0; i<chain.indata->numberOfEntries(); i++) {
+         for (int i=0; i<chain.indata->numberOfEntries(); i++) {
             szLineBuf[0]  = '\0';
             szLineBuf2[0] = '\0';
             char *psrc = chain.indata->getEntry(i, __LINE__);
@@ -34369,7 +34558,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             }
             detabLine(szLineBuf, szLineBuf2, MAX_LINE_LEN, cs.tabSize);
             if (chain.coldata) {
-               chain.addLine(szLineBuf2, "");
+               chain.addLine(szLineBuf2, str(""));
             } else {
                printf("%s\n", szLineBuf2);
             }
@@ -34489,7 +34678,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          cs.yes = 1;
 
       int iDirNext = 0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext))) return lRC;
       if (btest) return 0;
 
       cs.sim = !cs.yes;
@@ -34503,16 +34692,16 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (cs.quiet < 2) {
          const char *sxinfo = cs.sim ? "would be ":"";
          if (cs.withdirs)
-            printf("%d files, %ld dirs %sdeleted. ", cs.filesDeleted, cs.dirsDeleted, sxinfo);
+            printf("%d files, %d dirs %sdeleted. ", cs.filesDeleted, cs.dirsDeleted, sxinfo);
          else
             printf("%d files %sdeleted. ", cs.filesDeleted, sxinfo);
-         char *pcont = "including ";
+         cchar *pcont = "including ";
          if (cs.filesDeletedWP) {
-            printx("<time>including %ld readonly files<def>", cs.filesDeletedWP);
+            printx("<time>including %d readonly files<def>", cs.filesDeletedWP);
             pcont = ", ";
          }
          if (cs.dirsDeletedWP)
-            printx("<time>%s%ld readonly dirs<def>", pcont,cs.dirsDeletedWP);
+            printx("<time>%s%d readonly dirs<def>", pcont,cs.dirsDeletedWP);
          printf("\n");
       }
 
@@ -34553,7 +34742,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       cs.scanTabs = 0;
 
       int iDirNext = 0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext))) return lRC;
       if (btest) return 0;
 
       cs.sim = !cs.yes;
@@ -34602,7 +34791,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       int iDirNext = 0;
  
       nGlblConvTarget = eConvFormat_CRLF;
-      // printf("argr %ld, iDir %ld\n",argr,iDir);
+      // printf("argr %d, iDir %d\n",argr,iDir);
       if (nparm == 1 && strcmp(argv[iDir], "-i")) {
          // single file name given
          char *pszFile = argv[iDir];
@@ -34610,7 +34799,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (execFormConv(pszFile, 0))
             return 9;
       } else {
-         if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext)) return lRC;
+         if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext))) return lRC;
          if (btest) return 0;
          lRC = walkAllTrees(eFunc_FormConv, lFiles, lDirs, nBytes);
       }
@@ -34649,7 +34838,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (execFormConv(pszFile, 0))
             return 9;
       } else {
-         if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext)) return lRC;
+         if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext))) return lRC;
          if (btest) return 0;
          lRC = walkAllTrees(eFunc_FormConv, lFiles, lDirs, nBytes);
       }
@@ -34659,6 +34848,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bDone = 1;
    }
 
+   #ifdef SFK_DEPRECATED
    ifcmd (!strcmp(pszCmd, "synctext"))
    {
       ifhelp (1)
@@ -34671,6 +34861,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      -> changes in the targets are synced into the clusterfile automatically.\n"
              "   option -stop: exit after initial file collection, e.g. for post-processing.\n"
              "      #sfk synctext=cluster.cpp . .cpp .hpp\n"
+             "\n"
+             "#DEPCRECATED!\n"
+             "    this function will be removed in future releases.\n"
+             "    instead, use Depeche View to view and edit many files at high speed.\n"
              "\n"
              "$sfk synctext=dbfile [-up]\n"
              "    reuse an existing clusterfile.\n"
@@ -34692,6 +34886,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "    sfk maptext=yourcluster.cpp [-nomix] [-cmd=...] <err.txt\n"
              "       nomix: list only the mapped output lines. cmd: on first mapped line,\n"
              "       call supplied command, with clustername and line as parameters.\n"
+             "\n"
+             "#DEPCRECATED!\n"
+             "    this function will be removed in future releases.\n"
+             "    instead, use Depeche View to view and edit many files at high speed.\n"
+             "\n"
              );
       ehelp;
       // no real action here
@@ -34737,11 +34936,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       // collect dir and mask parms
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 0)) // no autocomplete!
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 0))) // no autocomplete!
          return lRC;
       if (btest) return 0;
 
-      long nReloadInfo = 0;
+      int nReloadInfo = 0;
 
       // if any target file information is given
       if (glblFileSet.anyRootAdded())
@@ -34763,11 +34962,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       {
          // else load the snapfile directly
          printf("> load : %s\n", glblFileSnap.getFileName());
-         long bDroppedAny = 0;
+         int bDroppedAny = 0;
          if (glblFileSnap.readFromFile(bDroppedAny, 0))
             return 9;
          // and force initial sync
-         long lMissing = 0;
+         int lMissing = 0;
          if (glblMemSnap.mirrorTargetsFrom(glblFileSnap, lMissing))
             return 9;
          if (lMissing > 0) {
@@ -34776,7 +34975,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (bInitialUpSync) {
             // user selected initial up-sync
             printf("> re-reading all targets ...\n");
-            long lSynced = 0;
+            int lSynced = 0;
             glblMemSnap.setAllTouched();
             if (glblFileSnap.syncUpTargets(glblMemSnap, lSynced))
                return 9;
@@ -34786,7 +34985,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          } else {
             // initial down-sync (default)
             printf("> sync : %s\n", glblFileSnap.getFileName());
-            long nSynced = 0;
+            int nSynced = 0;
             if (glblMemSnap.syncDownTargets(glblFileSnap, nSynced))
                return 9;
             printf("> done : %d targets (re)written [%u,%u]\n", nSynced, glblFileSnap.numberOfTargets(), glblMemSnap.numberOfTargets());
@@ -34795,15 +34994,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // wait for changes and sync them
       int iBlink = 0;
-      char *pszBlink = "-\\|/";
-      char *pszInfo  = "";
+      cchar *pszBlink = "-\\|/";
+      cchar *pszInfo  = "";
       num  lSnapFileTime = getFileTime(glblFileSnap.getFileName());
-      long bLFDone = 0;
-      long bbail = bStop; // 0 by default
+      int bLFDone = 0;
+      int bbail = bStop; // 0 by default
       while (!bbail)
       {
          #ifdef _WIN32
-         for (long iDelay=0; iDelay<10; iDelay++) {
+         for (int iDelay=0; iDelay<10; iDelay++) {
             if (userInterrupt()) {
                bbail = 1;
                break;
@@ -34832,7 +35031,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             // remember new filetime
             lSnapFileTime = lSnapTimeNew;
             // re-read the snapfile
-            long bDroppedAny = 0;
+            int bDroppedAny = 0;
             if (glblFileSnap.readFromFile(bDroppedAny, 1))
                { bFatal=1; continue; }
             if (bDroppedAny) {
@@ -34843,7 +35042,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                nReloadInfo = 7;
             }
             // check for changed snapfile targets
-            long nSynced = 0;
+            int nSynced = 0;
             if (glblMemSnap.syncDownTargets(glblFileSnap, nSynced))
                { bFatal=1; continue; }
             if (nSynced == 0 && nReloadInfo == 0) {
@@ -34872,10 +35071,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
 
          // check for updates in the target files
-         long lRC = glblMemSnap.checkLoadTargets();
+         int lRC = glblMemSnap.checkLoadTargets();
          if (lRC > 3)
            { bFatal=1; continue; }
-         long lSynced = 0;
+         int lSynced = 0;
          if (lRC & 1) {
             // updates have been reloaded. 
             // reloaded targets have the touched() flag set.
@@ -34974,15 +35173,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       glblFileSnap.setRootDir(pszGlblJamRoot);
 
       // collect dir and mask parms
-      if (lRC = processDirParms(pszCmd2, argc, argv, iDir, 0)) // no autocomplete!
+      if ((lRC = processDirParms(pszCmd2, argc, argv, iDir, 0))) // no autocomplete!
          return lRC;
       if (btest) return 0;
 
-      long nReloadInfo = 0;
-
       // load the snapfile directly
       // printf("> load : %s\n", glblFileSnap.getFileName());
-      long bDroppedAny = 0;
+      int bDroppedAny = 0;
       if (glblFileSnap.readFromFile(bDroppedAny, 0))
          return 9;
 
@@ -34991,6 +35188,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       bDone = 1;
    }
+   #endif // SFK_DEPRECATED
 
    regtest("stat -minsize=10 .");
    regtest("stat -quiet -i");
@@ -35108,7 +35306,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       int nAutoComp = (bGlblStdInAny || chain.usefiles) ? 3 : 1;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, nAutoComp, &iChainNext))
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, nAutoComp, &iChainNext)))
          return lRC;
       if (btest) return 0;
 
@@ -35125,25 +35323,25 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          nBytes = cs.flatbytecnt;
       }
 
-      long lMBytes = (long)(nBytes / 1000000);
+      int lMBytes = (int)(nBytes / 1000000);
 
       if (!cs.quiet && bSummary) {
          // chained mode: no dir stats, just add filesizes.
          setTextColor(nGlblHeadColor);
          switch (cs.listunit) {
             case 'b':
-               printf("%s, %5ld files, %ld dirs, %s bytes.\n", numtoa_blank(nBytes, 12), lFiles, lDirs, numtoa(nBytes));
+               printf("%s, %5d files, %d dirs, %s bytes.\n", numtoa_blank(nBytes, 12), lFiles, lDirs, numtoa(nBytes));
                break;
             case 'k':
-               printf("%s kb, %5ld files, %ld dirs, %s bytes.\n", numtoa_blank(nBytes/1000, 10), lFiles, lDirs, numtoa(nBytes));
+               printf("%s kb, %5d files, %d dirs, %s bytes.\n", numtoa_blank(nBytes/1000, 10), lFiles, lDirs, numtoa(nBytes));
                break;
             default :
-               printf("%5ld mb, %5ld files, %ld dirs, %s bytes.\n", lMBytes, lFiles, lDirs, numtoa(nBytes));
+               printf("%5d mb, %5d files, %d dirs, %s bytes.\n", lMBytes, lFiles, lDirs, numtoa(nBytes));
                break;
          }
          setTextColor(-1);
          if (cs.noFiles)
-            printf("%lu non-regular files skipped.\n", cs.noFiles);
+            printf("%u non-regular files skipped.\n", cs.noFiles);
       }
 
       // chaining: collected text lines
@@ -35177,7 +35375,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       printx("    -arc      include content of .zip .jar .tar etc. archives.\n");
              #endif // VFILEBASE
       printx("    -text     process only text files, skip all binary files.\n"
-             "              finds patterns also over long lines, avoiding line breaks.\n"
+             "              finds patterns also over long lines, avoiding line breaks.\n" 
              "    -bin      do not autodetect file content, process all as binary.\n"
              "              can also be used for floating text files (one linefeed per\n"
              "              paragraph, not per line). may produce unwanted line breaks\n"
@@ -35297,14 +35495,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             continue;
          else
          if (!bcolpat && !strncmp(argv[iDir], "-", 1))
-            break; // process long -dir form
+            break; // process int -dir form
          else
          if (!bcolpat && !chain.usefiles && !bGotFileDir) {
             // single dir or file specified.
             bGotFileDir = 1;
             Coi ocoi(argv[iDir], 0);
             if (ocoi.isTravelDir()) {
-                if (lRC = setProcessSingleDir(argv[iDir]))
+                if ((lRC = setProcessSingleDir(argv[iDir])))
                    return lRC;
             } else {
                 if (!fileExists(argv[iDir]))
@@ -35340,7 +35538,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       int iDirNext=0;
       if (iDir < argc) {
-         if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))
+         if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)))
             return lRC;
       } else {
          if (!chain.usefiles && !bGotFileDir)
@@ -35349,8 +35547,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (cs.verbose) {
          printf("[searching lines with");
-         long nGrepPat = glblGrepPat.numberOfEntries();
-         for (long i=0; i<nGrepPat; i++) {
+         int nGrepPat = glblGrepPat.numberOfEntries();
+         for (int i=0; i<nGrepPat; i++) {
             char *pszPat = glblGrepPat.getString(i);
             if (i==0)
                printf(" \"%s\"", pszPat);
@@ -35412,7 +35610,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bool bJava  = 0;
       bool bClass = 0;
       bool bAppend= 0;
-      long nrecsize = 500;
+      int nrecsize = 500;
 
       for (; iDir < argc; iDir++) 
       {
@@ -35460,9 +35658,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       if (bJava)
-         lRC = execBinToJava(pInFile, (long)nFileSize, bPack, pszPrefix, bClass, nrecsize);
+         lRC = execBinToJava(pInFile, (int)nFileSize, bPack, pszPrefix, bClass, nrecsize);
       else
-         lRC = execBinToCpp(pInFile, (long)nFileSize, bPack, pszPrefix, bHex);
+         lRC = execBinToCpp(pInFile, (int)nFileSize, bPack, pszPrefix, bHex);
 
       fclose(fGlblOut);
       delete [] pInFile;
@@ -35495,8 +35693,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "$sfk filter [-memlimit=n] -write inoutfile -replacepattern(s)\n"
              "\n"
              "   filter and change text lines, from standard input, or from file(s).\n"
-             "   input lines may have a maximum length of %lu characters.\n",
-             (ulong)(MAX_LINE_LEN-96)
+             "   input lines may have a maximum length of %u characters.\n",
+             (uint)(MAX_LINE_LEN-96)
              );
       printx("\n"
              "   $line selection options\n"
@@ -35732,8 +35930,6 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       CommandScope ocmd("Filter");
 
-      bool bFileFilt = !strncmp(pszCmd, "ffilt", 5) || !strncmp(pszCmd, "filefilt", 8);
-
       memset(&gfilter, 0, sizeof(gfilter));
       gfilter.argv    = argv;
       gfilter.iPat    = iDir;
@@ -35781,7 +35977,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          // single input file or directory specified?
          bWalkDirs = 1;
          Coi ocoi(pszInPath, 0);
-         if (bsid = ocoi.isTravelDir()) {
+         if ((bsid = ocoi.isTravelDir())) {
             setProcessSingleDir(pszInPath);
             // gfilter.bSkipBinaries = 1;
          } else {
@@ -35791,21 +35987,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
       }
 
-      long nInputs = 0;
+      int nInputs = 0;
       if (pszInPath)    nInputs++;
       if (iDirNew > 0)  nInputs++;
       if (bOldUseFiles) nInputs++;
 
       if (nInputs > 1) {
          perr("filter cannot process input files from multiple sources.\n");
-         long nsrc = 1;
+         int nsrc = 1;
          setTextColor(nGlblWarnColor);
          if (bOldUseFiles) {
-            printf("info : source %ld are filenames from previous command.\n", nsrc++);
+            printf("info : source %d are filenames from previous command.\n", nsrc++);
             printf("tip  : try to select all files within the previous command.\n");
          }
-         if (pszInPath)   printf("info : source %ld is input %s \"%s\"\n", nsrc++, bsid?"directory":"file", pszInPath);
-         if (iDirNew > 0) printf("info : source %ld is directory or file parameter \"%s\"\n", nsrc++, argv[iDirNew]);
+         if (pszInPath)   printf("info : source %d is input %s \"%s\"\n", nsrc++, bsid?"directory":"file", pszInPath);
+         if (iDirNew > 0) printf("info : source %d is directory or file parameter \"%s\"\n", nsrc++, argv[iDirNew]);
          setTextColor(-1);
          return 9;
       }
@@ -35815,7 +36011,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       {
          iDir = iDirNew ? iDirNew : iChainNew;
          // gfilter.bSkipBinaries = 1;
-         if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iChainNew)) return lRC;
+         if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iChainNew))) return lRC;
          bWalkDirs = 1;
       }
  
@@ -35881,7 +36077,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       info.clear(); // for -verbose output
 
       if (!cs.quiet && cs.binariesSkipped)
-         printx("<time>%ld binary files skipped%s.<def>\n", cs.binariesSkipped, cs.verbose?"":" (-verbose for more)");
+         printx("<time>%d binary files skipped%s.<def>\n", cs.binariesSkipped, cs.verbose?"":" (-verbose for more)");
 
       // command cleanup:
       glblFilterDups.reset(); // after last file
@@ -35889,9 +36085,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // analyze -test results
       if (cs.test) {
          lRC = 0;
-         for (long i=0; i<FILT_MAXTESTMASKS; i++) {
+         for (int i=0; i<FILT_MAXTESTMASKS; i++) {
             // if (ftest.apPosMasks[i])
-            //    printf("%ld: pos %s %ld\n",i,ftest.apPosMasks[i],ftest.anPosHits[i]);
+            //    printf("%d: pos %s %d\n",i,ftest.apPosMasks[i],ftest.anPosHits[i]);
             if (ftest.apPosMasks[i] && !ftest.anPosHits[i]) {  
                // a required phrase was not found
                printx("<err>miss :<def> %s\n", ftest.apPosMasks[i]);
@@ -35933,8 +36129,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!strcmp(argv[iDir], "-noblank") && argc >= 4)
          { bblank=0; iDir++; }
 
-      char *pszToAdd = argv[iDir];
-      long nMaxLineLen = sizeof(szLineBuf)-10;
+      int nMaxLineLen = sizeof(szLineBuf)-10;
       while (fgets(szLineBuf, nMaxLineLen, stdin))
       {
          removeCRLF(szLineBuf);
@@ -35977,8 +36172,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!strcmp(argv[iDir], "-noblank") && argc >= 4)
          { bblank=0; iDir++; }
 
-      char *pszToAdd = argv[iDir];
-      long nMaxLineLen = sizeof(szLineBuf)-10;
+      int nMaxLineLen = sizeof(szLineBuf)-10;
       while (fgets(szLineBuf, nMaxLineLen, stdin))
       {
          removeCRLF(szLineBuf);
@@ -36005,8 +36199,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       FileList oFiles;
       getZipList(argv[2], oFiles);
 
-      long nFiles = oFiles.clNames.numberOfEntries();
-      for (long i=0; i<nFiles; i++) 
+      int nFiles = oFiles.clNames.numberOfEntries();
+      for (int i=0; i<nFiles; i++) 
       {
          char *psz = oFiles.clNames.getEntry(i, __LINE__);
          num nSize = oFiles.clSizes.getEntry(i, __LINE__);
@@ -36026,8 +36220,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       FileList oFiles;
       getZipMD5(argv[2], md5, oFiles, 1);
 
-      long nFiles = oFiles.clNames.numberOfEntries();
-      for (long i=0; i<nFiles; i++) 
+      int nFiles = oFiles.clNames.numberOfEntries();
+      for (int i=0; i<nFiles; i++) 
       {
          char *psz = oFiles.clNames.getEntry(i, __LINE__);
          num nSize = oFiles.clSizes.getEntry(i, __LINE__);
@@ -36104,7 +36298,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!endsWithPathChar(pszDstRoot))
          strcat(pszGlblDstRoot, glblPathStr);
 
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3))
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3)))
          return lRC;
 
       // test if required tools are available, using freeze-log as tmpfile.
@@ -36113,11 +36307,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       sprintf(szLineBuf2, "%s09-freeze-log.txt", pszGlblDstRoot);
       if (!isWriteable(szLineBuf2)) return 9+perr("cannot write to: %s\n", szLineBuf2);
 
-      long lToolRC = 0;
+      int lToolRC = 0;
 
       #ifdef _WIN32
       lToolRC = checkXCopy(szLineBuf2, "[/D");
-      if (lToolRC) { perr("cannot run XCOPY command. please check your path. (rc %ld)\n", lToolRC); bBail=1; }
+      if (lToolRC) { perr("cannot run XCOPY command. please check your path. (rc %d)\n", lToolRC); bBail=1; }
       #else
       pszGlblXCopyCmd = strdup("cp");
       #endif
@@ -36140,7 +36334,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // tell exactly which external tool commands we're using.
       printf("] using: %s, %s\n", pszGlblXCopyCmd, pszGlblSFKCmd);
-      printf("] using: %s (%ld.%ld), %s (%ld.%ld)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo, pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
+      printf("] using: %s (%d.%d), %s (%d.%d)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo, pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
 
       char szContentsName[1024];
       char szMD5ArcName[1024];
@@ -36241,12 +36435,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (bGlblEscape)
          logError("error: user interrupt. archive tree is INCOMPLETE.");
 
-      long nInfo = 0;
-      long nErr  = 0;
+      int nInfo = 0;
+      int nErr  = 0;
       if (glblErrorLog.numberOfEntries() > 0) 
       {
-         long nMsg = glblErrorLog.numberOfEntries();
-         long i = 0;
+         int nMsg = glblErrorLog.numberOfEntries();
+         int i = 0;
          for (i=0; i<nMsg; i++) {
             char *psz = glblErrorLog.getEntry(i, __LINE__);
             if (!strncmp(psz, "info", 4))
@@ -36275,13 +36469,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
       printf("=== end of logfile content. ===\n");
 
-      printf("done: scanned %lu files in %lu sec (%lu kb/sec)\n",
-         glblFileCount.value(), currentElapsedMSec()/1000, currentKBPerSec());
-      printf("info: %lu files are frozen within %lu zip archives.\n", nGlblFzConArcFiles, nGlblFzConArchives);
-      printf("info: %lu files have a copy in the target tree.\n", nGlblFzConCopFiles);
+      printf("done: scanned %u files in %u sec (%u kb/sec)\n",
+         glblFileCount.value(), (int)(currentElapsedMSec()/1000), currentKBPerSec());
+      printf("info: %u files are frozen within %u zip archives.\n", nGlblFzConArcFiles, nGlblFzConArchives);
+      printf("info: %u files have a copy in the target tree.\n", nGlblFzConCopFiles);
 
       if (nErr > 0)
-         printf("warn: there are %ld error messages. read error logs above.\n", nErr);
+         printf("warn: there are %d error messages. read error logs above.\n", nErr);
 
       sprintf(szStaleList, "%s%s", pszGlblDstRoot, pszStaleList);
       if (glblStaleLog.numberOfEntries() > 0) 
@@ -36301,8 +36495,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                "# cat 10-stale-list.txt | sfk run -ifiles \"rm %cpfile\"\n", glblRunChar
                #endif
                );
-            long nEntries = glblStaleLog.numberOfEntries();
-            for (long i=0; i<nEntries; i++)
+            int nEntries = glblStaleLog.numberOfEntries();
+            for (int i=0; i<nEntries; i++)
                fprintf(fout, "%s\n", glblStaleLog.getEntry(i, __LINE__));
             fclose(fout);
          }
@@ -36316,10 +36510,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       printf("note: by listing some archives within %s.\n", pszGlblDstRoot);
 
       if (nGlblFzMisArcFiles > 0)
-         printf("warn: %lu files failed archiving (read error logs above).\n", nGlblFzMisArcFiles);
+         printf("warn: %u files failed archiving (read error logs above).\n", nGlblFzMisArcFiles);
 
       if (nGlblFzMisCopFiles > 0)
-         printf("warn: %lu files failed to copy (read error logs above).\n", nGlblFzMisCopFiles);
+         printf("warn: %u files failed to copy (read error logs above).\n", nGlblFzMisCopFiles);
 
       // cleanup
       if (pszGlblXCopyCmd) delete [] pszGlblXCopyCmd;
@@ -36422,7 +36616,6 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       for (; iDir<argc; iDir++)
       {
-         char *pszParm = 0;
          if (!strncmp(argv[iDir], "-", 1)) {
             if (setGeneralOption(argv, argc, iDir))
                continue;
@@ -36447,17 +36640,17 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // evaluate expression
       bool btrue = 0;
       if (strBegins(pexpr, "rc=")) {
-         long ncmp = atol(pexpr+3);
+         int ncmp = atol(pexpr+3);
          btrue = (lRC == ncmp) ? 1 : 0;
       }
       else
       if (strBegins(pexpr, "rc<")) {
-         long ncmp = atol(pexpr+3);
+         int ncmp = atol(pexpr+3);
          btrue = (lRC < ncmp) ? 1 : 0;
       }
       else
       if (strBegins(pexpr, "rc>")) {
-         long ncmp = atol(pexpr+3);
+         int ncmp = atol(pexpr+3);
          btrue = (lRC > ncmp) ? 1 : 0;
       }
       else
@@ -36485,7 +36678,6 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       ehelp;
 
       char *pszLabel     = 0;
-      char *pszFlatParms = 0;
 
       int  iChainNext =  0;
       int  iLocalParm = -1;
@@ -36495,10 +36687,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       for (; iDir<argc; iDir++)
       {
-         char *pszParm = 0;
          if (nState < 1 && !strncmp(argv[iDir], "-", 1)) {
             // general options are interpreted only before script name,
-            // i.e. as long as nState == 0.
+            // i.e. as int as nState == 0.
             if (strBegins(argv[iDir], "-lit")) {
                bliteral = 1;
                continue;
@@ -36543,7 +36734,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       StringTable oDynaStrings;
       char **psubargv = 0;
       int    nsubargc = 0;
-      for (long npass=0; npass<2; npass++)
+      for (int npass=0; npass<2; npass++)
       {
          char *psz1 = pScript;
          char  cold = 0; // old char before current one
@@ -36583,9 +36774,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
                // find end of token
                skipPastToken(&psz1, cold);
-               long ntoklen = psz1 ? (psz1-ptok) : 0;
+               int ntoklen = psz1 ? (psz1-ptok) : 0;
 
-               long nrc = 0;
+               int nrc = 0;
                if (npass && *psz1) {
                   cold = *psz1;   // e.g. lf will be overwritten
                   *psz1++ = '\0';
@@ -36632,7 +36823,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (cs.verbose > 0) {
          printf("loaded %d words from global script:\n", nsubargc);
-         for (long i=0; i<nsubargc; i++)
+         for (int i=0; i<nsubargc; i++)
             printf("%s,",psubargv[i]);
          printf("\n");
       }
@@ -36855,7 +37046,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
          break; // fall through
       }
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iChainNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iChainNext))) return lRC;
 
       if (!bAnyToken) {
          if (chain.useany()) {
@@ -36910,14 +37101,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       cs.sim = !cs.yes;
 
       if (chain.coldata && cs.sim)
-         pwarn("%s will receive no data as long as in simulation.\n", argv[iChainNext]);
+         pwarn("%s will receive no data as long as in simulation.\n", argv[iChainNext]); 
 
       if (cs.sim && !cs.nohead)
          printx("$[simulating:]\n");
 
       if (!bAnyToken) {
          // no tokens at all: run command w/o any file input
-         long lFiles=0, lDirs=0; num nBytes=0;
+         int lFiles=0, lDirs=0; num nBytes=0;
          Coi ocoi((char*)"?", 0); // dummy
          cs.nonames = 1; // do NOT create a ":file ?" line
          lRC = execRunFile(&ocoi, 0, 0, lFiles, lDirs, nBytes); // todo: -to support
@@ -36934,9 +37125,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // comment on user errors
       if (!cs.quiet && !cs.noinfo && !bGlblStdInAny) {
          if (cs.badNameForm & 1)
-            pinf("%ld input names contain blanks, but no quotes (or %cqfile) found.\n", cs.blankRunFiles, glblRunChar);
+            pinf("%d input names contain blanks, but no quotes (or %cqfile) found.\n", cs.blankRunFiles, glblRunChar);
          if (cs.badNameForm & 2)
-            pinf("%ld input names seem to use %c path separator instead of %c\n", cs.wrongpcRunFiles, glblWrongPChar, glblPathChar);
+            pinf("%d input names seem to use %c path separator instead of %c\n", cs.wrongpcRunFiles, glblWrongPChar, glblPathChar);
       }
 
       if (cs.sim && !cs.nohead)
@@ -37010,9 +37201,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bool bisprint = !strcmp(pszCmd, "printloop");
 
       bool bHaveFrom=0, bHaveTo=0;
-      long nfrom = 0;
-      long nto   = 0;
-      long ninc  = 1;
+      int nfrom = 0;
+      int nto   = 0;
+      int ninc  = 1;
       char *pszRunMask = 0;
       int  iChainNext = 0;
 
@@ -37100,7 +37291,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       copyFormStr(szRunCmdBuf, MAX_LINE_LEN, pszRunMask, strlen(pszRunMask));
       pszRunMask = szRunCmdBuf;
 
-      for (long i=nfrom; i<=nto && !userInterrupt(); i += ninc)
+      for (int i=nfrom; i<=nto && !userInterrupt(); i += ninc)
       {
          szLineBuf[0] = '\0';
          char *pszCur = pszRunMask;
@@ -37116,10 +37307,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             while (*pszTok2 && *pszTok2 != 'i')
                pszTok2++;
             if (*pszTok2 != 'i') return 9+perr("wrong syntax, expected %ci somewhere.\n",glblRunChar);
-            strcpy(szTokMask, "%ld");
+            strcpy(szTokMask, "%d");
             int nTokExtLen = pszTok2-pszTok-1;
             if (nTokExtLen > 0)
-               sprintf(szTokMask, "%%%.*sld",(int)nTokExtLen,pszTok+1);
+               sprintf(szTokMask, "%%%.*sd",(int)nTokExtLen,pszTok+1);
             // use (formatted) token
             nBufLen = strlen(szLineBuf);
             sprintf(&szLineBuf[nBufLen], szTokMask, i);
@@ -37140,7 +37331,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (bisprint || cs.sim) {
             // special case: just dump resulting command to terminal
             if (chain.coldata)
-               chain.addLine(szLineBuf, "");
+               chain.addLine(szLineBuf, str(""));
             else
                printf("%s\n", szLineBuf);
          } else {
@@ -37241,7 +37432,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          pszGlblInstMac = argv[iDir++];
       }
       int iDirNext=0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))) return lRC;
 
       lRC = walkAllTrees(eFunc_Inst, lFiles, lDirs, nBytes);
 
@@ -37289,7 +37480,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       // just for chaining:
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 0, &iChainNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 0, &iChainNext))) return lRC;
  
       if (!pszFile) return 9+perr("missing filename");
 
@@ -37343,7 +37534,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!strchr(pszCmd2, '.'))
       {
          // user did NOT supply .bat etc: search for every possible extension
-         long nhits = listPathAny(pszCmd2, 0); // 0: not silent
+         int nhits = listPathAny(pszCmd2, 0); // 0: not silent
          if (!nhits) {
             if (!cs.quiet) {
                printf("nothing like %s found within PATH and current dir.\n", pszCmd2);
@@ -37427,7 +37618,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       // sfk deblank -yes
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 1))) return lRC;
       if (btest) return 0;
 
       if (!cs.yes) printx("$[simulating:]\n");
@@ -37446,7 +37637,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       ifhelp (nparm < 2) 
 
       // if dumping all help text, run two passes
-      for (long i=0; i<2; i++) {
+      for (int i=0; i<2; i++) {
 
       if (!cs.deplist)
       printx("<help>$sfk reflist [-path] [-wide] -dir sdir -file .text -dir tdir -file .sext\n"
@@ -37519,7 +37710,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "                  for comparison.\n"
              "      -flat     : do not check if target files depend on other target files.\n"
              "                  set this to improve speed, if you know that such dependen-\n"
-             "                  cies cannot exist, e.g. if the targtes are .wav files.\n"
+             "                  cies cannot exist, e.g. if the targets are .wav files.\n"
              "      -memlimit=n : load and analyze only files with a size up to n mbytes.\n"
              "                    the default load limit is 300 mbytes.\n"
              "\n");
@@ -37634,7 +37825,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             // yet experimental: strip chars from sources input.
             // do not strip all printable chars, except if fast2.
             if (strcmp(argv[iDir], "-fast2"))
-               for (ulong uc=0; uc<256; uc++)
+               for (uint uc=0; uc<256; uc++)
                   if (isprint((char)uc))
                      abGlblRefChars[uc] = 1;
             cs.refstripsrc = 1;
@@ -37663,7 +37854,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             return 9+perr("no such file: %s\n", pszSingleSrc);
          cs.depsingle = 1;
       }
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iChainNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iChainNext))) return lRC;
 
       // check input: only two dir roots allowed
       if (!pszSingleSrc && glblFileSet.numberOfRootDirs() < 2)
@@ -37685,13 +37876,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // tree layer 0: targets
       // tree layer 1: sources
-      long rlFiles=0, rlDirs=0;
+      int rlFiles=0, rlDirs=0;
       FileList oDirFiles;
       num  rlBytes = 0, nLocalMaxTime = 0, nTreeMaxTime  = 0;
 
       // ===== collect list of sources to determine nGlblRefMaxSrc =====
-      long isrcroot = 0;
-      long idstroot = 1;
+      int isrcroot = 0;
+      int idstroot = 1;
       nGlblFunc = eFunc_RefColSrc;
       if (pszSingleSrc) {
          if (execRefColSrc(pszSingleSrc))
@@ -37702,21 +37893,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (cs.debug) info.print("] src: %s\n", pszTree);
          if (!isDir(pszTree)) return 9+perr("no such directory: %s\n", pszTree);
          Coi *pcoi = new Coi(pszTree, 0); // no relroot, is absolute
-         long nrc = walkFiles(pcoi, 0, rlFiles, oDirFiles, rlDirs, rlBytes, nLocalMaxTime, nTreeMaxTime);
+         int nrc = walkFiles(pcoi, 0, rlFiles, oDirFiles, rlDirs, rlBytes, nLocalMaxTime, nTreeMaxTime);
          if (!pcoi->refcnt()) delete pcoi;
          if (nrc) return 9;
       }
-      long nSrcToList = glblRefSrc.numberOfEntries();
+      int nSrcToList = glblRefSrc.numberOfEntries();
       if (bIncDstAsSrc) {
          // deplist: auto-include destinations as sources.
          // nSrcToList tells how many sources will be listed in output.
          cs.coldstnames = 1;
-         for (long iroot=idstroot; iroot<glblFileSet.numberOfRootDirs(); iroot++) {
+         for (int iroot=idstroot; iroot<glblFileSet.numberOfRootDirs(); iroot++) {
             char *pszTree = glblFileSet.setCurrentRoot(iroot);
             if (cs.debug) info.print("] dst: %s [included as src]\n", pszTree);
             if (!isDir(pszTree)) return 9+perr("no such directory: %s\n", pszTree);
             Coi *pcoi = new Coi(pszTree, 0); // no relroot, is absolute
-            long nrc = walkFiles(pcoi, 0, rlFiles, oDirFiles, rlDirs, rlBytes, nLocalMaxTime, nTreeMaxTime);
+            int nrc = walkFiles(pcoi, 0, rlFiles, oDirFiles, rlDirs, rlBytes, nLocalMaxTime, nTreeMaxTime);
             if (!pcoi->refcnt()) delete pcoi;
             if (nrc) return 9;
          }
@@ -37735,7 +37926,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // setup reference table
       glblRefDst.addRow(__LINE__); // for dst file names
       glblRefDst.addRow(__LINE__); // for dst ref counts
-      long i=0;
+      int i=0;
       for (i=0; i<nGlblRefMaxSrc; i++) {
          glblRefDst.addRow(__LINE__); // for source infos
       }
@@ -37752,12 +37943,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
       } else {
          // have not scanned dest. yet, scan now.
-         for (long iroot=idstroot; iroot<glblFileSet.numberOfRootDirs(); iroot++) {
+         for (int iroot=idstroot; iroot<glblFileSet.numberOfRootDirs(); iroot++) {
             char *pszTree = glblFileSet.setCurrentRoot(iroot);
             if (cs.debug) info.print("] dst: %s\n", pszTree);
             if (!isDir(pszTree)) return 9+perr("no such directory: %s\n", pszTree);
             Coi *pcoi = new Coi(pszTree, 0); // no relroot, is absolute
-            long nrc = walkFiles(pcoi, 0, rlFiles, oDirFiles, rlDirs, rlBytes, nLocalMaxTime, nTreeMaxTime);
+            int nrc = walkFiles(pcoi, 0, rlFiles, oDirFiles, rlDirs, rlBytes, nLocalMaxTime, nTreeMaxTime);
             if (!pcoi->refcnt()) delete pcoi;
             if (nrc) return 9;
          }
@@ -37768,7 +37959,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // ===== process potential sources (execRefProcSrc) =====
       /*
       fprintf(stderr, "excluded char map dump:\n");
-      for (ulong i=65; i<155; i++)
+      for (uint i=65; i<155; i++)
          if (!abGlblRefChars[i])
             fprintf(stderr, "%c", (char)i);
       fprintf(stderr, "\n");
@@ -37783,7 +37974,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!bGlblEscape)
       if (cs.deplist) {
          // dump dependency list
-         for (long isrc=0; isrc<nSrcToList; isrc++)
+         for (int isrc=0; isrc<nSrcToList; isrc++)
          {
             char *pszSrc = glblRefSrc.getEntry(isrc, __LINE__);
             StringTable asrc;
@@ -37794,18 +37985,18 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
       } else {
          // dump reference list
-         for (long idst=0; idst<glblRefDst.numberOfEntries(0); idst++)
+         for (int idst=0; idst<glblRefDst.numberOfEntries(0); idst++)
          {
             char *pszDst  = glblRefDst.getString(0, idst);
-            long  nRefCnt = glblRefDst.getLong(1, idst, __LINE__);
+            int  nRefCnt = glblRefDst.getLong(1, idst, __LINE__);
             if (nRefCnt > 0) {
-               chain.print('i', 0, "%05u %s       ", (unsigned long)nRefCnt, pszDst);
+               chain.print('i', 0, "%05u %s       ", (unsigned int)nRefCnt, pszDst);
                if ((nRefCnt > 0) && bGlblRefWideInfo) {
                   chain.print(' ', 2, "      :ref:\t"); // 2: with pre-lf (newline)
                } else {
                   chain.print(' ', 0, "<- "); // within same line
                }
-               long nDump = nRefCnt;
+               int nDump = nRefCnt;
                if (nDump > nGlblRefMaxSrc)
                   nDump = nGlblRefMaxSrc;
                for (i=0; i<nDump; i++) 
@@ -37818,7 +38009,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                }
                chain.print(' ', 1, ""); // 1: with post-lf
             } else {
-               chain.print(' ', 0, "%05u %s", (unsigned long)nRefCnt, pszDst); // with lf
+               chain.print(' ', 0, "%05u %s", (unsigned int)nRefCnt, pszDst); // with lf
                chain.print(' ', 1, ""); // 1: with post-lf
             }
          }
@@ -37826,7 +38017,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // if reflists are incomplete, warn about it
       if (bGlblRefLimitReached) {
-         printx("<warn>lists of source files have been truncated at the %ldth entry.<def>\n",nGlblRefMaxSrc);
+         printx("<warn>lists of source files have been truncated at the %dth entry.<def>\n",nGlblRefMaxSrc);
          printx("<time>use option -wide[=n] to list more source files per target.<def>\n");
       }
 
@@ -37939,14 +38130,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
          // append another echo string, converting \t etc.
          char *pszsrc  = argv[iDir];
-         long  nsrclen = strlen(pszsrc);
+         int  nsrclen = strlen(pszsrc);
          char *pszdst  = (char*)abBuf + strlen((char*)abBuf);
-         long  nmaxdst = MAX_ABBUF_SIZE - strlen((char*)abBuf);
+         int  nmaxdst = MAX_ABBUF_SIZE - strlen((char*)abBuf);
          copyFormStr(pszdst, nmaxdst, pszsrc, nsrclen);
       }
 
       // if constructed string ends with \r, imply -noline
-      long nlen = strlen((char*)abBuf);
+      int nlen = strlen((char*)abBuf);
       if (nlen > 0 && abBuf[nlen-1] == '\r')
          bNoLine = 1;
 
@@ -37954,9 +38145,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          // do not interpret any [red] etc. commands
          if (chain.coldata) {
             if (bNoLine)
-               chain.addToCurLine((char*)abBuf, "", 0);
+               chain.addToCurLine((char*)abBuf, str(""), 0);
             else
-               chain.addLine((char*)abBuf, "", 2); // splitbylf, also on termlf
+               chain.addLine((char*)abBuf, str(""), 2); // splitbylf, also on termlf
          } else {
             printf("%s%s",(char*)abBuf,bNoLine?"":"\n");
          }
@@ -38026,17 +38217,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       info.setAction("write", pszFile, "");
 
-      bool bTold = 0;
-
       srand(nSeed);
 
       num nRemain  = nSize;
       num nWritten = 0;
-      long nBlockSize = sizeof(abBuf)-10;
-      long i=0;
+      int nBlockSize = sizeof(abBuf)-10;
+      int i=0;
       while (nRemain > 0) {
          if (bText) {
-            long ibreak = 40 + rand() % 80;
+            int ibreak = 40 + rand() % 80;
             for (i=0; i<nBlockSize; i++) 
             {
                abBuf[i] = (uchar)(rand()%26+'a');
@@ -38052,7 +38241,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             for (i=0; i<nBlockSize; i++)
                abBuf[i] = (uchar)rand();
          }
-         long nWriteSize = nBlockSize;
+         int nWriteSize = nBlockSize;
          if (nWriteSize > nRemain)
              nWriteSize = nRemain;
          num nWrite = myfwrite(abBuf, nWriteSize, fout);
@@ -38157,7 +38346,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "    [4] *os      operating system, e.g. windows, linux-lib6, linux-lib5\n"
          "    [5] *vernum  version number, any number of values separated by dots\n"
          "    [6]  fix     fix level, e.g. a revision or service pack number\n"
-         "    [7] *title   long, descriptive name, as printed in a help text\n"
+         "    [7] *title   long, descriptive name, as printed in a help text\n" 
          "    [8] *date    release or compile date\n"
          "    [9]  info    additional infos or remarks, free text string\n"
          "\n"
@@ -38195,19 +38384,19 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (parseVersion((char*)pszGlblVersion, strlen(pszGlblVersion), omap))
             return -1;
 
-         char *pnam = omap.get("name"  , "");
-         char *ptyp = omap.get("type"  , "");
-         char *pos  = omap.get("os"    , "");
-         char *pnum = omap.get("vernum", "");
-         char *pfix = omap.get("fix"   , "");
-         char *ptit = omap.get("title" , "");
-         char *pdat = omap.get("date"  , "");
-         char *pinf = omap.get("info"  , "");
+         char *pnam = omap.get(str("name"  ), str(""));
+         char *ptyp = omap.get(str("type"  ), str(""));
+         char *pos  = omap.get(str("os"    ), str(""));
+         char *pnum = omap.get(str("vernum"), str(""));
+         char *pfix = omap.get(str("fix"   ), str(""));
+         char *ptit = omap.get(str("title" ), str(""));
+         char *pdat = omap.get(str("date"  ), str(""));
+         char *pinf = omap.get(str("info"  ), str(""));
 
          // create integer from version string
          char *psz1 = pnum;
-         long nVer = 0;
-         long nDot = 3;
+         int nVer = 0;
+         int nDot = 3;
          while (*psz1) {
             char c = *psz1++;
             if (c == '.')
@@ -38243,7 +38432,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       int iDirNext = 0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))) return lRC;
       if (btest) return 0;
 
       lRC = walkAllTrees(eFunc_Version, lFiles, lDirs, nBytes);
@@ -38311,9 +38500,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       cs.timeOutMSec = 30000;
 
       int   iDir    =     2;
-      ulong nPort   =    80;
-      ulong nPort2  =  8080;
-      char *pszPath =   ".";
+      uint nPort   =    80;
+      uint nPort2  =  8080;
+      char *pszPath =  str(".");
       bool  bSub    =     0;
       bool  bDeep   =     0;
       bool  bNoList =     0;
@@ -38430,6 +38619,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          #else
          "                    export SFK_FTP_RUNPW=mypassword\n"
          #endif
+         "     -ownip=x    if client sends PASV command, by default the\n"
+         "     -ownip x    server replies with the first network interface\n"
+         "                 IP found. if this is the wrong one, you may\n"
+         "                 supply a different IP here (as n.n.n.n).\n"
          "\n"
          "   NOTE: be aware that ANYONE may connect to your server.\n"
          "         with -rw specified, ANYONE may also write large files.\n"
@@ -38463,11 +38656,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       cs.timeOutMSec = 30000;
 
       int   iDir    =     2;
-      ulong nPort   =  strBegins(pszCmd, "sftserv") ? 2121 : 21;
-      ulong nPort2  =  2121;
+      uint nPort   =  strBegins(pszCmd, "sftserv") ? 2121 : 21;
+      uint nPort2  =  2121;
       bool  bRW     =     0;
       bool  bRun    =     0;
-      char *pszPath =   ".";
+      char *pszPath =  str(".");
       bool  bDeep   =     0;
       char *pszAuthPW =   0;
       char *pszRunPW  =   0;
@@ -38489,6 +38682,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (haveParmOption(argv, argc, iDir, "-port2", &pszParm)) {
             if (!pszParm) return 9;
             nPort2 = atol(pszParm);
+            continue;
+         }
+         else
+         if (haveParmOption(argv, argc, iDir, "-ownip", &pszParm)) {
+            if (!pszParm) return 9;
+            strcopy(cs.szownip, pszParm);
             continue;
          }
          else
@@ -38699,10 +38898,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // collect instant command here
       szLineBuf2[0]   = '\0';
       nGlblTCPMaxSizeMB = 0; // no size limit
-      ulong nPort     = !strcmp(pszCmd, "sft") ? 2121 : 21;
+      uint nPort     = !strcmp(pszCmd, "sft") ? 2121 : 21;
       cs.subdirs      = 0; // in case of mput
       char *pszHost   = 0;
-      long nstate     = 1;
+      int nstate     = 1;
       char *pszAuthPW = 0;
 
       bool bChained = chain.usefiles || chain.usedata;
@@ -38757,7 +38956,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                }
                // ftp client may act on current dir only.
                if (glblFileSet.beginLayer(false, __LINE__)) return 9;
-               glblFileSet.addRootDir(".", __LINE__, false);
+               glblFileSet.addRootDir(str("."), __LINE__, false);
                glblFileSet.autoCompleteFileMasks(3);
                glblFileSet.setBaseLayer();
                continue;
@@ -38826,7 +39025,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       char *pszVolPath = argv[2];
       char *pszRngSize = argv[3];
 
-      long nRangeMB = -1;
+      int nRangeMB = -1;
       if (strcmp(pszRngSize, "all"))
          if (!(nRangeMB = atol(pszRngSize)))
             return 9+perr("supply no. of mbytes to check, or \"all\".\n");
@@ -38859,7 +39058,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       ifhelp ((argc < 3) && (bnet || !chain.usefiles))
 
       // if dumping all help text, run three passes
-      for (long ihelp=0; ihelp<3; ihelp++) {
+      for (int ihelp=0; ihelp<3; ihelp++) {
 
       // create different help pages for sfk ask:
       if (bhelp)
@@ -38896,7 +39095,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              );
       if (bnet) {
       if (budp)
-      printx("      -echo    echo received packets back to sender.\n");
+      printx("      -echo    echo received packets back to sender.\n"
+             "      -stop    or stop=n stops after n received packages.\n"
+             "               with command chaining, default is -stop=1.\n"
+            );
       else
       printx("      -forward specifies a host and port to which to forward\n"
              "               incoming requests, to dump a tcp conversation.\n"
@@ -38948,7 +39150,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       else
       if (budp)
       printx("\n"
-             "   $example:\n"
+          // "   $see also:\n"
+          // "     #sfk sendudp<def>  - send UDP packets.\n"
+          // "\n"
+             "   $examples:\n"
              "     #sfk udpdump 5000\n"
              "        waits on port 5000 for incoming udp packages.\n"
              );
@@ -38974,10 +39179,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       cs.timeOutMSec = 60000;
       cs.timeOutAutoSelect = 1;
 
-      long nPort = -1;
+      int nPort = -1;
       char *pszForward = 0;
-      long nForward = 0;
-      long nTimeout = 60000;
+      int nForward = 0;
       int  iChainNext = 0;
       bool bEcho = 0;
 
@@ -39027,7 +39231,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             cs.timeOutMSec = atol(pszParm);
             cs.timeOutAutoSelect = 0;
             if (cs.timeOutMSec < 200) {
-               printx("<warn>note: timeout set to %ld milliseconds (%f seconds).<def>\n", cs.timeOutMSec, (double)cs.timeOutMSec / 1000.0);
+               printx("<warn>note: timeout set to %d milliseconds (%f seconds).<def>\n", cs.timeOutMSec, (double)cs.timeOutMSec / 1000.0);
             }
             continue;
          }
@@ -39059,6 +39263,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          else
          if (!strcmp(argv[iDir], "-echo")) {
             bEcho = 1;
+            continue;
+         }
+         else
+         if (haveParmOption(argv, argc, iDir, "-stop", &pszParm)) {
+            cs.stopcnt = pszParm ? atoi(pszParm) : 1;
             continue;
          }
          else
@@ -39105,7 +39314,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (pszForward)
             delete [] pszForward;
       } else {
-         if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iChainNext)) return lRC;
+         if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iChainNext))) return lRC;
          if (btest) return 0;
          lRC = walkAllTrees(eFunc_Hexdump, lFiles, lDirs, nBytes);
       }
@@ -39143,7 +39352,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "                     zero termination is NOT done automatically.\n"
              "\n"
              "      all given data fragments are joined into one large block.\n"
-             "      how long the block can be is system dependent, but it must\n"
+             "      how long the block can be is system dependent, but it must\n" 
              "      always stay below 2000 bytes.\n"
              "\n"
              "   $examples\n"
@@ -39158,11 +39367,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       int ndstport = -1;
       int nownport = -1;
-      long  nlisten = 0;
+      int  nlisten = 0;
       char  szDstIP[200+10];
       uchar abMsg[2000+100];
-      long  nMsg = 0;
-      long  nMsgMax = sizeof(abMsg)-100;
+      int  nMsg = 0;
+      int  nMsgMax = sizeof(abMsg)-100;
       char szBuf[10];
       num   nTimeout = 0;
 
@@ -39257,11 +39466,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                if (!isxdigit(szBuf[0])) return 9+perr("wrong hex format: %s\n",ppart);
                if (!isxdigit(szBuf[1])) return 9+perr("wrong hex format: %s\n",ppart);
                abMsg[nMsg++] = (uchar)strtol(szBuf, 0, 0x10);
-               if (nMsg > nMsgMax) return 9+perr("data too long");
+               if (nMsg > nMsgMax) return 9+perr("data too long"); 
             }
          } else {
-            long nlen = strlen(ppart);
-            if (nMsg+nlen > nMsgMax) return 9+perr("data too long");
+            int nlen = strlen(ppart);
+            if (nMsg+nlen > nMsgMax) return 9+perr("data too long"); 
             memcpy(abMsg+nMsg, ppart, nlen);
             nMsg += nlen;
          }
@@ -39419,7 +39628,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!pszDstBase)
            pszDstBase = pszSrc;
 
-      long nout = 1;
+      int nout = 1;
       bool ball = cs.yes;
       num  ntotal = 0;
 
@@ -39429,7 +39638,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       while (!bbail && (nRemain > 0))
       {
          // open next output file
-         sprintf(szLineBuf, "%s.part%ld", pszDstBase, nout++);
+         sprintf(szLineBuf, "%s.part%d", pszDstBase, nout++);
          char *pszDst = szLineBuf;
 
          if (!ball && fileExists(pszDst))
@@ -39457,20 +39666,20 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             num nTotalMB = ntotal / 1000000;
             printf("writing %s, %s mb done overall \r", pszDst, numtoa(nTotalMB));
 
-            long nMaxRead = nWorkBufSize;
+            int nMaxRead = nWorkBufSize;
             if (nMaxRead > nLocRemain)
-                nMaxRead = (long)nLocRemain;
-            long nread = myfread(pWorkBuf, nMaxRead, fin);
+                nMaxRead = (int)nLocRemain;
+            int nread = myfread(pWorkBuf, nMaxRead, fin);
             if (nread <= 0) {
                bbail = 1;
                break; // EOF on input
             }
 
-            long nwrite = (long)myfwrite(pWorkBuf, nread, fout);
+            int nwrite = (int)myfwrite(pWorkBuf, nread, fout);
             if (nwrite != nread) {
                delete [] pWorkBuf;
                fclose(fout); fclose(fin);
-               return 9+esys("fwrite", "error while writing: %s (r=%ld w=%ld)\n", pszDst, nread, nwrite);
+               return 9+esys("fwrite", "error while writing: %s (r=%d w=%d)\n", pszDst, nread, nwrite);
             }
 
             md5.update(pWorkBuf, nread);
@@ -39491,7 +39700,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // NO RETURN W/O DELETE UNTIl HERE
 
       // in case there are superfluous old output files from previous runs:
-      sprintf(szLineBuf, "%s.part%ld", pszSrc, nout);
+      sprintf(szLineBuf, "%s.part%d", pszSrc, nout);
       char *pszDst = szLineBuf;
       if (fileExists(pszDst))
       {
@@ -39509,15 +39718,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       char szMD5Write[100];
 
-      printf("%s split into %ld files, %s total bytes.\n", pszSrc, nout-1, numtoa(ntotal));
+      printf("%s split into %d files, %s total bytes.\n", pszSrc, nout-1, numtoa(ntotal));
       uchar *pmd5 = md5.digest();
-      for (long i=0; i<16; i++)
+      for (int i=0; i<16; i++)
          sprintf(&szMD5Write[i*2], "%02x", pmd5[i]);
       printf("md5 = %s   %s\n", szMD5Write, bVerify ? "[write ]":"");
 
       if (bVerify) {
          // run verify of output:
-         sprintf(szLineBuf2, "%s.part1", pszDstBase, nout++);
+         sprintf(szLineBuf2, "%s.part1", pszDstBase);
          if (execJoin(szLineBuf2, 0, 1, szMD5Write))
             return 9+perr("verification of output failed! splitting is incomplete.\n");
       }
@@ -39636,7 +39845,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bool   bDelDst    =  0;
       bool   bAbsolute  =   0;
 
-      long nstate = 1;
+      int nstate = 1;
       for (; iDir<argc; iDir++) 
       {
          if (!strcmp(argv[iDir], "-fromto")) {
@@ -39736,11 +39945,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       num nTotal  = 0;
       while (nRemain > 0) 
       {
-         long nMaxRead = sizeof(abBuf);
+         int nMaxRead = sizeof(abBuf);
          if (nMaxRead > nRemain)
-             nMaxRead = (long)nRemain;
+             nMaxRead = (int)nRemain;
 
-         long nread = fread(abBuf, 1, nMaxRead, fin);
+         int nread = fread(abBuf, 1, nMaxRead, fin);
          if (nread <= 0) {
             perr("unable to fully read part from %s, copy failed", pszSrc);
             lRC = 9;
@@ -39748,7 +39957,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
 
          if (fout) {
-            long nwrite = myfwrite(abBuf, nread, fout);
+            int nwrite = myfwrite(abBuf, nread, fout);
             if (nwrite != nread) {
                esys("fwrite", "error while writing: %s   \n", pszDst);
                lRC = 9;
@@ -39809,10 +40018,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       char *pszSrc = 0;
       char *pszDst = 0;
-      long  nloops = 1;
+      int  nloops = 1;
       char *pszCmd = 0;
 
-      long nstate = 1;
+      int nstate = 1;
       for (; iDir<argc; iDir++) 
       {
          if (!strncmp(argv[iDir], "-", 1)) {
@@ -39848,9 +40057,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       char szOutName[300];
       char *pext = strrchr(pszSrc, '.');
-      if (!pext) pext = ".dat";
+      if (!pext) pext = str(".dat");
 
-      for (long iloop=1; iloop <= nloops; iloop++)
+      for (int iloop=1; iloop <= nloops; iloop++)
       {
          // change a max. of 10 percent of the data
          num ndensity = (num)iloop * 10000 / (num)nloops;
@@ -39858,7 +40067,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          FILE *fin = fopen(pszSrc, "rb");
          if (!fin) return 9+perr("unable to open input file: %s\n", pszSrc);
 
-         sprintf(szOutName, "%s-%05lu%s", pszDst, (ulong)iloop, pext);
+         sprintf(szOutName, "%s-%05u%s", pszDst, (uint)iloop, pext);
 
          FILE *fout = fopen(szOutName, "wb");
          if (!fout) { fclose(fin); return 9+perr("unable to write: %s\n", szOutName); }
@@ -39869,11 +40078,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          num nFuzzed = 0;
          while (nRemain > 0) 
          {
-            long nMaxRead = sizeof(abBuf);
+            int nMaxRead = sizeof(abBuf);
             if (nMaxRead > nRemain)
-                nMaxRead = (long)nRemain;
+                nMaxRead = (int)nRemain;
    
-            long nread = fread(abBuf, 1, nMaxRead, fin);
+            int nread = fread(abBuf, 1, nMaxRead, fin);
             if (nread <= 0) {
                perr("unable to fully read part from %s, copy failed", pszSrc);
                lRC = 9;
@@ -39884,16 +40093,16 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             num nshoot = nread * ndensity / 100000;
             for (num i=0; i<nshoot; i++) 
             {
-               ulong ioff   = (ulong)(rand() % nread);
+               uint ioff   = (uint)(rand() % nread);
                uchar imod   = (uchar)(rand() & 0xFFUL);
                if (cs.verbose)
-                  printf("xor offset %05lxh with %02lxh\n", ioff, (ulong)imod);
+                  printf("xor offset %05xh with %02xh\n", ioff, (uint)imod);
                abBuf[ioff] ^= imod;
                nFuzzed++;
             }
    
             if (fout) {
-               long nwrite = myfwrite(abBuf, nread, fout);
+               int nwrite = myfwrite(abBuf, nread, fout);
                if (nwrite != nread) {
                   esys("fwrite", "error while writing: %s   \n", szOutName);
                   lRC = 9;
@@ -39921,7 +40130,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                char *psz1 = strstr(szCmd, "$outfile");
                if (!psz1) break;
    
-               long nleft = psz1 - szCmd;
+               int nleft = psz1 - szCmd;
                memcpy(szCmd2, szCmd, nleft);
                szCmd2[nleft] = '\0';
    
@@ -39937,12 +40146,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
             int iRC = system(szCmd);
 
-            printf("FUZZ.DONE density=%03ld fuzzed=%05ld %03ld = \"%s\"\n",
-               (long)(ndensity/10), (long)nFuzzed, (long)iRC, szCmd);
+            printf("FUZZ.DONE density=%03d fuzzed=%05d %03d = \"%s\"\n",
+               (int)(ndensity/10), (int)nFuzzed, (int)iRC, szCmd);
          }
          else
          if (!lRC && !cs.quiet) {
-            printf("%s bytes written, %ld modified into %s\n", numtoa(nTotal), (long)nFuzzed, szOutName);
+            printf("%s bytes written, %d modified into %s\n", numtoa(nTotal), (int)nFuzzed, szOutName);
          }
 
       }  // endfor loops
@@ -39985,10 +40194,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       ehelp;
 
       char *pHostPort   = 0;
-      long  nFirstReq   = 0;
-      long  nMaxReq     = 0;
+      int  nFirstReq   = 0;
+      int  nMaxReq     = 0;
       bool  bnopath     = 0;
-      long  nPort       = 80;
+      int  nPort       = 80;
       char *pFullUrl    = 0;
 
       char  szHost[200];   mclear(szHost);
@@ -40062,12 +40271,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       sock.sin_port = htons((unsigned short)nPort);
 
       if ((connect(hSock, (struct sockaddr *)&sock, sizeof(sock))) == -1) {
-         perr("cannot connect to %s:%lu, %s\n", szHost, nPort, netErrStr());
+         perr("cannot connect to %s:%u, %s\n", szHost, nPort, netErrStr());
          return 9;
       }
 
       // szLineBuf3 is the Host: header
-      snprintf(szLineBuf3, MAX_LINE_LEN, "Host: %s:%ld", szHost, nPort);
+      snprintf(szLineBuf3, MAX_LINE_LEN, "Host: %s:%d", szHost, nPort);
       char *pszHostHead = szLineBuf3;
       
       do
@@ -40075,7 +40284,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          bool bGotHeaderEnd = 0;
          bool bGotHostHead  = 0;
          char *pline = 0;
-         long ireq = nFirstReq; // if any
+         int ireq = nFirstReq; // if any
          while (1)
          {
             // get next input line
@@ -40125,7 +40334,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
 
          bool bfirst = 1;
-         long nwebrc = 0;
+         int nwebrc = 0;
          while (!readLineRaw(hSock, szLineBuf))
          {
             removeCRLF(szLineBuf);
@@ -40260,7 +40469,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!pSrcName && !bchained)      return 9+perr("missing URL\n");
       if (pDstDir && !isDir(pDstDir))  return 9+perr("target dir does not exist: %s\n", pDstDir);
 
-      ulong nmode = bpath2name ? 1 : 0;
+      uint nmode = bpath2name ? 1 : 0;
       if (bpath2path) nmode |= 2;
       if (bwithdom) nmode |= 4;
 
@@ -40282,7 +40491,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       else
       if (chain.usefiles)
       {
-         for (long i=0; i<chain.numberOfInFiles(); i++)
+         for (int i=0; i<chain.numberOfInFiles(); i++)
          {
             Coi *pcoi = chain.getFile(i);
             if (!pcoi) return 9+perr("int. #9529726");
@@ -40354,8 +40563,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (bfree)
          printf("%s\n", numtoa(nFree));
       else
-         printf("filesys=\"%s\" volume=\"%s\" totalmb=%ld freemb=%ld\n",
-            szFSName, szVolID, (long)(nTotal/1000000), (long)(nFree/1000000));
+         printf("filesys=\"%s\" volume=\"%s\" totalmb=%d freemb=%d\n",
+            szFSName, szVolID, (int)(nTotal/1000000), (int)(nFree/1000000));
 
       bDone = 1;
    }
@@ -40364,17 +40573,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    {
       char *pszFile = argv[2];
 
-      #ifdef _MSC_VER
-         #ifdef SFK_W64
-         struct __stat64 ostat;
+      #ifdef _WIN32
+         #ifdef _MSC_VER
+            #ifdef SFK_W64
+            struct __stat64 ostat;
+            #else
+            struct stat ostat;
+            #endif
          #else
-         struct stat ostat;
+            struct stat ostat;
          #endif
       #else
          struct stat64 ostat;
       #endif
 
-      long bdir=0,bread=0,bwrite=0;
+      int bdir=0,bread=0,bwrite=0;
       num  nmtime=0,nsize=0;
    
       num aExtTimes[2];
@@ -40384,13 +40597,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
           nmtime, nsize, aExtTimes, &ostat, sizeof(ostat))) {
          perr("cannot read: %s", pszFile);
       } else {
-         num nctime   = aExtTimes[0];
-         num natime   = aExtTimes[1];
-         ulong nmode  = (ulong)ostat.st_mode;
-         ulong ninode = (ulong)ostat.st_ino;
-         ulong ndev   = (ulong)ostat.st_dev;
-         ulong nrdev  = (ulong)ostat.st_rdev;
-         printf("mode=%08lXh inode=%lu device=%lu rdev=%lu\n", nmode, ninode, ndev, nrdev);
+         // num nctime   = aExtTimes[0];
+         // num natime   = aExtTimes[1];
+         uint nmode  = (uint)ostat.st_mode;
+         uint ninode = (uint)ostat.st_ino;
+         uint ndev   = (uint)ostat.st_dev;
+         uint nrdev  = (uint)ostat.st_rdev;
+         printf("mode=%08Xh inode=%u device=%u rdev=%u\n", nmode, ninode, ndev, nrdev);
          printf("   S_IFDIR  %d\n", (nmode & S_IFDIR ) ? 1 : 0);
          printf("   S_IFCHR  %d\n", (nmode & S_IFCHR ) ? 1 : 0);
          printf("   S_IFREG  %d\n", (nmode & S_IFREG ) ? 1 : 0);
@@ -40414,7 +40627,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    #ifdef WINFULL
    if (!strcmp(pszCmd, "rawcol"))
    {
-      long nval = atol(argv[2]);
+      int nval = atol(argv[2]);
       SetConsoleTextAttribute(hGlblConsole, nval);
       bDone = 1;
    }
@@ -40444,7 +40657,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       #ifdef USE_SFT_UPDATE
       char *pszFile = pszSrc;
       num nFileTime = getFileTime(localPath(pszFile));
-      printf("time3: %ld localPath: %s\n",(long)nFileTime,localPath(pszFile));
+      printf("time3: %d localPath: %s\n",(int)nFileTime,localPath(pszFile));
       printf("time4: %s", timeAsString(nFileTime, 1));
       #endif
 
@@ -40470,13 +40683,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             break;
 
          // load another library:
-         char *pszFile = argv[iDir];
-
          #ifdef _WIN32
+         char *pszFile = argv[iDir];
    
          HINSTANCE hlib = LoadLibraryA(pszFile);
          if (hlib != NULL)
-            printf("loaded: %s   (%lxh)\n", pszFile, (ulong)hlib);
+            printf("loaded: %s   (%xh)\n", pszFile, (uint)hlib);
          else
          {
             int nerr = GetLastError();
@@ -40527,7 +40739,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       char *pszSrc = argv[2];
 
       num nstart = getCurrentTime();
-      long nlines = 0;
+      int nlines = 0;
 
       Coi ocoi(pszSrc, 0);
       if (ocoi.open("rb"))
@@ -40535,13 +40747,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       while (ocoi.readLine(szLineBuf, MAX_LINE_LEN) > 0) {
          nlines++;
          // if (!(nlines & 65535))
-         //   { printf("%ld lines   \r", nlines); fflush(stdout); }
+         //   { printf("%d lines   \r", nlines); fflush(stdout); }
          printf("%s",szLineBuf);
       }
       ocoi.close();
 
       num nelaps = getCurrentTime() - nstart;
-      fprintf(stderr, "%ld lines in %s msec\n",nlines,numtoa(nelaps));
+      fprintf(stderr, "%d lines in %s msec\n",nlines,numtoa(nelaps));
 
       bDone = 1;
    }
@@ -40552,7 +40764,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       uchar adata[] = { 0xFF };
       md5.update(adata, 1);
       uchar *pmd5 = md5.digest();
-      mtklog("test digest: %02X %02X %02X %02X",pmd5[0],pmd5[1],pmd5[2],pmd5[3]);
+      mtklog(("test digest: %02X %02X %02X %02X",pmd5[0],pmd5[1],pmd5[2],pmd5[3]));
       printf("test digest: %02X %02X %02X %02X\n",pmd5[0],pmd5[1],pmd5[2],pmd5[3]);
       bDone = 1;
    }
@@ -40651,7 +40863,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                 "\n"
                 "   $sync<def>   does the same as copy, however files that exist in source,\n"
                 "          but not in destination, are called STALE files, and are DELETED\n"
-                "          if their age is >= %ld days. USE WITH CARE. If you specify wrong\n"
+                "          if their age is >= %d days. USE WITH CARE. If you specify wrong\n"
                 "          folders or file masks, this may delete files unintentionally.\n"
                 "          Take a close look at the output of the simulation mode, which\n"
                 "          is active by default.\n"
@@ -40666,7 +40878,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                 /*
                 "   -del        delete files in destination that do not exist in source,\n"
                 "               i.e. cleanup trash files. \"sfk copy -del\" is the same\n"
-                "               as \"sfk sync\". trash files younger than %ld days are called\n"
+                "               as \"sfk sync\". trash files younger than %d days are called\n"
                 "               \"stale\", and are not deleted even with -del specified.\n"
                 "   -nodel      do not delete files or directories in destination.\n"
                 "               \"sfk sync -nodel\" is the same as \"sfk copy\".\n"
@@ -40824,9 +41036,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       char *pszSrc   = 0;
       char *pszDst   = 0;
       bool  bCopy    = 1;
-      long  nDoSave  = 0;
+      int  nDoSave  = 0;
       bool  bDoLoad  = 0;
-      long  nBufMB   = 100;
+      int  nBufMB   = 100;
       int iChainNext = 0;
 
       cs.verifyLate = 0;
@@ -40993,10 +41205,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // remember this, have to strip it from full paths
       pszGlblCopySrc = pszSrc; // NULL on chaining
 
-      num nTime1 = getCurrentTime();
+      // num nTime1 = getCurrentTime();
 
       // parse subdirs and general options
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iChainNext))
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iChainNext)))
          return lRC;
 
       // now we know if in simulation or not
@@ -41007,9 +41219,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // activate source shadow skip implicitely if meta data are found
       if (!bchain && !cs.skipOwnMetaDir) {
-         joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszSrc, "zz-shadow-01");
+         joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszSrc, str("zz-shadow-01"));
          if (isDir(szRefNameBuf)) {
-            joinPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, szRefNameBuf, "zz-sign");
+            joinPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, szRefNameBuf, str("zz-sign"));
             if (filedb.isSignatureFile(szRefNameBuf2)) {
                filedb.setMetaDir(szRefNameBuf);
                cs.skipOwnMetaDir = 1;
@@ -41024,10 +41236,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             // same as -check dstroot\zz-shadow-01\sign.dat -shadow
             // setup signature database name:
             if (filedb.canRead()) return 9+perr("specify -load OR -check, but not both");
-            joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszSrc, "zz-shadow-01");
+            joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszSrc, str("zz-shadow-01"));
             if (!isDir(szRefNameBuf)) return 9+perr("metadb directory not found: %s\n", szRefNameBuf);
             if (filedb.setMetaDir(szRefNameBuf)) return 9;
-            joinShadowPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, pszSrc, "zz-sign");
+            joinShadowPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, pszSrc, str("zz-sign"));
             // if (!cs.sim)
             if (filedb.openRead(szRefNameBuf2, 1)) return 9;
             // avoid copying of own metadir to target
@@ -41037,9 +41249,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (nDoSave) {
             // user said -save explicitely
             if (!cs.sim) {
-               if (createSubDirTree(pszDst, "zz-shadow-01"))
+               if (createSubDirTree(pszDst, str("zz-shadow-01")))
                   return 9;
-               joinShadowPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, pszDst, "zz-sign");
+               joinShadowPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, pszDst, str("zz-sign"));
                if (filedb.openUpdate(szRefNameBuf2))
                   return 9;
                if (nDoSave >= 2)
@@ -41047,9 +41259,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             }
          } else {
             // no -save: check if a signature db exists in target
-            joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszDst, "zz-shadow-01");
+            joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszDst, str("zz-shadow-01"));
             if (isDir(szRefNameBuf)) {
-               joinPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, szRefNameBuf, "zz-sign");
+               joinPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, szRefNameBuf, str("zz-sign"));
                if (filedb.isSignatureFile(szRefNameBuf2)) {
                   if (!cs.sim) {
                      // user forgot -save: open for update implicitely
@@ -41086,13 +41298,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       bool bSrcDir = bchain || isDir(pszSrc);
       bool bDstDir = isDirByName(pszDst) || isDir(pszDst);
-      long nVerFiles  = 0;
-      long nVerFailed = 0;
-      long nSignsWritten = 0;
+      int nVerFiles  = 0;
+      int nVerFailed = 0;
+      int nSignsWritten = 0;
  
-      mtklog("copy: copy=%d chain=%d sdir=%d ddir=%d", bCopy,bchain,bSrcDir,bDstDir);
-      mtklog("copy: src=\"%s\" dir=%d", pszSrc, bSrcDir);
-      mtklog("copy: dst=\"%s\" dir=%d", pszDst, bDstDir);
+      mtklog(("copy: copy=%d chain=%d sdir=%d ddir=%d", bCopy,bchain,bSrcDir,bDstDir));
+      mtklog(("copy: src=\"%s\" dir=%d", pszSrc, bSrcDir));
+      mtklog(("copy: dst=\"%s\" dir=%d", pszDst, bDstDir));
 
       if (!bchain && !bSrcDir && !bDstDir) {
          if (!bCopy) return 9+perr("-nocopy not supported with single file operation.\n");
@@ -41112,7 +41324,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             printx("$[simulating:]\n");
          // src is a file, target a dir.
          strcopy(szRefNameBuf, pszDst);
-         long nLen = strlen(szRefNameBuf);
+         int nLen = strlen(szRefNameBuf);
          if ((nLen > 0) && (szRefNameBuf[nLen-1] != glblPathChar))
             strcat(szRefNameBuf, glblPathStr);
          // isolate last part of source name
@@ -41142,7 +41354,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             printx("$[simulating:]\n");
 
          if (bCopy) {
-            mtklog("copy: calling walktrees, hasroot.0 = %d", glblFileSet.hasRoot(0));
+            mtklog(("copy: calling walktrees, hasroot.0 = %d", glblFileSet.hasRoot(0)));
             lRC = walkAllTrees(eFunc_Copy, lFiles, lDirs, nBytes);
             if (lRC)
                break;
@@ -41153,7 +41365,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          // get around file system caching:
          if (!cs.sim && cs.verifyLate) // verify
          {
-            long lRC   = glblVerifier.verify();
+            glblVerifier.verify();
             nVerFiles  = glblVerifier.matchedFiles();
             nVerFailed = glblVerifier.failedFiles();
             info.clear(); // status output below
@@ -41171,7 +41383,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             if (nGlblCopyShadows) {
                // 2. meta dir was written on copy, filter it out on reverse scan.
                cs.skipOwnMetaDir = 1;
-               joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszGlblCopySrc, "zz-shadow-01");
+               joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszGlblCopySrc, str("zz-shadow-01"));
                if (!cs.sim && !isDir(szRefNameBuf)) return 9+perr("metadb directory not found: %s\n", szRefNameBuf);
                filedb.setMetaDir(szRefNameBuf);
             }
@@ -41202,8 +41414,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       bool bsilent = (cs.nohead || cs.quiet);
 
-      num nTime2 = getCurrentTime();
-      num nDiff  = nTime2-nTime1;
+      // num nTime2 = getCurrentTime();
       bool bTold = 0;
       if (!bSrcDir && !bDstDir) 
          { } // single file copy
@@ -41212,13 +41423,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       {
          const char *pszVerb = cs.sim ? "would copy":"copied";
          if (!cs.filesCloned && !cs.dirsCloned)
-            printx("$%s %lu files, %lu dirs.", pszVerb, cs.files, cs.dirs);
+            printx("$%s %u files, %u dirs.", pszVerb, cs.files, cs.dirs);
          else {
-            printx("$%s %lu files, %lu dirs (%lu/%lu attribs", pszVerb, cs.files, cs.dirs, cs.filesCloned, cs.dirsCloned);
+            printx("$%s %u files, %u dirs (%u/%u attribs", pszVerb, cs.files, cs.dirs, cs.filesCloned, cs.dirsCloned);
             if (nVerFiles > 0)
-               printx("$, %ld verified",nVerFiles);
+               printx("$, %d verified",nVerFiles);
             if (nVerFailed > 0)
-               printx("$, <err>%ld failed",nVerFailed);
+               printx("$, <err>%d failed",nVerFailed);
             printx("$).");
          }
          if (nGlblBytes > 0) {
@@ -41237,55 +41448,55 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!bsilent && (cs.filesDeleted || cs.dirsDeleted)) {
          const char *pszVerb = cs.sim ? "would delete":"deleted";
          setTextColor(nGlblWarnColor, 1);
-         printf("%s%s %ld files, %ld dirs.", bTold?" ":"", pszVerb, cs.filesDeleted, cs.dirsDeleted);
+         printf("%s%s %d files, %d dirs.", bTold?" ":"", pszVerb, cs.filesDeleted, cs.dirsDeleted);
          setTextColor(-1);
          bTold = 1;
       }
       if (!bsilent && cs.filesNewerInDst) {
          // setTextColor(nGlblWarnColor, 1);
-         printx("%s$(%ld differing files in dest)", bTold?" ":"", cs.filesNewerInDst);
+         printx("%s$(%d differing files in dest)", bTold?" ":"", cs.filesNewerInDst);
          // setTextColor(-1);
          bTold = 1;
       }
       if (!bsilent && (cs.numHiddenFilesSkipped || cs.numHiddenDirsSkipped)) {
          setTextColor(nGlblWarnColor, 1);
-         printf("%sskipped %ld hidden files, %ld dirs.", bTold?" ":"", cs.numHiddenFilesSkipped, cs.numHiddenDirsSkipped);
+         printf("%sskipped %d hidden files, %d dirs.", bTold?" ":"", cs.numHiddenFilesSkipped, cs.numHiddenDirsSkipped);
          setTextColor(-1);
          bTold = 1;
       }
       if (!bsilent && bTold && (nSignsWritten > 0)) { // && filedb.canUpdate()
          setTextColor(nGlblTimeColor, 1);
-         printf(" %ld signatures", nSignsWritten);
+         printf(" %d signatures", nSignsWritten);
          if (cs.shadowsWritten)
-            printf(", %ld shadows", cs.shadowsWritten);
+            printf(", %d shadows", cs.shadowsWritten);
          printf(".");
          setTextColor(-1);
          bTold = 1;
       }
       if (!bsilent && filedb.canRead() && filedb.anyEvents())
       {
-         char *pszpre = " ";
-         char *pszsub = "signs ";
+         cchar *pszpre = " ";
+         cchar *pszsub = "signs ";
          if (filedb.numberOfVerFailed() > 0) {
             if (filedb.numberOfVerFailed() == cs.shadowFallbacks)
                setTextColor(nGlblWarnColor, 1);
             else
                setTextColor(nGlblErrColor, 1);
-            printf(" %ld signatures failed", filedb.numberOfVerFailed());
+            printf(" %d signatures failed", filedb.numberOfVerFailed());
             if (cs.shadowFallbacks) {
                setTextColor(nGlblWarnColor, 1);
-               printf(", %ld shadow fallbacks", cs.shadowFallbacks);
+               printf(", %d shadow fallbacks", cs.shadowFallbacks);
             }
             pszpre=", "; pszsub="";
          }
          if (filedb.numberOfVerMissing() > 0) {
             setTextColor(nGlblErrColor, 1);
-            printf("%s%ld %snot found", pszpre, filedb.numberOfVerMissing(), pszsub);
+            printf("%s%d %snot found", pszpre, filedb.numberOfVerMissing(), pszsub);
             pszpre=", "; pszsub="";
          }
          setTextColor(nGlblTimeColor, 1);
          if (filedb.numberOfVerifies() > 0) {
-            printf("%s%ld %schecked.", pszpre, filedb.numberOfVerifies(), pszsub);
+            printf("%s%d %schecked.", pszpre, filedb.numberOfVerifies(), pszsub);
             pszpre=", "; pszsub="";
          }
          setTextColor(-1);
@@ -41296,7 +41507,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (cs.filesStale) {
          setTextColor(nGlblWarnColor, 1);
-         printf("%ld stale but recently edited files are kept until deletion limit (%ld days).\n", cs.filesStale, nGlblActiveFileAgeLimit);
+         printf("%d stale but recently edited files are kept until deletion limit (%d days).\n", cs.filesStale, nGlblActiveFileAgeLimit);
          setTextColor(-1);
       }
 
@@ -41383,19 +41594,19 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (filedb.openRead(pszDBFile, 1))
             return 9;
       } else {
-         joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszGlblCopySrc, "zz-shadow-01");
+         joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszGlblCopySrc, str("zz-shadow-01"));
          if (!isDir(szRefNameBuf)) return 9+perr("metadb directory not found: %s\n", szRefNameBuf);
-         joinShadowPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, pszGlblCopySrc, "zz-sign");
+         joinShadowPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, pszGlblCopySrc, str("zz-sign"));
          if (filedb.openRead(szRefNameBuf2, 1)) return 9;
       }
 
-      long nVerMixRC = 0;
-      long nSkipped = 0;
-      for (long i=0; i<filedb.numberOfFiles(); i++) 
+      int nVerMixRC = 0;
+      int nSkipped = 0;
+      for (int i=0; i<filedb.numberOfFiles(); i++) 
       {
          if (userInterrupt())
             break;
-         long nflags = filedb.getFileFlags(i);
+         int nflags = filedb.getFileFlags(i);
          if (bCheckAll || (nflags >= 2)) {
             nVerMixRC |= filedb.verifyFile(i, bCleanup);
          } else {
@@ -41408,40 +41619,40 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (!cs.quiet) {
          if (!filedb.numberOfVerifies() && !bCheckAll) {
-            long ncnt = filedb.numberOfFiles();
-            printf("%s contains no recently updated files. say -all to check all %ld entries.",pszGlblCopySrc,ncnt);
+            int ncnt = filedb.numberOfFiles();
+            printf("%s contains no recently updated files. say -all to check all %d entries.",pszGlblCopySrc,ncnt);
          } else {
             const char *pxinfo = bCheckAll ? "" : "recently updated ";
-            printf("%s %ld %sfiles verified.",pszGlblCopySrc,filedb.numberOfVerifies(),pxinfo);
+            printf("%s %d %sfiles verified.",pszGlblCopySrc,filedb.numberOfVerifies(),pxinfo);
          }
          bTold = 1;
       }
 
       if (!cs.quiet && filedb.canRead() && filedb.anyEvents())
       {
-         char *pszpre = " ";
-         char *pszsub = "signs ";
+         cchar *pszpre = " ";
+         cchar *pszsub = "signs ";
          if (filedb.numberOfVerFailed() > 0) {
             if (filedb.numberOfVerFailed() == cs.shadowFallbacks)
                setTextColor(nGlblWarnColor, 1);
             else
                setTextColor(nGlblErrColor, 1);
-            printf(" %ld signatures failed", filedb.numberOfVerFailed());
+            printf(" %d signatures failed", filedb.numberOfVerFailed());
             if (cs.shadowFallbacks) {
                setTextColor(nGlblWarnColor, 1);
-               printf(", %ld shadow fallbacks", cs.shadowFallbacks);
+               printf(", %d shadow fallbacks", cs.shadowFallbacks);
             }
             pszpre = ", ";
          }
          if (filedb.numberOfVerMissing() > 0) {
             setTextColor(nGlblErrColor, 1);
-            printf("%s%ld %snot found", pszpre, filedb.numberOfVerMissing(), pszsub);
+            printf("%s%d %snot found", pszpre, filedb.numberOfVerMissing(), pszsub);
             pszpre=", "; pszsub="";
          }
          setTextColor(nGlblTimeColor, 1);
-         printf("%s%ld %schecked", pszpre, filedb.numberOfVerifies(), pszsub);
+         printf("%s%d %schecked", pszpre, filedb.numberOfVerifies(), pszsub);
          if (nSkipped)
-            printf(", %ld skipped", nSkipped);
+            printf(", %d skipped", nSkipped);
          printf(".");
          setTextColor(-1);
          bTold = 1;
@@ -41452,10 +41663,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (nVerMixRC && bCleanup) {
          // at least one record failed to verify, and cleanup is selected:
          // rewrite meta db.
-         long nRecWritten = 0;
-         long nSaveRC = filedb.save(nRecWritten);
+         int nRecWritten = 0;
+         int nSaveRC = filedb.save(nRecWritten);
          if (!nSaveRC)
-            printf("metadb cleaned up, %ld records written.\n", nRecWritten);
+            printf("metadb cleaned up, %d records written.\n", nRecWritten);
          // else error was printed within save()
       }
 
@@ -41505,7 +41716,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
       else
       if (chain.coldata) {
-         chain.addLine(szLineBuf, "", 0);
+         chain.addLine(szLineBuf, str(""), 0);
       } else {
          printf("%s\n", szLineBuf);
       }
@@ -41629,7 +41840,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (!pszDir) return 9+perr("missing dir name for mkdir");
 
-      lRC = createSubDirTree(pszDir, "");
+      lRC = createSubDirTree(pszDir, str(""));
       if (lRC) return lRC;
 
       if (becho)
@@ -41694,7 +41905,6 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       int iChainNext = 0;
       for (; iDir<argc; iDir++) 
       {
-         char *pszParm = 0;
          if (!braw && !strcmp(argv[iDir], "-i")) {
             bstdin = 1;
             continue;
@@ -41715,7 +41925,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             continue;
          }
          else
-         if (!braw && strBegins(argv[iDir], "-ver") || !strcmp(argv[iDir], "-all"))
+         if (!braw && (strBegins(argv[iDir], "-ver") || !strcmp(argv[iDir], "-all")))
          {
             bdetail = 1;
             continue;
@@ -41746,11 +41956,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (pphrase)
          { bmin=0; bdetail=0; }
 
-      long iline = 0;
-      long nmin  = -1;
-      long nmax  = 0;
-      long imin  = 0;
-      long imax  = 0;
+      int iline = 0;
+      int nmin  = -1;
+      int nmax  = 0;
+      int imin  = 0;
+      int imax  = 0;
       mclear(szLineBuf2);  // will contain min line
       mclear(szLineBuf3);  // will contain max line
 
@@ -41775,7 +41985,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
          iline++;
          removeCRLF(szLineBuf);
-         long nlen = strlen(szLineBuf);
+         int nlen = strlen(szLineBuf);
          if (nmin < 0 || nlen < nmin) {
             nmin = nlen;
             imin = iline;
@@ -41790,23 +42000,23 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (!cs.quiet) {
          if (bdetail) {
-            chain.print("min\t%ld\t%ld\t\"%s\"", nmin, imin, szLineBuf2);
-            chain.print("max\t%ld\t%ld\t\"%s\"", nmax, imax, szLineBuf3);
+            chain.print("min\t%d\t%d\t\"%s\"", nmin, imin, szLineBuf2);
+            chain.print("max\t%d\t%d\t\"%s\"", nmax, imax, szLineBuf3);
             lRC = nmax;
          }
          else
          if (bmin && bmax) {
-            chain.print("%ld\t%ld", nmin, nmax);
+            chain.print("%d\t%d", nmin, nmax);
             lRC = nmax;
          }
          else
          if (bmin) {
-            chain.print("%ld", nmin);
+            chain.print("%d", nmin);
             lRC = nmin;
          }
          else {
             if (!cs.quiet)
-               chain.print("%ld", nmax);
+               chain.print("%d", nmax);
             lRC = nmax;
          }
       }
@@ -41862,7 +42072,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "   #example:\n"
              "\n"
              "   1. you are currently working in\n"
-             "         C:\\Documents And Long Complicated Paths\\Users\\You\\Work\n"
+             "         C:\\Documents And Long Complicated Paths\\Users\\You\\Work\n" 
              "\n"
              "   2. now type:\n"
              "         #sfk mkcd cd1\n"
@@ -41877,7 +42087,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "   => now, anytime you type:\n"
              "         #cd1\n"
              "            you jump instantly into\n"
-             "               C:\\Documents And Long Complicated Paths\\Users\\You\\Work\n"
+             "               C:\\Documents And Long Complicated Paths\\Users\\You\\Work\n" 
              "\n"
              "      and anytime you type:\n"
              "         #cd2\n"
@@ -41900,7 +42110,6 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       char *psz1 = strrchr(pszSFKCmd, glblPathChar);
       if (!psz1) return 9+perr("unable to find path of sfk" EXE_EXT "\n");
       sprintf(szRefNameBuf, "%.*s", (int)(psz1-pszSFKCmd+1),pszSFKCmd);
-      char *pszRel = szRefNameBuf+strlen(szRefNameBuf);
       strcat(szRefNameBuf, pszAlias);
       #ifdef _WIN32
       strcat(szRefNameBuf, ".bat");
@@ -42046,7 +42255,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      delete an alias (deletes the associated batchfile).\n"
              "\n"
              "   $sfk alias -ren oldname newname\n"
-             "      renane an alias (renames the associated batchfile).\n"
+             "      rename an alias (renames the associated batchfile).\n"
             );
       #ifdef SFINT
       printx("\n"
@@ -42100,11 +42309,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
          // create virual directory parms
          char *pSubArgv[10];
-         pSubArgv[0] = "sfk-dummy";
-         pSubArgv[1] = "alias-list";
-         pSubArgv[2] = "-norec";
+         pSubArgv[0] = str("sfk-dummy");
+         pSubArgv[1] = str("alias-list");
+         pSubArgv[2] = str("-norec");
          pSubArgv[3] = szRefNameBuf;
-         pSubArgv[4] = ".bat";
+         pSubArgv[4] = str(".bat");
          #ifdef _WIN32
          int nSubArgc = 5; // win: reduce scan to .bat files
          #else
@@ -42114,13 +42323,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          printx("$current aliases from the sfk home %s :\n", szRefNameBuf);
 
          // process and walk virtual directory parameters
-         if (lRC = processDirParms("alias-list", nSubArgc, pSubArgv, iSubDir, 3)) return lRC;
+         if ((lRC = processDirParms(str("alias-list"), nSubArgc, pSubArgv, iSubDir, 3))) return lRC;
          lRC = walkAllTrees(eFunc_AliasList, lFiles, lDirs, nBytes);
 
          // complete real parameters, just to find iDirNext
          int iDirNext = 0;
-         long lRC2 = 0;
-         if (lRC2 = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)) return lRC2;
+         int lRC2 = 0;
+         if ((lRC2 = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))) return lRC2;
 
          // now continue chain, e.g. filtering, if any
          if (chain.coldata) {
@@ -42135,7 +42344,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if ((argc > 3) && !strcmp(argv[2], "-del"))
       {
          // delete one or more aliases
-         if (blockChain("alias -delete", iDir, argc, argv, 2)) // 2: no pinf
+         if (blockChain(str("alias -delete"), iDir, argc, argv, 2)) // 2: no pinf
             return 9;
    
          for (iDir=3; iDir < argc; iDir++)
@@ -42167,7 +42376,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if ((argc >= 5) && !strcmp(argv[2], "-ren"))
       {
          // rename an alias
-         if (blockChain("alias -rename", iDir, argc, argv, 2)) // 2: no pinf
+         if (blockChain(str("alias -rename"), iDir, argc, argv, 2)) // 2: no pinf
             return 9;
 
          char *pszFrom = argv[3];
@@ -42207,12 +42416,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (argc == 3)
       {
          // list single alias
-         if (blockChain("alias [show]", iDir, argc, argv, 2)) // 2: no pinf
+         if (blockChain(str("alias [show]"), iDir, argc, argv, 2)) // 2: no pinf
             return 9;
 
          char *pszAlias = argv[2];
          strcat(szRefNameBuf, pszAlias);
-         char *pszRel = szRefNameBuf + strlen(szRefNameBuf);
          #ifdef _WIN32
          strcat(szRefNameBuf, ".bat");
          #endif
@@ -42221,7 +42429,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (!bIsAlias)
          {
             printf("No sfk alias \"%s\" is defined", pszAlias);
-            long nhits = listPathAny(pszAlias, 1); // silent
+            int nhits = listPathAny(pszAlias, 1); // silent
             if (nhits > 0) {
                printf(", but path contains:\n");
                listPathAny(pszAlias, 0); // loud
@@ -42233,14 +42441,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       else
       {
          // create new alias
-         if (blockChain("alias [create]", iDir, argc, argv, 2)) // 2: no pinf
+         if (blockChain(str("alias [create]"), iDir, argc, argv, 2)) // 2: no pinf
             return 9;
 
          if (checkArgCnt(argc, 4)) return 9;
          char *pszAlias = argv[2];
    
          // create batch filename parallel to sfk.exe
-         char *pszRel = szRefNameBuf+strlen(szRefNameBuf);
          strcat(szRefNameBuf, pszAlias);
          #ifdef _WIN32
          strcat(szRefNameBuf, ".bat");
@@ -42275,11 +42482,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             while (iDir < argc) {
                char *psz3 = argv[iDir];
                // check if user supplies parameter substitution
-               for (long i=1; i<10; i++) {
+               for (int i=1; i<10; i++) {
                   #ifdef _WIN32
-                  sprintf(szLineBuf, "%%%ld", i);
+                  sprintf(szLineBuf, "%%%d", i);
                   #else
-                  sprintf(szLineBuf, "$%ld", i);
+                  sprintf(szLineBuf, "$%d", i);
                   #endif
                   if (strstr(psz3, szLineBuf)) {
                      bHaveAnySubst = 1;
@@ -42303,12 +42510,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                   #endif
                }
                else
-               for (long i=1; i<10; i++)
+               for (int i=1; i<10; i++)
                   if (!aHaveSubst[i])
                      #ifdef _WIN32
-                     fprintf(fout, "%%%ld ", i);
+                     fprintf(fout, "%%%d ", i);
                      #else
-                     fprintf(fout, "$%ld ", i);
+                     fprintf(fout, "$%d ", i);
                      #endif
             }
    
@@ -42322,7 +42529,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             char *pszTmp = loadFile(szRefNameBuf);
             if (pszTmp) {
                printf("%s",pszTmp);
-               long nLen = strlen(pszTmp);
+               int nLen = strlen(pszTmp);
                if ((nLen > 0) && (pszTmp[nLen-1] != '\n'))
                   printf("\n");
                delete [] pszTmp;
@@ -42344,7 +42551,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
           || !strcmp(pszCmd, "hexfind")
          )
    {
-      bool bIsFind = bIsHexFind = !strcmp(pszCmd, "hexfind");
+      bIsHexFind = !strcmp(pszCmd, "hexfind");
 
       ifhelp (   ( chain.usefiles && (nparm < 1))
               || (!chain.usefiles && (nparm < 2))
@@ -42457,7 +42664,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       char *pszRepFile  = 0;
       bool  bRevert     = 0;
-      long  nstate      = 0;
+      int  nstate      = 0;
       char *pszFirstPat = 0;
       bool bGotFileDir  = 0;
       bool bcolpat      = 0;
@@ -42478,7 +42685,6 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // autoselect dump with binfind
       if (bIsHexFind) cs.repDump = 1;
 
-      int iDirFirst = iDir;
       for (; iDir<argc; iDir++) 
       {
          // "-" parms
@@ -42563,7 +42769,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             Coi ocoi(argv[iDir], 0);
             if (ocoi.isTravelDir()) {
                 if (bIsHexFind) {
-                   if (lRC = setProcessSingleDir(argv[iDir]))
+                   if ((lRC = setProcessSingleDir(argv[iDir])))
                       return lRC;
                 } else {
                    perr("no single directory supported with replace.\n");
@@ -42627,17 +42833,17 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // create replacement expression table
 
       // 1. estimate size, allocate
-      long nLines = 0;
+      int nLines = 0;
       char *psz1 = pszRepList;
       for (; *psz1; psz1++) if (*psz1 == '\n') nLines++;
-      long nMaxExp = nLines; // max. replacement array entries
+      int nMaxExp = nLines; // max. replacement array entries
       apRepSrcExp = new uchar*[nMaxExp];
       apRepDstExp = new uchar*[nMaxExp];
-      apRepSrcLen = new long[nMaxExp];
-      apRepDstLen = new long[nMaxExp];
-      apRepFlags  = new long[nMaxExp];
+      apRepSrcLen = new int[nMaxExp];
+      apRepDstLen = new int[nMaxExp];
+      apRepFlags  = new int[nMaxExp];
       apRepOffs   = new num[nMaxExp];
-      memset(apRepFlags, 0, sizeof(long)*nMaxExp);
+      memset(apRepFlags, 0, sizeof(int)*nMaxExp);
       if (!apRepSrcExp || !apRepDstExp || !apRepSrcLen || !apRepDstLen || !apRepFlags)
          return 9+perr("out of memory\n");
 
@@ -42645,14 +42851,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // In case of parameter errors, nGlblError must be set,
       // to avoid memory leak checks on exit.
 
-      long nLenErrLine = -1;
-      bool btold1 = 0;
+      int nLenErrLine = -1;
       bool bVarMode = 0;
  
       // 2. parse expressions
       nstate = 0;
       char *psz2  = 0;
-      long nLine  = 0;
+      int nLine  = 0;
       for (psz1 = pszRepList; psz1 && (*psz1); psz1=psz2) 
       {
          // fetch and prepare line
@@ -42703,8 +42908,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          // same for pszts, pszte
          *pszte = '\0';
          // shrink \\t and the like in both expressions
-         long nFromLen = pszfe-pszfs;
-         long nToLen   = pszte-pszts;
+         int nFromLen = pszfe-pszfs;
+         int nToLen   = pszte-pszts;
          if (shrinkFormTextBlock(pszfs, nFromLen)) return 9+reperr("wrong syntax in pattern", pszfs);
          if (shrinkFormTextBlock(pszts, nToLen))   return 9+reperr("wrong syntax in pattern", pszts);
          // => nFromLen, nToLen may have been reduced.
@@ -42714,7 +42919,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             cs.repDumpHalve = 1;
          }
          if (bRevert) {
-            long nSwap=nFromLen; nFromLen=nToLen; nToLen=nSwap;
+            int nSwap=nFromLen; nFromLen=nToLen; nToLen=nSwap;
             char *pSwap=pszfs; pszfs=pszts; pszts=pSwap;
                   pSwap=pszfe; pszfe=pszte; pszte=pSwap;
          }
@@ -42731,8 +42936,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             // as binary
             if (nFromLen & 1) return 9+reperr("wrong length of hex expression",pszfs,nLine);
             if (nToLen   & 1) return 9+reperr("wrong length of hex expression",pszts,nLine);
-            long nSrcBinLen = nFromLen / 2;
-            long nDstBinLen = nToLen   / 2;
+            int nSrcBinLen = nFromLen / 2;
+            int nDstBinLen = nToLen   / 2;
             apRepSrcLen[nBinRepExp] = nSrcBinLen;
             apRepDstLen[nBinRepExp] = nDstBinLen;
             apRepSrcExp[nBinRepExp] = new uchar[nSrcBinLen+10];
@@ -42751,7 +42956,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       int iDirNext=0;
       if (iDir < argc)
-         if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext))
+         if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext)))
             { nGlblError=1; return lRC; }
 
       if (!chain.usefiles && !bGotFileDir && !glblFileSet.rootDirs().numberOfEntries()) {
@@ -42765,7 +42970,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (cs.yes && (nLenErrLine != -1)) {
          nGlblError=1;
          if (pszRepFile)
-            return 9+perr("length mismatch in line %ld: source and target pattern must have same length\n",nLine);
+            return 9+perr("length mismatch in line %d: source and target pattern must have same length\n",nLine);
          else
             return 9+perr("length mismatch: source and target pattern must have same length\n");
       }
@@ -42816,16 +43021,16 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (!chain.colfiles) {
          if (bIsHexFind)
-            chain.print("%ld files checked, %ld files matched.\n", cs.files, cs.filesChg);
+            chain.print("%d files checked, %d files matched.\n", cs.files, cs.filesChg);
          else
-            chain.print("%ld files checked, %ld%s changed.\n", cs.files, cs.filesChg, cs.sim?" would be":"");
+            chain.print("%d files checked, %d%s changed.\n", cs.files, cs.filesChg, cs.sim?" would be":"");
       }
 
       if (nLenErrLine != -1) {
          setTextColor(nGlblTimeColor);
          const char *pextinf = cs.verbose ? "" : " (-verbose for more)";
          if (pszRepFile)
-            printf("source and target patterns have differing length, line %ld%s.\n",nLine,pextinf);
+            printf("source and target patterns have differing length, line %d%s.\n",nLine,pextinf);
          else
             printf("source and target patterns have differing length%s.\n",pextinf);
          setTextColor(-1);
@@ -42838,7 +43043,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (cs.sim && !cs.nohead)
          printx("$[add -yes to execute.]\n");
 
-      for (long i=0; i<nBinRepExp; i++) {
+      for (int i=0; i<nBinRepExp; i++) {
          delete [] apRepSrcExp[i];
          delete [] apRepDstExp[i];
       }
@@ -42910,9 +43115,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    {
       char *pszHay = argv[2];
       char *pszNed = argv[3];
-      long npos = 0;
-      long nrc = mystrstriq(pszHay, pszNed, &npos);
-      printf("%d = mystrstriq(str %s,mask %s) @%ld\n",nrc,pszHay,pszNed,npos);
+      int npos = 0;
+      int nrc = mystrstriq(pszHay, pszNed, &npos);
+      printf("%d = mystrstriq(str %s,mask %s) @%d\n",nrc,pszHay,pszNed,npos);
       return 0;
    }
 
@@ -42923,7 +43128,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       #ifndef _WIN32
       struct timeval tv;
       gettimeofday(&tv, NULL);
-      printf("tv_sec %ld usec %ld\n",tv.tv_sec,tv.tv_usec);
+      printf("tv_sec %d usec %d\n",(int)tv.tv_sec,(int)tv.tv_usec);
       num nval = tv.tv_sec + tv.tv_usec / 1000;
       printf("nval dec %s\n",numtoa(nval));
       printf("nval hex %s\n",numtohex(nval));
@@ -42939,13 +43144,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    if (!strcmp(pszCmd, "ansitooem"))
    {
       char szBuf[20];
-      for (ulong i=0; i<256; i++) {
+      for (uint i=0; i<256; i++) {
          uchar cansi = (uchar)i;
          szBuf[0] = (char)cansi;
          szBuf[1] = '\0';
          CharToOemA(szBuf, szBuf+10);
          uchar coem = szBuf[10];
-         printf("0x%02lX,0x%02lX, ", (ulong)cansi, (ulong)coem);
+         printf("0x%02lX,0x%02lX, ", (uint)cansi, (uint)coem);
       }
       return 0;
    }
@@ -42957,11 +43162,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       char *pszFile = argv[2];
       uchar abmd[20];
       memset(abmd, 0, sizeof(abmd));
-      long lrc = getFileMD5NoCache(pszFile, abmd, 0);
-      printf("%ld = md5nocache: ", lrc);
-      for (long i=0; i<16; i++)
+      int lrc = getFileMD5NoCache(pszFile, abmd, 0);
+      printf("%d = md5nocache: ", lrc);
+      for (int i=0; i<16; i++)
          printf("%02X",abmd[i]);
-      printf(" errno %ld lasterr %ld\n",(long)errno, GetLastError());
+      printf(" errno %d lasterr %d\n",(int)errno, GetLastError());
       return 0;
    }
    #endif
@@ -42970,7 +43175,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    {
       char *pszFile = argv[2];
       num nage = getFileAge(pszFile);
-      printf("%s sec, %ld days\n", numtoa(nage), (long)(nage / (24 * 3600)));
+      printf("%s sec, %d days\n", numtoa(nage), (int)(nage / (24 * 3600)));
       return 0;
    }
 
@@ -42995,11 +43200,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // calling this only for chaining support:
       int iDirNext=0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 0, &iDirNext))
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 0, &iDirNext)))
          return lRC;
 
       StringTable st;
-      long nSize = 0;
+      int nSize = 0;
 
       if (chain.usedata) {
          // take text from chain
@@ -43024,12 +43229,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       char *pszTmp = new char[nSize+1000];
       if (!pszTmp) return 9+perr("out of memory\n");
       pszTmp[0] = '\0';
-      long nLines = st.numberOfEntries();
-      long iout=0;
-      for (long i=0; i<nLines; i++)
+      int nLines = st.numberOfEntries();
+      int iout=0;
+      for (int i=0; i<nLines; i++)
       {
          char *psz = st.getEntry(i, __LINE__);
-         long nLen = (long)strlen(psz);
+         int nLen = (int)strlen(psz);
          if (iout+nLen < nSize)
          {
             strcat(pszTmp, psz);
@@ -43131,7 +43336,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          num iin  = 0;
          // split into buffer records.
          while (iin<nlen) {
-            long ibuf = 0;
+            int ibuf = 0;
             for (; iin<nlen; iin++) {
                char c = pszClip[iin];
                if (c == '\r')
@@ -43143,7 +43348,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                   break; // hard line wrap
             }
             szLineBuf[ibuf] = '\0';
-            chain.addLine(szLineBuf, "");
+            chain.addLine(szLineBuf, str(""));
          }         
       } else {
          // pszClip MAY contain 0D0A format, but writing to stdout
@@ -43183,7 +43388,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              );
       ehelp;
 
-      long nmsec = -1;
+      int nmsec = -1;
 
       for (; iDir<argc; iDir++) 
       {
@@ -43212,7 +43417,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // calling this only for chaining support:
       int iDirNext=0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))) return lRC;
 
       // we haven't collected any filenames, but maybe previous
       // commands have, so keep chain list as it is.
@@ -43241,7 +43446,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       ehelp;
 
       char *pszText  = 0;
-      long  ntimeout = 0;
+      int  ntimeout = 0;
 
       for (; iDir<argc; iDir++) 
       {
@@ -43271,46 +43476,46 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (!pszText && !cs.quiet) {
          #ifdef _WIN32  
-         pszText = "Press any key to continue, CTRL+C or ESC to stop.";
+         pszText = str("Press any key to continue, CTRL+C or ESC to stop.");
          #else
-         pszText = "Press ENTER to continue, or CTRL+C to stop.";
+         pszText = str("Press ENTER to continue, or CTRL+C to stop.");
          #endif
       }
 
       // wait for user input:
-      long nkey   = 0;
-      num  nstart = getCurrentTime();
+      int nkey   = 0;
       #ifdef _WIN32
+      num  nstart = getCurrentTime();
       if (pszText)
          { printf("%s\r", pszText); fflush(stdout); }
       while (true) {
          nkey = getKeyPress(1); // only DOWN events
          if (nkey > 0) {
-            if (cs.verbose) printf("[key 0x%lx]\n", (ulong)nkey);
+            if (cs.verbose) printf("[key 0x%x]\n", (uint)nkey);
             if (nkey >= 0x20) break;
             if (nkey == '\n' || nkey == '\r' || nkey == '\t' || nkey == 0x1B)
                break;
             // else ignore non-printable keys, esp. CTRL (0x11)
          }
-         long ndelay = ntimeout ? 500 : 100;
+         int ndelay = ntimeout ? 500 : 100;
          doSleep(ndelay);
          num nelapsed = getCurrentTime() - nstart;
          if (ntimeout) {
             if (nelapsed > ntimeout) break;
             num nremain = ntimeout - nelapsed;
-            printf("[%ld] - %s\r",(long)(nremain/1000),pszText);
+            printf("[%d] - %s\r",(int)(nremain/1000),pszText);
             fflush(stdout);
          }
       }
       printf("\n");
       #else
       if (pszText) printf("%s\n", pszText);
-      nkey = (long)getchar(); // requires enter
+      nkey = (int)getchar(); // requires enter
       #endif
 
       // calling this only for chaining support:
       int iDirNext=0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))) return lRC;
 
       // continue chain processing only if no ESCAPE pressed
       if (nkey != 0x1B) {
@@ -43330,8 +43535,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
           || !strcmp(pszCmd, "ttail") || !strcmp(pszCmd, "thead")
          )
    {
-      bool bTail = bIsTail = (strstr(pszCmd, "tail") ? 1 : 0);
-
+      bIsTail = (strstr(pszCmd, "tail") ? 1 : 0);
+      
       ifhelp (!chain.useany() && (nparm < 1))
       printx("<help>$sfk head [-lines=n] [-f[ollow]] [filename]\n"
              "$sfk tail [-lines=n] [-f[ollow]] [filename]\n"
@@ -43380,10 +43585,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       ehelp;
 
       char *pszFile   =   0;
-      long nLastLines =  10;
-      long nPollTime  = 500;
+      int nLastLines =  10;
+      int nPollTime  = 500;
       bool bFollow    =   0;
-      long nMaxLines  = 10000;
+      int nMaxLines  = 10000;
       int  iChainNext =   0;
       bool bUseSeek   =   1;
 
@@ -43394,7 +43599,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             if (!pszParm) return 9;
             nLastLines = atol(pszParm);
             if (!chain.usedata && bIsTail && (nLastLines > nMaxLines))
-               pwarn("tail supports only %ld -lines at maximum.\n", nMaxLines);
+               pwarn("tail supports only %d -lines at maximum.\n", nMaxLines);
             continue;
          }
          else
@@ -43444,8 +43649,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (chain.usedata) 
       {
          // head or tail the chain text
-         long nsize = chain.indata->numberOfEntries();
-         long nfrom = 0, nto = nsize;
+         int nsize = chain.indata->numberOfEntries();
+         int nfrom = 0, nto = nsize;
          if (bIsTail) {
             nfrom = nsize - nLastLines;
             if (nfrom < 0) nfrom = 0;
@@ -43453,7 +43658,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             nto = nLastLines;
             if (nto > nsize) nto = nsize;
          }
-         for (long i=nfrom; i<nto; i++) {
+         for (int i=nfrom; i<nto; i++) {
             char *ptext=0, *pattr=0;
             ptext = chain.indata->getEntry(i, __LINE__, &pattr);
             if (!ptext) return 9+perr("int. #168281112");
@@ -43473,7 +43678,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                pszFile = pcoi->name();
             } else {
                const char *pcmd = bIsTail ? "tail" : "head";
-               perr("too many input filenames for %s (%ld)",pcmd,chain.numberOfInFiles());
+               perr("too many input filenames for %s (%d)",pcmd,chain.numberOfInFiles());
                pinf("%s can only process a single input filename.\n",pcmd);
                pinf("use +t%s instead of %s if you want to process text.\n",pcmd,pcmd);
                pinf("try +ftt to convert filenames to text. see also \"sfk help chain\".\n");
@@ -43507,7 +43712,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                   num *ppos = new num[nMaxLines+10]; // with tolerance
                   if (!ppos) return 9+perr("out of memory\n");
                   memset(ppos, 0, sizeof(num)*nMaxLines);
-                  long nbufpos = 0;
+                  int nbufpos = 0;
          
                   // scan all line positions
                   FILE *fin = fopen(pszFile, "rb");
@@ -43523,7 +43728,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                      if (nbufpos < nMaxLines)
                         nbufpos++;
                      if (cs.debug)
-                        printf("line %ld pos %s \"%s\"\n",nbufpos,numtoa(npos2),szLineBuf);
+                        printf("line %d pos %s \"%s\"\n",nbufpos,numtoa(npos2),szLineBuf);
                   }
                   fclose(fin);
          
@@ -43535,7 +43740,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                   cperm.tailnpos = ppos[nLastLines];
          
                   if (cs.debug)
-                     printf("\ntake pos %s from offset %ld\n",numtoa(cperm.tailnpos),nLastLines);
+                     printf("\ntake pos %s from offset %d\n",numtoa(cperm.tailnpos),nLastLines);
          
                   delete [] ppos;
                } 
@@ -43543,8 +43748,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                {
                   // wait until file changes, then proceed
                   bool bTold  = 0;
-                  long iturn  = 0;
-                  char *aturn = "\\|/-";
+                  int iturn  = 0;
+                  cchar *aturn = "\\|/-";
                   while (!userInterrupt()) 
                   {
                      doSleep(nPollTime);
@@ -43558,7 +43763,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                      if (nsize2 != cperm.tailnsize) {
                         if (bIsTail && (nsize2 < cperm.tailnsize)) {
                            if (!cs.quiet)
-                              printf("[file %srecreated, rereading last %ld lines]\n", bTold?"":"shrunk or ",nLastLines);
+                              printf("[file %srecreated, rereading last %d lines]\n", bTold?"":"shrunk or ",nLastLines);
                            cperm.tailnsize = nsize2;
                            cperm.tailnpos = 0;
                            break;
@@ -43577,7 +43782,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                }
             }
       
-            long nrc = 0;
+            int nrc = 0;
       
             // dump new content, from pos to end
             FILE *fin = fopen(pszFile, "rb");
@@ -43592,7 +43797,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             }
    
             // dump from current position until end (if tail)
-            long nLocLine = 0;
+            int nLocLine = 0;
             myfgets_init();
             while (myfgets(szLineBuf, MAX_LINE_LEN-10, fin))
             {
@@ -43601,7 +43806,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                nLocLine++;
    
                if (chain.coldata)
-                  chain.addLine(szLineBuf, "");
+                  chain.addLine(szLineBuf, str(""));
                else
                   printf("%s\n", szLineBuf);
    
@@ -43611,7 +43816,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    
             if (nrc) {
                fclose(fin);
-               return 9+perr("error while filtering, rc %ld\n", nrc);
+               return 9+perr("error while filtering, rc %d\n", nrc);
             }
    
             // remember end position of read.
@@ -43735,16 +43940,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       bool bback    = 0;
       bool bcolor   = 1;
-      long bcompact = 1;
-      bool bnoshl   = 0;
+      int bcompact = 1;
       #ifdef _WIN32
-      char *pszsopt = "start ";
-      char *pszwopt = "";
-      char *pszxopt = "";
+      char *pszsopt = str("start ");
+      char *pszwopt = str("");
+      char *pszxopt = str("");
       #else
-      char *pszsopt = " &";
-      char *pszwopt = "wine ";
-      char *pszxopt = " -linux";
+      char *pszsopt = str(" &");
+      char *pszwopt = str("wine ");
+      char *pszxopt = str(" -linux");
       #endif
 
       // additional dview options are collected in abBuf:
@@ -43779,23 +43983,23 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
          else
          if (!strncmp(argv[iDir], "-noba", 5)) {
-            pszsopt = "";
+            pszsopt = str("");
             continue;
          }
          else
          if (!strncmp(argv[iDir], "-noli", 5)) {
-            pszxopt = "";
+            pszxopt = str("");
             continue;
          }
          else
          if (!strncmp(argv[iDir], "-nowi", 5)) {
-            pszwopt = "";
+            pszwopt = str("");
             continue;
          }
          else
          if (!strcmp(argv[iDir], "-plain")) {
-            pszwopt = "";
-            pszxopt = "";
+            pszwopt = str("");
+            pszxopt = str("");
             continue;
          }
          else
@@ -43821,7 +44025,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // render extra options for dview
       if (cs.wrapcol) {
          char *psz = (char*)abBuf;
-         sprintf(&psz[strlen(psz)], " -wrap=%ld", cs.wrapcol);
+         sprintf(&psz[strlen(psz)], " -wrap=%d", cs.wrapcol);
          bcolor = 0; // todo: -wrap with color support
       }
       // if (bnoshl) {
@@ -43831,17 +44035,16 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // find the target executable:
       // dview, dview.bat, dview.exe [but not dview120.exe]
       // does not search for other extensions like .cmd.
-      char *pszTarg    = "dview";
-
+      char *pszTarg    = str("dview");
       char *pszTargAbs = findPathLocation(pszTarg, 0);
 
       if (!pszTargAbs)
          pszTargAbs = findPathLocation("dview.exe", 0);
 
       if (!pszTargAbs)
-         if (pszTargAbs = findPathLocation("dview.bat", 0)) {
-            pszwopt    = "";
-            pszxopt    = "";
+         if ((pszTargAbs = findPathLocation("dview.bat", 0))) {
+            pszwopt    = str("");
+            pszxopt    = str("");
          }
 
       if (pszTargAbs)
@@ -43865,7 +44068,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             FILE *fout = fopen(pszTmpFile, "w");
             if (!fout) return 9+perr("cannot write temporary file: %s\n", pszTmpFile);
    
-            for (long i=0; i<chain.numberOfInFiles(); i++) {
+            for (int i=0; i<chain.numberOfInFiles(); i++) {
                Coi *pcoi = chain.getFile(i);
                if (!pcoi) return 9+perr("int. #141271853\n");
                fprintf(fout, "%s\n", pcoi->name());
@@ -43874,7 +44077,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    
             #ifdef VFILEBASE
             // cleanup possible connections to sfk ftp server
-            mtklog("view: cleanup connections");
+            mtklog(("view: cleanup connections"));
             resetLoadCaches(0);
             #endif // VFILEBASE
 
@@ -43909,7 +44112,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    
             bool bsnap = 0;
    
-            for (long i=0; i<chain.indata->numberOfEntries(); i++) 
+            for (int i=0; i<chain.indata->numberOfEntries(); i++) 
             {
                char *pattr = 0;
                strcopy(szLineBuf2, chain.indata->getEntry(i, __LINE__, &pattr));
@@ -43921,7 +44124,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                // :file text records with 'f' in rightmost extended attribute area
                // are real subfile headers.
                if (pattr) {
-                  long natrlen = strlen(pattr);
+                  int natrlen = strlen(pattr);
                   if (natrlen > 0 && pattr[natrlen-1] == 'f' && !strncmp(szLineBuf2, ":file ", 6))
                      bsubhead = 1;
                }
@@ -43951,7 +44154,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                      }
                      fprintf(fout, ":file: %s\n", szLineBuf2+6); 
                      if (bcolor) {
-                        for (long k=7+strlen(szLineBuf2+6); k>0; k--)
+                        for (int k=7+strlen(szLineBuf2+6); k>0; k--)
                            fputc('b',fout);
                         fputc('\n',fout);
                      }
@@ -43963,13 +44166,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                      fprintf(fout, ":file:\n"); if (bcolor) fprintf(fout, "\n");
                      fprintf(fout, "%s\n", szLineBuf2+6); 
                      if (bcolor) {
-                        for (long k=strlen(szLineBuf2+6); k>0; k--)
+                        for (int k=strlen(szLineBuf2+6); k>0; k--)
                            fputc('b',fout);
                         fputc('\n',fout);
                      }
                   }
                } else {
-                  mtklog("vtext: %04ld \"%s\"",(long)strlen(szLineBuf2),szLineBuf2);
+                  mtklog(("vtext: %04d \"%s\"",(int)strlen(szLineBuf2),szLineBuf2));
                   fprintf(fout, "%s\n", szLineBuf2);
                   if (bcolor) {
                      // map and print color attribute codes. dview displays only:
@@ -43993,7 +44196,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                            case 'v': *psz = ' '; break;
                            case 'V': *psz = ' '; break;
                         }
-                     mtklog("vattr: %04ld \"%s\"",(long)strlen(szAttrBuf),szAttrBuf);
+                     mtklog(("vattr: %04d \"%s\"",(int)strlen(szAttrBuf),szAttrBuf));
                      fprintf(fout, "%s\n", szAttrBuf);
                   }
                }
@@ -44041,7 +44244,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              );
       return 9;
       }
-      long nid = -1; // default id
+      int nid = -1; // default id
       bool breadid = 0;
       for (; iDir<argc; iDir++) 
       {
@@ -44073,7 +44276,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       int iDirNext = 0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))) return lRC;
       if (btest) return 0;
 
       MessageBeep(nid);
@@ -44144,13 +44347,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bool bShortForm = (pszCmd[0] == ':');
 
       if (glblFileSet.beginLayer(false, __LINE__)) return 9;
-      if (glblFileSet.addRootDir(".", __LINE__, false)) return 9;
+      if (glblFileSet.addRootDir(str("."), __LINE__, false)) return 9;
       if (bShortForm) {
          char *pszpat = pszCmd+1;
          sprintf(szLineBuf, "*%s*", pszpat);
          glblFileSet.addDirMask(szLineBuf);
       }
-      glblFileSet.addFileMask("*"); // dummy
+      glblFileSet.addFileMask(str("*")); // dummy
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++) 
@@ -44206,7 +44409,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (!cs.quiet) {
          if (cs.noFiles)
-            printf("%lu non-regular files skipped.\n", cs.noFiles);
+            printf("%u non-regular files skipped.\n", cs.noFiles);
       }
 
       STEP_CHAIN(iChainNext, 1);
@@ -44249,7 +44452,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       char *pszFile = argv[iDir];
-      long nnum = 1;
+      int nnum = 1;
       if (nparm >= 2)
            nnum = atol(argv[++iDir]);
 
@@ -44258,8 +44461,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       srand((unsigned)time(NULL));
 
-      for (long i=0; i<nnum; i++) {
-         char *pres = p->solve("all");
+      for (int i=0; i<nnum; i++) {
+         char *pres = p->solve(str("all"));
          if (!pres) return 9+perr("cannot solve 'all'\n");
          printf("%s\n", pres);
       }
@@ -44318,12 +44521,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       uchar *pout = new uchar[nOutSize+100];
       if (!pout) return 9+perr("out of memory.\n");
 
-      long nrc = 0;
-      long nsave = -1;
+      int nrc = 0;
+      int nsave = -1;
       if (bencode) {
          nrc = encode64(pdata, nFileSize, pout, nOutSize, 40);
          if (nrc)
-            perr("encoding failed, rc %ld\n", nrc);
+            perr("encoding failed, rc %d\n", nrc);
          else
             nsave = strlen((char*)pout);
       } else {
@@ -44341,7 +44544,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          } else {
             FILE *fout = fopen(pszOutFile, "wb");
             if (fout) {
-               long ndone = myfwrite(pout, nsave, fout);
+               int ndone = myfwrite(pout, nsave, fout);
                if (ndone != nsave)
                   perr("failed to fully write output file");
                fclose(fout);
@@ -44435,7 +44638,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!bdecode && (bjustdigits || strBegins(pword, "0x")))
       {
          if (bjustdigits) {
-            long npre = atol(pword);
+            int npre = atol(pword);
             if (npre > 255)
                return 9+perr("value too large");
             uchar n = (uchar)npre;
@@ -44485,7 +44688,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "         blanks and some chars like <> are skipped automatically.\n"
              "\n"
              "      #sfk filter dump.txt \"-+ >\" -rep \"_<<wild>__\" +hextobin out.dat\n"
-             "         takes a verbose hexdump produced by \"sfk hexump\":\n"
+             "         takes a verbose hexdump produced by \"sfk hexdump\":\n"
              "\n"
              "           >73746669 6C65732F 42617365 4C69622F< stfiles/BaseLib/ 00000020\n"
              "\n"
@@ -44536,9 +44739,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       uchar *poutmax = abBuf + sizeof(abBuf) - 100;
       bool berr=0;
-      long nConvLines=0, nSkippedLines=0;
+      int nConvLines=0, nSkippedLines=0;
       num nTotalBytes = 0;
-      for (long i=0; !berr && i<chain.indata->numberOfEntries(); i++)
+      for (int i=0; !berr && i<chain.indata->numberOfEntries(); i++)
       {
          // fetch another hex input line
          char *pszLine = chain.indata->getEntry(i, __LINE__);
@@ -44570,9 +44773,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             if (pout >= poutmax) { perr("buffer overflow: input lines too large\n"); berr=1; break; }
          }
          // flush collected binary line
-         long nBinSize = pout-abBuf;
+         int nBinSize = pout-abBuf;
          if (nBinSize > 0) {
-            if (myfwrite(abBuf, nBinSize, fout) != nBinSize) {
+            if ((int)myfwrite(abBuf, nBinSize, fout) != nBinSize) {
                esys("fwrite", "failed to write %s   \n", pszOutFile);
                berr=1;
                break;
@@ -44588,7 +44791,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       fclose(fout);
 
       if (!cs.quiet) {
-         printf("%ld lines converted, %ld skipped, %s output bytes.\n", nConvLines, nSkippedLines, numtoa(nTotalBytes));
+         printf("%d lines converted, %d skipped, %s output bytes.\n", nConvLines, nSkippedLines, numtoa(nTotalBytes));
          unsigned char *pmd5 = outmd.digest();
          for (int i=0; i<16; i++)
             sprintf(&szLineBuf[i*2], "%02x", pmd5[i]);
@@ -44716,7 +44919,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       int iDirNext = 0;
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))) return lRC;
       if (btest) return 0;
 
       if (glblDupScan.clDiffDirs && (glblFileSet.numberOfRootDirs() < 2))
@@ -44729,9 +44932,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       info.clear();
 
       if (!chain.colany() && !cs.quiet) {
-         printx("$%ld duplicates with %ld mb.", glblDupScan.clNumDups,(long)(glblDupScan.clDupBytes/1000000));
+         printx("$%d duplicates with %d mb.", glblDupScan.clNumDups,(int)(glblDupScan.clDupBytes/1000000));
          if (blistorg)
-            printx(" $%ld originals with %ld mb.\n",glblDupScan.clNumOrgs,(long)(glblDupScan.clOrgBytes/1000000));
+            printx(" $%d originals with %d mb.\n",glblDupScan.clNumOrgs,(int)(glblDupScan.clOrgBytes/1000000));
          else
             printf("\n");
       }
@@ -44820,10 +45023,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       bool bbatch = !strcmp(pszCmd, "batch");
       bool bWriteFile    = 0;
-      long nlang         = 0;
-      char *pszLang      = "";
+      int nlang         = 0;
+      char *pszLang      = str("");
       char *pszOutFile   = 0;
-      char *pszClassName = "fileio";
+      char *pszClassName = str("fileio");
       bool bLocalFile    = 0;
 
       #ifdef _WIN32
@@ -44948,7 +45151,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "#include <stdarg.h>\n"
          "\n"
          "// print error message with variable parameters.\n"
-         "long perr(const char *pszFormat, ...) {\n"
+         "int perr(const char *pszFormat, ...) {\n"
          "   va_list argList;\n"
          "   va_start(argList, pszFormat);\n"
          "   char szBuf[1024];\n"
@@ -44976,7 +45179,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "           psz = strchr(szBuf, '\\n'); if (psz) *psz = '\\0'; // strip lf\n"
          "     printf(\"line: \\\"%%s\\\"\\n\", szBuf);\n"
          "     strcat(szBuf, \"\\n\");\n"
-         "     long nlen = strlen(szBuf);\n"
+         "     int nlen = strlen(szBuf);\n"
          "     if (fwrite(szBuf, 1, nlen, fout) != nlen)\n"
          "        return 9+perr(\"failed to fully write %%s\\n\", pszOutFile);\n"
          "  }\n"
@@ -45328,7 +45531,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "         hello();\n"
          "      </script>\n"
          "  </td>\n"
-         "  <td align=\"center\" valign=\"top>&nbsp;</td>\n"
+         "  <td align=\"center\" valign=\"top\">&nbsp;</td>\n"
          " </tr>\n"
          "\n"
          "</table>\n"
@@ -45375,7 +45578,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "   // of the supplied image file name:\n"
          "\n"
          "   $asize = getimagesize($argv[1]);\n"
-         "   printf(\"w=%%04ld h=%%04ld %%s\\n\", $asize[0], $asize[1], $argv[1]);\n"
+         "   printf(\"w=%%04d h=%%04d %%s\\n\", $asize[0], $asize[1], $argv[1]);\n"
          "\n"
          "/* // ----- end of php script, end of batch -----\n"
          ":xend\n"
@@ -45668,6 +45871,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    if (!strcmp(pszCmd, "memerrtest"))
    {
       char *p = new char[1024];
+      (void)p;
       // fall through, expect mem leak message
       bDone=1;
    }
@@ -45675,18 +45879,18 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    if (!strcmp(pszCmd, "keytest")) 
    {
       StringMap omap;
-      long i=0;
+      int i=0;
       for (i=0; i<1000; i++) 
       {
          char szKey[100];
          char szVal[100];
-         sprintf(szKey, "key_%03ld", (long)(rand() % 1000));
-         sprintf(szVal, "val_%03ld", (long)(rand() % 1000));
+         sprintf(szKey, "key_%03d", (int)(rand() % 1000));
+         sprintf(szVal, "val_%03d", (int)(rand() % 1000));
          if (omap.put(szKey, szVal))
             return 9+perr("fail.1");
       }
 
-      printf("%ld entries in keymap\n", omap.size());
+      printf("%d entries in keymap\n", omap.size());
 
       for (i=0; i<omap.size(); i++) {
          char *pkey = 0;
@@ -45714,21 +45918,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (ozip.openDir())
          {  perr("cannot open"); return 9; }
 
-      for (Coi *psub=0; psub=ozip.nextEntry();) 
+      for (Coi *psub=0; (psub=ozip.nextEntry());) 
       {
          // psub is owned by caller!
-         printf("entry: %s dir=%d size=%ld time=%lu\n", psub->name(), psub->isTravelDir(), (long)psub->getSize(), (long)psub->getTime());
+         printf("entry: %s dir=%d size=%d time=%u\n", psub->name(), psub->isTravelDir(), (int)psub->getSize(), (int)psub->getTime());
          if (!psub->isTravelDir()) {
-            long nrc = psub->open("rb");
+            int nrc = psub->open("rb");
             if (nrc) {
-               printf("   ... open rc %ld\n", nrc);
+               printf("   ... open rc %d\n", nrc);
             } else {
                char abtmp[1024];
-               long nread = psub->readLine(abtmp, 100);
+               int nread = psub->readLine(abtmp, 100);
                if (nread >= 4) {
                   execHexdump(0, (uchar*)abtmp, nread);
                } else {
-                  printf("   ... nread %ld\n", nread);
+                  printf("   ... nread %d\n", nread);
                }
                psub->close();
             }
@@ -45744,10 +45948,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    if (!strcmp(pszCmd, "match")) {
       char *phay = argv[2];
       char *ppat = argv[3];
-      long nlen  = strlen(phay);
+      int nlen  = strlen(phay);
       memset(szAttrBuf, ' ', nlen);
       szAttrBuf[nlen] = '\0';
-      long ifirst=0, ilen=0;
+      int ifirst=0, ilen=0;
       if (matchstr(phay, ppat, 5, ifirst, ilen)) {
          if (ifirst+ilen < MAX_LINE_LEN)
             memset(szAttrBuf+ifirst, 'i', ilen);
@@ -45797,7 +46001,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       return 9;
       }
 
-      char *pmask = "";
+      char *pmask = str("");
       gs.showrc   = 1;
 
       for (; iDir<argc; iDir++) 
@@ -45818,37 +46022,37 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          {
             case 'n':
             {
-               long nFuncRC = 0;
+               int nFuncRC = 0;
                printf("file processed, ");
                bstop = cs.stopTree(nFuncRC);
                printf("processing %s.\n",bstop?"stopped":"continued");
-               if (cs.debug) printf("%d=stopTree(%ld)\n",bstop,nFuncRC);
+               if (cs.debug) printf("%d=stopTree(%d)\n",bstop,nFuncRC);
                break;
             }
             case 'e': lRC = 9+perr("syntax test error"); break;
             case 'w': lRC = 5+pwarn("general test warning"); break;
             case 'f':
             {
-               long nFuncRC = 9+perr("file unreadable.\n");
+               int nFuncRC = 9+perr("file unreadable.\n");
                bstop = cs.stopTree(nFuncRC);
                printf("   processing %s.\n",bstop?"stopped":"continued");
-               if (cs.debug) printf("%d=stopTree(%ld)\n",bstop,nFuncRC);
+               if (cs.debug) printf("%d=stopTree(%d)\n",bstop,nFuncRC);
                break;
             }
             case 'm':
             {
-               long nFuncRC = 19+perr("out of memory.\n");
+               int nFuncRC = 19+perr("out of memory.\n");
                bstop = cs.stopTree(nFuncRC);
                printf("   processing %s.\n",bstop?"stopped":"continued");
-               if (cs.debug) printf("%d=stopTree(%ld)\n",bstop,nFuncRC);
+               if (cs.debug) printf("%d=stopTree(%d)\n",bstop,nFuncRC);
                break;
             }
             case 'l':
             {
-               long nFuncRC = 5+perr("non-fatal fn error.\n");
+               int nFuncRC = 5+perr("non-fatal fn error.\n");
                bstop = cs.stopTree(nFuncRC);
                printf("   processing %s.\n",bstop?"stopped":"continued");
-               if (cs.debug) printf("%d=stopTree(%ld)\n",bstop,nFuncRC);
+               if (cs.debug) printf("%d=stopTree(%d)\n",bstop,nFuncRC);
                break;
             }
          }
@@ -45903,7 +46107,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          while (*psz1) {
             char *psz2 = psz1;
             while (*psz2 && *psz2 != '\n') psz2++;
-            long nlen = psz2 - psz1;
+            int nlen = psz2 - psz1;
             chain.print("%.*s\n", (int)nlen, psz1);
             if (*psz2) psz2++;
             psz1 = psz2;
@@ -45938,7 +46142,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       char *phostport = 0;
       bool bloop      = 0;
-      long ndelay     = 1000;
+      int ndelay     = 1000;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++) 
@@ -45977,7 +46181,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!phostport)
          return 9+perr("missing host:port\n");
 
-      long nPort = 80;
+      int nPort = 80;
 
       char szHost[200];
       strcopy(szHost, phostport);
@@ -46005,18 +46209,18 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // TODO: set shorter connection timeout
 
-      long ncnt = 1;
+      int ncnt = 1;
       while (1)
       {
          if (connect(hSock, (struct sockaddr *)&sock, sizeof(sock)) != -1)
             break; // success
 
          if (bloop) {
-            printf("not yet available, retrying (%ld)   \r",ncnt++);
+            printf("not yet available, retrying (%d)   \r",ncnt++);
             fflush(stdout);
             doSleep(ndelay);
          } else {
-            perr("cannot connect to %s:%lu, %s\n", szHost, nPort, netErrStr());
+            perr("cannot connect to %s:%u, %s\n", szHost, nPort, netErrStr());
             return 9;
          }
       }
@@ -46042,8 +46246,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       cs.verbose = 9;
       bool bSrcIsOlder = 0;
-      long nrc = fs1.differs(fs2, 1, &bSrcIsOlder);
-      printf("rc %ld srcio %d\n",nrc,bSrcIsOlder);
+      int nrc = fs1.differs(fs2, 1, &bSrcIsOlder);
+      printf("rc %d srcio %d\n",nrc,bSrcIsOlder);
 
       bDone = 1;
    }
@@ -46057,7 +46261,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       struct stat64 buf;
       if (stat64(pszFile, &buf)) return 9;
       num nnode = (num)buf.st_ino;
-      printf("%s (%lu) %s\n", numtohex(nnode,16),(ulong)nnode,pszFile);
+      printf("%s (%u) %s\n", numtohex(nnode,16),(uint)nnode,pszFile);
 
       bDone = 1;
    }
@@ -46139,7 +46343,6 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       char *pszScriptFile = 0;
       char *pszLabel      = 0;
-      char *pszFlatParms  = 0;
 
       int  iChainNext =  0;
       int  iLocalParm = -1;
@@ -46159,7 +46362,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          else
          if (nState < 1 && !strncmp(argv[iDir], "-", 1)) {
             // general options are interpreted only before script name,
-            // i.e. as long as nState == 0.
+            // i.e. as int as nState == 0.
             if (strBegins(argv[iDir], "-lit")) {
                bliteral = 1;
                continue;
@@ -46220,7 +46423,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       StringTable oDynaStrings;
       char **psubargv = 0;
       int    nsubargc = 0;
-      for (long npass=0; npass<2; npass++) 
+      for (int npass=0; npass<2; npass++) 
       {
          char *psz1 = pScript;
          char  cold = 0; // old char before current one
@@ -46258,9 +46461,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
                // find end of token
                skipPastToken(&psz1, cold);
-               long ntoklen = psz1 ? (psz1-ptok) : 0;
+               int ntoklen = psz1 ? (psz1-ptok) : 0;
 
-               long nrc = 0;
+               int nrc = 0;
                if (npass && *psz1) {
                   cold = *psz1;   // e.g. lf will be overwritten
                   *psz1++ = '\0';
@@ -46306,7 +46509,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (!lRC && (cs.verbose > 0)) {
          printf("loaded %d words from %s:\n   ", nsubargc, pszScriptFile);
-         for (long i=0; i<nsubargc; i++)
+         for (int i=0; i<nsubargc; i++)
             printf("%s,",psubargv[i]);
          printf("\n");
          // printf("iLocalParm %d nLocalParm %d\n",iLocalParm,nLocalParm);
@@ -46365,7 +46568,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       int  iChainNext = 0;
       int  iVal       = iDir;
       int  iValMax    = iDir;
-      long ndigits    = 1;
+      int ndigits    = 1;
 
       for (; iDir<argc; iDir++)
       {
@@ -46393,7 +46596,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (chain.usedata) {
          // convert chain text
-         for (long i=0; i<chain.indata->numberOfEntries(); i++) {
+         for (int i=0; i<chain.indata->numberOfEntries(); i++) {
             szLineBuf[0]  = '\0';
             char *psz = chain.indata->getEntry(i, __LINE__);
             if (!psz) return 9+perr("int. #58282010");
@@ -46408,7 +46611,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             }
             if (chain.coldata) {
                if (szLineBuf[0])
-                  chain.addLine(szLineBuf, "");
+                  chain.addLine(szLineBuf, str(""));
             } else {
                printf("%s\n", szLineBuf);
             }
@@ -46431,7 +46634,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             }
             if (chain.coldata) {
                if (nparm >= 2) strcat(szLineBuf, " ");
-               chain.addToCurLine(szLineBuf, "");
+               chain.addToCurLine(szLineBuf, str(""));
             } else {
                printf("%s ", szLineBuf);
             }
@@ -46487,11 +46690,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!penv) return 9+perr("missing environment");
 
       memset(szAttrBuf, 0, sizeof(szAttrBuf));
-      for (long i=0; penv[i] != 0; i++) 
+      for (int i=0; penv[i] != 0; i++) 
       {
          char *psz = penv[i];
 
-         long nlen = strlen(psz);
+         int nlen = strlen(psz);
          memset(szAttrBuf, ' ', nlen);
          szAttrBuf[nlen] = '\0';
 
@@ -46500,8 +46703,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          for (int ipat=iPatMin; !bbail && (ipat<=iPatMax); ipat++)
          {
             char *pszPat = argv[ipat];
-            long ipos = 0;
-            long ibas = 0;
+            int ipos = 0;
+            int ibas = 0;
             bool bhit = (bool)mystrstri(psz+ibas, pszPat, &ipos);
             if (!bhit) { bbail=1; continue; }
             while (bhit) {
@@ -46622,7 +46825,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       pszCmd = argv[iDir];
       if (pszCmd[0] == '+') pszCmd++;
       if (strcmp(pszCmd, "tofile") && strcmp(pszCmd, "toterm"))
-         pszCmd = "tofile"; // expecting immediate filename
+         pszCmd = str("tofile"); // expecting immediate filename
       else
          iDir++;
       // fall through
@@ -46654,8 +46857,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       bool btofile  = !strcmp(pszCmd, "tofile");
       char *pszFile = 0;
-      char *pszMode = "w";
-      bool bappend  = 0;
+      cchar *pszMode = "w";
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++) 
@@ -46698,8 +46900,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // tpl for chain text filter:
       if (chain.usedata) {
-         for (long i=0; i<chain.indata->numberOfEntries(); i++) {
-            char *pattr = "";
+         for (int i=0; i<chain.indata->numberOfEntries(); i++) {
+            char *pattr = str("");
             char *ptext = chain.indata->getEntry(i, __LINE__, &pattr);
             if (ptext) {
                if (fout)
@@ -46713,7 +46915,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
       else
       if (chain.usefiles) {
-         for (long i=0; i<chain.numberOfInFiles(); i++) {
+         for (int i=0; i<chain.numberOfInFiles(); i++) {
             Coi *pcoi = chain.getFile(i);
             if (pcoi) {
                if (fout)
@@ -46820,7 +47022,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       bool bsame = 0;
-      long ndig  = 5;
+      int ndig  = 5;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++) 
@@ -46853,11 +47055,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       }
 
       if (!bsame) {
-         sprintf(szLineBuf, "%ld", chain.indata->numberOfEntries());
+         sprintf(szLineBuf, "%d", chain.indata->numberOfEntries());
          if (chain.colany())
-            chain.addLine(szLineBuf, "");
+            chain.addLine(szLineBuf, str(""));
          else
-            printColorText(szLineBuf, "", 1); // with lf
+            printColorText(szLineBuf, str(""), 1); // with lf
       } else {
          if (groupChainText(pszCmd, 0, bsame, ndig)) return 9;
       }
@@ -46893,7 +47095,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    {
       ifhelp (1)
       printx("<help>$SFK" SFK_BRANCH " - The Swiss File Knife File Tree Processor.\n");
-      char *pfix = SFK_FIXPACK;
+      cchar *pfix = SFK_FIXPACK;
       sprintf(szLineBuf, "Release " SFK_VERSION " %s%s%s of " __DATE__ ".",
          pszGlblVerType, pfix[0] ? " Revision ":"", pfix);
       printx("%s\n", szLineBuf);
@@ -46920,224 +47122,187 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (bhelp)
       printx("\n$sfk main help (just type \"sfk\"):\n");
       else
-      printx("\n<file>usage:<def>\n");
-      printx("   $sfk list [-late|-old|-big|-small] [...] dir [mask]\n"
-             "       list latest, oldest or biggest files within a directory tree.\n"
-             "       find identical files. list changed files between directories.\n");
-      #ifdef VFILEBASE
-      printx("       list zip jar tar gz bz2 contents. type \"sfk list\" for more.\n");
-      if (0) // skip next printx
-      #endif // VFILEBASE
-      printx("       list zip and jar contents. type \"sfk list\" for more.\n");
-      printx("          #sfk list -dir src1 -file .cpp -dir src2 -file .hpp\n"
-             "          #sfk list -late=20 -pure\n"
-             "          #sfk list -arc mydir .zip .jar\n"
-             "   $sfk stat [-minsize=mb] dir [-i]\n"
-             "       show directory tree size statistics in mbytes.\n"
-             "       minsize: list only dirs and files >= minsize mbytes.\n"
-             "       -i: read list of files and directories from stdin.\n"
-             "          #sfk stat -minsize=10m\n"
-             "          #type dirlist.txt | sfk stat -quiet -i\n"
-             "   $sfk find [-c] singledir pattern [pattern2] [pattern3] ...\n"
-             "   $sfk grep [-c] -pat pattern [pattern2] -dir dir1 [-file] [.ext1] ...\n"
-             "       case-insensitive pattern search for text and binary.\n"
-             "       type \"sfk find\" for details. \"sfk grep\" is the same.\n"
-             "          #sfk find . foobar docs\n"
-             "          #sfk find -pat text1 text2 -dir src1 src2 -file .cpp .hpp\n"
-             "          #sfk grep -pat mytext -dir . -file .txt -norec\n"
-             );
-      printx("   $sfk filter <input >output [-lnum] [-c] -+orpat [++andpat] [-<not>nopat] [...]\n"
-             "   $sfk filter infile -+pattern\n"
-             "       filter and process text lines, from file(s) or from standard input.\n"
-             "       find, replace, highlight words and ex*pre??ions, split and reformat\n"
-             "       text columns. type \"sfk filter\" for more.\n"
-             "          #anyprog | sfk filter -+mypat -<not>otherpat\n"
-             "          #sfk filter result.txt -rep _\\_/_ -rep xC:\\xD:\\x\n"
-             "   $sfk filefind [or ff] [pattern2 <not>pattern3 ...] [options]\n"
-             "       easy filename finder by path patterns. \"sfk ff\" for more.\n"
-             "   $sfk env [-all] [word] [...]<def> search within environment variables.\n"
-             );
-      printx(
-             "   $sfk run \"your command <run>file [<run>qfile] [...]\" [-yes] [-quiet]\n"
-             "   $sfk runloop ifrom ito \"your command <run>[digits]i\" [-yes] [-quiet] [-nohead]\n"
-             "       run self-defined command, on files or directories, or by counter.\n"
-             "       type \"sfk run\" or \"sfk runloop\" for details.\n"
-             #ifdef WITH_TCP
-             "   $sfk ftpserv [-h|-help] [-port=nport] [-rw] [-maxsize=n]\n"
-             "       run simple ftp server, providing access to current directory.\n"
-             "       type \"sfk ftpserv -help\" for details.\n"
-             "   $sfk ftp host[:port] [put|get filename]\n"
-             "       simple ftp client. if connecting to sfk server, this client uses\n"
-             "       sfk/sft protocol, which should always work even if ftp doesn't.\n"
-             "       type \"sfk ftp\" for details.\n"
-             "   $sfk httpserv [-h|-help] [-port=nport] [-rw]\n"
-             "       instant http server, providing access to current directory.\n"
-             "       type \"sfk httpserv -help\" for details.\n"
-             #endif
-             #ifdef VFILENET
-             "   $sfk wget url [outdir] [-fullpath]\n"
-             "       download http:// content. type \"sfk wget\" for more.\n"
-             #endif // VFILENET
-             #ifdef WITH_TCP
-             "   $sfk webrequest http://host[:port]/path\n"
-             "       send an HTTP request and show the detailed reply text.\n"
-             #endif
-             "   $sfk split 2000m infile.dat [outfile.dat]\n"
-             "   $sfk join infile.dat.part1 [outfile.dat]\n"
-             "       split and join large binary files. \"sfk split\" for more.\n"
-             "   $sfk copy<def>     copy or synchronize files and dir trees.\n"
-             "   $sfk partcopy<def> copy some bytes from a file into another file.\n"
-             );
-      printx("   $sfk detab=tabsize dir ext1 [ext2 ...]\n"
-             "       replace tabs by spaces within file(s).\n"
-             "          #sfk detab=3 sources .cpp .hpp\n"
-             "          #sfk detab=3 singleFileName.txt\n"
-             "   $sfk scantab -dir dir1 dir2 -file ext1 [ext2 ...]\n"
-             "       check if files contain tabs. \"sfk scantab\" for more.\n"
-             "          #sfk scantab -dir src1 src2 -file .cpp .hpp\n"
-             "          #sfk scantab . .cpp .hpp\n"
-             );
-      printx("   $sfk lf-to-crlf [or addcr] [dir .ext1 .ext2] or [singlefile]\n"
-             "   $sfk crlf-to-lf [or remcr] [dir .ext1 .ext2] or [singlefile]\n"
-             "       convert between CR/LF and just LF text format.\n"
-             "          #sfk remcr batches .bat .cmd\n"
-             "          #sfk remcr mybatch.bat\n"
-             "   $sfk joinlines infile outfile\n"
-             "       for text with lines split by email reformatting.\n"
-             "   $sfk rep[lace] [...] -text /src/dst/ -dir mydir -file .ext1 [-yes]\n"
-             "       replace strings or byte blocks in files.  \"sfk rep\" for more.\n"
-             "   $sfk hexdump [-showle] [...] dir .ext1 .ext2 .ext3\n"
-             "   $sfk bin-to-src [-java] [-pack] [...] infile outfile namePrefix\n"
-             "       create hexdump, C or Java source code from binary data.\n"
-             "       type \"sfk hexdump\" or \"sfk bin-to-src\" for more.\n"
-             "   $sfk tcpdump [-showle] [...] targetserver:port [-timeout msec] [-wide]\n"
-             "       create hexdump of a tcp connection. \"sfk tcpdump\" for more.\n"
-             "   $sfk hextobin<def>   convert hexdump to binary data.\n"
-             );
-      printx("   $sfk tail [head] [-lines=n] [-f[ollow]] filename [filter options]\n"
-             "       print and follow last lines of a file. \"sfk tail\" for more.\n");
-      printx("   $sfk addhead <in >out [-noblank] string1 string2 ...\n"
-             "   $sfk addtail <in >out [-noblank] string1 string2 ...\n"
-             "       add string(s) at start or end of lines.\n"
-             "       with noblank specified, does not add blank char.\n"
-             "   $sfk strings [-umlauts] [-wrapbin=n] filename\n"
-             "       extract strings from a binary file. resulting text lines are split\n"
-             "       at column 80 by default, which can be changed by -wrapbin or -wrap.\n"
-             "          #sfk strings test.exe | sfk filter -+VersionInfo\n"
-             "   $sfk pathfind anycmd.exe | sfk where anycmd.exe\n"
-             "       tells location of anycmd.exe within PATH.\n"
-             "   $sfk deblank [-yes]\n"
-             "       replace blanks in filenames by \"_\" character.\n"
-             "       command only simulates. specify -yes to really rename.\n"
-             "   $sfk del[ete] dir .ext1 .ext2\n"
-             "       delete selected files. \"sfk del\" for more.\n"
-             );
-      printx("   $sfk color colorname\n"
-             "       set text color to white, grey, red, green, blue, yellow, black.\n"
-             );
-      printx("   $sfk echo [[color]]text[[def]] [text2] [...]\n"
-             "       print colored text onto console. \"sfk echo\" for details.\n"
-             "   $sfk sleep msec<def>   delay execution for a number of milliseconds.\n"
-             #ifdef _WIN32
-             "   $sfk pause [-quiet|mytext]<def>  wait until user presses any key.\n"
-             #else
-             "   $sfk pause [-quiet|mytext]<def>  wait until user presses enter key.\n"
-             #endif
-             );
-      printx("   $sfk snapto=outfile [-pure] [-norec] -dir mydir1 -file .ext1 .ext2\n"
-             "       collect many files into one large text file. \"sfk snapto\" for more.\n"
-            );
-      printx("   $sfk synctext=dbfile [-stop] dir mask [<not>mask2]\n"
-             "       edit many files in parallel, by editing a single collection file.\n"
-             "       type \"sfk synctext\" for details.\n"
-            );
-      printx("   $sfk md5gento=outfile dir [mask] [mask2] [<not>mask3] [...]\n"
-             "   $sfk md5gento outfile -dir dir1 dir2 -file mask1 mask2 <not>mask3 [...]\n"
-             "       create list of md5 checksums over all files.\n"
-             "          #sfk md5gento=md5.dat .\n"
-             "   $sfk md5check infile [-skip=n] [-skip n]\n"
-             "       verify list of md5 checksums. to speed up verifys by spot checking,\n"
-             "       specify -skip=n: after every checked file, n files will be skipped.\n"
-             "          #sfk md5check md5.dat\n"
-             "   $sfk md5 [-quiet] [-verify md5sum] filename [filename2 filename3 ...]\n"
-             "       create md5 of file(s), without a list. \"sfk md5\" for details.\n"
-             );
+      printx("\n<file>type \"sfk commandname\" for help on any of the following.<def>\n"
+             "some commands require to add \"-help\" for the help text.\n"
+             "\n");
 
-      #ifdef SFINT
-      printx(
-             "   $sfk freezeto=targetdir [-quiet][-hidden][-verbose] -dir src1 -copy|zip\n"
-             "       create self-verifying archive tree, prepared for dvd burning.\n"
-             "       type \"sfk freezeto\" for details.\n"
-             );
+/*
+sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
+*/
+
+      printHelp(
+         "file system\n"
+         "   sfk list       - list directory tree contents.\n"
+         "                    list latest, oldest or biggest files.\n"
+         "                    list directory differences.\n"
+         #ifdef VFILEBASE
+         "                    list zip jar tar gz bz2 contents.\n"
+         #else
+         "                    list zip and jar contents.\n"
+         #endif
+         "   sfk filefind   - find files by filename\n"
+         "   sfk treesize   - show directory size statistics\n"
+         "   sfk copy       - copy directory trees additively\n"
+         "   sfk sync       - mirror tree content with deletion\n"
+         "   sfk partcopy   - copy part from a file into another one\n"
+         "   sfk mkdir      - create directory tree\n"
+         "   sfk delete     - delete files and folders\n"
+         "   sfk deltree    - delete whole directory tree\n"
+         "   sfk deblank    - remove blanks in filenames\n"
+         "\n"
+         );
+
+      printHelp(
+         "conversion\n"
+         "   sfk lf-to-crlf - convert from LF to CRLF line endings\n"
+         "   sfk crlf-to-lf - convert from CRLF to LF line endings\n"
+         "   sfk detab      - convert TAB characters to spaces\n"
+         "   sfk entab      - convert groups of spaces to TAB chars\n"
+         "   sfk scantab    - list files containing TAB characters\n"
+         "   sfk split      - split large files into smaller ones\n"
+         "   sfk join       - join small files into a large one\n"
+         "   sfk hexdump    - create hexdump from a binary file\n"
+         "   sfk hextobin   - convert hex data to binary\n"
+         "   sfk hex        - convert decimal number(s) to hex\n"
+         "   sfk dec        - convert hex number(s) to decimal\n"
+         "   sfk chars      - print chars for a list of codes\n"
+         "   sfk bin-to-src - convert binary to source code\n"
+         "\n"
+         );
+
+      printHelp(
+         "text processing\n"
+         "   sfk filter     - search, filter and replace text data\n"
+         "   sfk addhead    - insert string at start of text lines\n"
+         "   sfk addtail    - append string at end of text lines\n"
+         "   sfk patch      - change text files through a script\n"
+         "   sfk snapto     - join many text files into one file\n"
+         "   sfk joinlines  - join text lines split by email reformatting\n"
+         #ifdef WITH_FN_INST
+         "   sfk inst       - instrument c++ sourcecode with tracing calls\n"
+         #endif
+         "   sfk replace    - replace words in binary and text files\n"
+         "   sfk hexfind    - find words in binary files, showing hexdump\n"
+         "   sfk run        - run command on all files of a folder\n"
+         "   sfk runloop    - run a command n times in a loop\n"
+         "   sfk printloop  - print some text many times\n"
+         "   sfk strings    - extract strings from a binary file\n"
+         "   sfk sort       - sort text lines produced by another command\n"
+         "   sfk count      - count text lines, filter identical lines\n"
+         "   sfk head       - print first lines of a file\n"
+         "   sfk tail       - print last lines of a file\n"
+         "   sfk linelen    - tell length of string(s)\n"
+         "\n"
+         );
+
+      printHelp(
+         "search and compare\n"
+         "   sfk find       - find words in binary files, showing text\n"
+         "   sfk md5gento   - create list of md5 checksums over files\n"
+         "   sfk md5check   - verify list of md5 checksums over files\n"
+         "   sfk md5        - calc md5 over a file, compare two files\n"
+         "   sfk pathfind   - search PATH for location of a command\n"
+         "   sfk reflist    - list fuzzy references between files\n"
+         "   sfk deplist    - list fuzzy dependencies between files\n"
+         "   sfk dupfind    - find duplicate files by content\n"
+         "\n"
+         );
+
+      #ifdef WITH_TCP
+      printHelp(
+         "networking\n"
+         "   sfk httpserv   - run an instant HTTP server.\n"
+         "                    type \"sfk httpserv -help\" for help.\n"
+         "   sfk ftpserv    - run an instant FTP server\n"
+         "                    type \"sfk ftpserv -help\" for help.\n"
+         "   sfk ftp        - instant anonymous FTP client\n"
+         #ifdef VFILENET
+         "   sfk wget       - download HTTP file from the web\n"
+         #endif
+         "   sfk webrequest - send HTTP request to a server\n"
+         "   sfk tcpdump    - print TCP conversation between programs\n"
+         "   sfk udpdump    - print incoming UDP requests\n"
+         "   sfk ip         - tell own machine's IP address(es).\n"
+         "                    type \"sfk ip -help\" for help.\n"
+         "\n"
+         );
       #endif
 
-      printx("   $sfk dupfind [-minsize=n] -dir dir1 -file .ext1 -dir dir2 -file .ext2\n"
-             "       find duplicate files. \"sfk dupfind\" for details.\n"
-             );
+      printHelp(
+         "scripting\n"
+         "   sfk script     - run many sfk commands in a script file\n"
+         "   sfk echo       - print (coloured) text to terminal\n"
+         "   sfk color      - change text color of terminal\n"
+         "   sfk alias      - create command from other commands\n"
+         "   sfk mkcd       - create command to reenter directory\n"
+         "   sfk sleep      - delay execution for milliseconds\n"
+         "   sfk pause      - wait for user input\n"
+         "   sfk label      - define starting point for a script\n"
+         "   sfk tee        - split command output in two streams\n"
+         "   sfk tofile     - save command output to a file\n"
+         "   sfk toterm     - flush command output to terminal\n"
+         "   sfk loop       - repeat execution of a command chain\n"
+         "   sfk cd         - change directory within a script\n"
+         "   sfk getcwd     - print the current working directory\n"
+         "\n"
+         );
 
-      printx("   $sfk reflist [-abs] [-wide] -dir sdir -file .ext1 -dir tdir -file .ext2\n"
-             "   $sfk deplist [-abs] [-wide] -dir sdir -dir tdir1 tdir2 [-file .ext]\n"
-             "       find file references or dependencies. \"sfk reflist\" for help.\n"
+      printHelp(
+         "development\n"
+         "   sfk bin-to-src - convert binary data to source code\n"
+         "   sfk make-random-file - create file with random data\n"
+         "   sfk fuzz       - change file at random, for testing\n"
+         "   sfk sample     - print example code for programming\n"
+         "   sfk inst       - instrument c++ with tracing calls\n"
+         "\n"
+         );
 
-             "   $sfk alias [-list|-del|-ren] [shortname] [=] [command]\n"
-             "       create command aliases to save typing effort. \"sfk alias\" for help.\n"
-             "   $sfk cd, getcwd<def>   change dir in command chain, get current work dir.\n"
-             "   $sfk mkdir path<def>   create directory, or tree of directories.\n"
-             "   $sfk mkcd cdname<def>  create an alias remembering the current dir.\n"
-             "   $sfk ... +view<def>    show results in Depeche View. \"sfk view\" for more.\n"
-             );
+      printHelp(
+         "diverse\n"
+         "   sfk view       - show results in Depeche View GUI\n"
+         #ifdef _WIN32
+         "   sfk toclip     - copy command output to clipboard\n"
+         "   sfk fromclip   - read text from clipboard\n"
+         #endif
+         "   sfk list       - show directory tree contents\n"
+         "   sfk env        - search environment variables\n"
+         "   sfk version    - show version of a binary file\n"
+         "   sfk ascii      - list ISO 8859-1 ASCII characters\n"
+         "   sfk ascii -dos - list OEM codepage 850 characters\n"
+         "\n"
+         );
 
-      printx("   $sfk patch [...]<def>  dynamic source file patching. \"sfk patch\" for more.\n"
-             "   $sfk sample<def>       create java, c++, php etc. example source code.\n"
-             "   $sfk batch<def>        create a batch file with embedded sfk commands.\n"
-             "   $sfk script<def>       execute sfk commands from a script file.\n"
-             "   $sfk linelen<def>      tell minimum or maximum length of string(s).\n"
-             "   $sfk hex [or dec]<def> convert numbers between decimal and hexadecimal.\n"
-             "   $sfk ... +sort<def>    sort text output of a previous command.\n"
-             "   $sfk ... +count<def>   count no. of lines, or duplicate occurences.\n"
-             "   $sfk ... +loop<def>    repeat the execution of command(s).\n"
-             "   $sfk ... +if ...<def>  conditional execution. \"sfk if\" for more.\n"
-             "   $sfk ... +call<def>    call script functions. \"sfk call\" for more.\n"
-             );
+      printHelp(
+         "help by subject\n"
+         "   sfk help select   - how dirs and files are selected in sfk\n"
+         "   sfk help options  - general options reference\n"
+         "   sfk help patterns - wildcards and text patterns within sfk\n"
+         "   sfk help chain    - how to combine (chain) multiple commands\n"
+         "   sfk help shell    - how to optimize the windows command prompt\n"
+         "   sfk help unicode  - about unicode file reading support\n"
+         "   sfk help colors   - how to change result colors\n"
+      // "   sfk help fileset  - how to list dir names in a text file.\n"
+         #ifdef VFILEBASE
+         #endif // VFILEBASE
+         "\n"
+         );
 
-      printx(
-             #ifdef WITH_FN_INST
-             "   $sfk inst<def>         instrument c++ source code with tracing calls.\n"
-             #endif
-
-             "   $sfk make-random-file<def>   create a file full of random data.\n"
-             "   $sfk ownip<def>        print ip address(es) of own machine.\n"
-             "   $sfk udpdump<def>      print content of incoming UDP packets.\n"
-
-             #ifdef _WIN32
+      printx("   $All tree walking commands support file selection this way:\n"
              "\n"
-             "   $sfk toclip<def>   - copy stdin to clipboard as plain text (windows only).\n"
-             "   $sfk fromclip<def> - get text from clipboard. \"sfk fromclip -h\" for more.\n"
-             "\n"
-             #endif
-
-             #ifdef _WIN32
-             "   $sfk [help] ascii [-ansi|-dos]<def> - list ascii character set.\n"
-             "   $sfk help shell<def>   - how to optimize your windows Command Prompt.\n"
-             #else
-             "   $sfk [help] ascii<def> - list ascii character set.\n"
-             #endif
-             "   $sfk chars phrase<def> - list character codes of given phrase.\n"
-
-             "\n"
-             "   $All tree walking commands support file selection this way:\n"
              "   1. short format with ONE directory tree and MANY file name patterns:\n"
              "      #src1dir .cpp .hpp .xml bigbar <not>footmp\n"
              "   2. short format with a list of explicite file names:\n"
              "      #letter1.txt revenues9.xls report3<sla>turnover5.ppt\n"
-             "   3. long format with MANY dir trees and file masks PER dir tree:\n"
+             "   3. long format with MANY dir trees and file masks PER dir tree:\n" 
              "      #-dir src1 src2 <not>src<sla>save -file foosys .cpp -dir bin5 -file .exe\n"
+             "\n"
+             "   For detailed help on file selection, type #\"sfk help select\"<def>.\n"
              "\n");
       printx("   %s and ? wildcards are supported within filenames. \"foo\" is interpreted\n"
              "   as \"%cfoo%c\", so you can leave out %s completely to search a part of a name.\n"
              "   For name start comparison, say \"%cfoo\" (finds foo.txt but not anyfoo.txt).\n"
+             "\n"
              "   When you supply a directory name, by default this means \"take all files\".\n"
-             "   The snapto function also supports option -all, meaning \"all text files\".\n"
              ,glblWildInfoStr,glblWildChar,glblWildChar,glblWildInfoStr,glblPathChar);
       #ifndef _WIN32
       if (!bhelp) setTextColor(nGlblWarnColor);
@@ -47147,11 +47312,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!bhelp) setTextColor(-1);
       #endif
       printx("\n"
-             "      #sfk list mydir<def>                   lists ALL  files of mydir, no * needed.\n"
-             "      #sfk list mydir .cpp .hpp<def>         lists SOME files of mydir, by extension.\n"
-             "      #sfk list mydir <not>.cfg<def>             lists all  files of mydir  EXCEPT .cfg\n"
-             "      #sfk snapto=a.txt mydir .doc<def>      collect ONLY .doc (which are binaries).\n"
-             "      #sfk snapto=a.txt mydir -all .doc<def> collect all text files, AND also .doc\n"
+             "      #sfk list mydir<def>                lists ALL  files of mydir, no * needed.\n"
+             "      #sfk list mydir .cpp .hpp<def>      lists SOME files of mydir, by extension.\n"
+             "      #sfk list mydir <not>.cfg<def>          lists all  files of mydir  EXCEPT .cfg\n"
              "\n"
              );
       printx("   $general options:\n"
@@ -47160,19 +47323,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      -nosub    do not process files within subdirectories.\n"
              "      -nocol    before any command switches off color output.\n"
              "      -quiet    or -nohead shows less output on some commands.\n"
-
              #ifdef _WIN32
              "      -hidden   includes hidden and system files and dirs.\n"
              #endif
-             "\n"
-             "   type \"sfk help colors\"    about how to change result colors.\n"
-             "   type \"sfk help select\"    for more on how to select files.\n"
-             "   type \"sfk help options\"   to list all general options and configs.\n"
-             "   type \"sfk help chain\"     about how to combine multiple commands.\n"
-             "   type \"sfk help patterns\"  for supported wildcards and slash patterns.\n"
-             #ifdef VFILEBASE
-             #endif // VFILEBASE
-          // "   type \"sfk help fileset\"   for how to list dir names in a text file.\n"
+             "      For detailed help on all options, type #\"sfk help options\".\n"
             );
       printx("\n"
              "   type #\"sfk ask word1 word2 ...\"<def>   to search ALL help text for words.\n"
@@ -47192,17 +47346,17 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          return 9; 
       }
 
-      char *pszSub = "";
+      char *pszSub = str("");
 
       if (bShortAscii)
-         pszSub = "ascii";
+         pszSub = str("ascii");
       else
          pszSub = bhelp ? (char*)"" : argv[2];
 
       #ifdef _WIN32
-      char *pszSet = "set";
+      char *pszSet = str("set");
       #else
-      char *pszSet = "export";
+      char *pszSet = str("export");
       #endif
 
       if (bhelp || !strncmp(pszSub, "color", 5))
@@ -47296,7 +47450,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (!strcmp(pszSub, "ascii") || !strcmp(pszSub, "ASCII"))
       {
-         char *pszSubSub = "";
+         char *pszSubSub = str("");
 
          int iDir = bShortAscii ? 2 : 3;
 
@@ -47314,10 +47468,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             }
          }
  
+         #ifdef _WIN32
          bool bAnsiToOem = 0;
          bool bOemToAnsi = 0;
-
-         #ifdef _WIN32
          if (!bGlblEnableOPrintf) {
             if (pszSubSub[0]) pwarn("-nocconv overrides -ansi or -dos. no conversions are done.\n");
             printf("Character set: ASCII from 0 to 127, codes above depending on your terminal.\n");
@@ -47346,13 +47499,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          #else
          printf("Character set: ASCII from 0 to 127, codes above depending on your terminal.\n");
          #endif
-         long nCharCols = 8;
-         long nCharRows = 0x20; // (255 / nCharCols) + 1;
-         for (long irow=0; irow<nCharRows; irow++) 
+         int nCharCols = 8;
+         int nCharRows = 0x20; // (255 / nCharCols) + 1;
+         for (int irow=0; irow<nCharRows; irow++) 
          {
-            for (long icol=0; icol<nCharCols; icol++) 
+            for (int icol=0; icol<nCharCols; icol++) 
             {
-               long i = icol * nCharRows + irow;
+               int i = icol * nCharRows + irow;
                if (i > 255)
                   printf("        ");
                else {
@@ -47360,7 +47513,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                   setTextColor(nGlblHitColor);
                   if (i < 10 ) putchar(' ');
                   if (i < 100) putchar(' ');
-                  printf("%ld ",i);
+                  printf("%d ",i);
                   setTextColor(nGlblRepColor);
                   printf("%X ",i);
                   setTextColor(-1);
@@ -47394,11 +47547,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                      case '\t': printf("TAB "); break;
                      default:
                         putchar('.');
-                        if (icol < nCharCols)
+                        if (icol < nCharCols) {
                            if (c < 0x10)
                               printf("   ");
                            else
                               printf("  ");
+                        }
                         break;
                   }
                }
@@ -47444,7 +47598,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "   $-nohidden<def>  exclude hidden and system files.\n"
          "   $-yes<def>       fully execute the command. some commands like \"run\" are\n"
          "              running in simulation mode by default, to avoid damage to your\n"
-         "              files, as long as you're unsure which files and dirs to select.\n"
+         "              files, as long as you're unsure which files and dirs to select.\n" 
          "              as soon as you add -yes, however, everything is fully executed.\n"
       // "   $-nonames<def>   or -nofile[names] does not create :file name records when\n"
       // "              chaining text data from one command to another.\n"
@@ -47461,6 +47615,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "              the color escape sequences.\n"
          "   $-col<def>       switch on colored output. \"sfk help colors\" for more.\n"
          "   $-html<def>      dump sfk help text (color control) in html format.\n"
+         "   $-htmlpage<def>  the same, but include a header to view it in a browser.\n"
          "   $-sincedir<def>  or -sincedif/add/chg: compare directory tree against\n"
          "              a reference tree, process only changed or added files.\n"
          "              see \"sfk list\" for details.\n"
@@ -47525,9 +47680,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "   $-keeptmp<def>   do not delete the temporary files, e.g. after \"run\".\n"
          "   $-showtmp<def>   tell verbosely which temporary files are created.\n"
          "   $-nowarn<def>    and -noerr, -nonote disable warn, error and note messages.\n");
-  printx("   $-memlimit=n<def> set the caching memory limit to n mbytes (default=%ld).\n"
+  printx("   $-memlimit=n<def> set the caching memory limit to n mbytes (default=%d).\n"
          "              used if a function needs to load whole files into memory.\n"
-         ,(long)(nGlblMemLimit / 1048576));
+         ,(int)(nGlblMemLimit / 1048576));
          #ifdef VFILEBASE
   printx("              if zip etc. archive processing is very slow, it may be caused by\n"
          "              a cache overflow. try to increase the -memlimit then.\n"
@@ -47551,7 +47706,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "              unreadable files and directories.\n"
          "   $-rcfromerr<def> some commands like filter, find, hexfind tell by shell rc\n"
          "              that something was found. by default, skipped errors like\n"
-         "              unredable files do NOT change this rc. with -rcfromerr,\n"
+         "              unreadable files do NOT change this rc. with -rcfromerr,\n"
          "              skipped errors do override the resulting shell rc.\n"
          "\n"
          "   to experiment with the above options, try \"sfk errortest\".\n"
@@ -47600,11 +47755,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          );
   */
          if (bGlblIgnore3600)
-            printx("   info: files with a time difference of 1 hour AND an age > %ld days\n"
+            printx("   info: files with a time difference of 1 hour AND an age > %d days\n"
                    "         are skipped by some commands, e.g. list -sincedir.\n\n", nGlblActiveFileAgeLimit);
 
          if (nGlblActiveFileAgeLimit != 30)
-            printx("   info: active file age limit is currently set to %ld days.\n", nGlblActiveFileAgeLimit);
+            printx("   info: active file age limit is currently set to %d days.\n", nGlblActiveFileAgeLimit);
    
          #ifndef _WIN32
          if (glblWildChar != '%') {
@@ -47623,7 +47778,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          );
    
          if (bGlblConsColumnsSet)
-            printx("   sfk currently uses %ld console columns for output with some commands.\n", nGlblConsColumns);
+            printx("   sfk currently uses %d console columns for output with some commands.\n", nGlblConsColumns);
 
          if (bhelp) printx("\n");
          bDone = 1;
@@ -47831,7 +47986,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "         list, select, stat, run, detab, scantab, hexdump and some more.\n"
          "\n"
          );
-  printx("   $2. long format file selection:\n"
+  printx("   $2. long format file selection:\n" 
          "\n"
          "      $-dir root1 [root2] [<wild>pathmask<wild>] [...] [-file mask1 [mask2] [...]]\n"
          "         $[-dir root3 root4 <not>direxcludemask -file mask3 <not>xmask4] [...]\n"
@@ -48263,7 +48418,7 @@ printx(
       }
 
       // did user supply a useable query phrase?
-      long npat = apat.numberOfEntries();
+      int npat = apat.numberOfEntries();
       if (nrawpat > 0 && !npat) {
          perr("the given words are too generic, and cannot be used for search.");
          pinf("please rephrase your query with more precise words.\n");
@@ -48271,13 +48426,13 @@ printx(
       }
 
       // just for chaining:
-      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 0, &iChainNext)) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 0, &iChainNext))) return lRC;
 
       // if search terms are supplied
       if (!iChainNext || (npat > 0))
       {
          // dump help contents now, optionally filtered by words
-         long i=0,k=0,nlastdump=-1;
+         int i=0,k=0,nlastdump=-1;
 
          if (!bdump && !iChainNext && !cs.quiet)
          {
@@ -48301,7 +48456,7 @@ printx(
             if (pattr) strcopy(szAttrBuf, pattr);
             else { mclear(szAttrBuf); }
 
-            long nhit=0,npos=0;
+            int nhit=0,npos=0;
             for (k=0; k<npat; k++) {
                char *ppat = apat.getEntry(k, __LINE__);
                if (mystrstri(pline, ppat, &npos)) {
@@ -48316,7 +48471,7 @@ printx(
             else
             if (nhit == npat) 
             {
-               long nindmax = indent(pline);
+               int nindmax = indent(pline);
 
                char *pcachetxt = 0;
                char *pcacheatt = 0;
@@ -48337,7 +48492,7 @@ printx(
 
                   // dump context before hit line
                   char *papre=0, *plpre=0;
-                  long ictx=0,ifwd=0;
+                  int ictx=0,ifwd=0;
    
                   // 1. walk back to zero indent
                   for (ictx=i-1; ictx>=0 && ictx>nlastdump; ictx--) 
@@ -48355,11 +48510,11 @@ printx(
                         if (!bdumpmiss)
                            printf("\n");
                      }
-                     long nindcur=0;
+                     int nindcur=0;
                      for (ifwd=ictx; ifwd<i; ifwd++) 
                      {
                         plpre = phelp->getEntry(ifwd, __LINE__, &papre);
-                        long nindfwd = indent(plpre);
+                        int nindfwd = indent(plpre);
                         // whenever indent changes, dump previous.
                         // also dump zero indent line.
                         if (ifwd==ictx || (nindfwd >= nindcur && nindfwd < nindmax))

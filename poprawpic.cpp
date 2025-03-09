@@ -237,10 +237,10 @@ static unsigned char pop_abRawBlock[7474] = {
 0,0,252,0,0,0,252,0,0,0,252,0,0,0,90,0,1,0,
 };
 
-long pop_getBlock(uchar *pOut, ulong nOutSize)
+int pop_getBlock(uchar *pOut, uint nOutSize)
 {
    uchar *pCur    = pop_abRawBlock;
-   ulong nInSize  = 7474;
+   uint  nInSize  = 7474;
    uchar *pMax    = pCur + nInSize;
    uchar *pOutMax = pOut + nOutSize;
    while (pCur < pMax)

@@ -14,6 +14,12 @@
 
 #include "sfkbase.hpp"
 
+#ifndef USE_SFK_BASE
+ #if defined(WINFULL) && defined(_MSC_VER)
+  #define SFK_MEMTRACE
+ #endif
+#endif
+
 #define MAX_CMD_LINES   10000 // max lines per :file ... :done block
 #define MAX_CACHE_LINES 10000 // max lines per :from ... :to pattern
 #define MAX_CMD         500   // max number of :from commands per patchfile
@@ -114,7 +120,7 @@ int processCmdRoot (char *pszIn) {
 }
 
 int processCmdFile(char *psz);
-extern long printx(const char *pszFormat, ...);
+extern int printx(const char *pszFormat, ...);
 
 // ensure allocation of buffers when entering patchMain,
 // and freeing of buffers when leaving:
@@ -182,7 +188,7 @@ int patchMain(int argc, char *argv[], int offs)
          "    bool                  existsFile                (char *psz);\n"
          ":to\n"
          "    // [patch-id]\n"
-         "    long                  existsFile                (char *psz);\n"
+         "    int                   existsFile                (char *psz);\n"
          ":done\n"
          "\n"
          ":mkdir sources\n"
@@ -647,7 +653,7 @@ int processCreateFile(char *pszIn)
    strcpy(szCmdBuf, pszFile);
 
    // any existing file?
-   if (!bGlblRevoke && !bGlblBackup)
+   if (!bGlblRevoke && !bGlblBackup) {
       if (fileExists(szCmdBuf)) {
          if (!bGlblVerify)
             log(0, "warning: file already exists: %s\n", szCmdBuf);
@@ -657,6 +663,7 @@ int processCreateFile(char *pszIn)
             return 1;
          }
       }
+   }
 
    FILE *fout = 0;
 
@@ -1034,7 +1041,7 @@ int processFileUntilDone(char *pszTargFileName)
          sprintf(szCopyCmd, "chmod -w %s", pszTargFileName);
          #endif
          system(szCopyCmd);
-         log(5, "revoked: %s, %lu bytes\n",pszTargFileName,(unsigned long)ntotal);
+         log(5, "revoked: %s, %u bytes\n",pszTargFileName,(unsigned int)ntotal);
          nGlblRevokedFiles++;
       } else {
          // xcopy requires us to create a dummy, otherwise we get a prompting
@@ -1226,7 +1233,7 @@ int processFileUntilDone(char *pszTargFileName)
    // now, we hold the patched target file in apOut.
    // overwrite the target.
    int bSwitchedAttrib = 0;
-   char *pszFileMode = "w";
+   cchar *pszFileMode = "w";
    if (bGlblUnixOutput)
          pszFileMode = "wb";
    ftarg = fopen(pszTargFileName, pszFileMode);
