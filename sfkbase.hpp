@@ -312,7 +312,8 @@ extern int shrinkFormTextBlock(char *psz, int &rLen, bool bstrict, bool xchars=0
 #define SFKDEEPZIP   // sfk175
 
 #ifndef SFKNOPACK
- #define SFKPACK      // sfk191
+ #define SFKPACK     // sfk191
+ #define SFKOFFICE   // sfk194
 #endif
 
 #ifdef _WIN32
@@ -775,10 +776,6 @@ struct SFKFindData
    __dev_t ostdev;   // under linux
    bool  bhavenode;  // under linux
 };
-#endif
-
-#ifdef SFKINT
- #define SFKOFFICE
 #endif
 
 class CoiData;
@@ -1700,6 +1697,7 @@ public:
    uint addsnapmeta;      // bit 0:time 1:size 2:encoding
    int stathilitelevel;   // stat command: highlight dirs <= this
    bool travelzips;        // traverse zipfile contents
+   int  office;            // traverse office contents
    bool probefiles;        // look into file headers to detect zip etc.
    bool incbin;            // include binary files in processing
    bool reldist;           // hexfind: tell also relative distances
@@ -1728,6 +1726,7 @@ public:
    char paramprefix[30];   // for user defined script input parameter names
    int wrapcol;            // if >0, auto-wrap lines in snapfile
    int wrapbincol;         // only on binary to text conversion
+   num nlineswrapped;      // number of hard wraps
    bool rewrap;            // ignore linefeeds, rewrap all
    char listunit;          // stat output in 'b'ytes, 'k'bytes or default.
    bool flatdirstat;       // list no. of files per dir, not dir tree
@@ -1766,7 +1765,6 @@ public:
    int  dumptrail;         // hexdump: trailing chars at line end
    int  bytesperline;      // hexdump: when using hex/decsrc
    num  recordsize;        // for some commands
-   int  replaceold;        // use old replace algorithm
    bool usetmp;            // use temporary file
    bool knx;               // internal
    char *knxtext;          // internal
@@ -1964,6 +1962,7 @@ enum eWalkTreeFuncs {
    eFunc_MetaCheck   ,
    eFunc_Scantab     ,
    eFunc_Filter      ,
+   eFunc_Load        ,
    eFunc_Delete      ,
    eFunc_DupScan     ,
    eFunc_Version     ,

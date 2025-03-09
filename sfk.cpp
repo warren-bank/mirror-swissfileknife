@@ -7,6 +7,47 @@
    The whole source code was created with Depeche View Professional,
    the world's fastest source code browser and editor.
 
+   1.9.4
+   Initial Release:
+   -  rel: 10.02.2019, Major Update
+   -  sum: SFK can now search and load office
+           file text contents, in Open Office
+           format files like .docx .xlsx .ods .odt.
+           Search functions now search only in
+           text files by default.
+   -  CHG: Syntax Change: xfind now only searches
+           in plain text files, but not in binaries.
+           use xfindbin to search also binary files.
+   -  CHG: Syntax Change: find now only searches
+           in plain text files, but not in binaries.
+           use findbin to search also binary files.
+   -  add: ofind, search text in office files like
+           .docx .xlsx .ods .odt and plain text files.
+   -  add: ofilter, filter text of an office file.
+   -  add: oload, load text of an office file
+           for display or further processing.
+   -  add: sfk help office, for details about
+           supported office file extensions.
+   -  add: sfk alias, mkcd: support for SFK_PATH
+           environment variable, to write batch files
+           only into this folder.
+   -  chg: sfk getdv: now also suggests to save
+           to SFK_PATH if given.
+   -  add: echo: option -stream for best output
+           transfer to setvar or xed.
+   -  dep: xtext is deprecated (redundant to xfind)
+   -  dep: ftext is deprecated (redundant to find)
+   -  fix: zipto: crash on sub folder names
+           containing accent characters,
+           especially on select ... +zipto.
+   -  chg: sfk data: max content per symbol
+           is now 8 kbytes instead of 1.
+   -  fix: xed: sfk ... +xed without any patterns
+           created unwanted color output.
+   internal:
+   -  add: fromtcp, replytcp
+   -  chg: unified execxfind
+
    1.9.3
    Revision 4:
    -  rel: 08.12.2018, Minor Update
@@ -1322,8 +1363,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.9.3" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "4"
+#define SFK_VERSION  "1.9.4" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1499,6 +1540,7 @@ void sfkmem_checklist(const char *pszCheckPoint) { }
 const char  glblPathChar    = '\\';
 const char  glblWrongPChar  = '/';
 const char *glblPathStr     = "\\";
+const char *glblDubPathStr  = "\\\\";
 const char *glblDotSlash    = ".\\";
 
 // Windows default compile has a stack size of 1 mb.
@@ -1512,6 +1554,7 @@ const char *glblDotSlash    = ".\\";
 const char  glblPathChar    = '/';
 const char  glblWrongPChar  = '\\';
 const char *glblPathStr     = "/";
+const char *glblDubPathStr  = "//";
 const char *glblDotSlash    = "./";
 
 // Most linux have a stack larger than 1 mb, some smaller.
@@ -4137,6 +4180,7 @@ char *relativeFilename(char *pszPath);
 void myfgets_init    ( );
 int myfgets         (char *pszOutBuf, int nOutBufLen, FILE *fin, bool *rpBinary=0, char *pAttrBuf=0);
 int execFilter      (Coi *pcoi, FILE *fin = 0, StringPipe *pin = 0, int nMaxLines = -1, char *pszOutFile = 0);
+int execLoad        (Coi *pcoi);
 int execDelFile     (char *pszName);
 int execDelDir      (char *pszName, int lLevel, int &lGlobFiles, FileList &oDirFiles, int &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2);
 int execVersion     (Coi *pcoi);
@@ -7387,18 +7431,12 @@ char *Coi::officeSubName( )
    if (purl)
          pname = purl + 3;
 
-   #ifdef _WIN32
-   cchar *pszsep = "\\\\";
-   #else
-   cchar *pszsep = "//";
-   #endif
-
-   char *pxsla = strstr(pname, pszsep);
+   char *pxsla = strstr(pname, glblDubPathStr);
    if (!pxsla) return 0; // no pattern hit
 
    // do NOT accept foo.xlsx\\bar.xlsx\\goo.xml for office.
    // this must be handled by xe zip reading.
-   if (strstr(pxsla+2, pszsep)) return 0;
+   if (strstr(pxsla+2, glblDubPathStr)) return 0;
 
    long nnamlen = pxsla - pname;
 
@@ -7420,13 +7458,7 @@ char *Coi::officeSubName( )
 
 void stripOfficeName(char *pname)
 {
-   #ifdef _WIN32
-   cchar *pszsep = "\\\\";
-   #else
-   cchar *pszsep = "//";
-   #endif
-
-   char *pxsla = strstr(pname, pszsep);
+   char *pxsla = mystrrstr(pname, glblDubPathStr);
    if (!pxsla) return;
 
    *pxsla = '\0';
@@ -7437,13 +7469,7 @@ void Coi::stripOfficeName()
 {
    if (!pszClName) return;
 
-   #ifdef _WIN32
-   cchar *pszsep = "\\\\";
-   #else
-   cchar *pszsep = "//";
-   #endif
-
-   char *pxsla = strstr(pszClName, pszsep);
+   char *pxsla = mystrrstr(pszClName, glblDubPathStr);
    if (!pxsla) return;
 
    *pxsla = '\0';
@@ -16535,6 +16561,7 @@ cchar *aGlblChainCmds[] =
    "0noop",
    "0begin",        // sfk189
    "0endif",        // sfk189
+   "6replytcp",     // receive text and binary
    "1rep",          // receive+send files
    "1extract",      // receive+send files sfk1840 with base
    "1xhex",         // receive+send files
@@ -16675,9 +16702,8 @@ cchar *aGlblChainCmds[] =
    // "8index", "8gindex",
    // "8reflist", "8deplist",
    // "8ip", "8bin-to-src",
-   "2getcol",  // internal
-   "2tabcol",  // internal
-   "1olist",   // sfk193
+   "2getcol",   // internal
+   "2tabcol",   // internal
    0
 };
 
@@ -23910,8 +23936,13 @@ int execJamFile(Coi *pcoi)
    cchar *pPrefix = pszGlblJamPrefix ? pszGlblJamPrefix : ":file:";
    char *pHeadLine = (char*)pPrefix;
 
+   static char szPureName[SFK_MAX_PATH+10];
+   static char szSubFile[SFK_MAX_PATH+10];
+
    char szHeadBuf[250];
    mclear(szHeadBuf);
+   szPureName[0] = '\0';
+   szSubFile[0] = '\0';
 
    #ifdef VFILEBASE
    // when adding file content to a collection,
@@ -23936,6 +23967,8 @@ int execJamFile(Coi *pcoi)
    }
 
    mtklog(("load: execjam: bin=%d %s", bIsBinary, pcoi->name()));
+
+   strcopy(szPureName, pcoi->name());
 
    if (cs.addsnapmeta)
    {
@@ -24003,14 +24036,14 @@ int execJamFile(Coi *pcoi)
 
       if (bIsBinary) {
          // skip all binaries
-         if (glblFileCount.countSkip(pcoi->name())) {
+         if (glblFileCount.countSkip(szPureName)) {
             if (pGlblJamStatCallBack) {
                int nrc = pGlblJamStatCallBack(pcoi, glblFileCount.value(), cs.lines, (uint)(cs.totalbytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
                mtklog(("%d = jam.stat.callback.5", nrc));
                lRC |= nrc;
             } else {
                info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(cs.totalbytes/1000000UL));
-               info.setStatus("skip", pcoi->name(), 0, eKeepAdd);
+               info.setStatus("skip", szPureName, 0, eKeepAdd);
             }
          }
          return lRC;
@@ -24019,13 +24052,15 @@ int execJamFile(Coi *pcoi)
       // add text files 1:1 keeping exactly the same size,
       // and skip all binary files. no conversions whatsoever.
       if (pcoi->open("rb"))
-         { pwarn("cannot read: %s%s\n", pcoi->name(),pcoi->lasterr()); return 0; }
+         { pwarn("cannot read: %s%s\n", szPureName,pcoi->lasterr()); return 0; }
 
-      // write subfile header
+      // . write subfile header
       if (!bGlblJamPure)
       {
-         lRC |= dumpJamLine(pHeadLine   , 0, 1);   // :file: mtime size
-         lRC |= dumpJamLine(pcoi->name(), 0, 1);   // actual filename
+         lRC |= dumpJamLine(pHeadLine , 0, 1);   // :file: mtime size
+         lRC |= dumpJamLine(szPureName, 0, 1);   // actual filename
+         if (cs.office && szSubFile[0])
+            lRC |= dumpJamLine(szSubFile, 0, 1); // e.g. workbook.xml
       }
 
       while (true)
@@ -24068,7 +24103,7 @@ int execJamFile(Coi *pcoi)
                lRC |= nrc;
             } else {
                info.setAddInfo("%u files, %u mb", (uint)glblFileCount.value(), (uint)(cs.totalbytes/1000000UL));
-               info.setStatus("snap", pcoi->name(), 0, eKeepAdd);
+               info.setStatus("snap", szPureName, 0, eKeepAdd);
             }
          }
  
@@ -24101,26 +24136,26 @@ int execJamFile(Coi *pcoi)
          // binary.whitelist: force binary loading
          // if listed in a white list file mask.
          char *pszRel = pcoi->relName();
-         if (matchesFileMask(pszRel, pcoi->name()) > 1) // matches by non-wildcard pattern
+         if (matchesFileMask(pszRel, szPureName) > 1) // matches by non-wildcard pattern
             bProcess = 1;
       }
 
       // optional check if target accepts file
       if (bProcess && pGlblJamCheckCallBack) {
-         if (pGlblJamCheckCallBack(pcoi->name()))
+         if (pGlblJamCheckCallBack(szPureName))
             bProcess = 0;
       }
 
       // if not, skip
       if (!bProcess) {
-         if (glblFileCount.countSkip(pcoi->name())) {
+         if (glblFileCount.countSkip(szPureName)) {
             if (pGlblJamStatCallBack) {
                int nrc = pGlblJamStatCallBack(pcoi, glblFileCount.value(), cs.lines, (uint)(cs.totalbytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
                mtklog(("%d = jam.stat.callback.1", nrc));
                lRC |= nrc;
             } else {
                info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(cs.totalbytes/1000000UL));
-               info.setStatus("skip", pcoi->name(), 0, eKeepAdd);
+               info.setStatus("skip", szPureName, 0, eKeepAdd);
             }
          }
          return lRC;
@@ -24128,11 +24163,13 @@ int execJamFile(Coi *pcoi)
 
       // open binary for read
       if (pcoi->open("rb"))
-         { pwarn("cannot read: %s%s\n", pcoi->name(),pcoi->lasterr()); return 0; }
+         { pwarn("cannot read: %s%s\n", szPureName,pcoi->lasterr()); return 0; }
 
       // write subfile header
       lRC |= dumpJamLine(pHeadLine   , 0, 1);   // :file: mtime size
-      lRC |= dumpJamLine(pcoi->name(), 0, 1);   // actual filename
+      lRC |= dumpJamLine(szPureName, 0, 1);     // actual filename
+      if (cs.office && szSubFile[0])
+         lRC |= dumpJamLine(szSubFile, 0, 1);   // e.g. workbook.xml
       if (lRC)
          return lRC;
 
@@ -24151,7 +24188,7 @@ int execJamFile(Coi *pcoi)
    {
       num nLocalBytes = 0;
       num nLocalLines = 0;
-      lRC = pGlblJamFileCallBack(pcoi->name(), nLocalLines, nLocalBytes);
+      lRC = pGlblJamFileCallBack(szPureName, nLocalLines, nLocalBytes);
       // should include header, trailer generation
       cs.lines   += nLocalLines;
       cs.totalbytes += nLocalBytes;
@@ -24160,13 +24197,13 @@ int execJamFile(Coi *pcoi)
    {
     // optional check if target accepts file
     if (pGlblJamCheckCallBack) {
-       if (pGlblJamCheckCallBack(pcoi->name()))
+       if (pGlblJamCheckCallBack(szPureName))
           return 1; // skipped
     }
 
     // add file content, check for illegal entries
     if (pcoi->open("rb"))
-      { pwarn("cannot read: %s%s\n", pcoi->name(),pcoi->lasterr()); return 0; }
+      { pwarn("cannot read: %s%s\n", szPureName,pcoi->lasterr()); return 0; }
 
     int nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
     memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
@@ -24194,7 +24231,7 @@ int execJamFile(Coi *pcoi)
       nLocalLines++;
 
       if (nLineLen == nMaxLineLen)
-         pwarn("max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, pcoi->name(), nLocalLines);
+         pwarn("max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, szPureName, nLocalLines);
 
       // safety: escape unexpected (mal-format) headers within content
       if (   startsLikeSnapFile((char*)abBuf)
@@ -24214,8 +24251,10 @@ int execJamFile(Coi *pcoi)
          // first local line: also write header
          if (!bGlblJamPure)
          {
-            lRC |= dumpJamLine(pHeadLine   , 0, 1);   // :file: mtime size
-            lRC |= dumpJamLine(pcoi->name(), 0, 1);   // actual filename
+            lRC |= dumpJamLine(pHeadLine   , 0, 1); // :file: mtime size
+            lRC |= dumpJamLine(szPureName, 0, 1);   // actual filename
+            if (cs.office && szSubFile[0])
+               lRC |= dumpJamLine(szSubFile, 0, 1); // e.g. workbook.xml
          }
       }
 
@@ -24272,7 +24311,7 @@ int execJamFile(Coi *pcoi)
             lRC |= nrc;
          } else {
             info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(cs.totalbytes/1000000UL));
-            info.setStatus("snap", pcoi->name(), 0, eKeepAdd);
+            info.setStatus("snap", szPureName, 0, eKeepAdd);
          }
       }
 
@@ -24304,7 +24343,7 @@ int execJamFile(Coi *pcoi)
          lRC |= nrc;
       } else {
          info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(cs.totalbytes/1000000UL));
-         info.setStatus("snap", pcoi->name(), 0, eKeepAdd);
+         info.setStatus("snap", szPureName, 0, eKeepAdd);
       }
    }
 
@@ -25207,6 +25246,7 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
          case eFunc_Find:
          case eFunc_GetPic:
          case eFunc_Filter:
+         case eFunc_Load:
          // case eFunc_Hexdump:
          // case eFunc_ReplaceFix:
          case eFunc_ReplaceFix:  // or xfind
@@ -25576,12 +25616,13 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
       case eFunc_ReplaceFix: return execReplaceFix(pcoi);    break;
       case eFunc_ReplaceVar: return execReplaceVar(pcoi);    break;
       #endif
+      case eFunc_Filter    : return execFilter(pcoi, 0, 0, -1, pszOutFile); break;
+      case eFunc_Load      : return execLoad(pcoi);          break;
+      case eFunc_Delete    : return execDelFile(pszFile);    break;
+      #ifndef USE_SFK_BASE
       #ifdef SFKOSE
       case eFunc_XFind     : return execXFind(pcoi, pszOutFile);   break;
       #endif
-      case eFunc_Filter    : return execFilter(pcoi, 0, 0, -1, pszOutFile); break;
-      case eFunc_Delete    : return execDelFile(pszFile);    break;
-      #ifndef USE_SFK_BASE
       case eFunc_Copy      : return execFileCopy(pcoi);      break;
       case eFunc_Move      : return execFileMove(pcoi);      break;
       case eFunc_Cleanup   : return execFileCleanup(pszFile);     break;
@@ -26255,15 +26296,13 @@ void copySFKMatchOptions()
    SFKMatch::bClExtract = cs.extract;
    SFKMatch::bClXText   = cs.xtext;
    SFKMatch::cClLitAttr = cs.litattr;
-   SFKMatch::iClTrace   = cs.verbose >= 2 ? 1 : 0;
+   SFKMatch::iClTrace   = cs.verbose >= 3 ? 1 : 0; // sfk194
 }
 #include "sfkmatch.cpp" // sfkmatch.mod
 #endif // USE_SFK_BASE
 
-#ifdef SFKOSE
-   #define SFK_JUST_OSE
-   #include "sfkext.cpp"
-#endif
+#define SFK_JUST_OSE
+#include "sfkext.cpp"
 
 int execReplaceFix(Coi *pcoi)
 {__
@@ -28459,6 +28498,50 @@ int listPathAny(char *pszCmd, bool bSilent)
    #endif
 
    return nhits;
+}
+
+char *getWritePath(int &rerr)
+{
+   char *pszSFKPath=getenv("SFK_PATH");
+   if (!pszSFKPath) return 0;
+
+   char *pszPath = getenv("PATH");
+   if (!pszPath) return 0;
+
+   char *psz1 = pszPath;
+   while (*psz1)
+   {
+      char *psz2 = psz1;
+      #ifdef _WIN32
+      while (*psz2 && (*psz2 != ';'))
+         psz2++;
+      #else
+      while (*psz2 && (*psz2 != ':'))
+         psz2++;
+      #endif
+
+      // isolate single directory from path.
+      int nLen = psz2-psz1;
+      strncpy(szLineBuf, psz1, nLen);
+      szLineBuf[nLen] = '\0';
+
+      // now holding single dir in szLineBuf.
+      stripTrailingBackSlashes(szLineBuf);
+      if (!strcmp(pszSFKPath, szLineBuf))
+         return pszSFKPath;
+
+      // step to next subpath
+      if (*psz2)
+         psz2++;
+      psz1 = psz2;
+   }
+
+   perr("SFK_PATH folder '%s' not found in PATH", pszSFKPath);
+   pinf("set the SFK_PATH environment variable only\n");
+   pinf("to a folder which is present in the PATH.\n");
+   rerr = 9;
+
+   return 0;
 }
 
 // uses szLineBuf, also for result!
@@ -37500,6 +37583,77 @@ int seekToLineFromEnd(Coi *pcoi, int iLineTarg)
    return 0;
 }
 
+// . for sfk load
+int execLoad(Coi *pcoi)
+{__
+   if (pcoi->open("rb"))
+      return 9+perr("cannot load: %s",pcoi->name());
+
+   size_t nRead = 0;
+   while ((nRead = pcoi->read(abBuf,sizeof(abBuf)-10)) > 0)
+   {
+      if (chain.coldata && chain.colbinary && !cs.collines)
+      {
+         if (chain.addBinary(abBuf, nRead))
+            return 9;
+      }
+      else
+      {
+         uchar *pSrcCur = abBuf;
+         uchar *pSrcMax = abBuf + nRead;
+
+         int iLineLen = 0, iSubLines = 0;
+   
+         while (pSrcCur < pSrcMax)
+         {
+            for (iLineLen=0; pSrcCur+iLineLen < pSrcMax; iLineLen++)
+               if (pSrcCur[iLineLen]=='\r' || pSrcCur[iLineLen]=='\n')
+                  break;
+   
+            int iRemain = iLineLen;
+            iSubLines = 0;
+            if (!iLineLen)
+               chain.print("\n");
+            else
+            while (iRemain > 0)
+            {
+               int iCopy = MAX_LINE_LEN - 10;
+   
+               if (iCopy > iRemain)
+                  iCopy = iRemain;
+   
+               memcpy(szLineBuf, pSrcCur, iCopy);
+               szLineBuf[iCopy] = '\0';
+               szAttrBuf[0] = '\0';
+   
+               if (chain.colany())
+                  chain.addLine(szLineBuf, szAttrBuf);
+               else
+                  printf("%s\n", szLineBuf);
+   
+               iSubLines++;
+   
+               pSrcCur += iCopy;
+               iRemain -= iCopy;
+            }
+            if (iSubLines > 1)
+               cs.nlineswrapped++;
+   
+            // skip EOL: CRLF or LF or CR
+            if (pSrcCur+1 < pSrcMax && !strncmp((char*)pSrcCur, "\r\n", 2))
+               pSrcCur += 2;
+            else
+            if (pSrcCur < pSrcMax && (*pSrcCur == '\n' || *pSrcCur == '\r'))
+               pSrcCur++;
+         }
+      }
+   }
+
+   pcoi->close();
+
+   return 0;
+}
+
 // caller supplies either pszInFile or fin.
 int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *pszOutFile)
 {__
@@ -37773,6 +37927,7 @@ int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *p
          if (   pszInFile && !bReWrite
              && !gfilter.bSingleFile && bFilenames
              && !cs.nonames && !bDumpedFileName
+             && !cs.office // sfk194 ofilt never print filename
             )
          {
             bDumpedFileName = 1;
@@ -38627,10 +38782,6 @@ void shutdownAllGlobalData()
 
    if (pGlblDumpBuf) delete [] pGlblDumpBuf;
 
-   #ifdef WITH_BITFILTER
-   glblBitFilter.shutdown();
-   #endif // WITH_BITFILTER
-
    // cleanup for all commands
    glblFileSet.shutdown();
    glblCircleMap.reset();
@@ -39343,7 +39494,7 @@ static const char *aWebRef[] =
    "echo", "runloop", "hsel", "hopt", "hchain", "hpat", "deblank", "tail",
    "hextobin", "fview", "del", "findclass", "inst", "reflist", "deplist",
    "netlog", "copy", "space", "filetime", "touch", "media", "version", "license",
-   "index", "iname", "xtext", "xex", "ftext", "hexfind", "xfind", "xhexfind",
+   "index", "iname", "xex", "hexfind", "xfind", "xhexfind",
    "extract", "xrep", "xed", "csvtotab", "tabtocsv", "rename", "xmlform",
    "entab", "addcrlf", "run", "udpsend", "chars", "hex", "sort",
    "perline", "setvar", "getvar", "helpvar", "ping", "number",
@@ -39812,7 +39963,16 @@ int loadInput(uchar **ppInText, char **ppInAttr, num *pInSize,
    strcopy(szEOL, cs.szeol);
    int  iEOL = strlen(szEOL);
 
-   if (bstdin || pszInFile)
+   if (cs.office && pszInFile && endsWithOfficeExt(pszInFile, __LINE__))
+   {
+      // load single office file content
+      if (setProcessSingleDir(pszInFile)) return 9;
+      int lFiles=0,lDirs=0; num nBytes=0;
+      if (walkAllTrees(eFunc_Load, lFiles, lDirs, nBytes)) return 9;
+      if (cs.nlineswrapped && !cs.nowarn)
+         pwarn("%s lines(s) were hard wrapped.\n", numtoa(cs.nlineswrapped));
+   }
+   else if (bstdin || pszInFile)
    {
       if (bstdin) {
          if (!(pInText = (uchar*)loadStdIn(nInSize)))
@@ -41035,6 +41195,7 @@ void printMainHelp(bool bhelp, char *penv[])
 
    printHelp(
       "conversion\n"
+      "   sfk oload      - load office file content as text\n"
       "   sfk lf-to-crlf - convert from LF to CRLF line endings\n"
       "   sfk crlf-to-lf - convert from CRLF to LF line endings\n"
       "   sfk detab      - convert TAB characters to spaces\n"
@@ -41065,6 +41226,7 @@ void printMainHelp(bool bhelp, char *penv[])
    printHelp(
       "text processing\n"
       "   sfk filter     - search, filter and replace text data\n"
+      "   sfk ofilter    - filter  text from an office file\n"
       "   sfk replace    - replace words in binary and text files\n"
       "   sfk xed        - edit stream text using sfk expressions\n"
       "   sfk xex        - extract from stream text using expressions\n"
@@ -41096,9 +41258,9 @@ void printMainHelp(bool bhelp, char *penv[])
 
    printHelp(
       "search and compare\n"
-      "   sfk xfind      - search in text and binary files using\n"
+      "   sfk xfind      - search in text files using\n"
       "                    wildcards and simple expressions\n"
-      "   sfk xtext      - search in text files only\n"
+      "   sfk xfindbin   - search in text and binary files\n"
       "   sfk xhexfind   - search with hexdump output\n"
       "   sfk extract    - extract data from text and binary\n"
       "   sfk find       - search static text, without wildcards\n"
@@ -41321,6 +41483,7 @@ void printMainHelp(bool bhelp, char *penv[])
           && !strBegins(psz, "SFK_CMD_LOG=")
           && !strBegins(psz, "SFK_PROXY=")
           && !strBegins(psz, "SFK_CRASH_LOG=")
+          && !strBegins(psz, "SFK_PATH=")
          )
          continue;
       if (bFirstEnv) {
@@ -41613,7 +41776,7 @@ SFKMapArgs::~SFKMapArgs( )
    if (oxargs.bdead) return 9;   \
    char **argx = oxargs.clargx;
 
-void printHelpText(cchar *pszSub, bool bhelp, bool bext=0);
+void printHelpText(cchar *pszSub, bool bhelp, int bext=0);
 
 int extmain(int argc, char *argv[], char *penv[],
    char *pszCmd, int &iDir,
@@ -44155,17 +44318,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             if (strlen(psz) > 40)
                return 9+perr("prefix too long, only up to 40 characters are allowed.");
             pszGlblJamPrefix = psz;
+            continue;
          }
-         else
          if (!strcmp(pszArg,"-pure"))
-            bGlblJamPure = 1;
-         else
+            { bGlblJamPure = 1; continue; }
          if (!strcmp(pszArg,"-stat"))
-            bstat = 1;
-         else
+            { bstat = 1; continue; }
          if (!strcmp(pszArg,"-nometa"))
-            cs.addsnapmeta = 0;
-         else
+            { cs.addsnapmeta = 0; continue; }
+         if (!strcmp(pszArg,"-office"))   // snapto, yet internal
+            { cs.office = 1; continue; }
          if (!strcmp(pszArg,"-raw")) {
             cs.addsnapraw = 1;
             // write snapfile in binary mode,
@@ -44178,18 +44340,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             #else
             cs.addsnaplf  = "\n";
             #endif
+            continue;
          }
-         else
          if (!strcmp(pszArg,"-rawest")) {
             cs.addsnapraw = 2;
             poutmode = "wb";
+            continue;
          }
-         else
          if (isDirParm(pszArg))
             break; // fall through
-         else
          if (!setGeneralOption(argx, argc, iDir))
-            break;
+            break; // fall through
       }
 
       // collect dir and mask parms
@@ -45282,29 +45443,33 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    regtest("list xdir +find mypat");
    regtest("list xdir +find -pat mypat");
 
-   bool bIsFText  = 0;
+   bool bIsFTex = 0;
+   bool bIsFBin = 0;
 
    ifcmd (   !strcmp(pszCmd, "find") || !strcmp(pszCmd, "grep") // +wref
-          || !strcmp(pszCmd, "ftext")
+          || !strcmp(pszCmd, "findbin")
+          || !strcmp(pszCmd, "ftext") // deprecated
          )
    {
-      bIsFText = strcmp(pszCmd, "ftext") ? 0 : 1;
+      bIsFBin = strcmp(pszCmd, "findbin") ? 0 : 1;
+      bIsFTex = bIsFBin ? 0 : 1;
 
       ifhelp (nparm < 1)
-      if (bIsFText)
-      printx("<help>$sfk ftext [opts] singledir word [word2] [word3] ... [-names]\n"
-             "\n"
-             "   case-insensitive text search for text files only.\n");
-      else
+      if (bIsFBin)
       printx("<help>$sfk find [opts] singledir word [word2] [word3] ... [-names]\n"
              "\n"
              "   case-insensitive text search for text and binary files.\n"
-             "   if multiple words are given then only areas containing\n"
-             "   all words are listed. sfk find tries to autodetect if a file\n"
-             "   is text or binary, adapting the output text formatting.\n"
+             "   sfk find tries to autodetect if a file is text or binary,\n"
+             "   adapting the output text formatting.\n"
+             );
+      else
+      printx("<help>$sfk find [opts] singledir word [word2] [word3] ... [-names]\n"
+             "\n"
+             "   search text in text files. if multiple words are given\n"
+             "   then only areas containing all words are listed.\n"
              "\n"
              "   this is a basic command to search only static words.\n"
-             "   type sfk xfind or xtext to use wildcards and expressions.\n"
+             "   type sfk xfind to use wildcards and expressions.\n"
              "\n"
              );
       printx("   $options\n");
@@ -45362,23 +45527,23 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      0 = no matches, 1 = matches found, >1 = major error occurred.\n"
              "      see also \"sfk help opt\" on how to influence error processing.\n"
              "\n");
-      if (!bIsFText)
+      if (!bIsFBin)
       printx("   $aliases\n"
-             "      #sfk ftext<def>     same as sfk find but reads only text files.\n"
+             "      #sfk findbin<def>  same as sfk find but reads also binary files.\n"
              "\n");
       printSearchReplaceCommands();
       webref("find");
       printx("   $examples\n"
              "      #sfk find . foo bar include\n"
-             "         search all files in current dir for the words foo+bar+include.\n"
+             "         search text files in current dir for the words foo+bar+include.\n"
              "         note that the short form syntax supports one directory name,\n"
              "         and any number of text patterns, but no file name patterns.\n"
              "\n"
              "      #sfk find -pat text1 text2 -dir src1 src2 -file .cpp .hpp\n"
              "         searches within the specified directories and file masks.\n"
              "\n");
-      if (!bIsFText)
-      printx("      #sfk find -wide -pat http:// .html -dir mydir -file .dat\n"
+      if (bIsFBin)
+      printx("      #sfk findbin -wide -pat http:// .html -dir mydir -file .dat\n"
              "       #+filter -rep \"_*http://_http://_\" -rep \"_.html*_.html_\"\n"
              "         find all http://*.hml references in binary .dat files,\n"
              "         using -wide to find links beyond 80 characters,\n"
@@ -45401,8 +45566,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       CommandScope oscope("find");
 
       bGlblAllowGeneralPure  = 1;
-      bGlblBinGrep           = 1;
-      bGlblBinGrepAutoDetect = 1;
+      bGlblBinGrep           = 0; // sfk194 find
+      bGlblBinGrepAutoDetect = 0; // sfk194 find
 
       cs.shortsyntax    = 0;
       cs.binallchars    = 1;  // sfk190
@@ -45412,9 +45577,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bool bcolpat2     = 0;  // dummy
 
       // alias presets
-      if (!strcmp(pszCmd, "ftext")) {
-         bGlblBinGrep = 0;
-         bGlblBinGrepAutoDetect = 0;
+      if (!strcmp(pszCmd, "findbin")) {
+         bGlblBinGrep = 1;
+         bGlblBinGrepAutoDetect = 1;
       }
 
       #ifdef VFILEBASE
@@ -45774,14 +45939,18 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    regtest("filter x.txt -blocksep _ -form #col1 -wrap=80");
    #endif
 
+   int  iIsOFilt = 0;
+
    ifcmd (   !strncmp(pszCmd, "filt", 4) || !strncmp(pszCmd, "ffilt", 5) // +wref
           || !strncmp(pszCmd, "filefilt", 8)
           || !strncmp(pszCmd, "wfilt", 5)
+          || (bGlblOffice && strBegins(pszCmd, "ofilt"))
          )
    {
       bool wfilt = strncmp(pszCmd, "wfilt", 5) ? 0 : 1;
+
       ifhelp (!chain.usedata && !chain.usefiles && (nparm < 1))
-      printHelpText("filter", bhelp, wfilt);
+      printHelpText("filter", bhelp, wfilt | (iIsOFilt<<1));
       ehelp;
 
       // skip #(10.10col1) in var args
@@ -45856,6 +46025,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          // single input file or directory specified?
          bWalkDirs = 1;
          Coi ocoi(pszInPath, 0);
+         if (iIsOFilt && ocoi.isZipSubEntry()) { // sfk194
+            perr("ofilter cannot be used with nested archive contents.");
+            return 9;
+         }
          if ((bsid = ocoi.isTravelDir()))
          {
             setProcessSingleDir(pszInPath);
@@ -48270,6 +48443,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                chain input data as unchanged as possible, like\n"
              "                filenames from parameters, to following commands:\n"
              "                   #sfk echo -pure \"%%1\" +xed \"_/_\\\\_\" ...\n"
+             "      -stream   no extra linefeeds, no colors, binary transfer.\n"
+             "                best for following +setvar or +xed commands.\n"
              "      -spat     activates slash patterns: \\t=TAB \\q=\" \\r=CR \\n=LF\n"
              "                \\xnn = any code with hex value nn. can be given\n"
              "                after -lit to use slash patterns without colors.\n"
@@ -48286,9 +48461,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "      $sfk echo<def>  will send the given text to a following command\n"
              "                if it accepts text or filename list input.\n"
-             "\n"
-             "      to send a single string as unchanged as possible to a command\n"
-             "      accepting binary data, like xed, use -literal -noline.\n"
+          // "\n"
+          // "      to send a single string as unchanged as possible to a command\n"
+          // "      accepting binary data, like xed, use -literal -noline.\n"
              "\n"
              "      by default, echo produces only text data, not filenames.\n"
              "      to send this to file commands use +texttofilenames or +ttf.\n"
@@ -48353,6 +48528,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bool bfirst = 1;
       bool bNoBlank = 0;
       bool bAsLines = 0;
+      bool bstream  = 0;
       int  iIndent  = 0;
       int  iLinesArgMin = 0;
       int  iLinesArgMax = 0;
@@ -48384,13 +48560,20 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             bNoLine = 1;
             continue;
          }
-         if (!strcmp(pszArg, "-lines")) {
-            bAsLines = 1;
-            continue;
-         }
          if (strBegins(pszArg, "-join")) {  // sfk187
             ctrimparm = 't';
             bNoBlank = 1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-stream")) {  // sfk1935 internal
+            // no linefeeds, no colors, binary transfer
+            bstream   = 1;
+            ctrimparm = 't';
+            cs.wpat   = 0;
+            continue;
+         }
+         if (!strcmp(pszArg, "-lines")) {
+            bAsLines = 1;
             continue;
          }
          if (!strcmp(pszArg, "-noblank")) {  // deprecated by -join,
@@ -48442,7 +48625,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          char *pszdst = (char*)abBuf + strlen((char*)abBuf);
          int  nmaxdst = MAX_ABBUF_SIZE - strlen((char*)abBuf);
          copyFormStr(pszdst, nmaxdst, pszsrc, nsrclen);
-         // printf("---\n%s\n---\n",dataAsTrace(pszdst,strlen(pszdst)));
+         // just copies if no -spat is given
 
          if (bAsLines) {
             bfirst = 1;
@@ -48483,12 +48666,15 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             // do not interpret any [red] etc. commands
             if (bEcho && chain.coldata) {
                if (bNoLine) {
-                  if (chain.colbinary)
+                  if (bstream || chain.colbinary)
                      chain.addBinary(abBuf, strlen((char*)abBuf)); // sfk1840
                   else
-                  chain.addToCurLine((char*)abBuf, str(""), 0);
+                     chain.addToCurLine((char*)abBuf, str(""), 0);
                } else {
-                  chain.addLine((char*)abBuf, str(""), 2); // splitbylf, also on termlf
+                  if (bstream)
+                     chain.addBinary(abBuf, strlen((char*)abBuf)); // sfk1935
+                  else
+                     chain.addLine((char*)abBuf, str(""), 2); // splitbylf, also on termlf
                }
             } else {
                printf("%s%s",(char*)abBuf,bNoLine?"":"\n");
@@ -49658,12 +49844,19 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printf("\n=== Depeche View Lite download ===\n\n");
       printx("$sfk will open a web browser, with URL:\n\n");
       printf("   http://stahlworks.com/dview.exe\n");
-      char *pszsfk = findPathLocation("sfk" EXE_EXT, 1); // for getdv. 1=nocwd
-      if (pszsfk) {
-         char *psz=strrchr(pszsfk, '\\');
-         if (psz) *psz='\0';
-         printx("\n$you may then save dview.exe in the same folder as sfk:\n\n");
-         printf("   %s\n", pszsfk);
+      char *pszWritePath=0;
+      int   isubrc=0;
+      if ((pszWritePath=getWritePath(isubrc))) {
+         printx("\nyou may then save dview.exe to folder %s\n",pszWritePath);
+         printx("or into the same folder as sfk.exe.\n");
+      } else {
+         char *pszsfk = findPathLocation("sfk" EXE_EXT, 1); // for getdv. 1=nocwd
+         if (pszsfk) {
+            char *psz=strrchr(pszsfk, '\\');
+            if (psz) *psz='\0';
+            printx("\n$you may then save dview.exe in the same folder as sfk:\n\n");
+            printf("   %s\n", pszsfk);
+         }
       }
       printf("\n");
 
@@ -52570,7 +52763,20 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   creates an alias batch file, remembering the current directory.\n"
              "   this batch can be used later to re-enter the remembered directory.\n"
              "\n"
-             "   #example:\n"
+             "   $batch file storage path parallel to sfk\n"
+             "\n"
+             "      this is default. for full details read: sfk alias\n"
+             "\n"
+             "   $alternative bath file path by SFK_PATH\n"
+             "\n"
+             "      you may also create a separate folder for your batch files\n"
+             "      which must be listed in the PATH environment variable.\n"
+             "      then $<exp> SFK_PATH=myfolder<def> to let sfk write into that.\n"
+             "\n"
+             "   $options\n"
+             "      -verbose   tell in detail which batch folder is used\n"
+             "\n"
+             "   $example:\n"
              "\n"
              "   1. you are currently working in\n"
              "         C:\\Documents And Long Complicated Paths\\Users\\You\\Work\n"
@@ -52605,14 +52811,28 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (checkArgCnt(argc, 3)) return 9;
       char *pszAlias = argx[2];
 
-      // find ourselves, result in szLineBuf
-      char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // for mkcd. 1=nocwd
-      if (!pszSFKCmd) return 9+perr("cannot find location of sfk" EXE_EXT " within PATH.\n");
-      // create batch filename parallel to sfk.exe
-      szRefNameBuf[0] = '\0';
-      char *psz1 = strrchr(pszSFKCmd, glblPathChar);
-      if (!psz1) return 9+perr("unable to find path of sfk" EXE_EXT "\n");
-      sprintf(szRefNameBuf, "%.*s", (int)(psz1-pszSFKCmd+1),pszSFKCmd);
+      char *pszWritePath=0;
+      int   isubrc=0;
+      if ((pszWritePath=getWritePath(isubrc))) {
+         strcopy(szRefNameBuf, pszWritePath);
+         strcat(szRefNameBuf, glblPathStr);
+         if (cs.verbose)
+            pinf("[nopre] using SFK_PATH %s\n",pszWritePath);
+      } else {
+         if (isubrc)
+            return 9;
+         // find ourselves, result in szLineBuf
+         char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // for mkcd. 1=nocwd
+         if (!pszSFKCmd) return 9+perr("cannot find location of sfk" EXE_EXT " within PATH.\n");
+         if (cs.verbose)
+            pinf("[nopre] using sfk.exe path %s\n",pszSFKCmd);
+         // create batch filename parallel to sfk.exe
+         szRefNameBuf[0] = '\0';
+         char *psz1 = strrchr(pszSFKCmd, glblPathChar);
+         if (!psz1) return 9+perr("unable to find path of sfk" EXE_EXT "\n");
+         sprintf(szRefNameBuf, "%.*s", (int)(psz1-pszSFKCmd+1),pszSFKCmd);
+      }
+
       strcat(szRefNameBuf, pszAlias);
       #ifdef _WIN32
       strcat(szRefNameBuf, ".bat");
@@ -52689,6 +52909,15 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      for example, if sfk" EXE_EXT " is located just in your current\n"
              "      working directory \".\", copy sfk" EXE_EXT " into a different\n"
              "      directory of the PATH, and then start aliasing.\n"
+             "\n"
+             "   $alternative bath file path by SFK_PATH\n"
+             "\n"
+             "      you may also create a separate folder for your batch files\n"
+             "      which must be listed in the PATH environment variable.\n"
+             "      then $<exp> SFK_PATH=myfolder<def> to let sfk write into that.\n"
+             "\n"
+             "   $options\n"
+             "      -verbose   tell in detail which batch folder is used\n"
              "\n"
              "   $see also\n"
              "      sfk mkcd : create an alias remembering the current directory.\n"
@@ -52786,19 +53015,27 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       sfkarg;
 
-      // find ourselves, result in szLineBuf
-      char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // for alias. 1=nocwd
-      if (!pszSFKCmd) return 9+perr("cannot find location of sfk" EXE_EXT " within PATH.\n");
-
-      if (cs.debug) printf("found sfk : %s\n", pszSFKCmd);
-
-      // isolate path of sfk.exe in szRefNameBuf
-      szRefNameBuf[0] = '\0';
-      char *psz1 = strrchr(pszSFKCmd, glblPathChar);
-      if (!psz1) return 9+perr("unable to find path of sfk" EXE_EXT "\n");
-      sprintf(szRefNameBuf, "%.*s", (int)(psz1-pszSFKCmd+1),pszSFKCmd);
-
-      if (cs.debug) printf("using path: %s\n", szRefNameBuf);
+      char *pszWritePath=0;
+      int   isubrc=0;
+      if ((pszWritePath=getWritePath(isubrc))) {
+         strcopy(szRefNameBuf, pszWritePath);
+         strcat(szRefNameBuf, glblPathStr);
+         if (cs.verbose)
+            pinf("[nopre] using SFK_PATH %s\n",pszWritePath);
+      } else {
+         if (isubrc)
+            return 9;
+         // find ourselves, result in szLineBuf
+         char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // for alias. 1=nocwd
+         if (!pszSFKCmd) return 9+perr("cannot find location of sfk" EXE_EXT " within PATH.\n");
+         if (cs.verbose)
+            pinf("[nopre] using sfk.exe path %s\n",pszSFKCmd);
+         // isolate path of sfk.exe in szRefNameBuf
+         szRefNameBuf[0] = '\0';
+         char *psz1 = strrchr(pszSFKCmd, glblPathChar);
+         if (!psz1) return 9+perr("unable to find path of sfk" EXE_EXT "\n");
+         sprintf(szRefNameBuf, "%.*s", (int)(psz1-pszSFKCmd+1),pszSFKCmd);
+      }
 
       if ((nparm >= 1) && !strcmp(argx[iDir], "-list"))
       {
@@ -53061,47 +53298,54 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    bool bIsXReplace = 0; // xreplace command
    bool bIsHexFind  = 0; // hexfind or xhexfind
    bool bIsAnyFind  = 0;
-   bool bIsXText    = 0;
    bool bIsXPat     = 0;
    bool bExtract    = 0;
    bool bFullHelp   = 0;
    bool bIsReplace  = 0;
-   bool bIsXFind    = 0;
    bool bIsXHexFind = 0; // pure alias
    bool bIsXRepDemo = 0;
    int  iIsOFind    = 0;
 
+   bool bIsXFTex    = 0; // just text files
+   bool bIsXFBin    = 0; // text and  binary
+
    bool bXdXe = 0;
 
+   // .
    ifcmd (   !strcmp(pszCmd, "rep") || !strcmp(pszCmd, "replace") // +wref
           || strBegins(pszCmd, "hexfind") // or hexfindle
           || (bXdXe && !strcmp(pszCmd, "xrep"))
           || (bXdXe && !strcmp(pszCmd, "xreplace"))
           || (         !strcmp(pszCmd, "xfind"))
-          || (         !strcmp(pszCmd, "xtext"))
+          || (         !strcmp(pszCmd, "xfindbin"))   // sfk194
+          || (         !strcmp(pszCmd, "xtext"))      // deprecated
           || (         !strcmp(pszCmd, "xhex") )
           || (         strBegins(pszCmd, "xhexfind")) // or xhexfindle
           || (         !strcmp(pszCmd, "extract"))
-          || (bGlblOffice && !strcmp(pszCmd, "ofind"))  // internal
-          || (bGlblOffice && !strcmp(pszCmd, "ofind2")) // internal
+          || (bGlblOffice && !strcmp(pszCmd, "ofind"))
          )
    {
       // xhexfind: alias of xfind -arc
       if (strBegins(pszCmd, "xhex")) {
-         pszCmd   = str("xfind");
-         bIsXHexFind  = 1;
+         bIsXHexFind = 1;
       }
 
       bIsFHexFind = strBegins(pszCmd, "hexfind");
       bIsFReplace = strBegins(pszCmd, "rep");
       bIsXExtract = !strcmp(pszCmd, "extract");
       bIsXReplace = strBegins(pszCmd, "xrep");
-      bIsXText    = !strcmp(pszCmd, "xtext"); // read text files only
-      bIsXFind    = !strcmp(pszCmd, "xfind") || bhelp; // help default
+
+      bIsXFTex    = !strcmp(pszCmd, "xfind")     // sfk194 just text
+                    || iIsOFind
+                    || !strcmp(pszCmd, "xtext")  // deprecated
+                    || bhelp; // help default
+      bIsXFBin    = !strcmp(pszCmd, "xfindbin")  // text and binary
+                    || bIsXHexFind;
+
       bIsHexFind  = bIsFHexFind || bIsXHexFind;
-      bExtract    = bIsXFind || bIsXText || bIsXExtract;
-      bIsAnyFind  = bIsXFind || bIsXText || bIsHexFind;
-      bIsXPat     = strBegins(pszCmd, "x") || bExtract;
+      bExtract    = bIsXFTex || bIsXFBin || bIsXExtract;
+      bIsAnyFind  = bIsXFTex || bIsXFBin || bIsHexFind;
+      bIsXPat     = strBegins(pszCmd, "x") || bExtract || iIsOFind;
       bFullHelp   = (nparm >= 1 && !strcmp(argv[iDir], "-full"));
       bIsReplace  = strstr(pszCmd, "rep") ? 1 : 0;
 
@@ -53131,10 +53375,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   as well as SFK Simple Expressions in brackets [],\n"
              "   creating a hexadecimal dump output.\n"
              );
-      else if (bIsXFind)
-      printx("<help>$sfk xfind singleDirName \"/searchtext/\"\n"
-             "$sfk xfind singleFileName \"/searchtext/\" [options]\n"
-             "$sfk xfind -dir mydir -file .cpp .txt -text \"/from/[totext/]\"\n"
+      else if (bIsXFBin)
+      printx("<help>$sfk xfindbin singleDirName \"/searchtext/\"\n"
+             "$sfk xfindbin singleFileName \"/searchtext/\" [options]\n"
+             "$sfk xfindbin -dir mydir -file .cpp .txt -text \"/from/[totext/]\"\n"
              "\n"
              "   search in text and binary files using wildcards * and ?\n"
              "   as well as SFK Simple Expressions in brackets [].\n"
@@ -53145,14 +53389,31 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   by default, $full text lines<def> containing hits are shown.\n"
              "   use option $-pure<def> to show only the found text.\n"
              "\n"
-             "   use $sfk xtext<def> to search in $text files only<def>.\n"
+             "   use $sfk xfind<def> to search in $text files only<def>.\n"
              "\n"
              "   search text can be followed by a $totext<def> to reformat output.\n"
              );
-      else if (bIsXText)
-      printx("<help>$sfk xtext singleDirName \"/searchtext/\"\n"
-             "$sfk xtext singleFileName \"/searchtext/\" [options]\n"
-             "$sfk xtext -dir mydir -file .cpp .txt -text \"/from/[totext/]\"\n"
+      else if (iIsOFind)
+      printx("<help>$sfk ofind singleDirName \"/searchtext/\"\n"
+             "$sfk ofind singleFileName \"/searchtext/\" [options]\n"
+             "$sfk ofind -dir mydir -file .docx .xlsx -text \"/from/[totext/]\"\n"
+             "\n"
+             "   search in $office files<def> like $.docx .xlsx .ods .odt<def>\n"
+             "   and in plain text files using wildcards * and ?\n"
+             "   as well as SFK Simple Expressions in brackets [].\n"
+             "\n"
+             "   the search text must be $surrounded by a delimiter<def> like / or _\n"
+             "   or any other character not part of the search text.\n"
+             "\n"
+             "   by default, $full text lines<def> containing hits are shown.\n"
+             "   use option $-pure<def> to show only the found text.\n"
+             "\n"
+             "   search text can be followed by a $totext<def> to reformat output.\n"
+             );
+      else if (bIsXFTex)
+      printx("<help>$sfk xfind singleDirName \"/searchtext/\"\n"
+             "$sfk xfind singleFileName \"/searchtext/\" [options]\n"
+             "$sfk xfind -dir mydir -file .cpp .txt -text \"/from/[totext/]\"\n"
              "\n"
              "   search $in text files only<def> using wildcards * and ?\n"
              "   as well as SFK Simple Expressions in brackets [].\n"
@@ -53162,6 +53423,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   by default, $full text lines<def> containing hits are shown.\n"
              "   use option $-pure<def> to show only the found text.\n"
+             "\n"
+             "   use $sfk ofind<def>    to search in $office files like .docx .xlsx<def>.\n"
+             "   use $sfk xfindbin<def> to search in $text and binary files<def>.\n"
              "\n"
              "   search text can be followed by a $totext<def> to reformat output.\n"
              );
@@ -53227,6 +53491,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("   $options\n"
              "      -nosub        do not include files in subdirectories.\n"
              "      -nobin[ary]   skip binary files.\n");
+      if (iIsOFind)
+      printx("      -verbose      always show which file is currently read.\n");
       if (bIsXPat)
       printx("      -case         case-sensitive text comparison. default is insensitive.\n"
              "                    for details type: sfk help nocase\n"
@@ -53279,8 +53545,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    // printx("      -enddir       to use -dir ... -file ... as first parameters, type:\n" // sfk182
    //        "                    sfk %s -dir ... -file ... -enddir -pat ...\n"
    //        , pszCmd);
-      if (bIsAnyFind || bIsXExtract)
-         arcinf(10); // hexfind, xfind, xtext, xhexfind, extract
+      if (!iIsOFind && (bIsAnyFind || bIsXExtract))
+         arcinf(10); // hexfind, xfind, xhexfind, extract
 
              #ifndef SFKXEREP
       if (bIsReplace)
@@ -53288,11 +53554,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                    for processing (default=100k)\n");
              #endif
       printx("      -firsthit     %s only first found pattern match per file.\n"
-             , (bIsXFind || bIsXText) ? "show":"process");
+             , (bIsXFTex || bIsXFBin) ? "show":"process");
       if (bIsFReplace)
       printx("      -maxscan=nm   stop searching after (approximately) first n megabytes\n"
              "                    per file. can be used only with same length replace.\n");
-      if (bIsXFind || bIsXText)
+      if (bIsXFTex || bIsXFBin)
       printx("      -tracesel     tell in detail which files are searched or ignored.\n"
              "      -quiet        do not show progress infos.\n"
              "      -names        list only names of files containing at least one hit.\n"
@@ -53327,7 +53593,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n");
 
       printx("   $output options\n");
-      if (!bIsHexFind && (bIsXFind || bIsXText))
+      if (!bIsHexFind && (bIsXFTex || bIsXFBin))
       printx("      -conlines=n1  show n lines of context around search hits. by default\n"
              "                    only text lines containing one or more hits are shown.\n"
              "                    all lines together cannot hold more than:\n"
@@ -53340,7 +53606,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -indent=n     set n chars of indentation for result display.\n"
              "      -pure         extract only searched data, same as -context=0.\n"
              "                    you may also set an environment variable:\n"
-             "                    <exp> SFK_CONFIG=xfind:pure,xtext:pure\n"
+             "                    <exp> SFK_CONFIG=xfind:pure,xfindbin:pure\n" // sfk194
              "                    use -pure -tofile x to extract binary content as is.\n"
              "      -fill=c       replace binary null and other unprintable characters\n"
              "                    with character c. default is a dot \".\"\n"
@@ -53353,7 +53619,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -maxdump=n    show up to n bytes only.\n"
              "      -nodump       do not create a hexdump, list only matching files.\n");
       else
-      if (!bIsXText && !bIsXFind)
+      if (!bIsXFTex && !bIsXFBin)
       printx("      -dump         create hexdump of search hits or replaced text.\n"
              "       -wide        with -dump: show 16 bytes per line.\n"
              "       -lean        with -dump: show  8 bytes per line.\n"
@@ -53363,7 +53629,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -astext       no hexdump, but print search hits as plain text.\n"
              "                    use this only with plain text files, not binary.\n");
       printx("      -showle       highlight CR/LF line endings in hex dump output\n");
-      if (!bIsXFind && !bIsXText)
+      if (!bIsXFTex && !bIsXFBin)
       printx("      -context=n    with hexdump: show additional n bytes of context.\n"
              "      -reldist      with hexdump: tell relative distances to previous hits.\n");
       if (bExtract)
@@ -53377,7 +53643,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                    unless a single input filename is given.\n"
              "                    does not change hex dump output headers.\n"
              "      -sep s        define separator s between hits in a file\n");
-      if (bIsXFind || bIsXText)
+      if (bIsXFTex || bIsXFBin)
       printx("      -rawterm      on output to terminal do not strip codes below 32.\n"
              "                    null bytes are always stripped.\n");
       if (!bIsHexFind)
@@ -53404,7 +53670,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      stripped, and all lines after the first line must start with\n"
              "      the separator character, or a space (not tab). multi line\n"
              "      commands must end with a dot '.' after the final separator.\n"
-             "      search patterns for xfind or xtext must end with /[all]\\n/\n"
+             "      search patterns for xfind(bin) must end with /[all]\\n/\n"
              "      if output text is not reformatted.\n"
              "      To keep whitespace at line start use \"\\ \" for a blank.\n"
              "      example: extract ID3v1 data from an .mp3 file\n"
@@ -53623,45 +53889,45 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         replace binary data with hex values 0x66, 0x6f, 0x6f\n"
              "         by data with values 0x62, 0x61, 0x72 in all .dat files.\n");
 
-      if (bhelp || bIsXFind)
-      printx("      #sfk xfind in.dat \"/foo[0.100 bytes of (a-z0-9_@ )]bar/\"\n"
+      if (bhelp || bIsXFBin)
+      printx("      #sfk xfindbin in.dat \"/foo[0.100 bytes of (a-z0-9_@ )]bar/\"\n"
              "         searches a single input file in.dat for all phrases\n"
              "         starting foo and ending bar, with 0 to 100 characters\n"
              "         inbetween being alphanumeric, @ or _ or space.\n"
-             "      #sfk xfind -text \"/foo*bar/[part2]\\n\" -dir mydir -file .txt\n"
+             "      #sfk xfindbin -text \"/foo*bar/[part2]\\n\" -dir mydir -file .txt\n"
              "         find foo*bar in all .txt files of folder mydir\n"
              "         but print only the text between foo and bar.\n"
-             "      #sfk xfind -text \"/\\x66\\x6f\\x6f[0.100 bytes]\\x62\\x61\\x72/\"\n"
+             "      #sfk xfindbin -text \"/\\x66\\x6f\\x6f[0.100 bytes]\\x62\\x61\\x72/\"\n"
              "       #-dir mydir -file .exe +view\n"
              "         find binary data starting with bytes 0x66, 0x6f, 0x6f,\n"
              "         ending with 0x62, 0x61, 0x72 and up to 100 bytes inbetween\n"
              "         in all .exe files of mydir and show result in dview. [14]\n"
-             "      #sfk xfind -arc in.zip \"/class*/\"\n"
+             "      #sfk xfindbin -arc in.zip \"/class*/\"\n"
              "         XE: find phrases starting with \"class\" in .zip contents\n"
              #ifdef _WIN32
-             "      #sfk xfind -justrc result.txt \"/error/\"\n"
+             "      #sfk xfindbin -justrc result.txt \"/error/\"\n"
              "      #IF %%ERRORLEVEL%%==1 GOTO foundError\n"
              "         in a batchfile: jump to label foundError if \"error\"\n"
              "         is found in result.txt. with -justrc no output is printed.\n"
              #endif
              );
 
-      if (bhelp || bIsXText)
-      printx("      #sfk xtext -pure -text \"/foo*bar/[part2]\\n/\"\n"
+      if (bhelp || bIsXFTex)
+      printx("      #sfk xfind -pure -text \"/foo*bar/[part2]\\n/\"\n"
              "       #-dir mydir -file .txt +view\n"
              "         search foo*bar in all .txt files of folder mydir,\n"
              "         extract the text between foo and bar without any\n"
              "         context (-pure), and display this in dview. [15]\n"
-             "      #sfk xtext -arc in.zip \"/class*/\"\n"
+             "      #sfk xfind -arc in.zip \"/class*/\"\n"
              "         XE: find phrases starting with \"class\" in .zip contents\n"
-             "      #sfk xtext mydir \"/[lstart]---info---[eol]**/[part4]/\"\n"
+             "      #sfk xfind mydir \"/[lstart]---info---[eol]**/[part4]/\"\n"
              "       #-to out<sla><run>file\n"
              "         from all files within mydir extract text after line\n"
              "            $---info---\n"
              "         writing resulting data to files in the out folder.\n"
              "         the $**<def> will collect up to 4000 bytes by default,\n"
              "         use $[1.100000 bytes]<def> to collect more.\n"
-             "      #sfk xtext mydir \"/[skip][3 chars]-foo/\" \"/*/\"\n"
+             "      #sfk xfind mydir \"/[skip][3 chars]-foo/\" \"/*/\"\n"
              "         find all lines not matching a pattern in mydir,\n"
              "         i.e. find lines with wrong format in files.\n"
              );
@@ -53786,7 +54052,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          bGlblHexDumpWide = 1;
 
       // autoselect dump per command
-      if (bIsXFind || bIsXText) { // init
+      if (bIsXFTex || bIsXFBin) { // init
          cs.repDump = 1;
          bforcedump = 1;
          cs.astext  = 1;
@@ -53796,10 +54062,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          cs.litattr = 'e'; // literal highlight attribute
          cs.xfind   = !strcmp(pszCmd, "xfind");
          cs.execweb = 1; // xfind, xtext
-         if (bIsXFind!=0 && strstr(pszConf, "xfind:pure"))
+         if (bIsXFTex!=0 && strstr(pszConf, "xfind:pure"))
             { bUsedContext=1; cs.contextlines = 0; }
          else
-         if (bIsXText!=0 && strstr(pszConf, "xtext:pure"))
+         if (bIsXFBin!=0 && strstr(pszConf, "xfindbin:pure"))
             { bUsedContext=1; cs.contextlines = 0; }
          else
             cs.contextlines = 1; // current line
@@ -53812,7 +54078,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (strEnds(pszCmd, "le"))
             cs.leattr = 'e';
       }
-      if (bIsXText)
+      if (bIsXFTex) // sfk194 new xfind default
          cs.textfiles = 1;
       // changed later in case of -justrc
 
@@ -54189,7 +54455,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          return 9+perr("unexpected: %s\n", argx[iDir]);
          // continue w/next pattern, option or chain cmd.
       }
- 
+
+      if (iIsOFind && cs.travelzips) {
+         perr("ofind -arc is not supported.");
+         return 9;
+      }
+
       if (btest) return 0;
 
       if (cs.verbose && bUsedContext)
@@ -54210,7 +54481,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (cs.nonames)
          cs.noind = 1;
 
-      if (bIsXFind || bIsXText) { // init.2
+      if (bIsXFTex || bIsXFBin) { // init.2
          // chaining to xed: binary only if pure
          if (!bGotPure)
             chain.colbinary = 0;
@@ -54592,7 +54863,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          nGlblError=1;
          return 9;
       }
-      if ((bIsXFind || bIsXText) && cs.hexfind && cs.tomask) {
+      if ((bIsXFTex || bIsXFBin) && cs.hexfind && cs.tomask) {
          perr("-to[file] cannot be used with xfind -hex output.");
          pinf("use \"+tofile filename\" as last parameter to store hex dump output.\n");
          pinf("use \"sfk extract\" to store binary data with option -tofile.\n");
@@ -54628,59 +54899,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             return 9;
       }
 
-      #ifdef WITH_BITFILTER
-      // to speed up search in some cases use a big bitfield
-      if (cs.fastopt > 0)
-      do
-      {
-         if (cs.xpat)
-            return 9+perr("-fast can be used only with replace (not xreplace)\n");
-         if (glblBitFilter.reinit())
-            return 9+perr("out of memory\n");
- 
-         // init the 3char sequences start filter field
-         int iminlen=0, imaxlen=0;
-         for (int iPat=0; iPat<nBinRepExp; iPat++)
-         {
-            uchar *pPatText = apRepSrcExp[iPat];
-            int   nPatLen   = apRepSrcLen[iPat];
-            int   nPatFlags = apRepFlags[iPat];
-            bool   bUseCase = (nPatFlags & (1<<2)) ? 1 : 0;
-            uchar *pFlags   = apRepSrcBit[iPat]; // can be NULL
-            uint  nPatStart = 0;
-            if (iminlen==0 || nPatLen<iminlen) iminlen=nPatLen;
-            if (imaxlen==0 || nPatLen>imaxlen) imaxlen=nPatLen;
-            if (nPatLen < 1)
-               continue;
-            switch (nPatLen)
-            {
-               case 1: nPatStart =    (((uint)pPatText[0]) << 16);
-                       glblBitFilter.setbits(nPatStart, 1, bUseCase, pFlags);
-                       break;
- 
-               case 2: nPatStart =    (((uint)pPatText[0]) << 16)
-                                   |  (((uint)pPatText[1]) <<  8);
-                       glblBitFilter.setbits(nPatStart, 2, bUseCase, pFlags);
-                       break;
- 
-               default:nPatStart =    (((uint)pPatText[0]) << 16)
-                                   |  (((uint)pPatText[1]) <<  8)
-                                   |  (((uint)pPatText[2]) <<  0);
-                       glblBitFilter.setbits(nPatStart, 3, bUseCase, pFlags);
-                       break;
-            }
-         }
-         // now bitfilter provides maxlen from 0 to 3
-         if (glblBitFilter.maxlen >= 2)
-            cs.fastopt = 2; // use full lookup
-
-         if (cs.verbose)
-            printf("using -fast mode %d. pattern minlen=%d maxlen=%d\n", cs.fastopt, iminlen, imaxlen);
-      }
-      while (0);
-      #endif // WITH_BITFILTER
-
-      if (bIsXFind || bIsXText) { // init.3
+      if (bIsXFTex || bIsXFBin) { // init.3
          if (pGlblDumpBuf) {
             delete [] pGlblDumpBuf;
             iGlblDumpBufSize = 0;
@@ -54961,8 +55180,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      depending on the input data and search/replace expressions,\n"
              "      it can happen that running the same replace multiple times\n"
              "      on the same stream produces further hits that didn't exist\n"
-             "      in the first run. read the sfk xtext extended help text\n"
-             "      by \"sfk xtext -full\" for details.\n"
+             "      in the first run. read the sfk replace extended help text\n"
+             "      by \"sfk replace -full\" for details.\n"
              "\n");
       printx("   $quoted multi line parameters are supported in scripts\n" // xed
              "      using full trim. type \"sfk script\" for details.\n"
@@ -55724,6 +55943,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                      break;
                   if (ipass) {
                      *pDstCur++ = *pSrcCur++;
+                     if (pInAttr && pOutAttr) // fix sfk194 xed nopat unwanted color
+                        pOutAttr[pDstCur-pOutText] = pInAttr[pSrcCur-pInText];
                   } else {
                      pSrcCur++;
                      nOutSize++;
@@ -55925,27 +56146,75 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
  
-   // .
-   ifcmd (!strcmp(pszCmd, "load"))
+   int iIsOLoad = 0;
+
+   ifcmd (   !strcmp(pszCmd, "load")
+          || (bGlblOffice && !strcmp(pszCmd, "oload")) // internal
+         )
    {
+
       ifhelp (nparm < 1)
+      if (iIsOLoad)
+      {
+      printx("<help>$sfk oload in.docx +...\n"
+             "\n"
+             "   load office file content as plain text,\n"
+             "   for easy display or further processing.\n"
+             "\n");
+      printx("   $about line wrapping\n"
+             "\n"
+             "   - when sending to a command that expects\n"
+             "     text lines like\n"
+             "        $sfk oload in.xlsx +filter ...\n"
+             "     then long lines or stream text will be\n"
+             "     hard wrapped at %d characters.\n"
+             "\n"
+             "   - when sending to stream capable commands\n"
+             "     like xed and xex data is not wrapped.\n"
+             "\n"
+             , (int)MAX_LINE_LEN);
+      printx("   $see also\n"
+             "      #sfk help office<def>  supported office file types\n"
+             "      #sfk xex<def>          extract phrases from text\n"
+             "      #sfk ofilter<def>      get lines from office file\n"
+             "\n");
+      printx("   $examples\n"
+             "      #sfk oload in.docx\n"
+             "         display contents of a .docx word file\n"
+             "      #sfk oload in.xlsx\n"
+             "         display spreadsheet table data as plain text\n"
+             "      #sfk oload in.xlsx +filter -+foo\n"
+             "         get all lines with 'foo' from a table\n"
+             "      #sfk oload in.docx +xex \"/foo**bar/\"\n"
+             "         extract multi line blocks from a word file\n"
+             "         starting with foo and ending with bar\n"
+             "      #sfk oload in.xlsx +filt -no-empty-lines +tabtocsv\n"
+             "         get records from a table, drop empty lines,\n"
+             "         then convert from tabs to comma separated data.\n"
+             );
+      }
+      else
+      {
       printx("<help>$sfk load in.txt +...\n"
              "\n"
              "   load text or binary data for further processing\n"
              "   within a command chain.\n"
              "\n"
+             "   use oload to load a single office file content\n"
+             "   like .docx .xlsx .ods .odt as plain text.\n"
+             "\n");
+      printx("   $about line wrapping\n"
+             "\n"
              "   - when sending to a command that expects\n"
              "     text lines like\n"
-             "\n"
-             "        $sfk load in.txt +filter ...\n"
-             "\n"
+             "        $sfk oload in.xlsx +filter ...\n"
              "     then long lines or stream text will be\n"
              "     hard wrapped at %d characters.\n"
-             , (int)MAX_LINE_LEN);
-      printx("\n"
-             "   - when sending to binary capable commands\n"
+             "\n"
+             "   - when sending to stream capable commands\n"
              "     like xed and xex data is not wrapped.\n"
-             "\n");
+             "\n"
+             , (int)MAX_LINE_LEN);
       printx("   $see also\n"
              "      #sfk xex<def>     load and extract any data\n"
              "      #sfk filter<def>  load and filter text lines\n"
@@ -55957,6 +56226,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk load in.txt +sort\n"
              "         sort the text lines of in.txt\n"
              );
+      }
       ehelp;
 
       sfkarg;
@@ -55987,6 +56257,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             continue;
          }
          return 9+perr("unexpected: %s\n",pszArg);
+      }
+
+      if (iIsOLoad && pszFile) {
+         Coi ocoi(pszFile, 0);
+         if (ocoi.isZipSubEntry()) // sfk194
+            return 9+perr("oload cannot be used with nested archive contents.");
       }
 
       uchar *pData = 0;

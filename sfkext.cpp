@@ -40,6 +40,10 @@
 
 #define SFKNEWDUMP
 
+uint   glblFromTCPPort    = -1;
+SOCKET glblFromTCPASocket = INVALID_SOCKET;
+SOCKET glblFromTCPCSocket = INVALID_SOCKET;
+
 extern struct CommandStats gs;
 extern struct CommandStats cs;
 extern struct CommandStats cspre;
@@ -133,6 +137,13 @@ bool isEmpty(char *psz);
 bool  strbeg(char *pszStr, cchar *pszPat);
 bool  stribeg(char *psz, cchar *pstart);
 void setSystemSlashes(char *pdst);
+int makeServerSocket(
+   uint  &nNewPort,                // i/o parm
+   struct sockaddr_in &ServerAdr,   // i/o parm
+   SOCKET &hServSock,
+   cchar  *pszInfo,
+   uint  nAltPort=0                // e.g. 2121 for ftp
+   );
 
 #ifdef SFKWINST
 int makeDeskIcon(HWND hwnd, char *pszTarget, char *pszShortCutName,
@@ -11736,9 +11747,10 @@ int execFixFile(ushort *ain, sfkfinddata64_t *pdata)
 
    mytime_t now = mytime(NULL);
    struct tm *tm = 0;
-   tm = mylocaltime(&now);
-   tm->tm_isdst = -1;
+   tm = mylocaltime(&now); // safe
+   if (tm == 0) return 9+perr("cannot get time"); // safety
 
+   tm->tm_isdst = -1;
    tm->tm_year = adate[0] - 1900;
    tm->tm_mon  = adate[1] - 1;
    tm->tm_mday = adate[2];
@@ -15300,8 +15312,10 @@ void SFKPic::setpix(uint x, uint y, uint c)
    if (!octl.ppix)
       return;
    uint ioff = y * octl.width + x;
-   if (ioff >= octl.npix)
+   if (ioff >= octl.npix) {
+      // printf("setpix.err\n");
       return;
+   }
    octl.ppix[ioff] = c;
 }
 
@@ -15310,8 +15324,10 @@ uint SFKPic::getpix(uint x, uint y)
    if (!octl.ppix)
       return 0;
    uint ioff = y * octl.width + x;
-   if (ioff >= octl.npix)
+   if (ioff >= octl.npix) {
+      // printf("getpix.err\n");
       return 0;
+   }
    return octl.ppix[ioff];
 }
 
@@ -15321,6 +15337,18 @@ void SFKPic::copyFrom(SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst
       return;
    if (!octl.npix) { perr("copyFrom target npix error"); return; }
    if (!pSrc->octl.npix) { perr("copyFrom source npix error"); return; }
+
+   if (wsrc==wdst && hsrc==hdst)
+   {
+      for (int i=0; i<wdst; i++) {
+         for (int k=0; k<hdst; k++) {
+            setpix(x1dst+i,y1dst+k,pSrc->getpix(x1src+i,y1src+k));
+         }
+      }
+      return;
+   }
+
+   // todo: total failure if source offset is nonzero!
 
    uint iSrcWidth        = wsrc;
    uint iSrcHeight       = hsrc;
@@ -15341,6 +15369,8 @@ void SFKPic::copyFrom(SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst
    double r1, g1, b1, a1 = 0;
    double r2, g2, b2, a2 = 0;
  
+   int e1=0,e2=0;
+
    for (uint dsty = 0; dsty < iDstHeight; dsty++)
    {
       srcpixy  = double(dsty) * HFactor;
@@ -15349,6 +15379,8 @@ void SFKPic::copyFrom(SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst
 
       dy  = srcpixy - (uint)srcpixy;
       dy1 = 1.0 - dy;
+
+      int e1=0,e2=0;
 
       for (uint dstx = 0; dstx < iDstWidth; dstx++)
       {
@@ -15365,10 +15397,10 @@ void SFKPic::copyFrom(SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst
          uint y_offset1 = srcpixy1 > srcpixymax ? srcpixymax : (uint)srcpixy1;
          uint y_offset2 = srcpixy2 > srcpixymax ? srcpixymax : (uint)srcpixy2;
 
-         if (x_offset1 >= iSrcWidth ) break;
-         if (x_offset2 >= iSrcWidth ) break;
-         if (y_offset1 >= iSrcHeight) break;
-         if (y_offset2 >= iSrcHeight) break;
+         if (x_offset1 >= iSrcWidth ) {e1++; break;}
+         if (x_offset2 >= iSrcWidth ) {e1++; break;}
+         if (y_offset1 >= iSrcHeight) {e1++; break;}
+         if (y_offset2 >= iSrcHeight) {e1++; break;}
  
          uint csrc1 = pSrc->getpix(x_offset1, y_offset1);
          uint csrc2 = pSrc->getpix(x_offset2, y_offset1);
@@ -15393,7 +15425,7 @@ void SFKPic::copyFrom(SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst
          dst_off = dst_y1 * octl.width + dst_x1;
 
          if (dst_off < 0 || dst_off > octl.npix)
-            break;
+            {e2++; break;}
 
          uchar rdst = (uchar)(r1 * dy1 + r2 * dy);
          uchar gdst = (uchar)(g1 * dy1 + g2 * dy);
@@ -15404,6 +15436,7 @@ void SFKPic::copyFrom(SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst
          setpix(dst_x1, dst_y1, pix(adst, rdst,gdst,bdst));
       }
    }
+   // if (e1 || e2) printf("copypix.err: %d %d\n",e1,e2);
 }
 
 #endif // SFKPIC
@@ -15840,7 +15873,9 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
 
    #ifdef _WIN32
    // handle sfk sel ... +zipto
-   if (cs.bzipto==1 && cspre.uname==0) {
+   // sfk1935: fix double conversion by iLevel check
+   if (cs.bzipto==1 && cspre.uname==0 && iLevel==0)
+   {
       // filename list was passed, pin has no utf so far.
       // actively convert to utf-8.
       ansiToUTF(szAbsNameUTF, SFK_MAX_PATH, pszToPackName);
@@ -15914,6 +15949,9 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
          if (glblZipDirs.find(szAbsPathUTF) != -1)
             break;
          Coi otmp(szAbsPathUTF,0);
+         otmp.getSize(); // force reading now sfk1935
+         otmp.getTime(); // force reading now
+         // printf("maketmp1: %s %s level=%d\n",szAbsPathUTF,numtoa(otmp.getSize()),iLevel);
          execZipFile(&otmp,1,iLevel+1);
       }
       else 
@@ -15949,6 +15987,9 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
 
             // then add parent dir first
             Coi otmp(szParPathUTF,0);
+            otmp.getSize(); // force reading now sfk1935
+            otmp.getTime(); // force reading now
+            // printf("maketmp2: %s %s level=%d\n",szParPathUTF,numtoa(otmp.getSize()),iLevel);
             execZipFile(&otmp,1,iLevel+1);
          } while (0);
 
@@ -16133,19 +16174,20 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
    num nTotalIn = pin->getSize();
    num nInTime1 = pin->getTime();
 
-   num nInTime2     = nInTime1;
+   num nInTime2 = nInTime1;
 
    if (cs.mofftime != 0)
    do
    {
       int iFileInDst   = 0;
       mytime_t ntfile  = (mytime_t)nInTime1;
-      struct tm *mytm  = mylocaltime(&ntfile);
+      struct tm *mytm  = mylocaltime(&ntfile); // safe
       if (!mytm) break;
       iFileInDst       = mytm->tm_isdst;
 
       mytime_t   nnow  = mytime(NULL);
-      struct tm *pnow  = mylocaltime(&nnow);
+      struct tm *pnow  = mylocaltime(&nnow); // safe
+      if (!pnow) return 9+perr("cannot get time");
       if (pnow->tm_isdst) {
          // computer is in DST
          if (iFileInDst == 0 && nInTime2 >= 3600) {
@@ -16300,13 +16342,19 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
    num nTimeForDos = (cs.mofftime & 1) ? nInTime2 : nInTime1;
 
    mytime_t now        = (mytime_t)nTimeForDos;
-   struct tm *mytm     = mylocaltime(&now);
-   zi.tmz_date.tm_sec  = mytm->tm_sec;
-   zi.tmz_date.tm_min  = mytm->tm_min;
-   zi.tmz_date.tm_hour = mytm->tm_hour;
-   zi.tmz_date.tm_mday = mytm->tm_mday;
-   zi.tmz_date.tm_mon  = mytm->tm_mon ;
-   zi.tmz_date.tm_year = mytm->tm_year;
+   struct tm *mytm     = mylocaltime(&now); // safe
+
+   if (!mytm) { // fix sfk1935 crash on umlaut folders
+      if (cs.verbose)
+         pinf("cannot store dos time %s for %s\n", numtoa(nTimeForDos), szInZipNameOEM);
+   } else {
+      zi.tmz_date.tm_sec  = mytm->tm_sec;
+      zi.tmz_date.tm_min  = mytm->tm_min;
+      zi.tmz_date.tm_hour = mytm->tm_hour;
+      zi.tmz_date.tm_mday = mytm->tm_mday;
+      zi.tmz_date.tm_mon  = mytm->tm_mon ;
+      zi.tmz_date.tm_year = mytm->tm_year;
+   }
 
    /*
    {
@@ -16507,8 +16555,8 @@ void getExtraTags(uchar abExtra[], uint nMaxExtra, unum aTimes[], int &b64size, 
       if (nextag == 0)
          break;
 
-      if (cs.verbose >= 2) {
-         printf("  tag: 0x%04x len=%02u %s\n", 
+      if (cs.verbose >= 3) { // sfk194
+         printf("  ziptag: 0x%04x len=%02u %s\n", 
             nextag, nexlen, dataAsHex(pcur,4+nexlen));
       }
 
@@ -16820,6 +16868,10 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice,
    if (!fileExists(pszInFile))
       return 9+perr("cannot read: %s\n",pszInFile);
 
+   // safety: display filename now in case of read crash
+   if (cs.verbose)
+      info.setAction("read", pszInFile, "", 0); // sfk194 unzip safe info
+
    int irc  = 0;
 
    int iout = 0;
@@ -16840,6 +16892,8 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice,
       return 9+perr("out of memory");
 
    UCharAutoDel odel(buf);
+
+   // char *a=0; *a='\0'; // crash test
 
    unzFile uf = unzOpen64(pszInFile);
    if (uf == 0) {
@@ -17041,12 +17095,12 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice,
       {
          int iFileInDst   = 0;
          mytime_t ntfile  = (mytime_t)nFileTime;
-         struct tm *mytm  = mylocaltime(&ntfile);
+         struct tm *mytm  = mylocaltime(&ntfile); // safe
          if (!mytm) break;
          iFileInDst       = mytm->tm_isdst;
 
          mytime_t   nnow  = mytime(NULL);
-         struct tm *pnow  = mylocaltime(&nnow);
+         struct tm *pnow  = mylocaltime(&nnow); // safe
          if (!pnow) break;
          if (pnow->tm_isdst) {
             // computer is in DST
@@ -17683,6 +17737,9 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice,
    }
 
    cs.uname = buname;
+
+   if (cs.verbose)
+      info.clear(); // sfk194 due to safe name print
 
    return irc;
 }
@@ -20363,7 +20420,7 @@ public:
 private:
    char     szClName[100];
    char     szClOpt[100];
-   char     szClCont[1024];
+   char     szClCont[8192];
    char     szClBuf[100];
    char     szClBuf2[200];
    // int      astatic[100];
@@ -20445,6 +20502,11 @@ void Symbol::collect(char *pszContent)
 {
    szLineBuf2[0] = '\0';
    copyFromFormText(pszContent, strlen(pszContent), szLineBuf2, MAX_LINE_LEN, 2);
+
+   if (strlen(szClCont) + strlen(szLineBuf2) + 10 > sizeof(szClCont)) {
+      printf("buffer overflow, %s cannot add: %s\n", szClName, dataAsTrace(szLineBuf2));
+      return;
+   }
 
    if (cs.debug)
       printf("   %s collects \"%s\"\n", szClName, szLineBuf2);
@@ -21215,13 +21277,14 @@ fprintf(fGlblOut,
 void printSearchReplaceCommands(bool bNoBlankLine)
 {
 printx("   $see also\n"
-       "      #sfk xfind<def>     search  wildcard text in   text/binary files\n"
-       "      #sfk xtext<def>     search  wildcard text in   text files  only\n"
+       "      #sfk xfind<def>     search  wildcard text in   plain text files\n"
+       "      #sfk ofind<def>     search  in office files    .docx .xlsx .ods\n"
+       "      #sfk xfindbin<def>  search  wildcard text in   text/binary files\n"
        "      #sfk xhexfind<def>  search  in text/binary with hex dump output\n"
        "      #sfk extract<def>   extract wildcard data from text/binary files\n"
        "      #sfk filter<def>    filter  and edit text with simple wildcards\n"
-       "      #sfk find<def>      search  fixed    text in   text/binary files\n"
-       "      #sfk ftext<def>     search  fixed    text in   text        files\n"
+       "      #sfk find<def>      search  fixed    text in   text        files\n"
+       "      #sfk findbin<def>   search  fixed    text in   text/binary files\n"
        "      #sfk hexfind<def>   search  fixed    text in        binary files\n"
        "      #sfk replace<def>   replace fixed    text in   text/binary files\n"
        "%s",
@@ -21572,7 +21635,7 @@ void webref(cchar *pszIn);
 void arcinf(int iind);
 
 // .
-void printHelpText(cchar *pszSub, bool bhelp, bool bext)
+void printHelpText(cchar *pszSub, bool bhelp, int bext)
 {
 
    if (!strcmp(pszSub, "xe"))
@@ -21600,13 +21663,19 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "\n"
          "   under xe, the following commands provide zip processing:\n"
          "\n"
-         "      find, hexfind, xfind, xtext, xhexfind, extract,\n"
-         "      list, filter, snapto\n"
+         "      find, findbin, hexfind, xfind, xfindbin, xhexfind,\n"
+         "      extract, list, filter, snapto\n"
          "\n"
          "   as usual, the output of such commands (text streams or filename lists)\n"
          "   can be processed by subsequent chain commands, just as with sfk base.\n"
          "\n"
          "   $LIMITATIONS:\n"
+         "\n"
+         "    - sfk xe can NOT extract office file text content embedded\n"
+         "      in archive files, like in myarc.zip\\\\mytext.docx\n"
+         "      i.e. it can do exactly the same office search as sfk base\n"
+         "      but not more. xe can search raw xml data embedded in\n"
+         "      nested archives, though, using xfind -arc\n"
          "\n"
          "    - zip file contents #must fit completely into memory<def>.\n"
          "      in general, zip files below 100 mb should be ok.\n"
@@ -22011,14 +22080,19 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
 
    if (!strcmp(pszSub, "filter"))
    {
-      bool wfilt = bext;
+      bool wfilt = (bext&1)?1:0;
+      bool ofilt = (bext&2)?1:0;
       printx("<help>$sfk filter [fileOrDir] -selectoption(s) -processoption(s)\n"
              "$sfk filt -selectoption(s) -processoption(s) -dir mydir -file .ext1 .ext2\n"
              "$sfk filter [-memlimit=n] -write inoutfile -replacepattern(s)\n"
+             "$sfk ofilter in.xlsx -+pattern\n"
              "\n"
              "   filter and change text lines, from standard input, or from file(s).\n"
-             "   input lines may have a maximum length of %u characters.\n",
-             (uint)(MAX_LINE_LEN-96)
+             "   input lines may have a maximum length of %u characters.\n"
+             "\n"
+             "   use ofilter to read plain text content from a single office\n"
+             "   file like .docx .xls .ods ('sfk help office' for more).\n"
+             , (uint)(MAX_LINE_LEN-96)
              );
       printx("\n"
              "   $line selection options\n"
@@ -22243,7 +22317,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
                 "\n");
       }
       printBewareWide();
-      if (!wfilt)
+      if (!wfilt && !ofilt)
       webref("filter");
       if (wfilt)
       {
@@ -22267,6 +22341,19 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "            $<row name=\"rc\">0</row>\n"
              "      #sfk wfilt .100 -inc \"\\<head>\" to \"</head>\"\n"
              "         extracts the html page head section from local IP .100\n"
+             );
+      }
+      else if (ofilt)
+      {
+      printx("   $see also\n"
+             "      #sfk filter<def>    for more filtering examples\n"
+             "\n");
+      printx("   $examples\n"
+             "      #sfk ofilter in.docx -+foo\n"
+             "         get all lines from in.docx containing foo\n"
+             "      #sfk ofilt in.xlsx -+apple -stabform <run>col2\\t<run>col3\n"
+             "         get table rows containing 'apple',\n"
+             "         then use only columns 2 and 3.\n"
              );
       }
       else
@@ -28960,6 +29047,181 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   if (!strcmp(pszCmd, "fromtcp")) // internal
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk fromtcp port\n"
+             "\n"
+             "   receive data from tcp and pass it\n"
+             "   to the next chain command.\n"
+             "   use replytcp to send a reply.\n"
+             "\n"
+             "   $options\n"
+             "      -close     close connection after first\n"
+             "                 data received (no replytcp\n"
+             "                 possible).\n"
+             "      -tolines   force output as text lines\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool bclose=0;
+
+      int iPort=-1;
+      struct sockaddr_in ServerAdr;
+      struct sockaddr_in ClientAdr;
+      socklen_t nSoLen = sizeof(sockaddr_in);
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strcmp(argx[iDir], "-tolines"))
+            { cs.collines = 1; continue; }
+         if (!strcmp(argx[iDir], "-close"))
+            { bclose = 1; continue; }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (iPort==-1)
+            { iPort=atoi(pszArg); continue; }
+         return 9+pbad(pszCmd, pszArg);
+      }
+
+      if (iPort==-1) 
+         return 9+perr("missing port");
+      if (glblFromTCPPort != -1 && glblFromTCPPort != iPort)
+         return 9+perr("port change not supported");
+
+      if (glblFromTCPPort == -1) 
+      {
+         glblFromTCPPort = iPort;
+         prepareTCP();
+         if (makeServerSocket(glblFromTCPPort, ServerAdr, glblFromTCPASocket, "fromtcp"))
+            return 9;
+      }
+
+      // accept socket is now available.
+      if (cs.verbose) printf("fromtcp: waiting for accept on %d\n", glblFromTCPPort);
+
+      int nRead = 0;
+
+      while (1)
+      {
+         while (1) {
+            glblFromTCPCSocket = accept(glblFromTCPASocket, (struct sockaddr *)&ClientAdr, &nSoLen);
+            if (glblFromTCPCSocket == INVALID_SOCKET) {
+               int nerr = netErrno();
+               if (nerr == WSAEWOULDBLOCK)
+                  { doSleep(50); continue; }
+               return 9+perr("fromtcp accept failed");
+            }
+            if (cs.verbose) printf("fromtcp: got connection\n");
+            break;
+         }
+   
+         // client socket is now available.
+         while (1) {
+            nRead = recv(glblFromTCPCSocket, (char*)abBuf, sizeof(abBuf)-10, 0);
+            if (nRead < 0) {
+               pinf("fromtcp: no data, closing socket\n");
+               closesocket(glblFromTCPCSocket);
+               glblFromTCPCSocket = INVALID_SOCKET;
+               break;
+            }
+            if (nRead == 0)
+               { doSleep(50); continue; }
+            if (bclose) {
+               closesocket(glblFromTCPCSocket);
+               glblFromTCPCSocket = INVALID_SOCKET;
+            }
+            break;
+         }
+
+         if (nRead > 0)
+            break;
+      }
+
+      if (cs.verbose) printf("fromtcp: got %d bytes request\n", nRead);
+
+      if (chain.coldata && chain.colbinary && !cs.collines)
+         chain.addBinary(abBuf, nRead);
+      else
+         chain.print("%s",(char*)abBuf);
+
+      // client socket stays open until replytcp.
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "replytcp")) // internal
+   {
+      ifhelp (argc <= 2 || (nparm >= 1 && isHelpOpt(argv[iDir])))
+      printx("<help>$sfk ... +replytcp\n"
+             "\n"
+             "   send chain data as a reply\n"
+             "   after fromtcp.\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk fromtcp 5000 +replytcp +loop\n"
+             "         echo tcp data received on port 5000\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         return 9+pbad(pszCmd, pszArg);
+      }
+
+      if (!chain.useany())
+         return 9+perr("missing chain data");
+
+      if (glblFromTCPCSocket == INVALID_SOCKET)
+         return 9+perr("missing fromtcp");
+
+      // client socket is available.
+
+      uchar *pInText = 0;
+      num    nInSize = 0;
+      if (loadInput(&pInText, 0, &nInSize, 0,0,0))
+         return 9;
+
+      UCharAutoDel odel(pInText);
+
+      if (cs.verbose) printf("send %d bytes reply: %s\n",(int)nInSize, dataAsTrace(pInText,(int)nInSize));
+
+      int nSent = send(glblFromTCPCSocket, (char*)pInText, nInSize, 0);
+      if (nSent != nInSize)
+         return 9+perr("replytcp cannot fully send");
+
+      doSleep(20);
+
+      closesocket(glblFromTCPCSocket);
+      glblFromTCPCSocket = INVALID_SOCKET;
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
    #ifdef SFKNEWDUMP
    ifcmd (   strBegins(pszCmd, "hexdump") // +wref
           || strBegins(pszCmd, "fhexdump")
@@ -29752,7 +30014,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             num nTime = mytime(NULL);
             struct tm *pLocTime = 0;
             mytime_t nTime2 = (mytime_t)nTime;
-            pLocTime = mylocaltime(&nTime2);      // may be NULL
+            pLocTime = mylocaltime(&nTime2); // safe, may be NULL
             if (pLocTime) {
                strftime(szTime, sizeof(szTime), "%H:%M", pLocTime);
             }
@@ -33113,6 +33375,287 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       bDone = 1;
    }
+
+   if (!strcmp(pszCmd, "joinpic")
+       || !strcmp(pszCmd, "fjoinpic")
+      )
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk [f]joinpic [inbase] maxoutwidth outbase\n"
+             "\n"
+             "   $see also\n"
+             "      sfk splitpic\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk joinpic a0 3000 edit\n"
+             "         join a01.png to a09.png into edit.png\n"
+             "         with a maximum width of 3000 pixels.\n"
+             "\n"
+             "      #sfk sel mydir .png +fjoinpic 3000 edit\n"
+             "         create edit.png combining selected images,\n"
+             "         with a maximum width of 3000 pixels.\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool bflist = strcmp(pszCmd, "fjoinpic") ? 0 : 1;
+
+      sfkPicAllocCallback = sfkPicAllocFunc;
+
+      char *pszinbase=0, *pszoutbase=0;
+      int   wtotal=0,htotal=0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!bflist && !pszinbase)
+            { pszinbase=pszArg; continue; }
+         if (!wtotal)
+            { wtotal=atoi(pszArg); continue; }
+         if (!pszoutbase)
+            { pszoutbase=pszArg; continue; }
+         return 9+pbad(pszCmd, pszArg);
+      }
+
+      if (!cs.yes)
+         printx("$[simulating:]\n");
+
+      char szin[SFK_MAX_PATH+20];
+      char szout[SFK_MAX_PATH+20];
+      char szmeta[SFK_MAX_PATH+20];
+
+      SFKPic oin,ototal;
+      int wmax=0,nmax=0;
+
+      sprintf(szmeta,"%s-sfkgeo.txt",pszoutbase);
+      FILE *fmeta=0;
+
+      if (cs.yes) {
+         fmeta=fopen(szmeta,"wb");
+         if (!fmeta)
+            return 9+perr("cannot write: %s",szmeta);
+      } else {
+         if (fileExists(szmeta))
+            printx("<warn>would replace:<def> %s\n",szmeta);
+      }
+
+      int npass = cs.yes ? 2 : 1;
+      for (int ipass=0; ipass<npass; ipass++)
+      {
+         int xcur=0,ycur=0,hrow=0,ncur=0;
+         int win=0,hin=0;
+
+         if (ipass) {
+            if (ototal.allocpix(wmax+32,htotal))
+               return 9+perr("cannot allocate image");
+         }
+
+         for (int iin=0; iin<100; iin++)
+         {
+            if (bflist) {
+               if (iin>=chain.numberOfInFiles())
+                  break;
+               Coi *pcoi = chain.getFile(iin);
+               if (!pcoi) break;
+               strcopy(szin,pcoi->name());
+            } else {
+               sprintf(szin, "%s%d.png", pszinbase,iin);
+            }
+
+            if (!fileExists(szin)) {
+               if (iin==0)
+                  return 9+perr("no such file: %s",szin);
+               break;
+            }
+            if (oin.load(szin))
+               return 9+perr("cannot load: %s",szin);
+            win=oin.octl.width;
+            hin=oin.octl.height;
+            if (win>wtotal)
+               return 9+perr("image too large: %s",szin);
+
+            if (xcur+win > wtotal)
+               { xcur=0; ycur+=hrow; hrow=0; ncur=0; }
+
+            hrow=mymax(hrow,hin);
+
+            if (ipass==0)
+               printf("add %04dx%04d at %04d %04d %s\n",win,hin,xcur,ycur,szin);
+            else {
+               // printf("cpy %04dx%04d at %04d %04d %s\n",win,hin,xcur,ycur,szin);
+               // todo: exact copy with unaligned widths
+               ototal.copyFrom(&oin,xcur,ycur,win-2,hin,0,0,win-2,hin);
+               fprintf(fmeta,"%d %d %d %d %s\n",xcur,ycur,win,hin,szin);
+            }
+
+            xcur += win;
+            ncur++;
+            xcur = ((xcur/16)+1) * 16;
+
+            wmax = mymax(wmax,xcur);
+            nmax = mymax(nmax,ncur);
+
+            oin.freepix();
+         }
+
+         if (ipass==0) {
+            htotal = ycur+hrow;
+         }
+      }
+ 
+      if (fmeta) {
+         fclose(fmeta);
+         fmeta=0;
+      }
+
+      sprintf(szout,"%s.png",pszoutbase);
+
+      printf("%swrite %s with %04dx%04d and %d columns\n",
+         cs.yes?"":"would ", szout, wmax, htotal, nmax);
+
+      if (cs.yes) {
+         if (ototal.save(szout))
+            return 9;
+         ototal.freepix();
+         printf("write %s\n",szmeta);
+      } else {
+         printx("$[add -yes to write output.]\n");
+      }
+
+      STEP_CHAIN(iChainNext, 0);
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "splitpic"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk splitpic infile outbase\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk splitpic edit out\n"
+             "         load edit.png and edit-sfkgeo.txt\n"
+             "         and extract images to out<sla>filename\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      sfkPicAllocCallback = sfkPicAllocFunc;
+
+      char *pszinbase=0, *pszoutbase=0;
+      int   wtotal=0,htotal=0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pszinbase)
+            { pszinbase=pszArg; continue; }
+         if (!pszoutbase)
+            { pszoutbase=pszArg; continue; }
+         return 9+pbad(pszCmd, pszArg);
+      }
+
+      if (!pszoutbase)
+         return 9+perr("missing output file basename");
+
+      if (!cs.yes)
+         printx("$[simulating:]\n");
+
+      char szin[SFK_MAX_PATH+20];
+      char szrelout[200+20];
+      char szout[SFK_MAX_PATH+20];
+      char szmeta[SFK_MAX_PATH+20];
+
+      SFKPic ototal;
+
+      sprintf(szin,"%s.png",pszinbase);
+      sprintf(szmeta,"%s-sfkgeo.txt",pszinbase);
+
+      FILE *fmeta=fopen(szmeta,"rb");
+      if (!fmeta)
+         return 9+perr("cannot read: %s",szmeta);
+
+      if (ototal.load(szin))
+         return 9;
+
+      int win=ototal.octl.width;
+      int hin=ototal.octl.height;
+      printf("input size %04dx%04d\n",win,hin);
+
+      for (int iout=1; ; iout++)
+      {
+         if (!(fgets(szLineBuf, sizeof(szLineBuf)-10, fmeta)))
+            break;
+         removeCRLF(szLineBuf);
+
+         int x=0,y=0,w=0,h=0;
+         // if (sscanf(szLineBuf,"%d %d %d %d %[^\\t\\n]",&x,&y,&w,&h,szrelout) != 5)
+         //   return 9+perr("unknown line in geo file: %s",szLineBuf);
+         char *psz=szLineBuf;
+         x=atoi(psz); while (*psz!=0 && *psz!=' ') psz++; if (*psz) psz++;
+         y=atoi(psz); while (*psz!=0 && *psz!=' ') psz++; if (*psz) psz++;
+         w=atoi(psz); while (*psz!=0 && *psz!=' ') psz++; if (*psz) psz++;
+         h=atoi(psz); while (*psz!=0 && *psz!=' ') psz++; if (*psz) psz++;
+         strcopy(szrelout,psz);
+
+         char *prel=szrelout+strlen(szrelout);
+         while (prel>szrelout && prel[-1]!='/' && prel[-1]!='\\') prel--;
+         sprintf(szout, "%s%c%s", pszoutbase,glblPathChar,prel);
+
+         if (!cs.yes && fileExists(szout))
+            printx("<warn>would replace:<def> %s\n",szout);
+
+         printf("%swrite from %04d %04d %04dx%04d to %s\n",
+            cs.yes?"":"would ",x,y,w,h,szout);
+
+         if (cs.yes) 
+         {
+            // w = ((w/16)+1)*16;
+            SFKPic oout;
+            oout.allocpix(w,h);
+            // printf("copy w%d h%d <- x%d y%d w%d h%d\n",w,h,x,y,w,h);
+            oout.copyFrom(&ototal, 0,0,w,h, x,y,w,h);
+            if (oout.save(szout))
+               return 9;
+            oout.freepix();
+         }
+      }
+
+      fclose(fmeta);
+      ototal.freepix();
+
+      if (!cs.yes)
+         printx("$[add -yes to write output.]\n");
+
+      STEP_CHAIN(iChainNext, 0);
+
+      bDone = 1;
+   }
+
    #endif // SFKPIC
 
    #ifdef SFKPACK
@@ -33506,7 +34049,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "       and add them to out.zip as a new virtual folder\n"
              "       named 'monday'.\n"
              "\n");
-      printx("     #sfk xtext mydir \"/foo*bar/\" -names +zipto out\n"
+      printx("     #sfk xfind mydir \"/foo*bar/\" -names +zipto out\n"
              "       search all text files in mydir for phrases\n"
              "       starting foo and ending bar. pass the list of\n"
              "       found filenames to zipto, and create out.zip.\n"
@@ -36138,24 +36681,19 @@ int makeDeskIcon(HWND hwnd, char *pszTarget, char *pszShortCutName,
 
 #endif // SFK_JUST_OSE
 
-
-
-
-
-
-
-
-
-// --- xfind ose begin ---
 #if defined(SFK_JUST_OSE)
 
+extern int nGlblConsColumns;
+
+// RC >= 0: bytes consumed from PostCur
+// RC <  0: error
 int dumpWithContext(
    uchar *aContext,
    int    iCtxIdx,
    int    iCtxUsed,
     uchar *pHitOut,
     int    iHitOut,
-     char *pHitAtt,  
+     char *pHitAtt,  // can be NULL
    uchar  *pPostCur,
    uchar  *pPostMax,
    bool    bFirstHit,
@@ -36170,16 +36708,21 @@ int dumpWithContext(
       return -2;
    if (!pPostCur || !pPostMax || pPostCur>pPostMax)
       return -3+perr("int. #215141,%p,%p,%d",pPostCur,pPostMax,(int)(pPostMax-pPostCur));
+
    int  imaxbuf = iGlblDumpBufSize / 2;
    int  imaxcur = imaxbuf - 2000;
    char *atxt = (char*)pGlblDumpBuf;
    char *aatt = (char*)pGlblDumpBuf + imaxbuf;
    int  itxt = 0;
    pGlblDumpBuf[iGlblDumpBufSize] = 1;
+
+   // join all into one buffer with attributes
    int iPostMax = (int)(pPostMax - pPostCur);
    int iPre  = mymin(iCtxUsed, cs.contextchars);
    int iCur  = mymin(iHitOut , imaxcur);
    int iPost = mymin(iPostMax, cs.contextchars);
+
+   // on binary data reduce pre and post context
    if (bIsBinaryData) {
       if (cs.contextlines < 2) {
          iPre   = mymin(iPre , 40);
@@ -36190,7 +36733,10 @@ int dumpWithContext(
          iPost  = mymin(iPost, 40+80*iLines);
       }
    }
+
    bool bToBinary = chain.coldata && chain.colbinary;
+
+   // add pre context
    if (cs.contextlines > 0)
    {
       int iPreLines = 0;
@@ -36214,6 +36760,8 @@ int dumpWithContext(
          itxt++;
       }
    }
+
+   // add synthesized hit output text
    char c = '\0';
    for (int i=0; i<iCur; i++)
    {
@@ -36225,12 +36773,15 @@ int dumpWithContext(
       aatt[itxt] = catt;
       itxt++;
    }
+   // should not occur: add truncation notice
    if (iCur < iHitOut)
    {
       strcpy(atxt+itxt, "[...]");
       strcpy(aatt+itxt, "wwwww");
       itxt += 5;
    }
+
+   // add post context
    int iPostConsumed = 0;
    if (cs.contextlines > 0)
    {
@@ -36250,49 +36801,67 @@ int dumpWithContext(
          }
       }
    }
+ 
+   // force complete line
    if (c != '\n') {
       atxt[itxt] = '\n';
       aatt[itxt] = ' ';
       itxt++;
    }
+
    atxt[itxt] = '\0';
    aatt[itxt] = '\0';
+
    if (pGlblDumpBuf[iGlblDumpBufSize] != 1) {
       perr("buffer overflow in dumpcontext (%d,%d)", pGlblDumpBuf[imaxbuf],imaxbuf);
       pGlblDumpBuf[iGlblDumpBufSize] = '\0';
    }
+
+   // --- print joined text well formatted ---
+
    char *pSrcCur = (char*)atxt;
    char *pSrcMax = (char*)atxt+itxt;
    char *pAttCur = (char*)aatt;
+
    int  iMaxCols = MAX_LINE_LEN;
+
    if (cs.indent > 0 && cs.indent + 32 < nGlblConsColumns)
         iMaxCols = (nGlblConsColumns - 2) - cs.indent;
+
    uchar cSrc = 0;
    char  cAtt = 0;
+
    while (pSrcCur < pSrcMax)
    {
+      // create next output line
       int iDst = 0;
+
       if (cs.indent > 0 && cs.indent < 20)
       {
          memset(szLineBuf, ' ', cs.indent);
          memset(szAttrBuf, ' ', cs.indent);
          iDst = cs.indent;
       }
+
       while (pSrcCur < pSrcMax && iDst<iMaxCols)
       {
          cSrc = (uchar)*pSrcCur++;
          cAtt = *pAttCur++;
+
          #ifdef _WIN32
          if (cSrc == '\r')
             continue;
          #endif
+
          if (cSrc == 0) {
             if (!cs.placeholder)
                continue;
             cSrc = cs.placeholder;
             cAtt = 't';
          }
+
          if (cs.rawterm==0 && cSrc<32) {
+            // strip BEL, BS, EOF
             switch (cSrc) {
                case '\t':
                case '\n':
@@ -36306,14 +36875,18 @@ int dumpWithContext(
                   break;
             }
          }
+
          if (cSrc == '\n')
             break;
+
          szLineBuf[iDst] = (char)cSrc;
          szAttrBuf[iDst] = (char)cAtt;
          iDst++;
       }
+
       szLineBuf[iDst] = '\0';
       szAttrBuf[iDst] = '\0';
+
       if (!cs.justrc)
       {
          if (bToOutFile) {
@@ -36336,28 +36909,37 @@ int dumpWithContext(
          }
       }
    }
+
    return iPostConsumed;
 }
+ 
 void dumpPure(uchar *pDstText, int nDstLen, char *pDstAttr)
 {
    char *pDmpCur = (char*)pDstText;
    char *pDmpMax = (char*)pDmpCur+nDstLen;
-   char *pAttCur = (char*)pDstAttr; 
+   char *pAttCur = (char*)pDstAttr; // or null
    int   iMaxAtt = pAttCur ? strlen(pAttCur) : 0;
+ 
    while (pDmpCur < pDmpMax)
    {
       int iCopy = pDmpMax - pDmpCur;
       if (iCopy > MAX_LINE_LEN)
           iCopy = MAX_LINE_LEN;
+ 
       int iDst=0;
       for (int iSrc=0; iSrc<iCopy; iSrc++)
       {
          uchar cSrc = (uchar)pDmpCur[iSrc];
          char  cAtt = (iSrc < iMaxAtt) ? pAttCur[iSrc] : ' ';
+
+         // if (pDstAttr!=0 && cAtt==' ')
+         //     cAtt = 'a';
+
          #ifdef _WIN32
          if (cSrc == '\r')
             continue;
          #endif
+ 
          if (cSrc == 0) {
             if (cs.placeholder)
                cSrc = cs.placeholder;
@@ -36365,6 +36947,7 @@ void dumpPure(uchar *pDstText, int nDstLen, char *pDstAttr)
                continue;
          }
          if (cs.rawterm==0 && cSrc<32) {
+            // strip BEL, BS, EOF
             switch (cSrc) {
                case '\t':
                case '\n':
@@ -36382,8 +36965,10 @@ void dumpPure(uchar *pDstText, int nDstLen, char *pDstAttr)
          szAttrBuf[iDst] = (char)cAtt;
          iDst++;
       }
+ 
       szLineBuf[iDst] = '\0';
       szAttrBuf[iDst] = '\0';
+ 
       if (iDst > 0) {
          if (cs.litattr) {
             if (chain.coldata)
@@ -36394,21 +36979,35 @@ void dumpPure(uchar *pDstText, int nDstLen, char *pDstAttr)
             chain.print("%s", szLineBuf);
          }
       }
+ 
       pDmpCur += iCopy;
    }
 }
+
 static uchar aContext[SFK_CTX_SIZE+100];
-int execXFind(Coi *pcoi, char *pszOptOutFile)
+
+#ifndef USE_SFK_BASE
+
+/*
+int execXFind(Coi *pcoi,char *pszOptOutFile) {
+*/
+
+int execXFind
+ (
+   Coi *pcoi, 
+   char *pszOptOutFile
+ )
 {__
    int  iRC = 0;
+
    num  nFileSize     = 0;
    num  nInBufferSize = cs.recordsize * 2;
    uchar *pInBuffer   = 0;
    num  nInputUsed    = 0;
    num  nTotalRead    = 0;
    num  nTotalWritten = 0;
-   bool bFileChanged  = 0;
-   num  nFound        = 0;
+   num  nFindHits     = 0;
+   bool bFoundHits  = 0;
    num  nBlockStartInFile = 0;
    int  nPerc=0, nLastPerc=0;
    bool bFileTold=0, bFirstHit=1;
@@ -36417,52 +37016,71 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
    int  iContextUsed  =  0;
    bool bRepDump      = cs.repDump;
    bool bWithContext  = cs.contextlines || cs.indent || cs.szseparator[0];
-   bool bSameLengthAndFile = 0;
-   bool bRepeatRun    = 0;
    num  nstart        = getCurrentTime();
    num  ntold         = nstart;
+
    char szFileHead[SFK_MAX_PATH+100];
+   char szAddInfo[200];
+
    mclear(aContext);
+
    szFileHead[0] = '\0';
    if (cs.usefilehead) {
       char *pmask = cs.szfilehead;
-      if (cs.filesChg==0) { 
+      if (cs.filesChg==0) {
          if (!strncmp(pmask, "\r\n", 2)) pmask += 2;
          else
          if (pmask[0] == '\n') pmask++;
       }
       snprintf(szFileHead, sizeof(szFileHead)-10, pmask, pcoi->name());
+      if (useOfficeBaseNames())
+         stripOfficeName(szFileHead); // xfind file head
    } else {
       bFileTold=1;
    }
+
    if (cs.debug)
       printf("execReplaceNew: %s\n", pcoi->name());
+
    if (cs.recordsize < 1)
       return 9+perr("wrong recordsize value");
+
    char *pszFile = pcoi->name();
+
    if (!pcoi->existsFile())
       return 1+pwarn("unable to read: %s - skipping\n", pszFile);
+
    {
       nFileSize = pcoi->getSize();
+ 
       if (nFileSize < 0)
          return 1+pwarn("unable to read: %s - skipping\n", pszFile);
+ 
       if (nFileSize == 0) {
          if (!cs.xtext && !cs.hexfind)
             pwarn("empty file: %s - skipping\n", pszFile);
          return 0;
       }
    }
+
    FileInfo finf;
    if (finf.init(pszFile, 56)) return 9;
-   cchar *infoAction = "read";
+
+   cchar *infoAction = cs.extract ? "read":"repl";
    info.clearProgress();
    info.setAction(infoAction, pcoi->name(), "", eNoPrint);
+
    Coi *pOutCoi = 0;
+
+
+   // reset hit flags etc.
    for (int i5=0; i5<nBinRepExp; i5++)
    {
       apRepFlags[i5] &= (0xFF ^ (1 << 1));
       apRepOffs[i5] = 0;
    }
+
+   // to speed up search, create start char map
    uchar abProbe[10];
    uchar abStartMap[256+10];
    mclear(abStartMap);
@@ -36472,9 +37090,11 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
       {
          if (!apRepObj)
             return 9+perr("int. #2168312");
+
          for (int iPat=0; iPat<nBinRepExp; iPat++)
          {
             SFKMatch *pObj = &apRepObj[iPat];
+ 
             for (int iCode=0; iCode<256; iCode++)
                abStartMap[iCode] |= pObj->aClHeadMatch[iCode];
          }
@@ -36503,11 +37123,16 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
          }
       }
    }
- do 
+
+ do // main block begin
  {
+   // input buffer holds up to 2 records with overlapping
    if (!(pInBuffer = new uchar[nInBufferSize+1024]))
       { perr("out of memory, record size too large"); iRC=1; break; }
    memset(pInBuffer, 0, nInBufferSize+1024);
+
+   // NO RETURN WITHOUT DELETE BEGIN
+
    {
       if (pcoi->open("rb")) {
          perr("cannot open: %s - skipping", pszFile);
@@ -36515,6 +37140,8 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
          break;
       }
    }
+
+   // main I/O loop
    int  bStart      = 1;
    int  bLineStart  = 1;
    int  bLastRecord = 0;
@@ -36522,15 +37149,23 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
    bool bEOF = false;
    bool bBinaryFile = 0;
    bool bAllThrough = 0;
+
    while (!bStop)
    {
       if (userInterrupt())
          { pinf("interrupted by user.\n"); iRC=2; break; }
+
+      // any further input?
       if (nInputUsed <= 0 && bEOF)
          break;
+
+      // refill input buffer.
+      // state: buffer may now contain remainder data
+      //        from offset 0, nInputUsed bytes.
       num nInBufferRemainSpace = nInBufferSize - nInputUsed;
       if (nInBufferRemainSpace > 0)
       {
+         // refill input buffer
          num nBlockSize = pcoi->read(pInBuffer+nInputUsed, nInBufferRemainSpace);
          if (nBlockSize <= 0)
             bEOF = true;
@@ -36538,25 +37173,40 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
             nInputUsed += nBlockSize;
             nTotalRead += nBlockSize;
             if (bStart && !bBinaryFile) {
+               // 173: detect binary file on first block
                if (memchr(pInBuffer, '\0', nInputUsed))
                   bBinaryFile = 1;
             }
          }
       }
+
       bLastRecord = (nTotalRead >= nFileSize) ? 1 : 0;
+
+      // state: buffer may now contain up to 2 records
+      //        from offset 0, nInputUsed bytes.
+
+      // search patterns in input buffer, up to one record.
       num nSearchRange = cs.recordsize;
       if (nInputUsed < nSearchRange)
          nSearchRange  = nInputUsed;
-      uchar *pCopyFrom = pInBuffer; 
-      uchar *pSrcCur   = pInBuffer; 
+      uchar *pCopyFrom = pInBuffer; // copy to output from
+      uchar *pSrcCur   = pInBuffer; // current source position
+
+      // start of pattern may step until this limit
       uchar *pSrcMax   = pInBuffer + nSearchRange;
+
+      // end of pattern may step until this limit
       uchar *pEndMax   = pInBuffer + nInputUsed;
+
       bool bCurrentBlockChanged = 0;
+
+      // forBufferBytesUpToOneRecord
       while (!bStop && (pSrcCur <= pSrcMax))
       {
          if (pSrcCur == pSrcMax) {
             if (!bLastRecord)
                break;
+            // zero length run just for [end] patterns
          }
          else
          if (!bStart) {
@@ -36570,14 +37220,23 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                continue;
             }
          }
+
+         // may now compare so many pattern bytes
          num nCmpRemain = pEndMax - pSrcCur;
+
+         // printf("X %d %.30s\n",bLineStart,dataAsTrace(pSrcCur,nCmpRemain));
+
+         // forAllSearchPatterns
          int iStepped = 0;
          if (!bAllThrough)
          for (int iPat=0; iPat<nBinRepExp; iPat++)
          {
+            // does current pattern fit into buffer?
             int nPatLen = apRepSrcLen[iPat];
             if (cs.xpat == 0 && nPatLen > nCmpRemain)
                continue;
+
+            // then get rest of source pattern
             uchar *pPatText = apRepSrcExp[iPat];
             int   nPatFlags = apRepFlags[iPat];
             bool   bUseCase = (nPatFlags & (1<<2)) ? 1 : 0;
@@ -36585,15 +37244,18 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
             #ifdef WITH_CASE_XNN
             uchar *pBit     = apRepSrcBit[iPat];
             #endif
+
             int  voff=0;
             bool bskip=0;
+
             if (cs.xpat) {
+               // use parser object instead of flat pattern
                SFKMatch *pObj = &apRepObj[iPat];
                nPatLen = nCmpRemain;
                if (!pObj->matches(pSrcCur, nPatLen, bStart, &bLineStart, bLastRecord)) {
-                  bMatch = true; 
+                  bMatch = true; // nPatLen was changed
                   voff = pObj->viewOffset();
-                  bskip = pObj->bClIsSkipPattern; 
+                  bskip = pObj->bClIsSkipPattern; // sfk193
                }
             }
             else
@@ -36606,29 +37268,38 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                   bMatch = true;
                #endif
             }
+
             if (!bMatch)
                continue;
-            bool buse = bskip ? 0 : 1; 
+
+            bool buse = bskip ? 0 : 1; // sfk193
+
             if (buse) info.clear();
+
+            // get target pattern
             uchar *pDstText = apRepDstExp[iPat];
             int   nDstLen   = apRepDstLen[iPat];
             char  *pDstAttr = 0;
+
             bool bOutHeadDone = 0;
             bool bOutDataDone = 0;
             bool bDumpToText  = (cs.dumpfrom==0 && (nPatFlags & (1 << 3))!=0);
             bool bDumpSingle  = (nPatFlags & (1 << 4)) ? 1 : 0;
             bool bDumpFromText= cs.dumpboth || (bDumpToText ? 0 : 1);
+
             if (buse && cs.xpat)
             {
                SFKMatch *pObj = &apRepObj[iPat];
                int iSubRC = 0;
+
                if (!(pDstText = pObj->renderOutput(nDstLen, iSubRC)))
                   { bStop=true; iRC=9; break; }
                pDstAttr = pObj->outAttr();
-               if (cs.extract) 
+
+               if (cs.extract)
                {
                 if (cs.sim) {
-                  if (pszOptOutFile) { 
+                  if (pszOptOutFile) { // sfk1914
                      printf("would write: %s\n", pszOptOutFile);
                      bOutDataDone = 1;
                   }
@@ -36638,7 +37309,7 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                         { bStop=true; iRC=9; break; }
                      if (!bFileTold) {
                         bFileTold = 1;
-                        if (!cs.nonames && cs.tomaskfile) 
+                        if (!cs.nonames && cs.tomaskfile) // sfk1914
                            addToExtractOutFile((uchar*)szFileHead, strlen(szFileHead));
                      }
                      bOutHeadDone = 1;
@@ -36669,25 +37340,30 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                      }
                   }
                 }
-               } 
+               } // endif extract
             }
+
             if (buse && (cs.verbose >= 2) && nDstLen && !(nPatFlags & (1<<0))) {
                printf("replace @%s: %.*s -> %.*s\n", numtohex(nBlockStartInFile+(pSrcCur-pInBuffer),10),
                   nPatLen, pSrcCur, nDstLen, pDstText);
             }
+
+            // dump search/replace hit
             if (bskip)
                { }
             else
-            if (cs.useJustNames) 
+            if (cs.useJustNames) // 1770
             {
                if (!bFileTold) {
                   bFileTold = 1;
-                  strcopy(szLineBuf3, pcoi->name()); 
+                  strcopy(szLineBuf3, pcoi->name()); // sfk193
                   if (useOfficeBaseNames())
-                     stripOfficeName(szLineBuf3); 
+                     stripOfficeName(szLineBuf3); // xfind -names
                   if (chain.colfiles)
-                     { } 
+                     { } // sfk191 no output here.
                   else if (chain.coldata) {
+                     // note: +view scans extended end of attribute line
+                     //       to identify 'f'ile header lines, therefore +2:
                      setattr(szAttrBuf3, 'f', strlen(szLineBuf3)+2, MAX_LINE_LEN);
                      chain.addLine(szLineBuf3, szAttrBuf3);
                   } else {
@@ -36699,16 +37375,21 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
             else
             if (cs.xtext && !bOutDataDone)
             {
+               // xfind, xtext: optional context dump
+
                if (!bOutHeadDone)
                {
                   if (!bFileTold) {
                      bFileTold = 1;
                      if (!cs.justrc) chain.print('f', 4, "%s", szFileHead);
                   }
+
+                  // add separator
                   if (!bFirstHit && cs.szseparator[0]) {
                      if (!cs.justrc) chain.print('t', 4, "%s", cs.szseparator);
                   }
                }
+
                if (bWithContext)
                {
                   int iPostConsumed = dumpWithContext(
@@ -36722,6 +37403,7 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                      );
                   if (iPostConsumed < 0)
                      { perr("error %d on output", iPostConsumed); bStop=true; iRC=9; break; }
+                  // do not dump context twice
                   iContextIdx = 0;
                   iContextUsed = 0;
                   nPatLen += iPostConsumed;
@@ -36730,6 +37412,7 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                {
                   dumpPure(pDstText,nDstLen,pDstAttr);
                }
+
                bFirstHit = 0;
             }
             else
@@ -36745,20 +37428,28 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                if (nHitLow > nAlign1) nHitLow -= nAlign1; else nHitLow = 0;
                if (nHitHi  < (nInputUsed - nAlign2)) {
                   nHitHi += nAlign2;
+                  // align dump size to multiples of 16 or 32
                   num nDiff = nHitHi-nHitLow;
-                  nDiff = ((num)(nDiff / nAlign0)) * nAlign0; 
+                  nDiff = ((num)(nDiff / nAlign0)) * nAlign0; // floor
                   nHitHi = nHitLow + nDiff;
                } else {
+                  // near end of file: make sure to dump all bytes
                   nHitHi = nInputUsed;
                }
                num nDumpLen = nHitHi-nHitLow;
+               // add sfk1812: support for -maxdump
                if (cs.maxdump)
                   nDumpLen = mymin(cs.maxdump,nDumpLen);
+               // fix sfk1812: no output on hits >= 4048 bytes
+               //    if (nDumpLen < MAX_LINE_LEN)
                {
                   int iHiOff=-1,iHiLen=-1;
+                  // calc hilite area for diffdump below
                   iHiOff = (int)(nHitRaw - nHitLow);
                   iHiLen = nPatLen-voff;
                   num nListOff = nBlockStartInFile + nHitLow;
+                  // if (bTold) { bTold=0; finf.printBlankLine(78); }
+                  // setTextColor(nGlblFileColor);
                   char szOffBuf1[60]; szOffBuf1[0] = '\0';
                   char szOffBuf5[60]; szOffBuf5[0] = '\0';
                   char szOffBuf2[60]; szOffBuf2[0] = '\0';
@@ -36766,8 +37457,10 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                   char szOffBuf6[60]; szOffBuf6[0] = '\0';
                   num nAbsOff = nHitRaw + nBlockStartInFile;
                   if (!cs.fullheader) {
+                     // sfk181 default
                      sprintf(szOffBuf1, "at offset 0x%s", numtohex(nAbsOff));
                   } else {
+                     // sfk1812 default
                      sprintf(szOffBuf1, "at offset %s", numtoa(nAbsOff));
                      sprintf(szOffBuf5, "0x%s", numtohex(nAbsOff));
                   }
@@ -36824,103 +37517,141 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                   }
                   nLastDumpOff = nAbsOff;
                }
-            }  
+            }  // endif dump
+
             if (buse)
             {
+               // reset dump context
                iContextUsed = 0;
-               bFileChanged = 1;
-               nFound++;
-               apRepFlags[iPat] |= (1 << 1); 
+ 
+               // update statistics
+               bFoundHits = 1;
+               nFindHits++;
+               apRepFlags[iPat] |= (1 << 1); // local hit mark
+ 
                if (cs.extract)
                { }
-               else
-               if (bSameLengthAndFile)
-               {
-                  if (!cs.sim && !cs.extract) {
-                     if (nPatLen != nDstLen)
-                        { perr("int. #21211502"); iRC=9; bStop=true; break; }
-                     memcpy(pSrcCur, pDstText, nPatLen);
-                     bCurrentBlockChanged = 1;
-                  }
-               }
             }
+
+            // on zero length hit, continue with further patterns
             if (nPatLen == 0)
                continue;
+
+            // on every search hit adapt line start state.
+            // relevant if dumpWithContext extended nPatLen.
             if (pSrcCur[nPatLen-1] == '\n')
                bLineStart = 1;
             else
                bLineStart = 0;
+
             iStepped += nPatLen;
             pSrcCur  += nPatLen;
-            if (buse) 
+
+            if (buse) // if not [skip]
                pCopyFrom = pSrcCur;
+
             bStart = 0;
+
+            // if only first hit should be processed
             if (buse && cs.useFirstHitOnly) {
                if (!cs.sim && !cs.extract)
-                  bAllThrough=true; 
+                  bAllThrough=true; // fix 1755
                else
                   bStop=true;
             }
+
             break;
-         }  
+
+         }  // endfor patterns
+
          bStart = 0;
+
          if (pSrcCur == pSrcMax)
-            break;   
+            break;   // zero length run for [eod]
+
          if (!iStepped)
          {
+            // on every skipped character adapt line start state
             if (*pSrcCur == '\n')
                bLineStart = 1;
             else
                bLineStart = 0;
+
             if (bRepDump) {
                aContext[iContextIdx & SFK_CTX_MASK] = *pSrcCur;
                iContextIdx = (iContextIdx+1) & SFK_CTX_MASK;
                if (iContextUsed<SFK_CTX_SIZE) iContextUsed++;
             }
+
             pSrcCur++;
          }
-      }  
+
+      }  // endfor buffer bytes
+
       pCopyFrom = pSrcCur;
+
+      // cleanup buffer: move remaining bytes to start
+      // state: pInBuffer to pCopyFrom were written already.
+      //        pCopyFrom to end of buffer are remainder.
       num nConsumed = pCopyFrom - pInBuffer;
       num nRemain   = nInputUsed - nConsumed;
       if (nRemain < 0)
          { perr("int. #21211501 (%ld)", (long)nRemain); iRC=9; bStop=true; break; }
       if (nRemain > 0)
-         memmove(pInBuffer, pCopyFrom, nRemain); 
+         memmove(pInBuffer, pCopyFrom, nRemain); // FIX: 1.7.2: instead of memcpy
       nInputUsed = nRemain;
+      // printf("remain: %ld\n", (long)nInputUsed);
+
+      // recalc current block start in file
       nBlockStartInFile += nConsumed;
-      if (bSameLengthAndFile != 0 && cs.maxscan != 0 && nBlockStartInFile >= cs.maxscan)
-         { bStop=true; break; }
+
       if (getCurrentTime() - ntold >= 1000)
       {
          info.setAction(infoAction, pcoi->name(), 0, eKeepAdd);
          ntold = getCurrentTime();
          info.setProgress(nFileSize, nTotalRead, "bytes", 1);
       }
-   }  
-   cs.files++; 
+
+   }  // endwhile further input
+
+      cs.files++; // no. of files read
  }
- while (0); 
+ while (0); // main block end
+
    info.clearProgress();
+
+   // input must be closed first
    if (pcoi->isFileOpen())
       pcoi->close();
-   if (bFileChanged && !bRepeatRun) {
+
+   // was the file content changed at all?
+   if (bFoundHits 
+      ) 
+   {
+      // chaining: add the found file
       if (chain.colfiles) do {
          #if defined(SFKOFFICE)
          if (cs.office>0 && cs.useJustNames>0 && pOutCoi==0) {
             if (useOfficeBaseNames())
-               pcoi->stripOfficeName(); 
+               pcoi->stripOfficeName(); // xfind -names
             if (chain.hasFile(pcoi->name()))
                break;
          }
          #endif
          chain.addFile(pOutCoi ? *pOutCoi : *pcoi);
       } while(0);
-      cs.filesChg++; 
+      // update the stats
+      cs.filesChg++;
    }
+
+   // NO RETURN WITHOUT DELETE END
+
    if (pInBuffer)
       delete [] pInBuffer;
+
    perFileExtractOutCleanup();
+
+   // collect stats: all patterns found?
    int nTotPats = nBinRepExp;
    int nHitPats = 0;
    for (int i2=0; i2<nBinRepExp; i2++)
@@ -36928,13 +37659,14 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
       if (apRepFlags[i2] & (1 << 1))
          nHitPats++;
       else
-      if (cs.verbose)
+      if (cs.verbose >= 2) // sfk194
       {
          if (cs.xpat) {
             info.print("%s : pattern not found: %s\n",pszFile,apRepObj[i2].fromText());
          }
          else
          {
+            // is it printable plain text?
             bool bPlainText = apRepFlags[i2] & (1 << 0) ? 0 : 1;
             uchar *pBin = apRepSrcExp[i2];
             if (bPlainText)
@@ -36960,10 +37692,11 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
       }
    }
    int nNotPats = nTotPats - nHitPats;
+
    if (cs.dostat || cs.verbose)
    {
-      if (!nHitPats && !cs.verbose)
-      { } 
+      if (nHitPats==0 && cs.verbose<2) // sfk194
+      { } // don't list files we wouldn't change
       else
       {
          cchar *pszPre   = finf.prefix();
@@ -36971,11 +37704,11 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
          num   nSizeDiff = nTotalWritten - nFileSize;
          const char *pszSign = (nSizeDiff > 0) ? "+":"";
          char szNumBuf[100];
-         info.print("[%s/%d/%d] %s%s",  
-            numtoa(nFound,3,szNumBuf),
+         info.print("[%s/%d/%d] %s%s",  // FIX: 160R2: nFindHits with >2G
+            numtoa(nFindHits,3,szNumBuf),
             (int)nHitPats,(int)nNotPats,pszPre,pszShort);
          if (   !cs.extract && !cs.xtext && !cs.hexfind
-             && !bSameLengthAndFile && nSizeDiff)
+             && nSizeDiff)
          {
             setTextColor(nGlblTimeColor);
             info.print("   %s%s bytes\n",pszSign,numtoa(nSizeDiff));
@@ -36985,8 +37718,15 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
          }
       }
    }
+
+
+   if (cs.debug) sfkmem_checklist("execxfind");
+
+   // info.clear() is done in main.
+
    return iRC;
 }
-#endif // defined(SFK_JUST_OSE)
-// --- xfind ose end ---
 
+#endif // USE_SFK_BASE
+
+#endif // defined(SFK_JUST_OSE)
