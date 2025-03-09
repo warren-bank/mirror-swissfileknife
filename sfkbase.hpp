@@ -271,7 +271,8 @@ extern int fileExists(char *pszFileName, bool bOrDir=0);
 
 #define strcopy(dst,src) mystrcopy(dst,src,sizeof(dst)-10)
 void  mystrcopy      (char *pszDst, cchar *pszSrc, int nMaxDst);
-int  mystrstri      (char *pszHayStack, cchar *pszNeedle, int *lpAtPosition = 0);
+char *mystrstri      (char *phay, cchar *ppat);
+int  mystrstrip      (char *pszHayStack, cchar *pszNeedle, int *lpAtPosition);
 char *mystrrstr      (char *psrc, cchar *ppat);
 char *mystrristr     (char *psrc, cchar *ppat);
 int  mystrncmp      (char *psz1, cchar *psz2, int nLen, bool bCase=0);

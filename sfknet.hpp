@@ -582,14 +582,16 @@ int   // RC 0 == OK
       sendDuplexReply   (struct sockaddr_in *pTo),
       decodeColorText   (int iFromOffset),
       checkTellCurrentColor (char c),
-      getClientIndex    (struct sockaddr_in *pAddr, bool *pFound);
+      getClientIndex    (struct sockaddr_in *pAddr, bool *pFound),
+      getTextSendDelay  ( );  // depending on (non)duplex mode
 bool
       hasCachedInput    ( ),
       hasCachedOutput  ( );
 char
      *getNextCommand    ( ),  // NULL if none
      *getNextInput      (char **ppAttr=0,
-                         struct sockaddr_in *pSenderAddr=0), 
+                         struct sockaddr_in *pSenderAddr=0,
+                         bool bDontCache=0), 
                         // returns NULL if none
      *peekHeader        (char *pszField),
       sfkToNetColor     (char c);
@@ -600,6 +602,7 @@ int
       iClOwnReceivePort,
       iClTargetSendPort,
       iClTimeout,
+      iClNonDuplexSendDelay,
       fdClSocket;
 bool
       bClMulticast,
@@ -662,6 +665,7 @@ struct UCPClientState
 
 #ifndef USE_SFK_BASE
 extern UDPIO sfkNetIO;
+extern UDPIO sfkNetSrc;
 #endif // USE_SFK_BASE
 
 extern int netErrno();

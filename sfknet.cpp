@@ -47,6 +47,7 @@ extern size_t myfwrite(uchar *pBuf, size_t nBytes, FILE *fout, num nMaxInfo=0, n
 
 #ifndef USE_SFK_BASE
 UDPIO sfkNetIO;
+UDPIO sfkNetSrc;
 #endif // USE_SFK_BASE
 
 #ifdef VFILEBASE
@@ -3661,15 +3662,15 @@ int Coi::rawLoadHttpDir( )
          // <a target="_blank" href=" ...
          if (!mystrnicmp(psz2, "<a ", 3)) {
             int npos = 0;
-            if (   mystrstri(psz2, " href=\"", &npos)
-                || mystrstri(psz2, " href='", &npos)
+            if (   mystrstrip(psz2, " href=\"", &npos)
+                || mystrstrip(psz2, " href='", &npos)
                )
             {
                ceref = psz2[npos+6];
                psz2 += npos+7;
                break; 
             }
-            if (mystrstri(psz2, " href=", &npos))
+            if (mystrstrip(psz2, " href=", &npos))
             {
                ceref = ' ';
                psz2 += npos+6;
@@ -3678,8 +3679,8 @@ int Coi::rawLoadHttpDir( )
          }
          if (!mystrnicmp(psz2, "<img ", 5)) {
             int npos = 0;
-            if (   mystrstri(psz2, " src=\"", &npos)
-                || mystrstri(psz2, " src='", &npos)
+            if (   mystrstrip(psz2, " src=\"", &npos)
+                || mystrstrip(psz2, " src='", &npos)
                )
             {
                ceref = psz2[npos+5];
@@ -4580,6 +4581,7 @@ void UDPIO::rawInit( )
    cClCurrentInColor = ' ';
    cClTellColor = '\0';
    iClUsingAltPortInsteadOf = -1;
+   iClNonDuplexSendDelay = 10;
 }
 
 UDPIO::~UDPIO( )
@@ -4751,7 +4753,7 @@ int UDPIO::initSendReceive
       clTargetAddr.sin_addr.s_addr = inet_addr(pszTargetAddress);
       clTargetAddr.sin_port        = htons((int)iClTargetSendPort);
    }
-   else
+   else if (pszTargetAddress)
    {
       // printf("udp: fd=%d outport=%d inport=%d active.\n",
       //   fdTmp, iClTargetSendPort, iClOwnReceivePort);
@@ -4810,17 +4812,22 @@ int UDPIO::receiveData(
    if (fdClSocket == INVALID_SOCKET)
       return -1;
 
-   struct sockaddr addrIncoming;
-   memset(&addrIncoming, 0, sizeof(addrIncoming));
+   int iRead = 0;
 
-   socklen_t clilen = sizeof(addrIncoming);
-
-   // receive with 10 bytes buffer tolerance.
-   // result is guaranteed to be zero terminated.
-   int iRead = recvfrom(fdClSocket, (char*)pBuffer, iBufferSize-10, 0, &addrIncoming, &clilen);
-
-   if (pAddrIncoming != 0 && clilen == iSizeOfAddrIncoming)
-      memcpy(pAddrIncoming, &addrIncoming, iSizeOfAddrIncoming);
+   if (isDataAvailable(0, 0))
+   {
+      struct sockaddr addrIncoming;
+      memset(&addrIncoming, 0, sizeof(addrIncoming));
+   
+      socklen_t clilen = sizeof(addrIncoming);
+   
+      // receive with 10 bytes buffer tolerance.
+      // result is guaranteed to be zero terminated.
+      iRead = recvfrom(fdClSocket, (char*)pBuffer, iBufferSize-10, 0, &addrIncoming, &clilen);
+   
+      if (pAddrIncoming != 0 && clilen == iSizeOfAddrIncoming)
+         memcpy(pAddrIncoming, &addrIncoming, iSizeOfAddrIncoming);
+   }
 
    // always guarantee zero termination.
    if (iRead >= 0)
@@ -4971,7 +4978,11 @@ int UDPIO::flushSend(bool bTellAboutSplitLine)
          break;
       }
       else
+      {
+         if (iClNonDuplexSendDelay)
+            doSleep(iClNonDuplexSendDelay);
          break;
+      }
    }
 
    iClHeadSize = 0;
@@ -5650,7 +5661,7 @@ char *UDPIO::getNextCommand( )
    return 0;
 }
 
-char *UDPIO::getNextInput(char **ppAttr, struct sockaddr_in *pSenderAddr)
+char *UDPIO::getNextInput(char **ppAttr, struct sockaddr_in *pSenderAddr, bool bDontCache)
 {
    if (iClInBufUsed <= 0)
       return 0;
@@ -5661,7 +5672,7 @@ char *UDPIO::getNextInput(char **ppAttr, struct sockaddr_in *pSenderAddr)
 
    // when receiving raw text, take input as is.
    // if input buffer overflows, also take as is.
-   if (!bClForceNextInput && bAllowJoin)
+   if (!bDontCache && !bClForceNextInput && bAllowJoin)
    {
       // wait for next CR or LF
       char cLast = aClInBuf[iClInBufUsed-1];
@@ -5682,4 +5693,12 @@ char *UDPIO::getNextInput(char **ppAttr, struct sockaddr_in *pSenderAddr)
    // dumpdata("nxin", aClInBuf);
 
    return aClInBuf;
+}
+
+int UDPIO::getTextSendDelay( )
+{
+   if (bClDuplex)
+      return 0;
+
+   return iClNonDuplexSendDelay;
 }
