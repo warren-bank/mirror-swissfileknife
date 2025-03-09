@@ -2,12 +2,31 @@
    swiss file knife
 
    known issues:
-   -  syncto: no empty target files supported yet
-   -  not every option can be specified everywhere
+   -  syncto: no empty target files supported yet.
+   -  not every option can be specified everywhere.
    -  patch, inst: option -keep-dates only works
       with Win32 yet (uses xcopy command).
-   -  mirrorto: zip called sometimes without any need
-      to update the archive, due to file time check.
+   -  unix handling of files>2GB and timestamps>2038
+      may require non-portable source adaptions.
+   -  time-stamp handling >2038 not yet tested.
+
+   1.0.8
+   -  fix: mirrorto: dir max time comparison switched off.
+      the file time is not a sufficient criteria for backup.
+      if user installed old files from an archive, he wants
+      them being backed up as well, although dir maxtime
+      is not changed. therefore we now always call zip.
+   -  fix: mirrorto: empty dirs: always calling zip, copy.
+   -  fix: dir time maximum building. some dirs were listed
+      as being newer then they are. fixed by resetting the
+      local maxtime after every execSingleDir use.
+   -  fix: win: now reading file sizes>2GB using _stati64.
+      fix: win: now reading time stamps>2038 using _stati64.
+      this requires non-portable 64-bit calls, therefore
+      these issues may still be unsolved under unix.
+   -  add: snapto: option -wrap=n to auto-wrap long lines.
+   -  add: snap file format: ,wrap=n in header line.
+   -  fix: combined paths now w/o double path char.
 
    1.0.7
    -  FIX: parallel write of editor and read of sfk on the
@@ -287,6 +306,8 @@ bool  bGlblStdInAny     = 0;  // all cmd except run: take list from stdin
 bool  bGlblStdInFiles   = 0;  // run only: take filename list from stdin
 bool  bGlblStdInDirs    = 0;  // run only: take directory list from stdin
 long  nGlblMD5Skip      = 0;
+long  nGlblSnapWrap     = 0;  // if >0, auto-wrap lines in snapfile
+bool  bGlblMirrorByDate = 0;  // inofficial, might be removed.
 
 #define _ { printf("[%d]\n",__LINE__); fflush(stdout); }
 
@@ -1520,11 +1541,12 @@ long walkStdInListFlat(long nFunc, long &rlFiles, num &rlBytes)
    nGlblFunc = nFunc;
 
    long lDirs = 0;
-   num nLocalMaxTime = 0, nTreeMaxTime  = 0;
 
    while (fgets(szLineBuf, sizeof(szLineBuf)-10, stdin))
    {
       removeCRLF(szLineBuf);
+
+      num nLocalMaxTime = 0, nTreeMaxTime  = 0;
 
       // skip remark and empty lines
       if (szLineBuf[0] == '#') continue;
@@ -1548,6 +1570,7 @@ long walkStdInListFlat(long nFunc, long &rlFiles, num &rlBytes)
          num  nLocalBytes = 0;
          long lRC = execSingleDir(pszSub, 0, rlFiles, rlDirs, nLocalBytes,
                                   nLocalMaxTime, nTreeMaxTime);
+         nLocalMaxTime = 0; // reset after use in execSingleDir
          rlBytes += nLocalBytes;
          delete [] pszSub;
          if (lRC >= 9)
@@ -1586,21 +1609,23 @@ long walkStdInListDeep(long nFunc, long &rlFiles, num &rlBytes)
       glblFileSet.setCurrentRoot(0);
 
       long lDirs = 0;
-      num  nLocalBytes = 0, ntime1 = 0, ntime2 = 0;
+      num  nLocalBytes = 0, nLocalMaxTime = 0, ntime2 = 0;
 
       char *pszSub = strdup(szLineBuf);
       if (bGlblDebug) printf("] siw: %s\n", pszSub);
-      long lRC = walkFiles(pszSub, 0, rlFiles, lDirs, nLocalBytes, ntime1, ntime2);
+      long lRC = walkFiles(pszSub, 0, rlFiles, lDirs, nLocalBytes, nLocalMaxTime, ntime2);
       if (!lRC && isDir(pszSub))
       {
          // if this succeeded, treat the tree as another dir.
          if (bGlblDebug) printf("] sid: %s\n", pszSub);
-         if (execSingleDir(pszSub, 0, rlFiles, lDirs, nLocalBytes, ntime1, ntime2))
+         if (execSingleDir(pszSub, 0, rlFiles, lDirs, nLocalBytes, nLocalMaxTime, ntime2))
          {
+            nLocalMaxTime = 0;
             bGlblError = 1;
             delete [] pszSub;
             return 9;
          }
+         nLocalMaxTime = 0;
       }
       rlBytes += nLocalBytes;
       delete [] pszSub;
@@ -1622,10 +1647,10 @@ long walkAllTrees(long nFunc, long &rlFiles, long &rlDirs, num &rlBytes)
 
    nGlblFunc = nFunc;
 
-   num nLocalMaxTime = 0, nTreeMaxTime  = 0;
-
    for (long nDir=0; glblFileSet.hasRoot(nDir); nDir++)
    {
+      num nLocalMaxTime = 0, nTreeMaxTime  = 0;
+
       // process one of the trees given at commandline.
       char *pszTree = glblFileSet.setCurrentRoot(nDir);
       if (bGlblDebug) printf("] wtr: %s\n", pszTree);
@@ -1635,10 +1660,13 @@ long walkAllTrees(long nFunc, long &rlFiles, long &rlDirs, num &rlBytes)
       } else {
          // if this succeeded, treat the tree as another dir.
          if (bGlblDebug) printf("] esr: %s\n", pszTree);
-         if (execSingleDir(pszTree, 0, rlFiles, rlDirs, rlBytes, nLocalMaxTime, nTreeMaxTime)) {
+         if (execSingleDir(pszTree, 0, rlFiles, rlDirs, rlBytes, nLocalMaxTime, nTreeMaxTime)) 
+         {
+            nLocalMaxTime = 0;
             bGlblError = 1;
             return 9;
          }
+         nLocalMaxTime = 0;
       }
    }
 
@@ -1665,15 +1693,6 @@ long lastCharIsBackSlash(char *pszName)
 #ifndef _MSC_VER
  #define _stat stat
 #endif
-
-num getFileTime(char *pszName)
-{
-   struct _stat buf;
-   if (_stat(pszName, &buf))
-      return 0;
-   // return time of last change
-   return (num)buf.st_mtime; // atime only on NTFS
-}
 
 long isDir(char *pszName)
 {
@@ -1705,18 +1724,28 @@ long getFileStat( // RC == 0 if exists anything
    num    &rlFileSize
  )
 {
+   #ifdef _MSC_VER
+   // using MSC specific 64-bit filesize and time stamp infos
+   struct _stati64 buf;
+   if (_stati64(pszName, &buf))
+      return -1;
+   rbIsDirectory = (buf.st_mode & _S_IFDIR ) ? 1 : 0;
+   rbCanRead     = (buf.st_mode & _S_IREAD ) ? 1 : 0;
+   rbCanWrite    = (buf.st_mode & _S_IWRITE) ? 1 : 0;
+   rlFileTime    =  buf.st_mtime;
+   rlFileSize    =  buf.st_size;
+   return 0;
+   #else
+   // generic: may not support 64-bit filesizes and time stamps
    struct _stat buf;
    if (_stat(pszName, &buf)) {
       return -1;
    }
    rbIsDirectory = (buf.st_mode & _S_IFDIR ) ? 1 : 0;
-   #ifdef _MSC_VER
-   rbCanRead     = (buf.st_mode & _S_IREAD ) ? 1 : 0;
-   rbCanWrite    = (buf.st_mode & _S_IWRITE) ? 1 : 0;
-   #endif
    rlFileTime    =  buf.st_mtime;
    rlFileSize    =  buf.st_size;
    return 0;
+   #endif
 }
 
 num getFileSize(char *pszName) 
@@ -1724,11 +1753,23 @@ num getFileSize(char *pszName)
    long bIsDir    = 0;
    long bCanRead  = 1;
    long bCanWrite = 1;
-   num  lFileTime = 0;
+   num  nFileTime = 0;
    num  nFileSize = 0;
-   if (getFileStat(pszName, bIsDir, bCanRead, bCanWrite, lFileTime, nFileSize))
+   if (getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize))
       return -1;
    return nFileSize;
+}
+
+num getFileTime(char *pszName)
+{
+   long bIsDir    = 0;
+   long bCanRead  = 1;
+   long bCanWrite = 1;
+   num  nFileTime = 0;
+   num  nFileSize = 0;
+   if (getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize))
+      return 0;
+   return nFileTime;
 }
 
 static long fileExists(char *pszName) {
@@ -3149,14 +3190,14 @@ long execGrep(char *pszFileName)
    return 0;
 }
 
-long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num &lBytes) 
+long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &nTreeMaxTime) 
 {
    long bIsDir    = 0;
    long bCanRead  = 1;
    long bCanWrite = 1;
-   num  lFileTime = 0;
+   num  nFileTime = 0;
    num  nFileSize = 0;
-   getFileStat(pszFileName, bIsDir, bCanRead, bCanWrite, lFileTime, nFileSize);
+   getFileStat(pszFileName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize);
 
    if (!strncmp(pszFileName, glblDotSlash, 2))
       pszFileName += 2;
@@ -3166,14 +3207,14 @@ long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num
       case 1:
          if (!bGlblQuiet && (nGlblListMinSize > 0))
          {
-            long lMBytes = (long)(nFileSize / 1000000);
+            long lMBytes = (long)(nFileSize / 1000000L);
             if (lMBytes >= nGlblListMinSize)
             {
                int nIndent = (int)lLevel;
                if (nIndent > strlen(pszBlank)) nIndent = strlen(pszBlank);
                if (nIndent > 10) nIndent = 10;
                  
-               printf("%4d mb,              %.*s%s\n", lMBytes, nIndent, pszBlank, pszFileName);
+               printf("%5ld mb,              %.*s%s\n", lMBytes, nIndent, pszBlank, pszFileName);
             }
          }
          break;
@@ -3181,12 +3222,19 @@ long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num
       case 2:
          if (!bGlblQuiet)
             printf("%s\n", pszFileName);
+            // printf("%s %s\n", numtoa(nFileTime), pszFileName);
          break;
 
       case 3:
          glblTwinScan.addFile(pszFileName);
          break;
    }
+
+   // update maxtimes
+   if (nFileTime > nLocalMaxTime)
+       nLocalMaxTime = nFileTime;
+   if (nFileTime > nTreeMaxTime)
+       nTreeMaxTime = nFileTime;
 
    lBytes += nFileSize;
    return 0;
@@ -3564,26 +3612,31 @@ long execRunDir(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num &
    return 0;
 }
 
-long execDirStat(char *pszDir, long lLevel, long lFiles, long lDirs, num lBytes)
+long execDirStat(char *pszDir, long lLevel, long lFiles, long lDirs, num lBytes, num &nLocalMaxTime, num &ntime2)
 {
-   if (nGlblListMode != 1)
-      return 0;
-
-   int nIndent = (int)lLevel;
-   if (nIndent > strlen(pszBlank)) nIndent = strlen(pszBlank);
-   if (nIndent > 10) nIndent = 10;
-
-   if (!strncmp(pszDir, glblDotSlash, 2))
-      pszDir += 2;
-
-   unsigned long lMBytes = (unsigned long)lBytes / 1000000UL;
-
-   if (bGlblQuiet) {
-      if (lLevel == 0)
-         printf("%4d mb %s\n", lMBytes, pszDir);
-   } else {
-      if (lMBytes >= nGlblListMinSize)
-         printf("%4d mb, %5d files, %.*s%s\n", lMBytes, lFiles, nIndent, pszBlank, pszDir);
+   if (nGlblListMode == 1)
+   {
+      int nIndent = (int)lLevel;
+      if (nIndent > strlen(pszBlank)) nIndent = strlen(pszBlank);
+      if (nIndent > 10) nIndent = 10;
+   
+      if (!strncmp(pszDir, glblDotSlash, 2))
+         pszDir += 2;
+   
+      unsigned long lMBytes = (unsigned long)lBytes / 1000000UL;
+   
+      if (bGlblQuiet) {
+         if (lLevel == 0)
+            printf("%5ld mb %s\n", lMBytes, pszDir);
+      } else {
+         if (lMBytes >= nGlblListMinSize)
+            printf("%5ld mb, %5ld files, %.*s%s\n", lMBytes, lFiles, nIndent, pszBlank, pszDir);
+      }
+   }
+   else
+   if (nGlblListMode == 2)
+   {
+      // printf("DIR %s %s\n", numtoa(nLocalMaxTime), pszDir);
    }
 
    return 0;
@@ -3676,9 +3729,13 @@ long walkFiles(char *pszIn, long lLevel, long &lFiles, long &lDirs, num &lBytes,
           || !strcmp(pszFile, ".."))
          continue;
 
-      long lSize2  = strlen(myfdat.cFileName);
-      char *pszSub = new char[lSize1+lSize2+10];
-      sprintf(pszSub, "%s%c%s", pszBasePath, glblPathChar, myfdat.cFileName);
+      long lSize2   = strlen(myfdat.cFileName);
+      char *pszSub  = new char[lSize1+lSize2+10];
+      long lBaseLen = strlen(pszBasePath);
+      if ((lBaseLen > 0) && (pszBasePath[lBaseLen-1] == glblPathChar))
+         sprintf(pszSub, "%s%s", pszBasePath, myfdat.cFileName);
+      else
+         sprintf(pszSub, "%s%c%s", pszBasePath, glblPathChar, myfdat.cFileName);
 
    #ifndef _WIN32
 
@@ -3723,9 +3780,12 @@ long walkFiles(char *pszIn, long lLevel, long &lFiles, long &lDirs, num &lBytes,
             if (execSingleDir(pszSub, lLevel+1, nDirFiles, nDirDirs, nDirBytes,
                               nDirLocalMaxTime, nDirTreeMaxTime))
             {
+               nDirLocalMaxTime = 0;
                delete [] pszSub; // falling past delete below
                break;
             }
+            nDirLocalMaxTime = 0;
+
             // NOTE: local maxtime is NOT promoted, it was used w/in execSingleDir.
             //       we only promote the tree max time:
             if (nDirTreeMaxTime > nTreeMaxTime)
@@ -4015,6 +4075,7 @@ long execJamFile(char *pszFile)
    long nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
    memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
    long nLocalLines = 0;
+   bool bWrapMode = (nGlblSnapWrap > 0) ? 1 : 0;
    while (fgets((char*)abBuf, nMaxLineLen, fin)) // yes, exact len
    {
       nGlblLines++;
@@ -4042,7 +4103,42 @@ long execJamFile(char *pszFile)
             fprintf(fGlblOut, ":file:\n%s\n", pszFile);
       }
 
-      fputs((char*)abBuf, fGlblOut);
+      if (bWrapMode && (strlen((char*)abBuf) > nGlblSnapWrap))
+      {
+         // auto-wrap input line into many smaller output lines
+         char *psz1 = (char*)abBuf;
+         char *pszOld = 0;
+         while (*psz1)
+         {
+            pszOld = psz1;
+            long icnt = 0;
+            char *pszGap = 0;
+            // step until overflow or eod, remember last whitespace
+            while (*psz1 && (icnt < nGlblSnapWrap)) {
+               char c = *psz1;
+               switch (c) {
+                  case ' ':
+                  case '\t':
+                     pszGap = psz1;
+                     break;
+               }
+               psz1++;
+               icnt++;
+            }
+            // if overflow, go back past whitespace. if no whitespace,
+            // make a word break at that point (splitting very long words).
+            if (*psz1) {
+               if (pszGap)
+                  psz1 = pszGap+1;
+            }
+            int nLen = psz1-pszOld;
+            fprintf(fGlblOut, "%.*s\n", nLen, pszOld);
+            // continue past whitespace or word break.
+         }
+      } else {
+         fputs((char*)abBuf, fGlblOut);
+      }
+
       nGlblBytes += strlen((char*)abBuf);
       abBuf[nMaxLineLen] = '\0';
    }
@@ -4287,7 +4383,7 @@ long execRefProcSrc(char *pszFile)
    return 0;
 }
 
-long execSingleFile(char *pszFile, long lLevel, long &lFiles, long &lDirs, num &lBytes, num &ntime1, num &ntime2)
+long execSingleFile(char *pszFile, long lLevel, long &lFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
 {
    // skip initial dot slash which might be returned by dir scanning
    if (!strncmp(pszFile, glblDotSlash, 2))
@@ -4308,9 +4404,9 @@ long execSingleFile(char *pszFile, long lLevel, long &lFiles, long &lDirs, num &
       case eFunc_JamIndex: return execJamIndex(pszFile);   break;
       case eFunc_SnapAdd : return execSnapAdd(pszFile);    break;
       case eFunc_BinPatch: return execBinPatch(pszFile);   break;
-      case eFunc_FileStat: return execFileStat(pszFile, lLevel, lFiles, lDirs, lBytes);  break;
+      case eFunc_FileStat: return execFileStat(pszFile, lLevel, lFiles, lDirs, lBytes, nLocalMaxTime, ntime2);  break;
       case eFunc_Grep    : return execGrep(pszFile);       break;
-      case eFunc_Mirror  : return execFileMirror(pszFile, ntime1, ntime2); break;
+      case eFunc_Mirror  : return execFileMirror(pszFile, nLocalMaxTime, ntime2); break;
       case eFunc_Run     : return execRunFile(pszFile, lLevel, lFiles, lDirs, lBytes);  break;
       case eFunc_FormConv: return execFormConv(pszFile);   break;
       #ifdef WITH_FN_INST
@@ -4369,13 +4465,24 @@ long execDirFreeze(char *pszName, long lLevel, num &nLocalMaxTime, num &nTreeMax
    sprintf(szLineBuf, "%s%s\\01-arc.zip", pszGlblDstRoot, pszName);
    num nZipTime = getFileTime(szLineBuf);
 
-   // a maxtime of 0 means there are no local files.
-   // a ziptime of 0 means there is no zip file.
-   // if there is no local file, or there is a newer zip file:
-   if ((nLocalMaxTime == 0) || ((nZipTime != 0) && (nLocalMaxTime <= nZipTime))) {
-      // printf("%c scan for changes %u     \r", pszGlblTurn[(nGlblTurnCnt++)&3], nGlblTurnCnt);
-      // fflush(stdout);
-   } else {
+   // FIX: whole time comparison now OPTIONAL (bGlblMirrorByDate).
+   //      if user installs old files, e.g. from an archive,
+   //      he surely wants them back-uped as well, although
+   //      they do NOT update the directory max time.
+
+   // IF we want to fully optimize the backup process, we have to check
+   // 1. if a directory contains files not yet listed there
+   // 2. if the existing files have a different md5 checksum
+   // but we shall NOT simply rely on the file times!
+
+   if (   // (nLocalMaxTime == 0) || // i.e. no files at all contained
+       (bGlblMirrorByDate && (nZipTime != 0) && (nLocalMaxTime <= nZipTime))
+      )
+   {
+      // skip, don't bother zip
+   }
+   else
+   {
       // else create or update zip archive
       sprintf(szLineBuf, 
               "zip -u -D \"%s%s\\01-arc.zip\" \"%s\\*\" "
@@ -4383,17 +4490,21 @@ long execDirFreeze(char *pszName, long lLevel, num &nLocalMaxTime, num &nTreeMax
               pszGlblDstRoot, pszName, pszName,
               pszGlblDstRoot
              );
-      printf("zip: %s          \n", pszName);
-      // printf("zip: %s lmax %u zip %u\n", pszName, nLocalMaxTime, nZipTime);
+
+      if (!bGlblQuiet)
+         printf("zip: %s          \n", pszName);
+
       long lRC = 0;
-      if (lRC = system(szLineBuf)) {
+      if (lRC = system(szLineBuf))
+      {
          // zip RC 12: nothing to do - no files w/in dir, ignore
-         if (lRC == 12)
+         if (lRC != 12)
+         {
+            // all other RC's: real error, like cannot access file
+            logError("error: RC %d while running command:\n   %s", lRC, szLineBuf);
+            // continue, list errors when finishing
             return 0;
-         // all other RC's: real error, like cannot access file
-         logError("error: RC %d while running command:\n   %s", lRC, szLineBuf);
-         // continue, list errors when finishing
-         return 0;
+         }
       }
    }
 
@@ -4426,24 +4537,24 @@ long execDirFreeze(char *pszName, long lLevel, num &nLocalMaxTime, num &nTreeMax
    return 0;
 }
 
-long execFileMirror(char *pszName, num &ntime1, num &ntime2)
+long execFileMirror(char *pszName, num &nLocalMaxTime, num &ntime2)
 {
    if (glblFileSet.getDirCommand() == eCmd_CopyDir)
-      return execFileXCopy(pszName, ntime1, ntime2);
+      return execFileXCopy(pszName, nLocalMaxTime, ntime2);
    else
    if (glblFileSet.getDirCommand() == eCmd_FreezeDir)
-      return execFileFreeze(pszName, ntime1, ntime2);
+      return execFileFreeze(pszName, nLocalMaxTime, ntime2);
    fprintf(stderr, "error: no command supplied for directory\n");
    return 9;
 }
 
-long execDirMirror(char *pszName, long lLevel, num &ntime1, num &ntime2)
+long execDirMirror(char *pszName, long lLevel, num &nLocalMaxTime, num &ntime2)
 {
    if (glblFileSet.getDirCommand() == eCmd_CopyDir)
-      return execDirXCopy(pszName, lLevel, ntime1, ntime2);
+      return execDirXCopy(pszName, lLevel, nLocalMaxTime, ntime2);
    else
    if (glblFileSet.getDirCommand() == eCmd_FreezeDir)
-      return execDirFreeze(pszName, lLevel, ntime1, ntime2);
+      return execDirFreeze(pszName, lLevel, nLocalMaxTime, ntime2);
    fprintf(stderr, "error: no command supplied for directory\n");
    return 9;
 }
@@ -4504,16 +4615,22 @@ long execDirXCopy(char *pszName, long lLevel, num &nLocalMaxTime, num &nTreeMaxT
    num nOldDirTime = getOldDirTime(pszName);
 
    // do we have to call xcopy at all?
-   if ((nMaxTime == 0) || ((nOldDirTime != 0) && (nMaxTime <= nOldDirTime))) {
-      // printf("%c scan for changes %u    \r", pszGlblTurn[(nGlblTurnCnt++)&3], nGlblTurnCnt);
-      // fflush(stdout);
-      // printf("xcopy: %s - no change\n", pszName); // , nOldDirTime, nMaxTime);
-   } else {
+   if (   // (nMaxTime == 0) || // i.e. no files at all contained
+       (bGlblMirrorByDate && (nOldDirTime != 0) && (nMaxTime <= nOldDirTime))
+      )
+   {
+      // skip, don't bother xcopy
+   }
+   else
+   {
       // xcopy a dir, excluding subdirectories (NO /S option)
       sprintf(szLineBuf, "xcopy \"%s\" \"%s%s\" /H /I /R /K /Y /D%s",
               pszName, pszGlblDstRoot, pszName, pszMode
              );
-      printf("xcopy: %s%s        \n", pszName, pszMode);
+
+      if (!bGlblQuiet)
+         printf("xcopy: %s%s        \n", pszName, pszMode);
+
       if (system(szLineBuf)) {
          logError("error: failed to fully execute command:\n   %s", szLineBuf);
          // continue anyway, list errors when finishing.
@@ -4565,23 +4682,34 @@ long execFileXCopy(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime)
    return 0;
 }
 
-long execSingleDir(char *pszName, long lLevel, long &lFiles, long &lDirs, num &lBytes, num &ntime1, num &ntime2)
+long execSingleDir(char *pszName, long lLevel, long &lFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
 {
    // skip initial dot slash which might be returned by dir scanning
    if (!strncmp(pszName, glblDotSlash, 2))
       pszName += 2;
 
+   long lRC = 0;
    switch (nGlblFunc) 
    {
-      case eFunc_FileStat: return execDirStat(pszName, lLevel, lFiles, lDirs, lBytes); break;
-      case eFunc_Mirror  : return execDirMirror(pszName, lLevel, ntime1, ntime2); break;
+      case eFunc_FileStat:
+           lRC = execDirStat(pszName, lLevel, lFiles, lDirs, lBytes, nLocalMaxTime, ntime2);
+           break;
+      case eFunc_Mirror  :
+           lRC = execDirMirror(pszName, lLevel, nLocalMaxTime, ntime2);
+           break;
       case eFunc_Run     :
-         if (bGlblWalkJustDirs)
-            return execRunDir(pszName, lLevel, lFiles, lDirs, lBytes);
-         break;
-      default: break;
+           if (bGlblWalkJustDirs)
+              lRC = execRunDir(pszName, lLevel, lFiles, lDirs, lBytes);
+           break;
+      default:
+           break;
    }
-   return 0;
+
+   // localMaxTime was used w/in above methods, reset now
+   // to avoid potential further use in other dir trees.
+   nLocalMaxTime = 0;
+
+   return lRC;
 }
 
 long checkMask(char *pszMask) {
@@ -4797,7 +4925,7 @@ int main(int argc, char *argv[])
    {
       printf("sfk/" SFK_BRANCH " " SFK_VERSION " - a swiss file knife derivate.\n"); // [patch-id]
       printf("this version provided by " SFK_PROVIDER ".\n");
-      printf("based on the free sfk 1.0.7 by stahlworks art & technology.\n");
+      printf("based on the free sfk 1.0.8 by stahlworks art & technology.\n");
       printf("Distributed for free under the GNU General Public License,\n"
              "without any warranty. Use with care and on your own risk.\n");
       printf("\n"
@@ -4806,6 +4934,7 @@ int main(int argc, char *argv[])
              "       collect many files into one large text file.\n"
              "       pure: don't insert filenames. prefix: insert str before every block.\n"
              "       norec: do not recurse into subdirs. stat: show time stats at end.\n"
+             "       wrap=n: auto-wrap long lines near column n, e.g. -wrap=80\n"
              "          sfk snapto=all-src.cpp -prefix=!$! . .cpp .hpp\n"
              "          sfk snapto=all-src.cpp -prefix=!$! -dir src1 src2 -file .cpp .hpp .xml\n"
              "   sfk syncto=dbfile dir mask [!mask2]\n"
@@ -4896,11 +5025,19 @@ int main(int argc, char *argv[])
 
              #ifdef _WIN32 // uses Window-specific XCopy command
              "\n"
-             "   sfk mirrorto=targetdir -dir src1 src2 !src1\\ignore\\ -copy|zip\n"
+             "   sfk mirrorto=targetdir [-quiet] -dir src1 -copy|zip\n"
              "       copy or freeze all or updated files from src to target,\n"
              "       using the external commands xcopy and zip.\n"
              "       !dirname excludes directory \"dirname\".\n"
-             "          sfk mirrorto=d:\\mirrorc -dir pic dev doc !pic\\tmp\\ -zip\n"
+             "       option -quiet avoids listing every single zip or xcopy call.\n"
+//           "       option -date skips directories without new timestamps.\n"
+//           "       do NOT use -date if you added or copied OLD files.\n"
+//           "          sfk mirrorto=d:\\mirrorc -dir pic dev doc !pic\\tmp\\ -zip\n"
+             "       NOTE: as everything else, mirrorto comes WITHOUT ANY WARRANTY.\n"
+             "       -> Always have a manual check afterwards if your most important\n"
+             "          files are really contained within the backup archives!\n"
+             "       -> Test read your backup media on different drives and machines!\n"
+             "       -> Test restoring of your backups from time to time!\n"
              #endif
 
              #ifdef WITH_FN_INST
@@ -4979,19 +5116,30 @@ int main(int argc, char *argv[])
       fGlblOut = fopen(pszGlblOutFile, "w");
       if (!fGlblOut) { fprintf(stderr, "error: cannot write %s\n", pszGlblOutFile); return 9; }
 
-      int iDir = 2;
-      if ((iDir < argc) && !strncmp(argv[iDir],"-prefix=",strlen("-prefix="))) {
-         pszGlblJamPrefix = strdup(argv[iDir]+strlen("-prefix="));
-         iDir++;
-      }
-      if ((iDir < argc) && !strcmp(argv[iDir],"-pure")) {
-         bGlblJamPure = 1;
-         iDir++;
-      }
       bool bstat = 0;
-      if ((iDir < argc) && !strcmp(argv[iDir],"-stat")) {
-         bstat = 1;
-         iDir++;
+      int iDir = 2;
+      while (iDir < argc) {
+         if (!strncmp(argv[iDir],"-prefix=",strlen("-prefix="))) {
+            pszGlblJamPrefix = strdup(argv[iDir]+strlen("-prefix="));
+            iDir++;
+         }
+         else
+         if (!strcmp(argv[iDir],"-pure")) {
+            bGlblJamPure = 1;
+            iDir++;
+         }
+         else
+         if (!strcmp(argv[iDir],"-stat")) {
+            bstat = 1;
+            iDir++;
+         }
+         else
+         if (!strncmp(argv[iDir],"-wrap=",strlen("-wrap="))) {
+            nGlblSnapWrap = atol(argv[iDir]+strlen("-wrap="));
+            iDir++;
+         }
+         else
+            break;
       }
       if (!pszGlblJamPrefix)
            pszGlblJamPrefix = strdup(":file:");
@@ -5000,7 +5148,10 @@ int main(int argc, char *argv[])
       processDirParms(pszCmd, argc, argv, iDir, 1);
 
       // write global file header
-      fprintf(fGlblOut, "%s%s\n\n", pszGlblSnapFileStamp, pszGlblJamPrefix);
+      fprintf(fGlblOut, "%s%s", pszGlblSnapFileStamp, pszGlblJamPrefix);
+      if (nGlblSnapWrap > 0)
+         fprintf(fGlblOut, ",wrap=%u", nGlblSnapWrap);
+      fprintf(fGlblOut,"\n\n");
       // we will scan the input if we see this content, and exclude it
 
       lRC = walkAllTrees(eFunc_JamFile, lFiles, lDirs, nBytes);
@@ -5442,7 +5593,7 @@ int main(int argc, char *argv[])
          processDirParms(pszCmd, argc, argv, iDir, 1);
       lRC = walkAllTrees(eFunc_FileStat, lFiles, lDirs, nBytes);
       long lMBytes = (long)(nBytes / 1000000);
-      printf("%4d mb, % 5d files in total.\n", lMBytes, lFiles);
+      printf("%5ld mb, %5ld files in total.\n", lMBytes, lFiles);
       bDone = 1;
    }
 
@@ -5747,6 +5898,16 @@ int main(int argc, char *argv[])
          strcat(pszGlblDstRoot, glblPathStr);
 
       int iDir = 2;
+      while (iDir < argc) {
+         if (!strcmp(argv[iDir], "-date"))
+            { iDir++; bGlblMirrorByDate = 1; }
+         else
+         if (!strcmp(argv[iDir], "-quiet"))
+            { iDir++; bGlblQuiet = 1; }
+         else
+            break;
+      }
+
       if (processDirParms(pszCmd, argc, argv, iDir, 1))
          return 9;
 
