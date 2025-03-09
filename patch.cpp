@@ -10,10 +10,10 @@
  #endif
 #endif
 
-#define MAX_CMD_LINES   10000 // max lines per :file ... :done block
-#define MAX_CACHE_LINES 10000 // max lines per :from ... :to pattern
-#define MAX_CMD         500   // max number of :from commands per patchfile
-#define MAX_OUT_LINES   50000 // max lines per target file
+#define MAX_CMD_LINES    10000 // max lines per :file ... :done block
+#define MAX_CACHE_LINES  10000 // max lines per :from ... :to pattern
+#define MAX_CMD            500 // max number of :from commands per patchfile
+#define MAX_OUT_LINES   500000 // max lines per target file
 
 FILE *fpatch  = 0;
 char *pszRoot = 0;
@@ -219,10 +219,11 @@ int patchMain(int argc, char *argv[], int offs)
       return -1;
    }
 
+   szCmdBuf[0] = '\0';
    #ifdef _WIN32
-   _getcwd(szCmdBuf,sizeof(szCmdBuf)-10);
+   if (_getcwd(szCmdBuf,sizeof(szCmdBuf)-10)) { }
    #else
-   getcwd(szCmdBuf,sizeof(szCmdBuf)-10);
+   if (getcwd(szCmdBuf,sizeof(szCmdBuf)-10)) { }
    #endif
    char *psz = strrchr(szCmdBuf, glblPathChar);
    if (!psz) {
@@ -1001,11 +1002,11 @@ int processFileUntilDone(char *pszTargFileName)
          #else
          sprintf(szCopyCmd, "chmod +w %s", pszTargFileName);
          #endif
-         system(szCopyCmd);
+         if (system(szCopyCmd)) { }
          #ifdef _WIN32
          // 2. delete target to ensure copy will work
          sprintf(szCopyCmd, "del %s",pszTargFileName);
-         system(szCopyCmd);
+         if (system(szCopyCmd)) { }
          #endif
       }
       // 3. copy backup over target
@@ -1034,7 +1035,7 @@ int processFileUntilDone(char *pszTargFileName)
          #else
          sprintf(szCopyCmd, "chmod -w %s", pszTargFileName);
          #endif
-         system(szCopyCmd);
+         if (system(szCopyCmd)) { }
          log(5, "revoked: %s, %u bytes\n",pszTargFileName,(unsigned int)ntotal);
          nGlblRevokedFiles++;
       } else {
@@ -1064,7 +1065,7 @@ int processFileUntilDone(char *pszTargFileName)
       #else
       sprintf(szCopyCmd, "chmod +w %s", szProbeCmd);
       #endif
-      system(szCopyCmd);
+      if (system(szCopyCmd)) { }
       if (remove(szProbeCmd)) {
          log(0, "error  : cannot delete stale backup: %s\n",szProbeCmd);
          return 1;
@@ -1093,7 +1094,7 @@ int processFileUntilDone(char *pszTargFileName)
          #else
          sprintf(szCopyCmd, "chmod +w %s", szProbeCmd);
          #endif
-         system(szCopyCmd);
+         if (system(szCopyCmd)) { }
          if (remove(szProbeCmd)) {
             log(0, "error  : cannot delete stale backup: %s\n",szProbeCmd);
             return 1;
@@ -1238,7 +1239,7 @@ int processFileUntilDone(char *pszTargFileName)
       #else
       sprintf(szProbeCmd, "chmod +w %s", pszTargFileName);
       #endif
-      system(szProbeCmd);
+      if (system(szProbeCmd)) { }
       bSwitchedAttrib = 1;
       ftarg = fopen(pszTargFileName, pszFileMode);
    }
@@ -1329,7 +1330,7 @@ int processFileUntilDone(char *pszTargFileName)
       #else
       sprintf(szProbeCmd, "chmod -w %s", pszTargFileName);
       #endif
-      system(szProbeCmd);
+      if (system(szProbeCmd)) { }
    }
 
    if (bSwitchedAttrib) {

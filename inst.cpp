@@ -598,11 +598,11 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
             #else
             sprintf(szCopyCmd, "chmod +w %s", pszFile);
             #endif
-            system(szCopyCmd);
+            if (system(szCopyCmd)) { }
             #ifdef _WIN32
             // 2. delete target to ensure copy will work
             sprintf(szCopyCmd, "del %s",pszFile);
-            system(szCopyCmd);
+            if (system(szCopyCmd)) { }
             #endif
          }
 
@@ -634,7 +634,7 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
             #else
             sprintf(szCopyCmd, "chmod -w %s", pszTargFileName);
             #endif
-            system(szCopyCmd);
+            if (system(szCopyCmd)) { }
             if (!bRedo) {
                printf("revoked: %s, %u bytes\n",pszTargFileName,(unsigned int)ntotal);
                return 0;
@@ -723,7 +723,7 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
       #else
       sprintf(szLineBuf, "chmod +w %s",  pszFile);
       #endif
-      system(szLineBuf);
+      if (system(szLineBuf)) { }
       // retry 
       if (!(fout = fopen(pszFile, "w"))) {
          fprintf(stderr, "error  : unable to write: %s\n", pszFile);

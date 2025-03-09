@@ -1,3 +1,5 @@
+#ifndef _SFKBASE_HPP_
+#define _SFKBASE_HPP_
 /*
    swiss file knife base include
 */
@@ -1138,4 +1140,6 @@ private:
    ListEntry *pClFirst;
    ListEntry *pClLast;
 };
+
+#endif // _SFKBASE_HPP_
 

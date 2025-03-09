@@ -1,7 +1,7 @@
 @echo off
 sfk pathfind -quiet dview.exe
 IF %ERRORLEVEL%==0 GOTO havedview
-sfk pathfind -quiet dview.exe
+sfk pathfind -quiet notepad
 IF %ERRORLEVEL%==0 GOTO havenotepad
 echo Neither dview.exe nor notepad.exe found.
 echo You may try to download Depeche View:
