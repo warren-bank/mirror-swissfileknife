@@ -11860,7 +11860,7 @@ int execFixFile(ushort *ain, sfkfinddata64_t *pdata)
             FILETIME nDstMTime, nDstCTime;
             FILETIME *pMTime=0, *pCTime=0;
  
-            if (!makeWinFileTime(nTime2, nDstMTime))
+            if (!makeWinFileTime(nTime2, nDstMTime)) // fixfile
                pMTime = &nDstMTime;
  
             // if (nClCTime > 0)
@@ -13441,6 +13441,7 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
          "#include <stdarg.h>\n"
          "#include <stdlib.h>\n"
          "#include <ctype.h>\n"
+         "#include <stdint.h>\n"
          "\n"
          "// print error message with variable parameters.\n"
          "int perr(const char *pszFormat, ...) {\n"
@@ -13548,91 +13549,384 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
 
       case 6:
       chain.print(
-         "@echo off\n"
-         "sfk script \"%%~f0\" -from begin %%*\n" // fix sfk1933 "" quotes
-         "rem . %%~f0 is the absolute batch file name\n"
-         "GOTO xend\n"
-         "\n"
-         "sfk label begin -var\n"
-         "   +if \"%%1 = \" begin\n"
-         "      +tell \"add 'play' to play the number game.\"\n"
-         "      +stop 0\n"
-         "      +endif\n"
-         "   +if \"%%1 = play\" begin\n"
-         "      +call game\n"
-         "      +stop 0\n"
-         "      +endif\n"
-         "   +tell \"unknown parameter: %%1\"\n"
-         "   +end\n"
-         "\n"
-         "sfk label game\n"
-         "   // Note: install SFKTray to see colorful lights.\n"
-         "   +rand 1 10\n"
-         "      +setvar mynum\n"
-         "   +tell \"i know a number, you can guess it.\"\n"
-         "   +tell \"enter from 1 to 10, you have 3 tries.\"\n"
-         "   +setvar try=\"try again.\"\n"
-         "   +for i from 1 to 3\n"
-         "      +prompt\n"
-         "         +setvar usernum\n"
-         "      +if \"#(i) > 2\"\n"
-         "         then setvar try=\"\"\n"
-         "      +if \"#(mynum) < #(usernum)\" begin\n"
-         "         +status local \"slot=#(i) color=red\"\n"
-         "         +tell \"no, my number is [Red]lower[def]. #(try)\"\n"
-         "         +endif\n"
-         "      +if \"#(mynum) > #(usernum)\" begin\n"
-         "         +status local \"slot=#(i) color=red\"\n"
-         "         +tell \"no, my number is [Red]higher[def]. #(try)\"\n"
-         "         +endif\n"
-         "      +if \"#(mynum) = #(usernum)\" begin\n"
-         "         +status local \"slot=1 color=green blink=fast timeout=10\"\n"
-         "         +status local \"slot=2 color=green blink=fast timeout=10\"\n"
-         "         +tell \"[green]correct, you win![def]\"\n"
-         "         +stop 0\n"
-         "         +endif\n"
-         "   +endfor\n"
-         "   +status local \"slot=1 color=red blink=fast timeout=10\"\n"
-         "   +status local \"slot=2 color=red blink=fast timeout=10\"\n"
-         "   +tell \"[Red]3 tries done, you loose. it was #(mynum).[def]\"\n"
-         "   +end\n"
-         "\n"
-         ":xend\n"
+// --- sfk batch name.bat default script begin ---
+"@echo off\n"
+"sfk script \"%%~f0\" -from begin %%*\n"
+"rem %%~f0 is the absolute batch file name.\n"
+"GOTO xend\n"
+"\n"
+"sfk label begin -var\n"
+"\n"
+"   // default batch, with some variable support.\n"
+"   // for a full file backup example use:\n"
+"   //    sfk batch -full myfile.bat\n"
+"\n"
+"   +if \"%%1 = \" begin\n"
+"      +tell \"[green]usage:[def]\"\n"
+"      +tell \"   #(sys.ownscript.name) copy [-yes]\"\n"
+"      +stop -all\n"
+"      +endif\n"
+"\n"
+"   +setvar cmd=\"%%1\"\n"
+"   +setvar yes=\"%%2\"\n"
+"\n"
+"   +if \"#(cmd) = copy\" begin\n"
+"      +call docopy\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +tell \"unknown command: #(cmd)\"\n"
+"\n"
+"   +end\n"
+"\n"
+"sfk label docopy\n"
+"\n"
+"   +copy -checkdirs\n"
+"   \n"
+"      mydir mydir2\n"
+"\n"
+"      -dir core doc db\n"
+"\n"
+"         -subdir !\\tmp !\\save\n"
+"         -file   !.tmp\n"
+"\n"
+"         #(yes)\n"
+"\n"
+"   +end\n"
+"\n"
+":xend\n"
+// --- sfk batch default script end ---
          );
          break;
 
       case 7:
       chain.print(
-         "#!/bin/bash\n"
-         "sfk script \"$0\" -from begin $@\n" // fix sfk1933 "" quotes
-         "exit\n" // sfk193
-         "function skip_block\n"
-         "{\n"
-         "sfk label begin -var\n"
-         "#  +echo \"main got parameters: %%1 %%2 %%3\"\n"
-         "#  +then setvar \"a=the quick brown fox\"\n"
-         "#  +call myfunc foo bar %%1\n"
-         "#  +end\n"
-         "#  // note that # lines are skipped by bash,\n"
-         "#  // but not by sfk.\n"
-         "\n"
-         "sfk label myfunc\n"
-         "   +echo \"func got parameters: %%1 %%2 %%3\"\n"
-         "   +echo \"variable a contains: #(a)\"\n"
-         "   +echo \"#(a)\"\n"
-         "      +tcall substr 4 5\n"
-         "      +setvar b\n"
-         "   +echo \"variable b contains: #(b)\"\n"
-         "   +end\n"
-         "\n"
-         "sfk label substr\n"
-         "   +xex \"/[start][%%1 chars][%%2 chars]/[part3]/\"\n"
-         "   +tend\n"
-         "\n"
-         "#  // if bash produces errors with \\r you must:\n"
-         "#  //   sfk remcr %s\n"
-         "}\n",
-         pszOutFile ? pszOutFile : "thisfile.sh"
+// --- sfk batch name.sh default script begin ---
+"#!/bin/bash\n"
+"sfk script \"$0\" -from begin $@\n"
+"exit\n"
+"function skip_block\n"
+"{\n"
+"sfk label begin -var -upat2\n"
+"\n"
+"   // default batch, with unified windows/linux syntax (-upat2).\n"
+"   // for a full file backup example use:\n"
+"   //    sfk batch -full myfile.sh\n"
+"\n"
+"   +if \"%%1 = \" begin\n"
+"      +tell \"[green]usage:[def]\"\n"
+"      +tell \"   #(sys.ownscript.name) copy [-yes]\"\n"
+"      +stop -all\n"
+"      +endif\n"
+"\n"
+"   +setvar cmd=\"%%1\"\n"
+"   +setvar yes=\"%%2\"\n"
+"\n"
+"   +if \"#(cmd) = copy\" begin\n"
+"      +call docopy\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +tell \"unknown command: #(cmd)\"\n"
+"\n"
+"   +end\n"
+"\n"
+"sfk label docopy\n"
+"\n"
+"   +copy -checkdirs\n"
+" \n"
+"      mydir mydir2\n"
+"\n"
+"      -dir core doc db\n"
+"\n"
+"         -subdir :\\tmp :\\save\n"
+"         -file   :.tmp\n"
+"\n"
+"         #(yes)\n"
+"\n"
+"   +end\n"
+"}\n"
+// --- sfk batch name.sh default script end ---
+         );
+         break;
+
+      case 106:
+      chain.print(
+// --- sfk batch name.bat -full script begin ---
+"@echo off\n"
+"sfk script -anyparms \"%%~f0\" -from begin %%*\n"
+"rem %%~f0 is the absolute batch file name.\n"
+"rem %%* passes through every parameter given.\n"
+"rem -anyparms allows words starting with '+'.\n"
+"GOTO xend\n"
+"\n"
+"sfk label begin -var -checkdirs\n"
+"\n"
+"   // Selective file copy example. Just run this batch for infos.\n"
+"   // Read detailed explanations of every step in the SFK e-Book,\n"
+"   // under \"Backup and transfer of folders\".\n"
+"\n"
+"   +setvar cmd=\"%%1\"\n"
+"   +setvar yes=\"%%2\"\n"
+"   +setvar target=R:\\backup\n"
+"\n"
+"   // helper variables for short typing.\n"
+"   // empty parms must be replaced by \"-noop\".\n"
+"   +setvar s=\"#(sys.ownscript.name)\"\n"
+"   +setvar m=\"[Magenta]\"\n"
+"   +setvar d=\"[def]\"\n"
+"\n"
+"   // if \"view\" or \"+view\" is given with list, size, or big\n"
+"   // then insert a variable command to view all output\n"
+"   // comfortably and searcheable with Depeche View.\n"
+"   +setvar todview=\"\"\n"
+"   +if \"#(contains(yes,'view')) = 1\" setvar todview=\"+view\"\n"
+"\n"
+"   +if \"%%1 = \" begin\n"
+"      +tell \"[green]DataWay:[def] PC Backup\"\n"
+"      +tell \"   #(m)FROM#(d) C: and D: #(m)TO#(d) #(target)\"\n"
+"      +tell \"   #(m)WITH#(d) org app work mail\"\n"
+"      +tell \"   #(m)WITHOUT#(d) cache save, and tmp files\"\n"
+"      +tell \" \"\n"
+"      +tell \"[green]Usage:[def]\"\n"
+"      +tell \"   #(s) command\"\n"
+"      +tell \" \"\n"
+"      +tell \"[green]Commands:[def]\"\n"
+"      +tell \"   #(m)list#(d)        - list all selected source files.\"\n"
+"      +tell \"                 press escape or ctrl+c to stop.\"\n"
+"      +tell \"   #(m)size#(d)        - tell size of source folders,\"\n"
+"      +tell \"                 list 50  mb blocks and larger\"\n"
+"      +tell \"   #(m) size200#(d)    - list 200 mb blocks and larger\"\n"
+"      +tell \"   #(m)big#(d)         - show biggest selected source files\"\n"
+"      +tell \" \"\n"
+"      +tell \"   #(m)copy#(d)        - simulate copy to #(target)\"\n"
+"      +tell \"   #(m) copy -yes#(d)  - really   copy to #(target)\"\n"
+"      +tell \" \"\n"
+"      +tell \"   #(m)copy7d#(d)      - copy only files created or changed\"\n"
+"      +tell \"                 in the last 7 days\"\n"
+"      +tell \" \"\n"
+"      +tell \"   #(m)sync#(d)        - simulate copy with DELETE of files\"\n"
+"      +tell \"                 in #(target) which do not exist\"\n"
+"      +tell \"                 in the source folders\"\n"
+"      +tell \"   #(m) sync -yes#(d)  - really   sync to #(target)\"\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   // \"-using\" allows to use the same file set in multiple commands.\n"
+"   // \"-root\" is a prefix for every -dir entry within -using.\n"
+"   +if \"#(cmd) = list\" begin\n"
+"      +dir -time -size\n"
+"         -root C:\\ -using cdirs\n"
+"         -root D:\\ -using ddirs\n"
+"         #(todview)\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(begins(cmd,'size')) = 1\" begin\n"
+"      +setvar minsize=#(substr(cmd,4))\n"
+"      +if \"#(minsize) = \" setvar minsize=10\n"
+"      +treesize -minsize=#(minsize)m\n"
+"         -root C:\\ -using cdirs\n"
+"         -root D:\\ -using ddirs\n"
+"         #(todview)\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(cmd) = big\" begin\n"
+"      +big -root C:\\ -using cdirs\n"
+"           -root D:\\ -using ddirs\n"
+"           #(todview)\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(cmd) = copy\" begin\n"
+"      +copy #(yes) C:\\ #(target)\\c -using cdirs\n"
+"      +copy #(yes) D:\\ #(target)\\d -using ddirs\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(begins(cmd,'copy')) = 1\" begin\n"
+"      +setvar since=#(substr(cmd,4))\n"
+"      +copy -since #(since) #(yes) C:\\ #(target)\\c -using cdirs\n"
+"      +copy -since #(since) #(yes) D:\\ #(target)\\d -using ddirs\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(cmd) = sync\" begin\n"
+"      +sync #(yes) -wipe C:\\ #(target)\\c -using cdirs\n"
+"      +sync #(yes) -wipe D:\\ #(target)\\d -using ddirs\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +tell \"unknown command: #(cmd)\"\n"
+"\n"
+"   +end\n"
+"\n"
+"sfk label cdirs\n"
+"\n"
+"   // copy C:\\org C:\\app etc.\n"
+"   // variables #() are not supported.\n"
+"   // every parameter with whitespaces must be quoted by \"\".\n"
+"\n"
+"   -dir     org\n"
+"            app\n"
+"            \"Users\\All Users\\VirtualBox\"\n"
+"\n"
+"      -subdir  !\\cache\\\n"
+"               !\\save\\\n"
+"               \"!\\unused stuff\\\"\n"
+"\n"
+"      -file    !.tmp\n"
+"\n"
+"   +end\n"
+"\n"
+"sfk label ddirs\n"
+"\n"
+"   // this will copy: D:\\work D:\\mail\n" 
+"\n"
+"   -dir     work\n"
+"\n"
+"      -subdir  !\\.svn\n"
+"               !\\old\\\n"
+"               !\\save\\\n"
+"    \n"
+"      -file    !\\tmp*.*\n"
+"               !.tmp\n"
+"               !.bak\n"
+"\n"
+"   -dir     mail\n"
+"\n"
+"      -subdir  !\\cache\n"
+"\n"
+"   +end\n"
+"\n"
+":xend\n"
+// --- sfk batch -full script end ---
+         );
+         break;
+
+      case 107:
+      chain.print(
+// --- sfk batch name.sh -full script begin ---
+"#!/bin/bash\n"
+"sfk script \"$0\" -from begin $@\n"
+"exit\n"
+"function skip_block\n"
+"{\n"
+"sfk label begin -var -upat2 -checkdirs\n"
+"\n"
+"   // Selective file copy example. Just run this batch for infos.\n"
+"   // Read detailed explanations of every step in the SFK e-Book,\n"
+"   // under \"Backup and transfer of folders\".\n"
+"\n"
+"   +setvar cmd=\"%%1\"\n"
+"   +setvar yes=\"%%2\"\n"
+"   +setvar source=project\n"
+"   +setvar target=project2\n"
+"\n"
+"   // helper variables for short typing.\n"
+"   // empty parms must be replaced by \"-noop\".\n"
+"   +setvar s=\"#(sys.ownscript.name)\"\n"
+"   +setvar m=\"[Magenta]\"\n"
+"   +setvar d=\"[def]\"\n"
+"\n"
+"   +if \"%%1 = \" begin\n"
+"      +tell \"[green]DataWay:[def] copy #(source) folders\"\n"
+"      +tell \"   #(m)FROM#(d) #(source) #(m)TO#(d) #(target)\"\n"
+"      +tell \"   #(m)WITH#(d) core desktop mobile doc\"\n"
+"      +tell \"   #(m)WITHOUT#(d) .svn old save, and some large files\"\n"
+"      +tell \" \"\n"
+"      +tell \"[green]Usage:[def]\"\n"
+"      +tell \"   #(s) command\"\n"
+"      +tell \" \"\n"
+"      +tell \"[green]Commands:[def]\"\n"
+"      +tell \"   #(m)list#(d)        - list all selected source files.\"\n"
+"      +tell \"                 press escape or ctrl+c to stop.\"\n"
+"      +tell \"   #(m)size#(d)        - tell size of source folders,\"\n"
+"      +tell \"                 list 50  mb blocks and larger\"\n"
+"      +tell \"   #(m) size200#(d)    - list 200 mb blocks and larger\"\n"
+"      +tell \"   #(m)big#(d)         - show biggest selected source files\"\n"
+"      +tell \" \"\n"
+"      +tell \"   #(m)copy#(d)        - simulate copy to #(target)\"\n"
+"      +tell \"   #(m) copy -yes#(d)  - really   copy to #(target)\"\n"
+"      +tell \" \"\n"
+"      +tell \"   #(m)copy7d#(d)      - copy only files created or changed\"\n"
+"      +tell \"                 in the last 7 days\"\n"
+"      +tell \" \"\n"
+"      +tell \"   #(m)sync#(d)        - simulate copy with DELETE of files\"\n"
+"      +tell \"                 in #(target) which do not exist\"\n"
+"      +tell \"                 in the source folders\"\n"
+"      +tell \"   #(m) sync -yes#(d)  - really   sync to #(target)\"\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   // \"-using\" allows to use the same file set in multiple commands.\n"
+"   // \"-root\" is a prefix for every -dir entry within -using.\n"
+"   +if \"#(cmd) = list\" begin\n"
+"      +dir -time -size -root #(source) -using projdirs\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(begins(cmd,'size')) = 1\" begin\n"
+"      +setvar minsize=#(substr(cmd,4))\n"
+"      +if \"#(minsize) = \" setvar minsize=10\n"
+"      +treesize -minsize=#(minsize)m -root #(source) -using projdirs\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(cmd) = big\" begin\n"
+"      +big -root #(source) -using projdirs\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(cmd) = copy\" begin\n"
+"      +copy #(yes) #(source) #(target) -using projdirs\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(begins(cmd,'copy')) = 1\" begin\n"
+"      +setvar since=#(substr(cmd,4))\n"
+"      +copy -since #(since) #(yes) #(source) #(target) -using projdirs\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +if \"#(cmd) = sync\" begin\n"
+"      +sync #(yes) -wipe #(source) #(target) -using projdirs\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +tell \"unknown command: #(cmd)\"\n"
+"\n"
+"   +end\n"
+"\n"
+"// within label projdirs variables #() are not supported.\n"
+"// every parameter with whitespaces must be quoted by \"\".\n"
+"// -upat2 above allows unified syntax under linux/windows.\n"
+"\n"
+"// this will copy: project/core project/desktop ...\n"
+"// to copy whole project use: -dir .\n"
+"\n"
+"sfk label projdirs\n"
+"\n"
+"   -dir     core\n"
+"            desktop\n"
+"            mobile\n"
+"            doc\n"
+"\n"
+"      -subdir  :/.svn\n"
+"               :/old/\n"
+"               :/save/\n"
+"               \":/unused stuff/\"\n"
+"               :/tmpbin\n"
+"\n"
+"      -file    :.tmp \n"
+"               :.tar :.tar.bz2\n"
+"               :tmp%%.txt :.new\n"
+"               :/a.out/\n"
+"\n"
+"   +end\n"
+"}\n"
+// --- sfk batch name.sh -full script end ---
          );
          break;
 
@@ -15315,7 +15609,82 @@ int SFKPic::load(char *pszFile)
    if (!(pPack = loadBinaryFlex(pszFile, nPack)))
       return 9+pferr(pszFile, "cannot load: %s", pszFile);
 
-   uint *ppix = loadpic(pPack,nPack,&octl);
+   uint *ppix = 0;
+   
+   if (cs.srcpicwidth)
+   {
+      do
+      {
+         int csrc = cs.srcpicchan;
+         if (csrc == 0) csrc = 3;
+
+         int wsrc = cs.srcpicwidth;
+         int hsrc = nPack / (wsrc * csrc);
+         int npix = wsrc * hsrc;
+         
+         ppix = new uint[npix+10];
+         if (!ppix)
+            { perr("outofmem"); break; }
+         memset(ppix, 0, npix * sizeof(uint));
+
+         uchar *psrc = pPack;
+         int isrc = 0;
+         int idst = 0;
+         uint r,g,b,c,a;
+
+         for (int y=0; y<hsrc; y++)
+         {
+            for (int x=0; x<wsrc; x++)
+            {
+               isrc = y * wsrc * csrc + x * csrc;
+               idst = y * wsrc + x;
+
+               r = psrc[isrc+0];
+
+               a = 0xff;
+
+               switch (csrc) 
+               {
+                  case 1:
+                     r = psrc[isrc+0];
+                     g = r;
+                     b = r;
+                     break;
+                  case 3:
+                     r = psrc[isrc+0];
+                     g = psrc[isrc+1];
+                     b = psrc[isrc+2];
+                     break;
+                  case 4:
+                     r = psrc[isrc+0];
+                     g = psrc[isrc+1];
+                     b = psrc[isrc+2];
+                     a = psrc[isrc+3];
+                     break;
+               }
+
+               c = pix(a, r, g, b);
+
+               ppix[idst] = c;
+            }
+         }
+
+         memset(&octl, 0, sizeof(octl));
+
+         octl.width  = wsrc;
+         octl.height = hsrc;
+         octl.filecomp = csrc;
+         octl.outcomp  = 3;
+
+         octl.ppix   = ppix;
+         octl.npix   = npix;
+      }
+      while (0);
+   }
+   else
+   {
+      ppix = loadpic(pPack,nPack,&octl);
+   }
 
    delete [] pPack;
 
@@ -15344,7 +15713,7 @@ int SFKPic::save(char *pszFile)
    if (isubrc)
       return isubrc+perr("packpic rc %d",isubrc);
 
-   isubrc=saveFile(pszFile,pPack,nPack,"wb");
+   isubrc = saveFile(pszFile,pPack,nPack,"wb");
 
    delete [] pPack;
 
@@ -22505,7 +22874,7 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
              );
    }
 
-   if (!strcmp(pszSub, "syncnames")) // internal
+   if (!strcmp(pszSub, "syncnames"))
    {
       printx("<help>$sfk syncnames [opts] -dir fromdir todir\n"
              "\n"
@@ -22513,10 +22882,10 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
              "   from your local disk to an external backup disk,\n"
              "   without copying files.\n"
              "\n"
-             "   only for use before sfk sync, to avoid long lasting\n"
+             "   #only for use before sfk sync,<def> to avoid long lasting\n"
              "   copy/delete actions on folder name changes.\n"
              "\n"
-             "   #Warning: heuristic command. wrong renames may occur!<def>\n"
+             "   #Warning: Heuristic command. Wrong renames may occur!<def>\n"
              "\n"
              "   this command may sometimes move/rename wrong files,\n"
              "   especially with option -unsafe and many files of\n"
@@ -22527,7 +22896,9 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
              "   full of holiday snapshots and videos, where the one\n"
              "   or other misrenamed image or video is not a problem.\n"
              "\n"
-             "   #should be followed by sfk sync<def>, to complete a backup.\n"
+             "   #must be followed by sfk sync,<def> on the same folders,\n"
+             "   to cleanup possible wrong renames. (no guarantee\n"
+             "   that cleanup always works.)\n"
              "\n"
              "   $options for faster processing\n"
              "      -byname   compare relative filenames\n"
@@ -22616,6 +22987,7 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
              #endif
              #ifndef _WIN32
              "      -verbose   list also non-regular files\n"
+             "      -withhead  tell 'listing n of n files' with chaining.\n"
              "      -showskip  tell whenever dir contents are skipped to avoid\n"
              "                 double processing caused by symbolic links.\n"
              "      -allowdups disable detection of duplicate dir contents.\n"
@@ -22880,10 +23252,14 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
              "   file like .docx .xls .ods ('sfk help office' for more).\n"
              "\n");
       printx("   $line selection options\n"
-             "      -+pat1 -+pat2 [...]   include lines containing pat1 OR  pat2\n"
-             "      ++pat1 ++pat2 [...]   include lines containing pat1 AND pat2\n"
+             "      -+pat1 -+pat2         include lines containing pat1 OR  pat2\n"
+             "      -and+pat1 -and+pat2   include lines containing pat1 AND pat2\n"
+             "                            in any order.\n"
+             "      \"-+pat1*pat2\"         include lines containing pat1 AND pat2\n"
+             "                            in the given order.\n"
              "      -ls+pat1              include lines starting with pat1\n"
              "      -le+pat1 -le+pat2     include lines ending   with pat1 OR pat2\n"
+             "      \"-ls+pat1*pat2\"       include starting  pat1 and having pat2\n"
              "      -<not>pat1 -<not>pat2         exclude lines containing pat1 OR  pat2\n"
              "      -ls<not>pat1              exclude lines starting with pat1\n"
              "      -le<not>pat1 -le<not>pat2     exclude lines ending with pat1 or pat2\n"
@@ -23774,6 +24150,24 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
          "         subdir exclusion masks can stay as they are.\n"
          "\n"
          );
+  printx("      $file set reuse within scripts:\n"
+         "\n"
+         "      to allow reuse of the same -dir ... -file ...\n"
+         "      parameters by different commands, these options exist:\n"
+         "\n"
+         "      $-root x<def>     prefix every -dir parameter by x,\n"
+         "                  then remove x in the -dir parameters to\n"
+         "                  make a fileset compatible to copy/sync\n"
+         "      $-using l<def>    use -dir ... -file ... text given at label l.\n"
+         "                  text in that label may contain // remarks,\n"
+         "                  but no variables like ##(foo).\n"
+         "      $-checkdirs<def>  stop if given -dir folders do not exist\n"
+         "\n"
+         "      to get a full example script type:\n"
+         "\n"
+         "         #sfk batch mytest.bat<def>    for a Windows .bat example\n"
+         "         #sfk batch mytest.sh<def>     for a Cygwin/Linux .sh example\n"
+         "\n");
   printx("   $3. single parameter file set selection:\n"
          "\n"
          "      some commands like find, filter or tail do not accept the full\n"
@@ -23972,7 +24366,7 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
   webref("helpvar");
   printx("      $example:\n"
          "         $--- file filt.bat begin ---\n"
-         "         sfk #script<def> %%~f0 -from begin %%*\n"
+         "         sfk #script<def> \"%%~f0\" -from begin %%*\n"
          "         GOTO end\n"
          "         sfk #label<def> begin\n"
          "            +filter %%1 %%2\n"
@@ -25684,6 +26078,7 @@ int reformatjson(char *pinbuf, char *poutbuf, char *poutatt, int ioutmax)
 
 bool haveParmOption(char *argv[], int argc, int &iDir, cchar *pszOptBase, char **pszOutParm);
 bool isDirParm(char *psz);
+bool sfkisopt(char *psz);
 bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJustCheck=0);
 bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext, bool bAllowVerbose=0);
 bool alldigits(char *psz);
@@ -25719,6 +26114,9 @@ void reduceToPath(char *psz);
 int makeINameResultLine(char *pszText, char *pszAttr, int iMask, bool bTabs, int iDigits);
 int tcpAnyServ(uint nPort, char *pszForward, int nForward);
 int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool bEcho,
+   char *pszFromMask, char *pszNotFromMask, int iMinSize, int iMaxSize,
+   uchar *pPat, int nPat, uint nFlags, SOCKET hRev);
+int udpRevServ(uint nServerPort, uint nPort, char *pszGroup,
    char *pszFromMask, char *pszNotFromMask, int iMinSize, int iMaxSize,
    uchar *pPat, int nPat, uint nFlags);
 extern cchar *pszGlblTurn;
@@ -26176,7 +26574,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             continue;
          }
          else
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (isDirParm(argx[iDir]))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -26426,7 +26824,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             { nmode = 1; continue; }
          if (!strcmp(pszArg, "-all"))
             { nmode = 2; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -26596,7 +26994,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bTextMode = 1;
             continue;
          }
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
@@ -26922,7 +27320,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bTest = 1;
             continue;
          }
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
@@ -27823,7 +28221,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          }
 
          // FIX: 1692: general option handling
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (isDirParm(argx[iDir]))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -27973,7 +28371,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
@@ -28118,7 +28516,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
    ifcmd (strBegins(pszCmd, "ftpserv") || strBegins(pszCmd, "sftserv")  // +wref
           || !strcmp(pszCmd, "sfs3") || !strcmp(pszCmd, "sfs4")
-          || !strcmp(pszCmd, "sfs5")
+          || !strcmp(pszCmd, "sfs5") || !strcmp(pszCmd, "sfs6") // sfk197 internal
+          || !strcmp(pszCmd, "sfs7") || !strcmp(pszCmd, "sfs8")
+          || !strcmp(pszCmd, "sfs9")
           || strBegins(pszCmd, "fileserv")   // sfk1943
          )
    {
@@ -28226,7 +28626,14 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          // "\n"
          "   $aliases\n"
          "      #sfk sftserv<def>   same as sfk ftpserv but using port 2121.\n"
-         "      #sfk fileserv<def>  the same as sfk sftserv.\n"
+         "      #sfk fileserv<def>  same as sfk sftserv.\n"
+         /*
+         "\n"
+         "   $interactive shortcuts\n"
+         "      avoid to use in scripts which must be understood by others.\n"
+         "      #sfk sfs3<def>      same as sfk sftserv -rw -port=3000\n"
+         "      #sfk sfs9<def>      same as sfk sftserv -rw -port=9000\n"
+         */
          "\n");
   printHelpText("ftpprot", bhelp, 0);
   printx("   $problems and solutions:\n"
@@ -28330,6 +28737,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (!strcmp(pszCmd, "sfs3")) { bRW=1; nPort=3000; }
       if (!strcmp(pszCmd, "sfs4")) { bRW=1; nPort=4000; }
       if (!strcmp(pszCmd, "sfs5")) { bRW=1; nPort=5000; }
+      if (!strcmp(pszCmd, "sfs6")) { bRW=1; nPort=6000; }
+      if (!strcmp(pszCmd, "sfs7")) { bRW=1; nPort=7000; }
+      if (!strcmp(pszCmd, "sfs8")) { bRW=1; nPort=8000; }
+      if (!strcmp(pszCmd, "sfs9")) { bRW=1; nPort=9000; }
 
       int istate = 0;
 
@@ -28451,7 +28862,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.showerr = 1;
             continue;
          }
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
@@ -28672,7 +29083,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             { imetasel=2; iOutMask+=4; continue; }
          if (!strcmp(pszArg, "-withmeta"))
             { imetasel=0; iOutMask+=4; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -29171,7 +29582,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.binallchars = 1;
             continue;
          }
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (isDirParm(argx[iDir]))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -29238,7 +29649,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             }
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -29353,7 +29764,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             printf("written: sfkmon.cfg\n");
             exit(0);
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -29811,6 +30222,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bool  bCollectData= 0;
       bool  bGotNoOpt   = 0;
       uint  nFlags      = 0;
+      bool  bReverse    = 0;
 
       if (budpcast)
          cs.nodump = 1;
@@ -29835,6 +30247,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bGlblHexDumpWide = 0;
             continue;
          }
+         if (strBegins(pszArg, "-revserv")) {
+            bReverse = 1;
+            continue;
+         }
          if (!strcmp(pszArg, "-pure"))   { nGlblHexDumpForm=1; continue; }
          if (!strcmp(pszArg, "-hexsrc")) { nGlblHexDumpForm=2; continue; }
          if (!strcmp(pszArg, "-decsrc")) { nGlblHexDumpForm=3; continue; }
@@ -29843,7 +30259,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          if (!strcmp(pszArg, "-flat")) { nGlblHexDumpForm=4; continue; }
          if (!strcmp(pszArg, "-post")) { nGlblHexDumpForm=5; cs.bytesperline=16; continue; }
          if (!strcmp(pszArg, "-min"))  { nGlblHexDumpForm=6; cs.bytesperline=16; continue; }
-         if (strBegins(pszArg, "-sep")) { cs.separator=1; continue; }
+         if (strBegins(pszArg, "-sep")) {
+            if (cs.knx) pinf("use -full with knxdump to get a separator.\n");
+            cs.separator=1; continue; 
+         }
          if (strBegins(pszArg, "-nosep")) { cs.separator=0; continue; }
          if (!strcmp(pszArg, "-nolf")) { cs.nolf=1; continue; }
          if (strBegins(pszArg, "-bon"))
@@ -30082,7 +30501,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             );
             return 0;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -30137,13 +30556,330 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          if (nPort == -1)
             return 9+perr("specify port number to listen on.\n");
          if (btest) return 0;
-         udpAnyServ(nPort, pszForward, nForward, pszGroup, bEcho, pszFromMask, pszNotFromMask, iMinSize, iMaxSize, abMsg, nMsg, nFlags);
+         if (bReverse)
+            udpRevServ(nPort, nPort, pszGroup,
+               pszFromMask, pszNotFromMask,
+               iMinSize, iMaxSize, abMsg, nMsg, nFlags);
+         else
+            udpAnyServ(nPort, pszForward, nForward,
+               pszGroup, bEcho, pszFromMask, pszNotFromMask, 
+               iMinSize, iMaxSize, abMsg, nMsg, nFlags,
+               INVALID_SOCKET);
       }
 
       if (iChainNext) {
          // producing command
          STEP_CHAIN(iChainNext, chain.coldata); // sfk181 hexdump always
       }
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "udpproxy"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk udpproxy serverport [pass dataport]\n"
+             "\n"
+             "   udp reverse proxy, to work around subnet\n"
+             "   or vpn routing limitations, for specific ports.\n"
+             "\n"
+             "   1. listens on a tcp server port where an udpget\n"
+             "      client can connect to, asking for data.\n"
+             "\n"
+             "   2. listens on an udp data port whose data\n"
+             "      should be forwarded to the client.\n"
+             "\n"
+             "   $commands\n"
+             "      pass n       listen on data port n. if this is\n"
+             "                   left out the same port number is\n"
+             "                   used as the server port.\n"
+             "\n"
+             "   $see also\n"
+             "      sfk udpget   the udpproxy client\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk udpproxy 3000\n"
+             "         listen on server port 3000, and pass udp\n"
+             "         messages received on port 3000.\n"
+             "\n"
+             "      #sfk udpproxy 3000 pass 5000\n"
+             "         listen on server port 3000, and pass udp\n"
+             "         messages received on port 5000.\n"
+             "\n"
+             "      #sfk udpget 192.168.178.100:3000 127.0.0.1:6000\n"
+             "         connect to proxy on machine .100, and pass\n"
+             "         received udp to port 6000 on the local machine.\n"
+             "\n"
+             "      #make 2>&1 | sfk tonetlog 5000\n"
+             "         if .100 is a build server, send output text\n"
+             "         of a make command to local port 5000, which\n"
+             "         will be passed on by the udpproxy above.\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      int iServerPort = -1;
+      char *pszGroup  = 0;
+      int   nPort     = -1;
+      char  szListenBuf[100];
+
+      // optional filters, not used
+      uchar abMsg[50];
+      int   nMsg = 0;
+      int   nMsgMax = sizeof(abMsg)-10;
+      mclear(abMsg);
+      int   iMinSize    =-1;
+      int   iMaxSize    =-1;
+      char *pszFromMask = 0;
+      char *pszNotFromMask = 0;
+
+      // flags: use listen port as prefix port
+      uint  nFlags      = 2;
+
+      // no hexdump etc. of passed data by default
+      cs.nohead = 1;
+      cs.nodump = 1;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (sfkisopt(pszArg)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+
+         if (iServerPort == -1)
+            { iServerPort = atoi(pszArg); continue; }
+
+         if (!strcmp(pszArg, "pass")) {
+            iDir++; if (iDir>=argc) break;
+            pszArg = argx[iDir];
+         }
+
+         // can be port or 224.0.0.x group
+         if (!pszGroup && strchr(pszArg, '.')) {
+            strcopy(szListenBuf, pszArg);
+            pszGroup = szListenBuf;
+            // also accept 224.0.0.x:port notation
+            char *psz = strchr(szListenBuf, ':');
+            if (psz) {
+               *psz++ = '\0';
+               nPort = atol(psz);
+            }
+            continue;
+         }
+         if (nPort == -1) {
+            nPort = atol(pszArg);
+            continue;
+         }
+         return 9+perr("unexpected: %s", pszArg);
+      }
+
+      if (nPort == -1)
+         nPort = iServerPort;
+
+      udpRevServ((uint)iServerPort, nPort, pszGroup,
+         pszFromMask, pszNotFromMask,
+         iMinSize, iMaxSize, abMsg, nMsg, nFlags);
+
+      if (iChainNext)
+         { STEP_CHAIN(iChainNext, 0); }
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "udpget")) // internal
+   {
+      if (!chain.usefiles && (nparm < 1)) {
+      printx("<help>$sfk udpget server:port target:port\n"
+             "\n"
+             "   get udp messages from a reverse proxy\n"
+             "   and send it into the local machine's network.\n"
+             );
+      return 9;
+      }
+
+      sfkarg;
+
+      char *pservport = 0;
+      char *ptargport = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszParm = 0;
+         char *pszArg  = argx[iDir];
+         if (!strcmp(pszArg, "-prefix"))
+            { cs.prefix=1; continue; }
+
+         if (sfkisopt(argx[iDir])) {
+            if (isDirParm(argx[iDir]))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argx[iDir]);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pservport) {
+            pservport = argx[iDir];
+            continue;
+         }
+         if (!ptargport) {
+            ptargport = argx[iDir];
+            continue;
+         }
+         return 9+pbad(pszCmd, argx[iDir]);
+      }
+
+      if (!pservport)
+         return 9+perr("missing serverhost:port\n");
+      if (!ptargport)
+         return 9+perr("missing targethost:port\n");
+
+      lRC = 0; // default: cannot connect
+
+      int nServPort = 0;
+      int nTargPort = 0;
+
+      char szServer[200];
+      char szTarget[200];
+
+      strcopy(szServer, pservport);
+      char *psz1 = strchr(szServer, ':');
+      if (psz1)
+         { *psz1++ = '\0'; nServPort = atol(psz1); }
+
+      strcopy(szTarget, ptargport);
+      psz1 = strchr(szTarget, ':');
+      if (psz1)
+         { *psz1++ = '\0'; nTargPort = atol(psz1); }
+
+      SOCKET hSock = 0;
+
+      prepareTCP();
+ 
+      hSock = socket(AF_INET, SOCK_STREAM, 0);
+      if (hSock == INVALID_SOCKET) {
+         if (!cs.justrc)
+            perr("cannot create socket (2)\n");
+         lRC = 9;
+      }
+
+      struct sockaddr_in oaddr;
+      oaddr.sin_family = AF_INET;
+      oaddr.sin_port = htons((unsigned short)nServPort);
+
+      struct sockaddr_in FrontAdr; mclear(FrontAdr);
+      FrontAdr.sin_family = AF_INET;
+      FrontAdr.sin_port = htons((unsigned short)nTargPort);
+      if (setaddr(&FrontAdr,szTarget,1))
+         return 9+perr("cannot get target host: %s\n", szTarget);
+
+      SOCKET hTargSock = socket(AF_INET, SOCK_DGRAM, 0);
+
+      if (lRC < 9) {
+         if (setaddr(&oaddr,szServer)) {
+            if (!cs.justrc)
+               perr("cannot set address\n");
+            lRC = 9;
+         }
+      }
+
+      if (lRC < 9)
+      {
+         int ncnt = 1;
+         while (!userInterrupt())
+         {
+            if (connect(hSock, (struct sockaddr *)&oaddr, sizeof(oaddr)) != -1)
+               break;
+
+            printf("server not yet available, retrying (%d)   \r",ncnt++);
+            fflush(stdout);
+            doSleep(1000);
+         }
+
+         // listen for incoming messages
+         printf("waiting for incoming messages.\n");
+         while (1)
+         {
+            uchar ablen[2];
+            recv(hSock, (char*)ablen+0, 1, 0);
+            recv(hSock, (char*)ablen+1, 1, 0);
+            uint nLen = ((uint)ablen[0]) << 8;
+            nLen |= (uint)ablen[1];
+            // printf("LEN: %02x%02x %u\n",ablen[0],ablen[1],nLen);
+
+            int nRead = 0;
+            while (nRead < nLen)
+            {
+               int nsub = recv(hSock, (char*)szLineBuf+nRead, nLen-nRead, 0);
+               if (nsub <= 0)
+                  { printf("connection lost.\n"); nRead=-1; break; }
+               nRead += nsub;
+            }
+            if (nRead < 0) break;
+
+            if (memcmp(szLineBuf, "SFK\0FW4", 7) != 0) {
+               printf("invalid reply (%d04), ignoring: %s\n", 
+                  nRead, dataAsTrace(szLineBuf, 32)); 
+               continue;
+            }
+
+            uchar *pData = (uchar*)szLineBuf;
+            int    nData = nRead;
+            uint   nSrcAddr = 0;
+            uint   nSrcPort = 0;
+
+            uint nHeader = pData[7];
+            if (nHeader >= 6)
+            {
+               nSrcAddr =     (((uint)pData[8])  << 24)
+                           |  (((uint)pData[9])  << 16)
+                           |  (((uint)pData[10]) <<  8)
+                           |  (((uint)pData[11]) <<  0);
+               nSrcPort =     (((uint)pData[12]) <<  8)
+                           |  (((uint)pData[13]) <<  0);
+            }
+
+            if (!cs.prefix) 
+            {
+               uint  nhead = 8+nHeader;
+               uchar *psrc = pData+nhead;
+               uchar *pmax = pData+nRead;
+               uchar *pdst = pData;
+               uint  ncopy = nRead-nhead;
+               if (psrc+ncopy <= pmax)
+               {
+                  memmove(pdst,psrc,ncopy);
+                  nData -= nhead;
+               }
+            }
+
+            int isubrc = sendto(hTargSock, (char*)pData, nData, 0, 
+               (struct sockaddr*)&FrontAdr, sizeof(FrontAdr));
+
+            if (cs.verbose)
+               printf("pass %u %03u to %s:%u : %s\n",
+                  nSrcPort, nData, szTarget, nTargPort,
+                  dataAsTrace(pData, mymin(32,nData))
+                  );
+         }
+
+         closesocket(hSock);
+      }
+
+      STEP_CHAIN(iChainNext, 0);
 
       bDone = 1;
    }
@@ -30182,7 +30918,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             { cs.collines = 1; continue; }
          if (!strcmp(argx[iDir], "-close"))
             { bclose = 1; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             return 9+perr("unknown option: %s\n", pszArg);
@@ -30282,7 +31018,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             return 9+perr("unknown option: %s\n", pszArg);
@@ -30573,7 +31309,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.stopcnt = pszParm ? atoi(pszParm) : 1;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -30813,7 +31549,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.quiet = 1;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -31412,7 +32148,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.ntp=1;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(argx[iDir]))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -31607,7 +32343,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             { bhex = 1; continue; }
          if (!strcmp(pszArg, "-hex64"))   // internal
             { bmax = 1; bhex = 1; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -31699,7 +32435,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -31902,7 +32638,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             nlisten = -1;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -32074,7 +32810,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bNoWait = 1;
             continue;
          }
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (isDirParm(argx[iDir]))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -32195,7 +32931,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
    ifcmd (!strcmp(pszCmd, "ftp") || !strcmp(pszCmd, "sft") // +wref
           || !strcmp(pszCmd, "sf3") || !strcmp(pszCmd, "sf4")
-          || !strcmp(pszCmd, "sf5")
+          || !strcmp(pszCmd, "sf5") || !strcmp(pszCmd, "sf6") // sfk197
+          || !strcmp(pszCmd, "sf7") || !strcmp(pszCmd, "sf8")
+          || !strcmp(pszCmd, "sf9")
           || !strcmp(pszCmd, "put")    // sfk1943
           || !strcmp(pszCmd, "putall") // sfk1943
           || !strcmp(pszCmd, "mput")   // sfk1944
@@ -32219,7 +32957,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "\n"
          "   $commands\n"
          "      put x     send a single file with name x\n"
+         "      put l r   send local file l with remote name r\n"
          "      get x     receive a single file with name x\n"
+         "      get r l   receive file r with local name l\n"
          "      mput x    send multiple files of the current directory\n"
          "                having x in their filename\n"
          "      mput .ext send multiple files ending with .ext\n"
@@ -32233,6 +32973,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       // "                if x exists on both sides.\n"
          "      !mycmd    execute local command mycmd\n"
          "      bye       exit\n"
+         "\n");
+  printx("   $names with whitespace require quotes\n"
+         "      when using names with blanks, like \"the file.txt\",\n"
+         "      these must be surrounded by double quotes \"\".\n"
          "\n");
   printx("   $with SFT only:\n"
          "      cput x    send new or changed files of the current dir.\n"
@@ -32271,15 +33015,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "                and tell if SFK_FTP_USER/PW variable is used.\n"
          "                helpful to get more infos in case of errors.\n"
          "      -force    continue transfer after errors.\n"
+         "      -showip   tell how short ip's like .1 are expanded.\n"
          "      -quiet    disable progress indicator and other output.\n"
          "      -noprog   no progress indicator during transfers.\n"
-         /* sfk185: use cput/cget instead
-         "      -update   or -up transmits only changed files. this option\n"
-         "                is experimental and may or may not work, depending\n"
-         "                on the server software, server settings (UTC vs.\n"
-         "                local time) and time zone.\n"
-         "      -new      the same as -update.\n"
-         */
          "      -user=x   or -user x sends username x instead of anonymous.\n"
          "                you may also set an environment variable like:\n"
          "                   <exp> SFK_FTP_USER=myuser\n"
@@ -32298,6 +33036,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "                by file owner and to apply umask under linux.\n"
          "     -verify    extra verify by re-reading files after transfer\n"
          "                and comparing against a transmitted md5 checksum.\n"
+         "     -setexec=x  when sending files to a linux server, set files\n"
+         "                 matching pattern x as executable (chmod +x).\n"
          "\n");
   printx("   $aliases\n"
          "      #sfk sft<def>                same as sfk ftp but using port 2121\n"
@@ -32305,6 +33045,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "                             to send only changed and new files.\n"
          "      #sfk list ... +putall<def>   same as: sfk list ... +sft ... mput\n"
          "                             to send all selected files.\n"
+         /*
+         "\n"
+         "   $interactive shortcuts\n"
+         "      avoid to use in scripts which must be understood by others.\n"
+         "      #sfk sf3 ~ dir<def>    same as: sfk sft -port=3000 localhost dir\n"
+         "      #sfk sf9 ~ dir<def>    same as: sfk sft -port=9000 localhost dir\n"
+         */
          "\n"
          "   $automatic IP expansion\n"
          "      if you are in the same subnet as the target host,\n"
@@ -32335,6 +33082,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
   printx("   $examples\n"
          "      #sfk ftp farpc put test.zip\n"
          "         send test.zip to farpc\n"
+         "      #sfk ftp farpc put test.zip \"the dir/test1.zip\"\n"
+         "         the same, but with remote name test1.zip\n"
+         "         in a target folder \"the dir\".\n"
          "      #sfk ftp -user=foo -pw=bar farpc put test.zip\n"
          "         the same but with authentication\n"
          "      #sfk ftp 192.168.1.99:30199 get test.zip\n"
@@ -32384,6 +33134,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "         download myfile.txt instantly. if a local file\n"
          "         exists with the same name then it is overwritten.\n"
          "\n"
+         "      #sfk sft farpc dir \"the dir\"\n"
+         "         show contents of folder 'the dir'.\n"
+         "\n"
+         "      #sfk sft farpc get \"the dir/a file.txt\" local.txt\n"
+         "         download 'a file.txt' in remote folder 'the dir'\n"
+         "         to a different local filename 'local.txt'.\n"
+         "\n"
          "      #sfk sft farpc mget myfile\n"
          "         download all files having \"myfile\" in their name.\n"
          "         sfk will show a \"simulating\" preview first.\n"
@@ -32398,7 +33155,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "         by default, sfk sftserv allows deep direct access\n"
          "         to files within folders. all required output dirs\n"
          "         are created automatically. this deep access cannot\n"
-         "         be used with mget, mput and dir.\n"
+         "         be used with mget and mput.\n"
          "\n"
          );
   printx("      #sfk sel mydir .txt +sft farpc cput\n"
@@ -32426,6 +33183,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "      #sfk today mydir +sft -quiet .100 cput -yes +sleep 3000 +loop\n"
          "         check mydir every 3 seconds for files changed today\n"
          "         and upload them to .100 if newer as on server.\n"
+         "\n"
+         "      #sfk sft ~ dir\n"
+         "         list files on localhost port 2121\n"
+         "\n"
+         "      #sfk sft ~3000 dir\n"
+         "         list files on localhost port 3000\n"
          "\n");
   printx("   $NOTE:<def> existing files are overwritten <err>without asking back<def>.\n"
          "      Make sure that ftp server and client are running\n"
@@ -32439,34 +33202,39 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       // collect instant command here
       szLineBuf2[0]   = '\0';
       nGlblTCPMaxSizeMB = 0; // no size limit
-      uint nPort      = !strcmp(pszCmd, "sft") ? 2121 : 21;
+      cs.curport      = !strcmp(pszCmd, "sft") ? 2121 : 21;
       cs.subdirs      = 0; // in case of mput
-      char *pszHost   = 0;
+      char *pszFtpCmd = 0;
       int nstate      = 1;
       char *pszUser   = 0;
       char *pszAuthPW = 0;
       cs.preserve     = 0;
- 
+      bool benquote   = 0;
+
       // since SFT 103, default is not to use verify, for faster transfer.
       cs.verify = 0;
 
-      if (nPort == 21)
+      if (cs.curport == 21)
          cs.showprotocol = 1; // sfk1852
 
       bool bChained = chain.usefiles || chain.usedata;
 
       // aliases, yet internal
-      if (!strcmp(pszCmd, "sf3"))  { nPort=3000; }
-      if (!strcmp(pszCmd, "sf4"))  { nPort=4000; }
-      if (!strcmp(pszCmd, "sf5"))  { nPort=5000; }
+      if (!strcmp(pszCmd, "sf3"))  { cs.curport = 3000; }
+      if (!strcmp(pszCmd, "sf4"))  { cs.curport = 4000; }
+      if (!strcmp(pszCmd, "sf5"))  { cs.curport = 5000; }
+      if (!strcmp(pszCmd, "sf6"))  { cs.curport = 6000; }
+      if (!strcmp(pszCmd, "sf7"))  { cs.curport = 7000; }
+      if (!strcmp(pszCmd, "sf8"))  { cs.curport = 8000; }
+      if (!strcmp(pszCmd, "sf9"))  { cs.curport = 9000; }
       if (!strcmp(pszCmd, "put"))  {
-         nPort=2121; strcpy(szLineBuf2, "cput");
+         cs.curport=2121; strcpy(szLineBuf2, "cput");
          if (!bChained) return 9+perr("put can be used after list only");
       }
       if (!strcmp(pszCmd, "putall")
           || !strcmp(pszCmd, "mput"))
       {
-         nPort=2121; strcpy(szLineBuf2, "mput"); 
+         cs.curport=2121; strcpy(szLineBuf2, "mput"); 
          if (!bChained) return 9+perr("putall can be used after list only");
       }
 
@@ -32474,6 +33242,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       for (; iDir<argc; iDir++)
       {
          char *pszParm = 0;
+         char *pszArg  = argx[iDir];
          if (haveParmOption(argx, argc, iDir, "-pw", &pszParm)) {
             if (!pszParm) return 9+perr("-pw requires a parameter.\n");
             pszAuthPW = pszParm;
@@ -32487,6 +33256,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          if (haveParmOption(argx, argc, iDir, "-notify", &pszParm)) {
             if (!pszParm) return 9+perr("-notify requires a parameter.\n");
             cs.notifyto = pszParm;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-setexec", &pszParm)) { // sfk197
+            if (!pszParm) return 9+perr("-setexec requires a mask.\n");
+            if (!glblUPatMode && strchr(pszParm, glblWrongPChar))
+               return 9+perr("%s: use %c slash, or set -upat\n", pszArg, glblPathChar);
+            strcopy(cs.setxmask, pszParm);
             continue;
          }
          if (strBegins(argx[iDir], "-up") || !strcmp(argx[iDir], "-new"))
@@ -32525,7 +33301,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                cs.maxftpwait *= 1000;
             continue;
          }
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (isDirParm(argx[iDir]))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -32540,13 +33316,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          char *pparm = argx[iDir];
          switch (nstate++) {
             case 1: {
-               // first parm must be host:port
-               pszHost = strdup(pparm);
-               char *psz = strchr(pszHost, ':');
-               if (psz) {
-                  *psz++ = '\0';
-                  nPort = atol(psz);
-               }
+               // first parm must be host:port.
+               // default port was set above.
+               if (csGetHostPort(pparm))
+                  return 9;
                // ftp client may act on current dir only.
                if (glblFileSet.beginLayer(false, __LINE__)) return 9;
                glblFileSet.addRootDir(str("."), __LINE__, false);
@@ -32554,15 +33327,26 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                glblFileSet.setBaseLayer();
                continue;
             }
+            case 2: {
+               pszFtpCmd = pparm;
+               if (!strcmp(pszFtpCmd, "get")
+                   || !strcmp(pszFtpCmd, "put"))
+                  benquote = 1;
+               strcopy(szLineBuf2, pparm);
+               continue;
+            }
             default: {
-               // continue to collect instant command
+               // continue to collect instant command,
+               // considering internal enquoting
                if (szLineBuf2[0]) strcat(szLineBuf2, " ");
+               if (benquote) strcat(szLineBuf2, "\"");
                strcat(szLineBuf2, pparm);
+               if (benquote) strcat(szLineBuf2, "\"");
             }
          }
       }
  
-      if (!pszHost)
+      if (!cs.curhost[0])
          return 9+perr("missing target host.\n");
 
       char szInfo[100];
@@ -32593,22 +33377,17 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (cs.verbose && bGotEnv) // since 1770
          printf("[using SFK_FTP_%s for authentication]\n",szInfo);
 
-      if (btest) {
-         if (pszHost) delete [] pszHost;
+      if (btest)
          return 0;
-      }
 
       // run in interactive or direct mode
       if (szLineBuf2[0]) {
          // direct mode
-         ftpClient(pszHost, nPort, szLineBuf2, pszUser, pszAuthPW, bChained);
+         ftpClient(cs.curhost, cs.curport, szLineBuf2, pszUser, pszAuthPW, bChained);
       } else {
          // interactive mode
-         ftpClient(pszHost, nPort, 0, pszUser, pszAuthPW, bChained);
+         ftpClient(cs.curhost, cs.curport, 0, pszUser, pszAuthPW, bChained);
       }
-
-      // cleanup
-      if (pszHost) delete [] pszHost;
 
       lRC = (cs.files ? 1 : 0); // sfk193
 
@@ -32743,7 +33522,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bShowScript = 1;
          }
          else
-         if (!strncmp(argx[iDir], "-", 1))
+         if (sfkisopt(argx[iDir]))
          {
             if (isDirParm(argx[iDir]))
                break; // fall through
@@ -33191,7 +33970,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.rawterm = 1;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -33455,7 +34234,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             continue;
          }
          else
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -33705,7 +34484,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       for (; iDir<argc; iDir++)
       {
          char *pszArg  = argx[iDir];
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -33908,7 +34687,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          {
             // parse initial -dir ... -file ... parameters
             int iDirNext = 0;
-            if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 5, &iDirNext))) {
+            if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1+4+8, &iDirNext))) { // ren
                nGlblError=1;
                pinf("try to add -enddir after initial -dir ... -file ...\n");
                return 9;
@@ -33927,7 +34706,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.exact = 1;
             continue;
          }
-         if (!strcmp(pszArg, "-pat")) {
+         if (!strcmp(pszArg, "-pat")) { // rename
             bcolpat = 1;
             continue;
          }
@@ -33936,7 +34715,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bcolpat = 1;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1) && strcmp(pszArg, "-to"))
+         if (sfkisopt(pszArg) && strcmp(pszArg, "-to"))
          {
             if (isDirParm(pszArg))
                break; // fall through
@@ -33964,7 +34743,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.shortsyntax = 1;
             bcolpat = 1;
             // is -pat following immediately?
-            if ((iDir < argc-1) && !strcmp(argx[iDir+1], "-pat"))
+            if ((iDir < argc-1) && !strcmp(argx[iDir+1], "-pat")) // rename
                iDir++; // then skip this
             continue;
          }
@@ -34188,7 +34967,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             // parse initial -dir ... -file ... parameters
             bGotFileDir=1;
             int iDirNext = 0;
-            if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 5, &iDirNext))) {
+            if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1+4+8, &iDirNext))) { // xren
                nGlblError=1;
                pinf("try to add -enddir after initial -dir ... -file ...\n");
                return 9;
@@ -34235,7 +35014,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.rentodir = pszArg;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
@@ -34261,7 +35040,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.shortsyntax = 1;
             bcolpat = 1;
             // is -pat following immediately?
-            if ((iDir < argc-1) && !strcmp(argx[iDir+1], "-pat"))
+            if ((iDir < argc-1) && !strcmp(argx[iDir+1], "-pat")) // xrename
                iDir++; // then skip this
             continue;
          }
@@ -34481,9 +35260,15 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      -q n         set jpeg output quality\n"
              "      -w[idth] n   set width n\n"
              "      -h[eight] n  set height n\n"
+             "      -inwidth n   set raw image input width\n"
+             "      -inchan n    set raw image input channels\n"
              "\n"
              "   $examples\n"
              "      #sfk pic in.jpg -height 120 out.jpg\n"
+             "         rescale a .jpg\n"
+             "      #sfk pic in.dat -inwidth=800 -inchan=3 out.png\n"
+             "         convert raw rgb pixel data of an image\n"
+             "         with 800 pixels width and rgb data to .png\n"
              "\n"
              );
       ehelp;
@@ -34537,11 +35322,21 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             targh=atoi(pszParm);
             continue;
          }
+         if (haveParmOption(argx, argc, iDir, "-inwidth", &pszParm)) {
+            if (!pszParm) return 9;
+            cs.srcpicwidth=atoi(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-inchan", &pszParm)) {
+            if (!pszParm) return 9;
+            cs.srcpicchan=atoi(pszParm);
+            continue;
+         }
          if (!strcmp(pszArg, "-trans"))
             {  btrans=1; continue; }
          if (!strcmp(pszArg, "-notrans"))
             {  bnotrans=1; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -34686,7 +35481,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -34838,7 +35633,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -34955,7 +35750,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       {
          char *pszArg = argx[iDir];
          char *pszParm = 0;
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -35041,7 +35836,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          char *pszArg = argx[iDir];
          if (strBegins(pszArg, "-col"))
             { istate = 1; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -35210,7 +36005,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.fastcomp = 1;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -35374,7 +36169,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "               but no binary files.\n"
              "     -nometa   do not add the os/code comment,\n"
              "               or <exp> SFK_CONFIG=nozipmeta\n"
-             "     -setexec mask1 mask2 <not>mask3 ...\n"
+             "     -setexec  mask1 mask2 <not>mask3 ...\n"
              "               mark files as executable with\n"
              "               linux/mac operating systems.\n"
              "               must be followed by -dir ...\n"
@@ -35506,7 +36301,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "               and add all files into that folder.\n"
              "               cannot add to an existing folder.\n"
              "     -nometa   do not add the os/code comment.\n"
-             "     -setexec mask1 mask2 <not>mask3 ...\n"
+             "     -setexec  mask1 mask2 <not>mask3 ...\n"
              "               mark files as executable with\n"
              "               linux/mac operating systems.\n"
              "               must be followed by -dir ...\n"
@@ -35623,7 +36418,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          char *pszParm = 0;
          if (strBegins(pszArg, "-setexec"))
             { istate=1; continue; }
-         if (!strncmp(pszArg, "-", 1))
+         if (sfkisopt(pszArg))
             istate=0;
          if (haveParmOption(argx, argc, iDir, "-asdir", &pszParm)) {
             if (!pszParm) return 9;
@@ -35675,7 +36470,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          if (!strcmp(pszArg, "-meta"))   { cs.addmeta = 1; continue; }
          if (!strcmp(pszArg, "-nometa")) { cs.addmeta = 0; continue; }
          if (!strcmp(pszArg, "-bzip2"))  { cs.bzip2 = 1; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -36246,9 +37041,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.catzip = 1;
             continue;
          }
-         if (strBegins(pszArg, "-pat"))
+         if (strBegins(pszArg, "-pat")) // unzip
             { istate=1; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -36438,7 +37233,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       {
          char *pszArg  = argx[iDir];
          char *pszParm = 0;
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -36640,7 +37435,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             btoansi = 0;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -36950,7 +37745,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bofansi = 0;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -37175,7 +37970,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             ibadrc = 1;
             continue;
          }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -37304,7 +38099,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             { bstdin = 1; continue; }
          if (!strcmp(argx[iDir], "-nobom"))
             { bbom = 0; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -37458,7 +38253,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             { psame=str("-"); continue; }
          if (!strcmp(pszArg, "-swap"))
             { bswap=1; continue; }
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -37605,7 +38400,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bTable = 1;
             continue;
          }
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (sfkisopt(argx[iDir])) {
             if (isDirParm(argx[iDir]))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -37658,6 +38453,18 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      -dig[its]=n  round result to n digits\n"
              "      -form        also print the formula,\n"
              "                   tab separated after result\n"
+             "\n");
+      printx("   $experimental brackets support\n"
+             "      you may add option -bra[ckets] to use formulas\n"
+             "      with brackets, like\n"
+             "         #sfk calc -bra 1.0/(1.0-1.0/(3+5)*9)\n"
+             "      however this is an experimental feature.\n"
+             "      #wrong calculations may occur with brackets,\n"
+             "      on highly complex formulas. therefore:\n"
+             "      - counter-check the output with an alternate\n"
+             "        calculator before using a command repeatedly.\n"
+             "      - if you really find formulas that calculate\n"
+             "        wrong, supply samples in the sfk forum.\n"
              "\n");
       printx("   $chaining support\n"
              "      can use chain input data as ##text within formula.\n"
@@ -37911,7 +38718,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -37960,7 +38767,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       {
          char *pszArg  = argx[iDir];
          char *pszParm = 0;
-         if (!strncmp(pszArg, "-", 1)) {
+         if (sfkisopt(pszArg)) {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))

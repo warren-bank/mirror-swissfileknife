@@ -34,7 +34,7 @@ $TEXE -nocol test $TCMD T02.5.bin2src res-07.txt
 $TEXE -nocol filter <testfiles/Formats/07-filter-src.txt -+something -:delete >res-08.txt
 $TEXE -nocol test $TCMD T02.6.filter res-08.txt
 
-$TEXE -nocol filter testfiles/Formats/07-filter-src.txt ++delete ++something >res-09.txt
+$TEXE -nocol filter testfiles/Formats/07-filter-src.txt -and+delete -and+something >res-09.txt
 $TEXE -nocol test $TCMD T02.7.filter res-09.txt
 
 $TEXE -nocol addhead -blank <testfiles/Formats/08-head-tail.txt >res-10.txt test1 test2 test3
@@ -69,8 +69,8 @@ $TEXE -nocol filter testfiles/Formats/10-dir-list.txt >res-14.txt -rep _/_/_ -re
 $TEXE -nocol test $TCMD T05.1.filtrep res-14.txt
 
 $TEXE -nocol filter testfiles/Formats/12-foo-jam.txt -ls+class -+void >res-15.txt
-$TEXE -nocol filter testfiles/Formats/12-foo-jam.txt +ls+class -+void >>res-15.txt
-$TEXE -nocol filter testfiles/Formats/12-foo-jam.txt ++class ++bar    >>res-15.txt
+$TEXE -nocol filter testfiles/Formats/12-foo-jam.txt -lsand+class -+void >>res-15.txt
+$TEXE -nocol filter testfiles/Formats/12-foo-jam.txt -and+class -and+bar    >>res-15.txt
 $TEXE -nocol filter -case -lnum testfiles/Formats/12-foo-jam.txt -+bottle -+Trace >>res-15.txt
 $TEXE -nocol test $TCMD T05.2.filter res-15.txt
 

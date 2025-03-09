@@ -1745,6 +1745,7 @@ public:
    bool ftpupdate;         // mput, mget: explicite -update
    bool ftpall;            // mput, mget: disable -update mode
    bool ftpwidelist;       // with webserv
+   bool webdesklist;       // with webserv
    bool noclone;           // disable time stamp replication
    bool preserve;          // copy full attributes with sft
    int fast;               // command dependent optimization
@@ -1942,6 +1943,16 @@ public:
    num  sanetime;          // of crc list file
    int  usehta;            // webserv internal
    bool usingflist;        // sfk196 with -flist
+   int  absdirs;           // sfk1963 with sync
+   bool checkdirs;
+   #ifdef SFKPIC
+   int  srcpicwidth;
+   int  srcpicchan;
+   #endif // SFKPIC
+   char rootdir[SFK_MAX_PATH+10];   // sfk197 -root
+   char setxmask[60];      // draft: -setexec
+   char curhost[255+20];   // sfk197
+   int  curport;           // sfk197 -1 if unset
 };
 
 // extern struct CommandStats gs;
@@ -2202,8 +2213,10 @@ public:
    uint  nClInCheckSum;
 
 private:
-   char  szClPreBuf[MAX_LINE_LEN+10];
-   char  szClPreAttr[MAX_LINE_LEN+10];
+   // prebuf is huge to allow long chain.print examples
+   char  szClPreBuf[MAX_LINE_LEN*2+10];
+   char  szClPreAttr[MAX_LINE_LEN*2+10];
+   // buf is a normal line buffer
    char  szClBuf[MAX_LINE_LEN+10];
    char  szClAttr[MAX_LINE_LEN+10];
    char  szClBinBuf[32768+100];
@@ -2768,6 +2781,7 @@ extern bool  useOfficeBaseNames();
 extern void  setUsingFileList(int bYesNo);
 extern bool  ispathchr(char c);
 extern int   myfseek(FILE *f, num nOffset, int nOrigin);
+extern int   csGetHostPort(char *psz);
 extern SFKChars sfkchars;
 
 #endif // _SFKBASE_HPP_

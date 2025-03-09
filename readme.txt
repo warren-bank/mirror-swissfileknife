@@ -19,7 +19,7 @@ just download or copy the SFK binary and use it - INSTANTLY.
 How to get SFK up and running anywhere
 --------------------------------------
 
-   Download the executables for Windows, Linux/lib6 or Linux/lib5
+   Download the executables for Windows, Mac OS/X, or desktop Linux
 
    By browser:
 
@@ -32,57 +32,36 @@ How to get SFK up and running anywhere
 
    OR
 
-   On a Linux text console, use one of these:
-
-      Instant binaries:
-
-      -  wget http://stahlworks.com/sfkux             (Linux lib6)
-      -  wget http://stahlworks.com/sfkuxold          (Linux lib5)
-      -  wget http://stahlworks.com/sfkarm            (ARM Linux)
-
-      Whole distribution package in a .zip (insert version for nnn):
-
-      -  wget http://stahlworks.com/dev/sfk/sfknnn.zip
-
-      Make sure your system has the real Info-ZIP unzip command,
-      in version 5.50 or higher (just type "unzip" to find out).
-      If nothing is available, get one of these:
-
-      -  wget http://stahlworks.com/unzipux           (Linux lib6)
-      -  wget http://stahlworks.com/unzipuxold        (Linux lib5)
-
-   OR
-
    Apple Macintosh:
 
-      The Mac binaries are available from:
+      The Mac 64-bit intel binary is available from:
 
-      -  curl -o sfkmac http://stahlworks.com/sfkmac     (Intel i686)
-      -  curl -o sfkmac http://stahlworks.com/sfkmacold  (PowerPC)
+      -  curl -o sfkmac http://stahlworks.com/sfkmac
 
       Alternatively, a self compile under Mac is done by
       getting the sources as described below, then type
 
-         g++ -DMAC_OS_X sfk.cpp sfkext.cpp sfkpack.cpp -o sfk
+         g++ sfk.cpp sfkext.cpp sfkpack.cpp -o sfk
 
    OR
 
-   64-bit Linux in general:
+   Desktop Linux:
 
-   -  there are no binary distributions so far, but you may compile
-      the source code easily, even if you're no software developer.
+      The Linux i686 64-bit binary is available from:
 
-      first, type "g++" to find out if a compiler exists on your system.
-      if so, download the source code, contained in the sfknnn.zip, from
+      -  wget http://stahlworks.com/sfkux
 
-      http://sourceforge.net/projects/swissfileknife/
+   OR
+   
+   Any system:
 
-      then extract that by "unzip sfknnn.zip",
-      and take a look into do-compile-unix.bat or type:
+      Get the whole distribution package in a .zip:
 
-         Linux 64-bit compile:
+      -  wget http://stahlworks.com/sfk.zip
 
-            g++ sfk.cpp sfkext.cpp sfkpack.cpp -o sfk
+      Then extract this, and compile by:
+
+         g++ sfk.cpp sfkext.cpp sfkpack.cpp -o sfk
 
    OR
 
@@ -96,7 +75,7 @@ How to get SFK up and running anywhere
 
          -  on another machine where you have SFK already, type
    
-            sfk httpserv -port=9090
+            sfk webserv -port=9090
    
          -  then, on the target machine, try to open a web browser
             and to access
@@ -105,10 +84,10 @@ How to get SFK up and running anywhere
    
             OR type
    
-               wget http://othermachine:9090/sfknnn.zip
+               wget http://othermachine:9090/sfk.zip
    
             provided that you have the SFK distribution zip file 
-            located in the directory where you typed "sfk httpserv"
+            located in the directory where you typed "sfk webserv"
 
       If that fails (no browser, no gui, no wget command),
       check if there exists an "ftp" command on the target.
@@ -128,18 +107,10 @@ How to get SFK up and running anywhere
 
                dir
                bin
-               get sfknnn.zip
+               get sfk.zip
 
             provided that you have the SFK distribution zip file 
             located in the directory where you typed "sfk ftpserv".
-            Of course you may also try
-
-               get sfkux
-               get sfkuxold
-               get sfk-linux.exe       (sfkux in the zip package)
-               get sfk-linux-lib5.exe  (sfkuxold in the zip package)
-
-            if your target machine is a linux system.
 
          -  if ftp connections fail to work, check if the "ftp"
             client on the target accepts the command
@@ -152,14 +123,16 @@ How to get SFK up and running anywhere
             connections are created.)
 
 
-How to prepare the SFK binary under Linux:
+How to prepare the SFK binary under Linux/Mac:
 
-   -  after download, you have to type
+   -  after download, you have to rename it like
 
          mv sfkux sfk
+
+      and you must enable execution by
+
          chmod +x sfk
 
-      to enable execution (the 'x' flag) of sfk.
       Then simply type
 
          ./sfk
@@ -195,7 +168,7 @@ Where to place the SFK executable:
       This way you avoid the long, blank-character-contaminated,
       inefficient default paths like "C:\Program Files".
 
-   Recommendation for Linux:
+   Recommendation for Linux/Mac:
 
       -  type "cd" then "pwd" to find out what your account's
          home directory is.
@@ -205,7 +178,7 @@ Where to place the SFK executable:
 
             mkdir tools
 
-         then rename sfk-linux.exe to sfk, and copy that
+         then rename sfkux to sfk, and copy that
          into the tools dir.
 
       -  extend the PATH like
@@ -229,7 +202,7 @@ License:
    -  Swiss File Knife Base is provided completely for free,
       and can be used unlimited, without any warranty.
 
-   -  the source code provided in the sfknnn.zip download packages
+   -  the source code provided in the sfk.zip download packages
       is provided under BSD license, and therefore free for unlimited
       use also in commercial projects, without any warranty.
 
@@ -252,13 +225,12 @@ See also:
 
          http://stahlworks.com/depeche-view.html
 
-   -  The whole SFK documentation is available as the paperback book
-      "100 Command Line Tools" on Amazon
-
    -  The whole SFK documentation is available as an e-book,
       optimized for reading on mobile devices.
       For details see www.stahlworks.com
 
+   -  The whole SFK documentation is available as the paperback book
+      "100 Command Line Tools" on Amazon
 
 The SFKTray GUI Status Display
 ==============================

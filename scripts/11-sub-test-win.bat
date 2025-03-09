@@ -34,7 +34,7 @@
 %TEXE% filter <testfiles\Formats\07-filter-src.txt -+something -!delete >res-08.txt
 %TEXE% test %TCMD% T02.6.filter res-08.txt
 
-%TEXE% filter testfiles\Formats\07-filter-src.txt ++delete ++something >res-09.txt
+%TEXE% filter testfiles\Formats\07-filter-src.txt -and+delete -and+something >res-09.txt
 %TEXE% test %TCMD% T02.7.filter res-09.txt
 
 %TEXE% addhead -blank <testfiles\Formats\08-head-tail.txt >res-10.txt test1 test2 test3
@@ -69,8 +69,8 @@
 %TEXE% test %TCMD% T05.1.filtrep res-14.txt
 
 %TEXE% filter testfiles\Formats\12-foo-jam.txt -ls+class -+void >res-15.txt
-%TEXE% filter testfiles\Formats\12-foo-jam.txt +ls+class -+void >>res-15.txt
-%TEXE% filter testfiles\Formats\12-foo-jam.txt ++class ++bar    >>res-15.txt
+%TEXE% filter testfiles\Formats\12-foo-jam.txt -lsand+class -+void >>res-15.txt
+%TEXE% filter testfiles\Formats\12-foo-jam.txt -and+class -and+bar    >>res-15.txt
 %TEXE% filter -case -lnum testfiles\Formats\12-foo-jam.txt -+bottle -+Trace >>res-15.txt
 %TEXE% test %TCMD% T05.2.filter res-15.txt
 
