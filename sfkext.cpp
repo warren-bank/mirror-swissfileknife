@@ -132,6 +132,7 @@ uchar *loadBinaryFlex(Coi &ocoi, num &rnFileSize);
 bool isEmpty(char *psz);
 bool  strbeg(char *pszStr, cchar *pszPat);
 bool  stribeg(char *psz, cchar *pstart);
+void setSystemSlashes(char *pdst);
 
 #ifdef SFKWINST
 int makeDeskIcon(HWND hwnd, char *pszTarget, char *pszShortCutName,
@@ -378,6 +379,8 @@ int sfksetvar(char *pname, uchar *pDataIn, int iDataIn, int badd)
    return 0;
 }
 
+extern bool glblUPatMode;
+
 uchar *sfkgetvar(char *pname, int *plen)
 {
    static char szBuf[30];
@@ -410,6 +413,18 @@ uchar *sfkgetvar(char *pname, int *plen)
          if (plen)
             *plen = strlen(psz);
          return (uchar*)psz;
+      }
+   }
+   if (strBegins(pname, "opt.")) // internal
+   {
+      szBuf[0]='\0';
+      if (!strcmp(pname, "opt.quiet"))   sprintf(szBuf, "%d", cs.quiet);
+      if (!strcmp(pname, "opt.verbose")) sprintf(szBuf, "%d", cs.verbose);
+      if (!strcmp(pname, "opt.upat"))    sprintf(szBuf, "%d", glblUPatMode);
+      if (szBuf[0]) {
+         if (plen)
+            *plen = strlen(szBuf);
+         return (uchar*)szBuf;
       }
    }
 
@@ -3198,7 +3213,9 @@ int HTTPClient::connectHttp(char *phostorip, int nport, TCPCon **ppout)
       }
 
       #ifdef WITH_SSL2
-      if (!(pClSSLContext = SSL_CTX_new(TLSv1_client_method())))
+      // fails with some sites, producing SSL_Connect error -1:
+      //    if (!(pClSSLContext = SSL_CTX_new(TLSv1_client_method())))
+      if (!(pClSSLContext = SSL_CTX_new(TLS_client_method()))) // sfk1933
       #else
       if (!(pClSSLContext = SSL_CTX_new(SSLv23_client_method())))
       #endif
@@ -3223,14 +3240,13 @@ int HTTPClient::connectHttp(char *phostorip, int nport, TCPCon **ppout)
          perr("Unable to set TLS servername extension.\n");
          return 9;
       }
-      if (cs.debug) printf("[SSL_set_tlsext_host_name done]\n");
+      if (cs.debug) printf("[SSL_set_tlsext_host_name: %s]\n", phostorip);
       #endif
 
       int iErrCode = SSL_connect(pClSSLSocket);
 
       if (iErrCode < 0)
       {
-         mtklog(("SSLConnect failed (%d)",iErrCode));
          printf("SSLConnect failed (%d)\n",iErrCode);
          close();
          return 9;
@@ -4542,7 +4558,6 @@ int HTTPClient::sendReq
       "User-Agent: %s\r\n"
       "Accept: text/html;q=0.9,*/*;q=0.8\r\n"
       "Accept-Language: en-us,en;q=0.8\r\n"
-   // "Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n"
       "Connection: close\r\n"
       "\r\n"
       , pcmd, pfile, phost, szPort
@@ -13477,7 +13492,7 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
          "   +run -quiet \"sfk echo \\\"Found hit in: [green]$file[def]\\\"\" -yes\n"
          "\n"
          "   // run the script by:\n"
-         "   // \"sfk script %s pattern1 [pattern2 ...]\"\n",
+         "   //    sfk script \"%s\" pattern1 [pattern2 ...]\n",
          pszOutFile ? pszOutFile : "thisfile"
          );
          break;
@@ -13485,7 +13500,7 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
       case 6:
       chain.print(
          "@echo off\n"
-         "sfk script %%~f0 -from begin %%*\n"
+         "sfk script \"%%~f0\" -from begin %%*\n" // fix sfk1933 "" quotes
          "rem . %%~f0 is the absolute batch file name\n"
          "GOTO xend\n"
          "\n"
@@ -13540,7 +13555,7 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
       case 7:
       chain.print(
          "#!/bin/bash\n"
-         "sfk script $0 -from begin $@\n"
+         "sfk script \"$0\" -from begin $@\n" // fix sfk1933 "" quotes
          "exit\n" // sfk193
          "function skip_block\n"
          "{\n"
@@ -13809,7 +13824,7 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
          "\n"
          "IF \"%%1\"==\"\" GOTO xerr01\n"
          "\n"
-         "sfk script %s -from begin %%*\n"
+         "sfk script \"%s\" -from begin %%*\n" // fix sfk1933 "" quotes
          "GOTO xend\n"
          "\n"
          ":xerr01\n"
@@ -14280,14 +14295,14 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
          if (iSystem==1)
          chain.print(
             "@echo off\n"
-            "sfk script %%~f0 -from begin %%*\n"
+            "sfk script \"%%~f0\" -from begin %%*\n" // fix sfk1933 "" quotes
             "rem \"%%~f0\" is the absolute batch file name.\n"
             "GOTO xend\n"
             "\n");
          else
          chain.print(
             "#!/bin/bash\n"
-            "sfk script $0 -from begin $@\n"
+            "sfk script \"$0\" -from begin $@\n" // fix sfk1933 "" quotes
             "function skip_block\n"
             "{\n");
 
@@ -15765,52 +15780,6 @@ void utftooem(char *poem, int imaxoem, char *putf)
    *poem='\0';
 }
 
-/*
-#define DOSTIME_MINIMUM ((uint)0x00210000L)
-uint dostime(int y, int n, int d, int h, int m, int s)
-{
-  return y < 1980 ? DOSTIME_MINIMUM :
-        (((uint)y - 1980) << 25) | ((uint)n << 21) | ((uint)d << 16) |
-        ((uint)h << 11) | ((uint)m << 5) | ((uint)s >> 1);
-}
-uint unix2dostime(num t)
-{
-  time_t t_even = (time_t)((t + 1) & (~1));
-
-  struct tm *s = localtime(&t_even);
-
-  if (s == (struct tm *)NULL) {
-      t_even = (time_t)(((unsigned long)time(NULL) + 1) & (~1));
-      s = localtime(&t_even);
-  }
-
-  return dostime(s->tm_year + 1900, s->tm_mon + 1, s->tm_mday,
-                 s->tm_hour, s->tm_min, s->tm_sec);
-}
-*/
-
-/*
-static const uint kHighDosTime = 0xFF9FBF7D;
-static const uint kLowDosTime = 0x210000;
-
-#define PERIOD_4 (4 * 365 + 1)
-#define PERIOD_100 (PERIOD_4 * 25 - 1)
-#define PERIOD_400 (PERIOD_100 * 4 + 1)
-
-bool FileTimeToDosTime(const FILETIME &ft, unsigned long *dosTime)
-{
-  WORD datePart, timePart;
-  if (!::FileTimeToDosDateTime(&ft, &datePart, &timePart))
-  {
-    *dosTime = (ft.dwHighDateTime >= 0x01C00000) ? kHighDosTime : kLowDosTime;
-    return false;
-  }
-  *dosTime = (((uint)datePart) << 16) + timePart;
-  return 1;
-}
-*/
-
-// .
 // bDir 1: physical folder
 // bDir 2: virtual folder just in zip
 int execZipFile(Coi *pin, int bDir, int iLevel)
@@ -16335,7 +16304,7 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
    /*
    {
      FILETIME ointime = {0, 0};
-     timetToFileTime(nInTime1, &ointime);
+     // timetToFileTime(nInTime1, &ointime);
      FILETIME localFileTime = { 0, 0 };
      FileTimeToLocalFileTime(&ointime, &localFileTime);
      FileTimeToDosTime(localFileTime, &zi.dosDate);
@@ -16630,10 +16599,14 @@ int zipOEMToUTF(char *pdst, int imaxdst, char *psrc)
    return 0;
 }
 
-int execUnzip(char *pszInFile, char *pszSubFile=0, int iOffice=0);
+int execUnzip(char *pszInFile, char *pszSubFile=0, int iOffice=0, char **ppSharedStrings=0);
+
+bool flexMatch(char *pszhay, cchar *pszpat);
 
 int Coi::loadOfficeSubFile(cchar *pszFromInfo)
 {
+   // printf("loadOfficeSubFile %s %s\n",name(),pszFromInfo);
+
    if (data().src.data)
       return 0; // nothing to do
 
@@ -16652,11 +16625,26 @@ int Coi::loadOfficeSubFile(cchar *pszFromInfo)
    *psz = 0;
    psz += 2;
 
+   char *pSharedStrings = 0;
+
    cs.pOutCoi = this;
    cs.catzip = 1;
-   int irc = execUnzip(proot, psz); // loadOfficeSubFile
+
+   int irc = 0;
+   
+   if (flexMatch(name(), "/sheet#.xml"))
+      irc = execUnzip(proot, psz, 0, &pSharedStrings); // loadOfficeSubFile
+   else
+      irc = execUnzip(proot, psz, 0, 0); // loadOfficeSubFile
+
    cs.catzip = 0;
    cs.pOutCoi = 0;
+
+   CharAutoDel odel2(pSharedStrings);
+
+   // printf("-> sharedstrings: %p %d\n",pSharedStrings,pSharedStrings?strlen(pSharedStrings):0);
+
+   // shared strings, if any, are freed automatically
 
    return irc;
 }
@@ -16706,16 +16694,124 @@ void Coi::rawCloseOfficeDir( )
    data().bdiropen = 0;
 }
 
-void setSystemSlashes(char *pdst);
+// todo: .xlsxm etc.
+static cchar *pGlblOfficeSubFilter =
 
-int execUnzip(char *pszInFile, char *pszSubFile, int iOffice)
+   ".docx document.xml\n"  // ms word
+   ".dotx document.xml\n"  // ms word
+   ".dotm document.xml\n"  // ms word
+
+   ".xlsx *sheet#.xml\n"   // ms excel, and uses sharedStrings.xml
+   ".xlsm *sheet#.xml\n"   // ms excel, and uses sharedStrings.xml
+
+   ".odt content.xml\n"    // oo writer
+   ".ods content.xml\n"    // oo calc
+
+   ".pptx core.xml *slides/slide#.xml\n"    // ms powerpoint
+   ".ppsx core.xml *slides/slide#.xml\n"    // ms powerpoint
+
+   ;
+
+// ppt\slides\slide1.xml
+// slides/slide#.xml
+bool flexMatch(char *pszhay, cchar *pszpat)
+{
+   // from rite to left
+   cchar *phaycur=pszhay+strlen(pszhay);
+   cchar *ppatcur=pszpat+strlen(pszpat);
+   while (phaycur>pszhay && ppatcur>pszpat)
+   {
+      char cpat=tolower(ppatcur[-1]);
+      char chay=tolower(phaycur[-1]);
+      if (cpat=='#') {
+         ppatcur--;
+         bool bany=0;
+         while (phaycur>pszhay
+                && isdigit(phaycur[-1])!=0)
+            { bany=1; phaycur--; }
+         if (!bany) return 0;
+         continue;
+      }
+      if (cpat=='/') {
+         ppatcur--;
+         if (chay!='/' && chay!='\\') return 0;
+         phaycur--;
+         continue;
+      }
+      if (cpat != chay) return 0;
+      ppatcur--;
+      phaycur--;
+   }
+   return 1;
+}
+
+bool keepOfficeSubFile(char *pszParName, char *pszSubName)
+{
+   char szpat[100];
+
+   /*
+      office\parent.docx   word\document.xml
+   */
+   char *pszParExt = strrchr(pszParName, '.');
+   if (!pszParExt) return 0;
+
+   char *psz = strstr(str(pGlblOfficeSubFilter), pszParExt);
+   if (!psz) {
+      // unlisted above: keep .xml generic
+      if (strEnds(pszSubName, ".xml"))
+         return 1;
+      return 0;
+   }
+
+   // .pptx core slide\n
+   psz = strchr(psz, ' ');
+   if (!psz) return 0;
+   psz++;
+
+   // core slide
+   while (*psz!=0 && *psz!='\n')
+   {
+      char *pnext=psz;
+      while (*pnext!=0 && *pnext!=' ' && *pnext!='\n')
+         pnext++;
+      int ilen=pnext-psz;
+      if (ilen+10 > sizeof(szpat)) return 0;
+      memcpy(szpat,psz,ilen);
+      szpat[ilen]='\0';
+
+      // *core matches within
+      // document.xml matches end
+      if (szpat[0]=='*' && flexMatch(pszSubName,szpat+1)!=0) {
+         // printf("match %s %s\n",pszSubName,szpat);
+         return 1;
+      }
+      if (szpat[0]!='*' && strEnds(pszSubName,szpat)==1) {
+         // printf("match %s %s\n",pszSubName,szpat);
+         return 1;
+      }
+
+      psz=pnext;
+      if (*psz==' ')
+         psz++;
+   }
+
+   return 0;
+}
+
+int execUnzip(char *pszInFile, char *pszSubFile, int iOffice,
+   char **ppSharedStrings)
 {__
+   // printf("execUnzip %s %s\n",pszInFile,pszSubFile);
+
    char szAddInfo[100];
    char szSizeBuf[100];
    char szTimeBuf[100];
    char szToMaskBuf[SFK_MAX_PATH+10];
 
    glblUnzipDirs.resetEntries();
+
+   if (!fileExists(pszInFile))
+      return 9+perr("cannot read: %s\n",pszInFile);
 
    int irc  = 0;
 
@@ -16983,14 +17079,18 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice)
       }
 
       bool bskip = 0;
+      bool bSharedStrings = 0;
 
       int iMasks = glblUnzipMask.numberOfEntries();
 
       if (pszSubFile)
       {
          // ----- extract a single sub file -----
-         if (strcmp(szLineBuf2, pszSubFile))
+         if (ppSharedStrings != 0 && flexMatch(szLineBuf2, "/sharedStrings.xml") != 0)
+            { bSharedStrings = 1; } // must keep
+         else if (strcmp(szLineBuf2, pszSubFile))
             bskip = 1;
+         // printf("check %d %s\n",bskip,szLineBuf2);
       }
       else if (iMasks > 0)
       {
@@ -17030,8 +17130,7 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice)
       else if (iOffice == 1)
       {
          // ----- office mode 1: use only .xml files -----
-         int ilen = strlen(szLineBuf2);
-         if (ilen<4 || mystricmp(szLineBuf2+ilen-4, ".xml")!=0)
+         if (!keepOfficeSubFile(pszInFile, szLineBuf2))
             bskip = 1;
       }
 
@@ -17526,10 +17625,21 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice)
          }
       }
 
-      if (cs.pOutCoi!=0 && pColBuf!=0) {
-         cs.pOutCoi->setContent((uchar*)pColBuf, nColCur, nFileTime);
-         // disable auto delete. OutCoi owns this now.
-         pColBuf = 0;
+      if (cs.pOutCoi!=0 && pColBuf!=0) 
+      {
+         if (ppSharedStrings && bSharedStrings)
+         {
+            *ppSharedStrings = pColBuf;
+            // disable auto delete. caller owns this now.
+            pColBuf = 0;
+         }
+         else
+         {
+            // office filtering is done by caller
+            cs.pOutCoi->setContent((uchar*)pColBuf, nColCur, nFileTime);
+            // disable auto delete. OutCoi owns this now.
+            pColBuf = 0;
+         }
       }
 
       cs.filesZip++; // zip
@@ -19119,7 +19229,7 @@ int copyFileWin(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num
       return 0;
    }
 
-   info.setAction("copy ", pszSrc, "00");
+   info.setAction("copy ", pszTell, "00"); // fix sfk1933 not pszSrc
 
    DWORD nSysFlags = 0;
 
@@ -22400,6 +22510,9 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
   printx("   $-verbose<def>   print additional infos while running a command.\n"
          "              helpful if a command doesn't work as expected.\n"
          "              only some commands support -verbose. try also -verbose=2.\n"
+         "   $-tracechain<def>  tell in detail how the command chain is executed.\n"
+         "   $-keepchain<def>   never stop the command chain, even if commands\n"
+         "                that expect filenames get none.\n"
          #if (!defined(SFK_LIB5))
          "   $-nofollow<def>  or -nofo does not follow symbolic directory links.\n"
          "              this option may NOT work with older Linux versions,\n"
@@ -22847,11 +22960,8 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "         #+filenamestotext<def> or #+ftt<def>\n"
          "\n"
          "      however, most sfk commands try to do such conversions automatically.\n"
-         "\n"
-         "   $using chain data between commands\n"
-      // "      #sfk cmd1 ... +to cmd2<def>     must pass data to cmd2. use with +call\n"
-      // "                                and +end where it is unclear if the next\n"
-      // "                                command may need the chain data.\n"
+         "\n");
+  printx("   $using chain data between commands\n"
          "      #sfk cmd1 ... +then cmd2<def>   does not pass any data to cmd2,\n"
          "                                prints cmd1 output to terminal.\n"
          "      #sfk ... +toterm<def>           dumps current chain content to terminal.\n"
@@ -22893,13 +23003,32 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      #sfk label ... +end<def>        returns no chain data\n"
          "      #sfk label ... +tend<def>       returns text data\n"
          "      #sfk label ... +fend<def>       returns a filename list\n"
+         "\n");
+  printx("   $if chaining stops with \"no files, stopping at x\":\n"
          "\n"
-         "   $scope and lifetime of options\n"
+         "      this means command x expects a list of filenames,\n"
+         "      but the previous command did not produce any.\n"
+         "      you have three options then:\n"
+         "\n"
+         "      - use #+then x<def> if command x should never receive any\n"
+         "        filenames from a previous command.\n"
+         "\n"
+         "      - or add #-keepchain<def> at the preceeding command, or\n"
+         "        directly after sfk, to enforce execution of command x.\n"
+         "\n"
+         "      - or use #-nonote<def> to suppress the \"no files\" message.\n"
+         "\n");
+  printx("   $scope and lifetime of options\n"
          "      most options are valid only for the command where they are specified.\n"
          "      if another command follows in the chain, the option is reset.\n"
          "      but some options may also be specified on a global scope.\n"
          "      read more on that under \"$sfk help options<def>\".\n"
-         "\n");
+         "\n"
+         "   $global options\n"
+         "      -tracechain   get verbose output while sfk steps\n"
+         "                    through a command chain\n"
+         "\n"
+         );
          /*
          "   $tracing a data flow within a script\n"
          "      set global option $-iotrace<def> like:\n"
@@ -30143,9 +30272,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      v1         optional protocol version\n"
              "      slot=n     target slot number 1-9\n"
              "      color=s    set color s as one of:\n"
-             "                 #red green blue yellow orange\n"
-             "                 #gray grey white cyan purple black\n"
-             "                 or with SFKTray Full only:\n"
+             "                 #red green blue yellow orange gray black\n"
+             "                 you may also try:\n"
+             "                 #white cyan purple black\n"
+             "                 but these have limited use, as they appear\n"
+             "                 similar to other colors in the system tray.\n"
+             "                 with SFKTray Full you may also use:\n"
              "                 3- or 6 digit #rgb hex value\n"
              "                 e.g. #f00<def> = red, #dddddd<def> = light gray\n"
              "      blink=s    select 'slow' or 'fast' blink\n"
@@ -34387,6 +34519,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "       print this as UTF-8 text to terminal.\n"
              "     #sfk wtou in.txt -tofile out.txt\n"
              "       write UTF-8 output to out.txt.\n"
+             "     #sfk list mydir .txt +perline \"wtou <run>qtext\"\n"
+             "       if all .txt files in mydir use wide chars\n"
+             "       then print them to terminal as UTF-8.\n"
              "\n"
              );
       ehelp;
@@ -34963,7 +35098,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
-         char *pszArg  = argx[iDir];
+         char *pszArg = argx[iDir];
          if (!strcmp(argx[iDir], "-i")) {
             bstdin = 1;
             continue;
@@ -35664,6 +35799,53 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   #ifdef SFKINT
+    #ifdef _WIN32
+   if (!strcmp(pszCmd, "playsound")) // internal
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk playsound filename.wav\n"
+             "\n"
+             "   play a sound file\n"
+             "\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      char *pszFilename = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pszFilename) {
+            pszFilename=pszArg;
+            continue;
+         }
+         return 9+pbad(pszCmd, pszArg);
+      }
+
+      if (!PlaySound(pszFilename, 0, SND_FILENAME))
+         perr("cannot play: %s\n", pszFilename);
+
+      STEP_CHAIN(iChainNext, 0);
+
+      bDone = 1;
+   }
+    #endif
+   #endif // SFKINT
+
    #ifdef SFKWINST
    // .
    if (!strcmp(pszCmd, "install")) // internal
@@ -35943,6 +36125,8 @@ int makeDeskIcon(HWND hwnd, char *pszTarget, char *pszShortCutName,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
+
 
 
 

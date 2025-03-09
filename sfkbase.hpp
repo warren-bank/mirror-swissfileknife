@@ -224,6 +224,9 @@ extern       char  glblWildChar    ;
   typedef __time64_t mytime_t;
   #define mymktime _mktime64
   #define mytime _time64
+  #ifndef WITH_SSL
+   // #define time_t bad_time_t_use_mytime_t
+  #endif
  #else
   typedef time_t mytime_t;
   #define mymktime mktime
@@ -319,6 +322,7 @@ extern int (*pGlblJamCheckCallBack)(char *pszFilename);
 extern int (*pGlblJamFileCallBack)(char *pszFilename, num &rLines, num &rBytes);
 extern int (*pGlblJamLineCallBack)(char *pszLine, int nLineLen, bool bAddLF);
 extern int (*pGlblJamStatCallBack)(Coi *pCoiOrNull, uint nFiles, uint nLines, uint nMBytes, uint nSkipped, char *pszSkipInfo);
+extern int (*pGlblShowDataCallBack)(char *pszLine, int nLineLen);
 extern int bGlblPassThroughSnap;
 
 char *findPathLocation(cchar *pszCmd, bool bExcludeWorkDir=0);
@@ -1519,12 +1523,12 @@ public:
    static int  validSeqLen    (char *pszSrc, int iMaxSrc);
           int  validSeqLenInt (char *pszSrc, int iMaxSrc);
 
-private:
    int   readRaw();
    int   readSeq();
    int   icur, imax;
    bool  banychars;
    bool  bbadchars;
+   bool  bdecodexml;
    uchar *psrc;
 };
 
@@ -1541,6 +1545,7 @@ public:
    int memcheck  ;
    int verbose   ;  // 0,1,2
    int iotrace   ;
+   int tracechain;
    bool shortsyntax        ; // sfk1812 i/o bGlblShortSyntax
    bool anyused            ; // sfk1812 i/o bGlblAnyUsed
    bool delStaleFiles      ;
@@ -1623,7 +1628,8 @@ public:
    bool yes;
    bool logcmd;
    bool force;
-   bool nostop;
+   bool nostop;      // command specific
+   bool keepchain;   // keep chain always running
    bool syncFiles;   // sync files instead of copy
    bool syncOlder;   // with sync, copy older over newer files
    int  flat;        // copy: flat output filenames
@@ -1698,6 +1704,7 @@ public:
    bool cachestat;         // cache statistics at program end
    bool travelHttp;        // decided per command, esp. list
    #endif // VFILEBASE
+   bool  recurl;
    bool subdirs;           // recurse into subdirs
    bool hidesubdirs;       // do not process subdir names at all
    bool utf8dec;           // utf-8  detect and decode (not yet impl.)
@@ -1850,6 +1857,7 @@ public:
    bool showreq;           // print web requests
    num  maxwebsize;        // web download limit
    bool execweb;
+   bool openbyapp;
    int  maxlines;          // max lines to read
    int  taillines;         // lines from eof
    bool usevars;
