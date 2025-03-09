@@ -2799,7 +2799,7 @@ int FTPClient::list(char *pdir, CoiTable **ppout, char *pRootURL)
 
       // === end meta data extraction ===
 
-      // prefix every entry by it's source url
+      // prefix every entry by its source url
       cchar *pInsPath = "";
       cchar *pszTrail = "";
 

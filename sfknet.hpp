@@ -237,7 +237,7 @@ protected:
 };
 
 // class to auto close a connection,
-// AND to automatically clear it's pointer.
+// AND to automatically clear its pointer.
 class ConAutoClose {
 public:
       ConAutoClose   (TCPCore *pcore, TCPCon **pcon, int nTraceLine);

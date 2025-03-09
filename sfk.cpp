@@ -5,6 +5,90 @@
    http://stahlworks.com/dev/swiss-file-knife.html
    Provided under the BSD license.
 
+   1.6.3
+   Revision 3:
+   -  fix: sfk select ... -file foo*.txt did not select
+           files with extension .txt. (internal mismatch
+           of .txt against /foo.txt/ -> ref 163R3)
+   Revision 2:
+   -  fix: sfk dumphelp and sfk ask didn't work.
+   Initial Release:
+   -  CHG: SYNTAX CHANGE: option -sub no longer means
+           "include sub directories". inclusion of sub dirs
+           was default on nearly every SFK command, so this 
+           option made no sense anyway. Nevertheless,
+
+           CHECK YOUR BATCH FILES if you used -sub anywhere,
+           and if so, rewrite as "-withsub" !
+           
+           Option -nosub to disable sub directory processing
+           stays as is.
+
+           The NEW option -sub starts a list of sub
+           directory masks like:
+           
+               sfk list -dir mydir -sub .svn -file .txt
+               
+           It can also be written as -subdir
+
+               sfk list -dir mydir -subdir .svn -file .txt
+               
+           but -sub is shorter to type and still meaningful.
+
+   -  CHG: SYNTAX CHANGE: exclusion of sub directories
+           within current dir or a given root dir
+           was inconsistent. now it works like:
+           WIDE SUB DIR SELECTION SYNTAX:
+           -dir . -sub !foo   -> exclude subdirs like *foo*
+            (foo is not allowed to start with ".")
+           -dir . -sub !.foo  -> exclude with extension "foo"
+           -dir . -sub !\foo  -> exclude starting with foo
+           -dir . -sub !foo\  -> exclude ending with foo
+           -dir . -sub !\foo\ -> exclude exactly "foo"
+           -dir . -sub !\foo\bar\ -> exclude subdir combi
+           -dir . -sub foo    -> within paths having *foo*
+           -dir . -sub \foo   -> within paths having *\foo
+           -dir . -sub foo\   -> within paths having *foo\
+           -dir . -sub \foo\  -> within paths exactly foo
+           -dir . -sub .foo   -> include with extension "foo"
+           -dir . -sub \foo\bar\ -> within subdir combi
+           COMPACT SUB DIR SELECTION SYNTAX:
+           -dir . !foo   -> exclude subdirs like *foo*
+            (foo is not allowed to start with ".")
+           -dir . !.foo  -> exclude with extension "foo"
+           -dir . !\foo  -> exclude starting with foo
+           -dir . !foo\  -> exclude ending with foo
+           -dir . !\foo\ -> exclude exactly "foo"
+           -dir . !\foo\bar\ -> exclude subdir combi
+           -dir . *foo*  -> within paths having *foo*
+           -dir . *\foo  -> within paths having *\foo
+           -dir . *foo\  -> within paths having *foo\
+           -dir . *\foo\ -> within paths exactly foo
+           -dir . *.foo  -> include with extension "foo"
+           -dir . *\foo\bar\ -> in subdir combi
+           SEE ALSO: sfk help select
+   -  CHG: SYNTAX CHANGE: selection of files is now
+           done just like sub directory selection:
+           -file !foo    -> exclude all files like *foo*
+           -file !\foo   -> exclude starting with foo          
+           -file !foo\   -> exclude ending with foo
+           -file !\foo\  -> exclude exactly "foo"
+           -file !.foo   -> exclude with extension "foo"
+   -  chg: improved help text of help select, help fileset
+           and sfk snapto.
+   -  fix: file selection in top level folders within
+           current dir "." using path masks: start of
+           folder name comparison by slash fixed.
+           -dir . *\foo  -> now really selects folder
+                            "foo" within current dir.
+   -  fix: sfk find -lnum ... +filter chaining
+           produced line numbers at the wrong place.
+   -  fix: help text typos.
+   internal:
+   -  chg: subdir and path masks now stored in
+           separate arrays.
+   -  add: profiler class.
+   
    1.6.2
    Revision 2:
    -  fix: sfk copy: stop of copy by CTRL+C produced
@@ -40,6 +124,7 @@
    -  fix: compile warnings about unused return codes.           
    -  fix: missing progress output on FTP send/receive.
    internal:
+   -  opt: small execJamFile optimizations.
    -  chg: removed unused code.
    -  add: multicast support with udpdump, udpsend.
    -  add: sfk wput, yet experimental.
@@ -140,7 +225,7 @@
    -  DEL: FUNCTION REMOVAL: sfk synctext marked as deprecated.
            it can still be used, but will be removed in future
            releases. sfk synctext is very complicated to use,
-           and it's functionality is completely provided
+           and its functionality is completely provided
            in a much better way by Depeche View.
    -  chg: main help text complete rework.
    -  add: ftpserv: option -ownip=x to manually set PASV ip.
@@ -1373,8 +1458,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.6.2"  // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "2"
+#define SFK_VERSION  "1.6.3"  // ver_ and check the _PRE definition
+#define SFK_FIXPACK  "3"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1525,6 +1610,7 @@ void setTextColor(int n, bool bStdErr=0);
 int perr(const char *pszFormat, ...);
 int pwarn(const char *pszFormat, ...);
 int pinf(const char *pszFormat, ...);
+int containsWildCards(char *pszName);
 
 // ========== 64 bit abstraction layer begin ==========
 
@@ -1718,6 +1804,134 @@ int prepareTCP()
 }
 
 // ====== SFK primitive function library end   ========
+
+// =========== Profiling ==========
+
+#ifdef SFK_PROFILING
+
+// CRITICAL: static constructor sequence
+// <-> StaticPerformancePoint
+StaticPerformanceStats glblPerfStats;
+
+StaticPerformanceStats::StaticPerformanceStats( )
+{
+   memset(this, 0, sizeof(*this));
+}
+
+void StaticPerformanceStats::addPoint(StaticPerformancePoint *pPoint)
+{
+   if (iClPoints >= MAX_PERF_POINTS) 
+   {
+      fprintf(stdout, "ERROR: too many profiling points\n");
+      fprintf(stderr, "ERROR: too many profiling points\n");
+      return;
+   }
+
+   apClPoints[iClPoints++] = pPoint;
+}
+
+int StaticPerformanceStats::numberOfPoints( )
+   { return iClPoints; }
+
+StaticPerformancePoint *StaticPerformanceStats::getPoint(int iIndex)
+   { return apClPoints[iIndex]; }
+
+// CRITICAL: static constructor sequence
+// <-> StaticPerformanceStats
+StaticPerformancePoint::StaticPerformancePoint(const char *pszID,
+   const char *pszFile, int iTraceLine)
+{
+   pszClID = pszID;
+   pszClFile = pszFile;
+   iClTraceLine = iTraceLine;
+   iClHits = 0;
+   iClTotalTime = 0;
+   iClSubTimes = 0;
+   glblPerfStats.addPoint(this);
+}
+
+void StaticPerformancePoint::blockEntry( )
+   { iClHits++; }
+
+void StaticPerformancePoint::blockExit(int iElapsedTicks)
+   { iClTotalTime += iElapsedTicks; }
+
+DynamicPerformancePoint::DynamicPerformancePoint(StaticPerformancePoint *pStaticPoint)
+{
+   nClEntryTickCount = getPerfCnt();
+   pClStaticPoint = pStaticPoint;
+
+   // enter next level
+   pClStaticParent = glblPerfStats.pClCurrentPoint;
+   glblPerfStats.pClCurrentPoint = pClStaticPoint;
+
+   pClStaticPoint->blockEntry();
+}
+
+DynamicPerformancePoint::~DynamicPerformancePoint( )
+{
+   num iElapsed = getPerfCnt() - nClEntryTickCount;
+
+   pClStaticPoint->blockExit((int)iElapsed);
+
+   // up one level
+   if (pClStaticParent)
+      pClStaticParent->iClSubTimes += iElapsed;
+   glblPerfStats.pClCurrentPoint = pClStaticParent;
+}
+
+void logProfile( )
+{
+   num nTicksPerMSec = getPerfFreq() / 1000;
+   if (!nTicksPerMSec)
+       nTicksPerMSec = 1;
+
+   printf("performance (%d points):\n", glblPerfStats.numberOfPoints());
+
+   int iTotalMSec = 0;
+   int iTotalPerc = 0;
+
+   for (int ipass=0; ipass<2; ipass++)
+   for (int i=0; i<glblPerfStats.numberOfPoints(); i++)
+   {
+      StaticPerformancePoint *p = glblPerfStats.getPoint(i);
+
+      num nNetto = p->iClTotalTime - p->iClSubTimes;
+      num nMSec  = nNetto / nTicksPerMSec;
+
+      if (!ipass) {
+         iTotalMSec += (int)nMSec;
+      } else {
+         int iPerc = nMSec * 100 / (iTotalMSec ? iTotalMSec : 1);
+         iTotalPerc += iPerc;
+         printf("% 10s : % 10I64d % 5d % 3d%% % 8I64d   %s:%d   (%d-%d)\n",
+            p->pszClID,
+            nNetto, (int)nMSec, iPerc,
+            p->iClHits,
+            p->pszClFile,
+            p->iClTraceLine,
+            (int)p->iClTotalTime, (int)p->iClSubTimes
+            );
+      }
+   }
+
+      printf("% 10s : % 10I64d % 5d % 3d%% % 8I64d   %s:%d   (%d-%d)\n",
+         "total",
+         (num)0, iTotalMSec, iTotalPerc,
+         (num)0,
+         "any",
+         0,
+         0, 0
+         );
+}
+
+#else
+
+void logProfile( )
+{
+}
+
+#endif
 
 // ====== SFK crash handler begin ========
 
@@ -2180,7 +2394,7 @@ public:
    bool skipLinks;   // do not follow symbolic directory links
    bool traceFileFlags;
    bool fileMaskAndMatch;  // AND match of file mask parts
-   bool pathMaskAndMatch;  // AND match of path mask parts
+   bool dirMaskAndMatch;  // AND match of path mask parts
    bool incFNameInPath;    // include filename in path mask check
    bool verifyEarly;       // copy: verify directly after write
    bool verifyLate;        // copy: verify in a separate pass
@@ -5640,7 +5854,8 @@ uchar Coi::isUTF16( ) { return nClUCS; }
 bool Coi::isSnapFile( ) { return bClSnap; }
 
 bool Coi::isBinaryFile( )
-{__
+{__ _p("sf.isbin")
+
    // if binary status was alread set, return it:
    if (nClHave & COI_HAVE_BINARY)
       return bClBinary;
@@ -5744,7 +5959,8 @@ bool Coi::isBinaryFile( )
 
 // TODO: rework rc handling in case of error
 int Coi::readLine(char *pszOutBuf, int nOutBufLen)
-{
+{_p("sf.readln")
+
    if (!data().rbuf.data) {
       memset(&data().rbuf, 0, sizeof(data().rbuf));
       data().rbuf.data = new uchar[MY_GETBUF_MAX+100];
@@ -5756,7 +5972,8 @@ int Coi::readLine(char *pszOutBuf, int nOutBufLen)
 
    // if remaining data is less than halve of buffer, read next block
    if (!data().rbuf.geteod && ( data().rbuf.getsize < (MY_GETBUF_MAX/2)-100 ))
-   {
+   {_p("sf.readl1")
+   
       // move remaining cache data to front of buffer
       int nindex  = data().rbuf.getindex;
       int nremain = data().rbuf.getsize;
@@ -5796,31 +6013,35 @@ int Coi::readLine(char *pszOutBuf, int nOutBufLen)
    uchar *pdstmax  = pdst + nOutBufLen - 10;
 
    bool bBinary    = 0;
-   int nSrcBytes  = 0;
-   int nDstBytes  = 0;
+   int  nSrcBytes  = 0;
+   int  nDstBytes  = 0;
 
-   for (; psrc < psrcmax && pdst < pdstmax;)
-   {
-      uchar c1 = *psrc++;
-      nSrcBytes++;
-
-      if (c1 == 0x00 || c1 == 0x1A) {
-         if (!c1)
-            bBinary = 1;
-         c1 = (uchar)'.';
+   {_p("sf.readl2")
+   
+      for (; psrc < psrcmax && pdst < pdstmax;)
+      {
+         uchar c1 = *psrc++;
+         nSrcBytes++;
+   
+         if (c1 == 0x00 || c1 == 0x1A) {
+            if (!c1)
+               bBinary = 1;
+            c1 = (uchar)'.';
+         }
+         else
+         if (c1 == (uchar)'\r')
+            continue;
+   
+         *pdst++ = (char)c1;
+         nDstBytes++;
+   
+         if (c1 == (uchar)'\n')
+            break;
       }
-      else
-      if (c1 == (uchar)'\r')
-         continue;
-
-      *pdst++ = (char)c1;
-      nDstBytes++;
-
-      if (c1 == (uchar)'\n')
-         break;
+      *pdst = '\0';
+   
    }
-   *pdst = '\0';
-
+ 
    data().rbuf.getindex += nSrcBytes; // copy next line from there
    data().rbuf.getsize  -= nSrcBytes; // reduce remaining bytes in buf
    data().rbuf.getpos   += nSrcBytes; // absolute source position in file
@@ -5832,7 +6053,8 @@ int Coi::readLine(char *pszOutBuf, int nOutBufLen)
 }
 
 size_t Coi::read(void *pbufin, size_t nBufSize)
-{__
+{__ _p("sf.read")
+
    if (nClUCS && (nBufSize & 0x1UL)) {
       // force even buffer size on ucs-2
       nBufSize ^= (size_t)0x1UL;
@@ -9683,7 +9905,8 @@ void FileList::reset()
 }
 
 int FileList::addFile(char *pszAbsName, char *pszRoot, num nTimeStamp, num nSize, char cSortedBy)
-{__
+{__ _p("sf.addfile")
+
    // IF filename starts with ".\\", skip this part
    if (!strncmp(pszAbsName, glblDotSlash, strlen(glblDotSlash)))
       pszAbsName += strlen(glblDotSlash);
@@ -10144,7 +10367,8 @@ void FileSet::resetAddFlags() {
    bClGotNegFile = 0;
 }
 
-void FileSet::reset() {
+void FileSet::reset() 
+{
    nClCurDir   =  0;
    nClCurLayer = -1;
    resetAddFlags();
@@ -10163,17 +10387,6 @@ char* FileSet::firstFileMask() {
    Array &rMasks = fileMasks();
    if (!rMasks.isStringSet(0)) return str("*");
    return rMasks.getString(0);
-}
-
-bool FileSet::isAnyExtensionMaskSet() 
-{
-   for (int i=0; clFileMasks.isStringSet(i); i++) 
-   {
-      char *pszMask = clFileMasks.getString(i);
-      if (pszMask[0] == '.')
-         return true;
-   }
-   return false;
 }
 
 int FileSet::getDirCommand() {
@@ -10499,9 +10712,39 @@ int FileSet::addDirCommand(int lCmd)
    return 0;
 }
 
-int FileSet::addDirMask(char *pszMask) {
+int FileSet::addDirMask(char *pszMask) 
+{
    if (ensureBase(__LINE__)) return 9;
+   
+   // per definitionem,  ".ext" means ".ext/"
+   // per definitionem, "!.ext" means "!.ext/"
+   // per definitionem, "*.ext" means "*.ext/"
+   
+   int iMaskLen = strlen(pszMask);
+   if (pszMask[0] == '.' && pszMask[iMaskLen-1] != glblPathChar) 
+   {
+      snprintf(pClLineBuf, MAX_LINE_LEN-10, "%s%c", pszMask, glblPathChar);
+      pszMask = pClLineBuf;
+   }
+   else
+   if (   pszMask[0] == glblNotChar
+       && pszMask[1] == '.'
+       && pszMask[iMaskLen-1] != glblPathChar) 
+   {
+      snprintf(pClLineBuf, MAX_LINE_LEN-10, "%s%c", pszMask, glblPathChar);
+      pszMask = pClLineBuf;
+   }
+   else
+   if (   pszMask[0] == glblWildChar
+       && pszMask[1] == '.'
+       && pszMask[iMaskLen-1] != glblPathChar)
+   {
+      snprintf(pClLineBuf, MAX_LINE_LEN-10, "%s%c", pszMask, glblPathChar);
+      pszMask = pClLineBuf;
+   }
+   
    clDirMasks.addString(pszMask);
+   
    return 0;
 }
 
@@ -10509,6 +10752,24 @@ int FileSet::addFileMask(char *pszMask)
 {
    // if (cs.debug) printf("] addFileMask %s\n", pszMask);
    if (ensureBase(__LINE__)) return 9;
+
+   // per definitionem,  ".ext" means ".ext/"
+   // per definitionem, "!.ext" means "!.ext/"
+   
+   int iMaskLen = strlen(pszMask);
+   if (pszMask[0] == '.' && pszMask[iMaskLen-1] != glblPathChar)
+   {
+      snprintf(pClLineBuf, MAX_LINE_LEN-10, "%s%c", pszMask, glblPathChar);
+      pszMask = pClLineBuf;
+   }
+   else
+   if (   pszMask[0] == glblNotChar
+       && pszMask[1] == '.'
+       && pszMask[iMaskLen-1] != glblPathChar)
+   {
+      snprintf(pClLineBuf, MAX_LINE_LEN-10, "%s%c", pszMask, glblPathChar);
+      pszMask = pClLineBuf;
+   }
 
    #ifdef VFILEBASE
    if (!cs.shallowzips && cs.xelike && cs.travelzips && endsWithArcExt(pszMask)) {
@@ -10580,7 +10841,8 @@ int FileSet::autoCompleteFileMasks(int nWhat)
    return 0;
 }
 
-void FileSet::setBaseLayer() {
+void FileSet::setBaseLayer() 
+{
    clRootDirs.setRow(0, __LINE__);
    clDirMasks.setRow(0, __LINE__);
    clFileMasks.setRow(0, __LINE__);
@@ -10945,6 +11207,7 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
          if (nMatchPre)
          {
             char *pszTmp = szClLastLine;
+            bool bPrefixed = 0;
 
             memset(szClAttBuf, ' ', sizeof(szClAttBuf));
             szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
@@ -10953,9 +11216,12 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
             else
                sprintf(szClPreBuf, " / ");
             szClAttBuf[1] = 'p';
+            
             if (!cs.pure) {
                if (chain.coldata) {
-                  chain.addToCurLine(szClPreBuf, szClAttBuf, 0);
+                  // FIX: 163: create new record here
+                  chain.addLine(szClPreBuf, szClAttBuf);
+                  bPrefixed = 1;
                } else {
                   printColorText(szClPreBuf, szClAttBuf, 0); // w/o LF
                }
@@ -10978,16 +11244,22 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                      break;
                }
             }
-            if (chain.coldata)
-               chain.addLine(pszTmp, szClAttBuf);
-            else
+            if (chain.coldata) {
+               // FIX: 163: if prefix, append after that
+               if (bPrefixed)
+                  chain.addToCurLine(pszTmp, szClAttBuf, 0);
+               else
+                  chain.addLine(pszTmp, szClAttBuf);
+            } else {
                printColorText(pszTmp, szClAttBuf);
+            }
          }
  
          // create coloured display of hits of CURRENT line
          if (nMatchCur)
          {
             char *pszTmp = pszBuf;
+            bool bPrefixed = 0;
 
             memset(szClAttBuf, ' ', sizeof(szClAttBuf));
             szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
@@ -10999,9 +11271,12 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                szClPreBuf[1] = '\\';
                szClAttBuf[1] = 'p';
             }
+            
             if (!cs.pure) {
                if (chain.coldata) {
-                  chain.addToCurLine(szClPreBuf, szClAttBuf, 0);
+                  // FIX: 163: create new record here
+                  chain.addLine(szClPreBuf, szClAttBuf, 0);
+                  bPrefixed = 1;
                } else {
                    printColorText(szClPreBuf, szClAttBuf, 0); // w/o LF
                }
@@ -11025,10 +11300,15 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                      break;
                }
             }
-            if (chain.coldata)
-               chain.addLine(pszTmp, szClAttBuf);
-            else
+            if (chain.coldata) {
+               // FIX: 163: if prefix, append after that
+               if (bPrefixed)
+                  chain.addToCurLine(pszTmp, szClAttBuf, 0);
+               else
+                  chain.addLine(pszTmp, szClAttBuf);
+            } else {
                printColorText(pszTmp, szClAttBuf);
+            }
          }
 
          // line was listed, do NOT remember
@@ -11232,7 +11512,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-sim"))       { pcs->sim = 1; return true; }
    if (!strcmp(psz1, "-norec"))     { pcs->subdirs = 0; return true; }
    if (!strncmp(psz1, "-nosub", 6)) { pcs->subdirs = 0; return true; }
-   if (!strcmp(psz1, "-sub"))       { pcs->subdirs = 1; return true; }
+   if (!strcmp(psz1, "-withsub"))   { pcs->subdirs = 1; return true; }
    if (!strcmp(psz1, "-i"))         { bGlblStdInAny = 1; return true; }
    if (!strcmp(psz1, "-verbose"))   { pcs->verbose = 1; return true; }
    if (!strcmp(psz1, "-verbose=2")) { pcs->verbose = 2; return true; }
@@ -11586,6 +11866,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       setPriority(-1);
       return true;
    }
+   if (!strcmp(psz1,"-broad"))   {  cs.incFNameInPath = 1; return true; }
    return false;
 }
 
@@ -11674,13 +11955,15 @@ int processFlatDirParms(char *pszPreCmd, char *pszCmdLine, int nAutoComplete)
    return processDirParms(str(""), nParms, apGlblFileParms, 0, nAutoComplete);
 }
 
-enum ePDPStates {
+enum ePDPStates 
+{
    eST_Idle       = 0,
    eST_RootDirs   = 1,
    eST_FileMasks  = 2,
    eST_GrepPat    = 3,
    eST_IncBin     = 4,
    eST_DirFile    = 5,
+   eST_SubDirs    = 6,
 
    eST_MAXStates
 };
@@ -11780,6 +12063,7 @@ cchar *aGlblChainCmds[] =
    "1call",         // receive FILES and text
    "1if",           // receive FILES and text
    "2require",      // receive TEXT
+   "2difflines",    // receive TEXT
    0
 };
 
@@ -12052,8 +12336,6 @@ bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext,
 
 int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoComplete, int *iDirNext, bool *pAnyDone)
 {__
-   int checkMask(char *pszMask);
-
    mtklog(("processDirParms with argc=%d",argc));
 
    bool bAnyDone = 0; // any user-supplied dir/file parm used
@@ -12198,6 +12480,13 @@ int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCom
                      return 9;
                }
                else
+               if (lState == eST_SubDirs) {
+                  if (cs.debug) printf("] -dir: begin layer.3\n");
+                  // not the very first -dir parm: add another layer
+                  if (glblFileSet.beginLayer(false, __LINE__))
+                     return 9;
+               }
+               else
                if (lState == eST_RootDirs && !bPreFileFlank) {
                   // -dir tmp1 tmp2 -dir tmp3 -file .txt
                   // add implicite "-file *" to first layer
@@ -12216,6 +12505,17 @@ int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCom
                aStateTouched[eST_FileMasks] = 0;
                continue;
             }
+            
+            if (!strcmp(psz1, "-sub") || !strcmp(psz1, "-subdir"))
+            {
+               aStateTouched[eST_SubDirs] = 1;
+               if (lState != eST_RootDirs) {
+                  perr("-sub[dir] is allowed only after -dir");
+                  return 9;
+               }
+               lState = eST_SubDirs;
+               continue;
+            }
 
             if (!strcmp(psz1, "-any")) {
                // list of file- and directory names follows.
@@ -12224,7 +12524,10 @@ int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCom
                continue;
             }
 
-            if (psz1[0] == glblNotChar) {
+            if (   psz1[0] == glblNotChar
+                && lState != eST_SubDirs
+               )
+            {
                if (lState == eST_RootDirs)
                   lRC |= glblFileSet.addDirMask(psz1);
                else
@@ -12324,6 +12627,13 @@ int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCom
                   // add another root dir, referencing the current layer.
                   if (glblFileSet.addRootDir(psz1, __LINE__, true))
                      return 9; 
+                  bAnyDone = 1;
+                  break;
+               }
+               case eST_SubDirs : {
+                  // add another dir mask, referencing the current layer.
+                  if (glblFileSet.addDirMask(psz1))
+                     return 9;
                   bAnyDone = 1;
                   break;
                }
@@ -12890,7 +13200,8 @@ void resetAllFileSets()
 }
 
 int walkAllTrees(int nFunc, int &rlFiles, int &rlDirs, num &rlBytes) 
-{__
+{__ _p("sf.walkall")
+
    mtklog(("wat: walkAllTrees fn %d err %d",nFunc,nGlblError));
 
    if (nGlblError)
@@ -12975,7 +13286,7 @@ int walkAllTrees(int nFunc, int &rlFiles, int &rlDirs, num &rlBytes)
          cs.flatbytecnt += nLocalBytes;
       } else {
          rlDirs++; // count root dir
-         rlDirs   += nLocalDirs; // add it's subdirs
+         rlDirs   += nLocalDirs; // add its subdirs
          rlFiles  += nLocalFiles;
          rlBytes  += nLocalBytes;
       }
@@ -16287,7 +16598,8 @@ bool matchesName(char *pszStr, char *pszMask,
    int *pHitPos = 0, int *pHitLen = 0
    )
 {
-    // printf("\nmname %s %s\n",pszStr,pszMask);
+    if (cs.verbose >= 4)
+       printf("\nmname %s %s\n",pszStr,pszMask);
 
     // flags, bit 0: DISABLE start of name comparison
     bool bEnableSNC = ((nFlags & 1) == 0);
@@ -16297,7 +16609,7 @@ bool matchesName(char *pszStr, char *pszMask,
 
     // flags, bit 2: matchesDirMask mode, no ".ext" comparison.
     bool bMDirMask = (nFlags & 4) ? 1 : 0;
-
+    
     //  foo         -> thefoosys.txt
     //  *foo*bar*   -> thefooanybar.txt
     //  .txt        -> only .txt files
@@ -16366,9 +16678,18 @@ bool matchesName(char *pszStr, char *pszMask,
 
                 // FIX: R157: no longer use strrchr(pstr1, '.')
                 char *psz5 = 0;
-                if (nMaskLen <= nNameLen) {
-                   psz5 = pstr1 + nNameLen - nMaskLen;
-                   if (*psz5 != '.') psz5 = 0;   
+                if (endsWithPathChar(szMatchBuf)) {
+                   if (nMaskLen <= nNameLen) {
+                      psz5 = pstr1 + nNameLen - nMaskLen;
+                      if (*psz5 != '.') psz5 = 0;   
+                   }
+                } else {
+                   // FIX 163R3: .txt <-> tmp1.txt/
+                   // fix includes strnicmp below i/o stricmp
+                   if (nMaskLen+1 <= nNameLen) {
+                      psz5 = pstr1 + nNameLen - (nMaskLen+1);
+                      if (*psz5 != '.') psz5 = 0;
+                   }
                 }
 
                 bool bmatch1 = false;
@@ -16378,10 +16699,10 @@ bool matchesName(char *pszStr, char *pszMask,
                 if (bMDirMask)
                     bmatch1 = dirExtEndMatch(psz5, szMatchBuf);
                 else
-                    bmatch1 = !mystricmp(psz5, szMatchBuf);
+                    bmatch1 = !mystrnicmp(psz5, szMatchBuf, nMaskLen);
                 if (bmatch1 && rPartMatch) *rPartMatch = true;
                 // final match decision by extension:
-                if (cs.verbose >= 3) printf("%d = MATCH (msk %s, str %s) %d^%d r3\n",bneg^bmatch1,szMatchBuf,pszStr,bneg,bmatch1);
+                if (cs.verbose >= 3) printf("%d = MATCH (msk %s, str %s) %d^%d r3 %p\n",bneg^bmatch1,szMatchBuf,pszStr,bneg,bmatch1,psz5);
                 return bneg ^ bmatch1;
             }
 
@@ -16476,217 +16797,208 @@ bool matchesName(char *pszStr, char *pszMask,
     return brc;
 }
 
-int matchesFileMask(char *pszStr, char *pszInfoAbsName=0)
+// RC 0 : no match
+// RC 1 : match, but just by wildcard
+// RC 2 : match by non wildcard pattern
+int matchesFileMask(char *pszFile, char *pszInfoAbsName=0)
 {
-   int lMatched = 0;
-   bool bPart    = 0;
-   char *pszPart = 0;
-   char *pszInfo = pszInfoAbsName ? pszInfoAbsName : pszStr;
+   int iRC = 1;
+   
+   // build normalized filename
+   //    foo.txt     -> /foo.txt/
+   //    foo\bar.txt -> /foo/bar.txt/
+   int iNameLen = strlen(pszFile);
+   
+   char *pszNormSubName = new char[iNameLen + 10];
+   CharAutoDel odel(pszNormSubName);
 
-   int nPosMasks = 0;
-   int nPosHits  = 0;
+   pszNormSubName[0] = '\0';
+   if (pszFile[0] != glblPathChar)
+      strcat(pszNormSubName, glblPathStr);
+   if (iNameLen > 0) {
+      int iAppendPos = strlen(pszNormSubName);
+      memcpy(pszNormSubName+iAppendPos, pszFile, iNameLen);
+      pszNormSubName[iAppendPos+iNameLen] = '\0';
+   }
+   if (iNameLen == 0 || pszFile[iNameLen-1] != glblPathChar)
+      strcat(pszNormSubName, glblPathStr);
+
+   int iNumberOfWhiteMasks    = 0;
+   int iNumberOfWhiteMatches  = 0;
+   int iNumberOfBlackMasks    = 0;
+   int iNumberOfWildMasks     = 0;
 
    Array &rMasks = glblFileSet.fileMasks();
-   for (int i=0; rMasks.isStringSet(i); i++) 
+   for (int i=0; rMasks.isStringSet(i); i++)
    {
       char *pszMask = rMasks.getString(i);
 
-      if (isWildStr(pszMask)) {
-         lMatched |= 0x1;
-         continue;
-      }
-
-      if (pszMask[0] == glblNotChar) {
-         if (matchesName(pszStr, pszMask+1)) {
-            if (nGlblTraceSel & 2) {
-               setTextColor(nGlblTraceExcColor);
-               info.print("file-exclude: %s due to \"%s\"\n", pszInfo, pszMask);
-               setTextColor(-1);
-            }
-            return 0; // negative mask hit
-         }
-         continue;
-      }
-
-      // positive mask check:
-      nPosMasks++;
-      if (matchesName(pszStr, pszMask, &bPart)) {
-         lMatched |= 0x2;
-         pszPart   = pszMask;
-         nPosHits++;
-      }
-   }
-
-   // if special mode AND mask check is set:
-   if (cs.fileMaskAndMatch) {
-      if (nPosMasks > 0 && nPosHits < nPosMasks) {
-         if (nGlblTraceSel & 2) {
-            setTextColor(nGlblTraceExcColor);
-            info.print("file-exclude: %s [no AND match, %d/%d]\n", pszInfo, nPosHits, nPosMasks);
-            setTextColor(-1);
-         }
-         return 0;
-      }
-   }
-
-   if (nGlblTraceSel & 2) {
-      if (lMatched) {
-         setTextColor(nGlblTraceIncColor);
-         if (pszPart)
-            info.print("file-include: %s due to \"%s\"\n", pszInfo, pszPart);
-         else
-            info.print("file-include: %s\n", pszInfo);
-         setTextColor(-1);
-      } else {
-         setTextColor(nGlblTraceExcColor);
-         info.print("file-exclude: %s\n", pszInfo); // probably not reached
-         setTextColor(-1);
-      }
-   }
-
-   return lMatched;
-}
-
-// NOTE: although both matchesDirMask and matchesPathMask
-//       use dirMasks(), they do NOT influence each other:
-// => matchesDirMask  only checks against "+" and "!" masks
-// => matchesPathMask only checks against "*" masks
-
-// check done per directory: does dirname match?
-bool matchesDirMask(char *pszStr, bool bQuiet)
-{
-   // deprecated:
-   //    if '+' masks are given, all dirs are excluded
-   //    except those matching the masks.
-   //    if no '+' are given, all dirs are included
-   //    except those matching negative masks.
-   bool lRC = bGlblHavePlusDirMasks ? 0 : 1;
-   // ... should always be 1 initially.
-
-   Array &rMasks = glblFileSet.dirMasks();
-   for (int i=0; rMasks.isStringSet(i); i++) 
-   {
-      char *pszMask = rMasks.getString(i);
       if (pszMask[0] == glblNotChar)
       {
-         mtklog(("mdm: check neg mask: %s %s", pszMask, pszStr));
-         // ,5: disable start-of-name comparison AND disable 
-         //     the .extension comparison (the latter would
-         //     never work as pszStr ends with slash).
-         if (matchesName(pszStr, pszMask+1, 0, 5)) {
-            if (!bQuiet && (nGlblTraceSel & 1)) {
+         iNumberOfBlackMasks++;
+         if (matchesName(pszNormSubName, pszMask+1, 0, 3)) { // ,3: no start-of-name + cmp-path
+            if (nGlblTraceSel & 1) {
                setTextColor(nGlblTraceExcColor);
-               info.print("dir-exclude : %s due to \"%s\"\n", skipDotSlash(pszStr), pszMask);
+               info.print("file-exclud: %s due to \"%s\"\n", pszNormSubName, pszMask);
                setTextColor(-1);
             }
-            mtklog(("mdm: 0, neg mask hit: %s %s", pszMask, pszStr));
             return 0;
          } else {
-            if (cs.verbose >= 4) printf("1 = MDSB (msk %s, str %s)\n", pszMask, pszStr);
-            mtklog(("mdm: neg mask miss %s %s", pszMask, pszStr));
+            if (cs.verbose >= 4)
+               printf("1 = msbm (msk %s, str %s)\n", pszMask, pszNormSubName);
          }
       }
       else
-      if (pszMask[0] == '+')
       {
-         if (mystrstriq(pszStr, pszMask+1))
-            lRC = 1; // but continue checking for negative masks
-      } else {
-         mtklog(("mdm: skip wild mask: %s %s (checked later)", pszMask, pszStr));
-         lRC = 1; // mask with wildcards: NOT used here, but in matchesPathMask()
+         iNumberOfWhiteMasks++;
+         if (matchesName(pszNormSubName, pszMask, 0, 3)) { // ,3: no start-of-name + cmp-path
+            iNumberOfWhiteMatches++;
+            if (!containsWildCards(pszMask))
+               iRC = 2;
+            if (nGlblTraceSel & 1) {
+               setTextColor(nGlblTraceExcColor);
+               info.print("file-wmatch: %s to \"%s\"\n", pszNormSubName, pszMask);
+               setTextColor(-1);
+            }
+         } else {
+            if (cs.verbose >= 4)
+               printf("0 = mswm (msk %s, str %s)\n", pszMask, pszNormSubName);
+         }
       }
    }
 
-   if (!bQuiet && (nGlblTraceSel & 1)) {
-      if (lRC) {
+   // if any white masks given, at least one or all must match
+   if (cs.fileMaskAndMatch) {
+      if (iNumberOfWhiteMasks > 0 && iNumberOfWhiteMatches < iNumberOfWhiteMasks)
+         iRC = 0;
+   } else {
+      if (iNumberOfWhiteMasks > 0 && iNumberOfWhiteMatches < 1)
+         iRC = 0;
+   }
+
+   if (nGlblTraceSel & 1) {
+      if (iRC) {
          setTextColor(nGlblTraceIncColor);
-         info.print("dir-include : %s\n", skipDotSlash(pszStr));
+         info.print("file-keep  : %s (wmask=%d/%d bmask=0/%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks);
          mtklog(("mdm: include %s", pszStr));
       } else {
          setTextColor(nGlblTraceExcColor);
-         info.print("dir-exclude : %s\n", skipDotSlash(pszStr));
+         info.print("file-exclud: %s (wmask=%d/%d bmask=0/%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks);
          mtklog(("mdm: exclude %s", pszStr));
       }
       setTextColor(-1);
    }
 
-   mtklog(("mdm: %d for %s", lRC, pszStr));
+   mtklog(("mdm: %d for %s", iRC, pszStr));
 
-   return lRC;
+   return iRC;
 }
 
-// check done per filename: does the file path match?
-bool matchesPathMask(char *pszFilename, bool bIsPathName)
-{
-   int nPosMasks = 0;
-   int nPosHits  = 0;
+bool matchesDirMask(char *pszFullPath, bool bTakeFullPath, bool bApplyWhiteMasks)
+{_p("sf.mtchdir")
 
-   // isolate path from filename
-   static char szPathBuf[500];
-   strcopy(szPathBuf, pszFilename);
-   if (!bIsPathName && !cs.incFNameInPath) {
-      char *psz = strrchr(szPathBuf, glblPathChar);
-      // terminate AFTER slash, allowing for more
-      // checks against last element of path:
-      if (psz) *++psz = '\0';
+   bool bRC = 1;
+
+   // build normalized path name
+   //    include  -> /include/
+   //    \foo\bar -> /bar/
+   // if input path is an absolute filename
+   //    include\foo.hpp -> /include/
+   int iPathLen = strlen(pszFullPath);
+   if (!bTakeFullPath) {
+      char *pszRelName = strrchr(pszFullPath, glblPathChar);
+      if (!pszRelName)
+         iPathLen = 0;
+      else
+         iPathLen = pszRelName - pszFullPath;
    }
-   char *pszPath = szPathBuf;
 
+   char *pszNormSubName = new char[iPathLen + 10];
+   CharAutoDel odel(pszNormSubName);
+
+   pszNormSubName[0] = '\0';
+   if (pszFullPath[0] != glblPathChar)
+      strcat(pszNormSubName, glblPathStr);
+   if (iPathLen > 0) {
+      int iAppendPos = strlen(pszNormSubName);
+      memcpy(pszNormSubName+iAppendPos, pszFullPath, iPathLen);
+      pszNormSubName[iAppendPos+iPathLen] = '\0';
+   }      
+   if (iPathLen == 0 || pszFullPath[iPathLen-1] != glblPathChar)
+      strcat(pszNormSubName, glblPathStr);
+      
+   int iNumberOfWhiteMasks    = 0;
+   int iNumberOfWhiteMatches  = 0;
+   int iNumberOfBlackMasks    = 0;
+   int iNumberOfWildMasks     = 0;
+      
    Array &rMasks = glblFileSet.dirMasks();
    for (int i=0; rMasks.isStringSet(i); i++)
    {
       char *pszMask = rMasks.getString(i);
-      if (pszMask[0] == glblNotChar) {
-         // also check neg masks, in case it wasn't done in walkFiles.
-         if (matchesName(pszPath, pszMask+1, 0, 3)) { // ,3: no start-of-name + cmp-path
-            // negative mask hit:
-            if (nGlblTraceSel & 2) {
+
+      if (pszMask[0] == glblNotChar)
+      {
+         // black masks are applied asap, both during directory travel
+         // and later when checking file paths.
+         iNumberOfBlackMasks++;
+         if (matchesName(pszNormSubName, pszMask+1, 0, 3)) { // ,3: no start-of-name + cmp-path
+            if (nGlblTraceSel & 1) {
                setTextColor(nGlblTraceExcColor);
-               info.print("path-exclude: %s [due to %s]\n", pszPath, pszMask);
+               info.print("dir-exclude: %s due to \"%s\"\n", pszNormSubName, pszMask);
                setTextColor(-1);
             }
-            mtklog(("mpm: 0, neg mask hit: %s", pszFilename));
             return 0;
+         } else {
+            if (cs.verbose >= 4) 
+               printf("1 = msbm (msk %s, str %s)\n", pszMask, pszNormSubName);
          }
       }
       else
-      if (pszMask[0] == '+') { }
-      else
+      if (bApplyWhiteMasks)
       {
-         // mask with wildcards.
-         nPosMasks++;
-         if (matchesName(pszPath, pszMask, 0, 3)) { // ,3: no start-of-name + cmp-path
-            nPosHits++;
-            // continue processing as neg masks may follow.
+         // white masks are applied on file path checking,
+         // but not on directory travel.
+         iNumberOfWhiteMasks++;
+         if (matchesName(pszNormSubName, pszMask, 0, 3)) { // ,3: no start-of-name + cmp-path
+            iNumberOfWhiteMatches++;
+            if (nGlblTraceSel & 1) {
+               setTextColor(nGlblTraceExcColor);
+               info.print("dir-wmatch : %s to \"%s\"\n", pszNormSubName, pszMask);
+               setTextColor(-1);
+            }
+         } else {
+            if (cs.verbose >= 4)
+               printf("0 = mswm (msk %s, str %s)\n", pszMask, pszNormSubName);
          }
       }
    }
-
-   // if special mode AND mask check is set:
-   if (cs.pathMaskAndMatch) {
-      if (nPosMasks > 0 && nPosHits < nPosMasks) {
-         if (nGlblTraceSel & 2) {
-            setTextColor(nGlblTraceExcColor);
-            info.print("path-exclude: %s [no AND match, %d/%d]\n", pszPath, nPosHits, nPosMasks);
-            setTextColor(-1);
-         }
-         mtklog(("mpm: 0, no matches: %s", pszFilename));
-         return 0;
+   
+   // if any white masks given, at least one or all must match
+   if (cs.dirMaskAndMatch) {
+      if (iNumberOfWhiteMasks > 0 && iNumberOfWhiteMatches < iNumberOfWhiteMasks)
+         bRC = 0;
+   } else {
+      if (iNumberOfWhiteMasks > 0 && iNumberOfWhiteMatches < 1)
+         bRC = 0;
+   }
+   
+   if (nGlblTraceSel & 1) {
+      if (bRC) {
+         setTextColor(nGlblTraceIncColor);
+         info.print("dir-keep   : %s (wmask=%d/%d bmask=0/%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks);
+         mtklog(("mdm: include %s", pszStr));
+      } else {
+         setTextColor(nGlblTraceExcColor);
+         info.print("dir-exclude: %s (wmask=%d/%d bmask=0/%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks);
+         mtklog(("mdm: exclude %s", pszStr));
       }
+      setTextColor(-1);
    }
 
-   if (!nPosMasks) {
-      mtklog(("mpm: 1, no pos masks: %s", pszFilename));
-      return true;
-   }
+   mtklog(("mdm: %d for %s", bRC, pszStr));
 
-   if (nPosHits) {
-      mtklog(("mpm: 1, pos hits: %s", pszFilename));
-      return true;
-   }
-
-   mtklog(("mpm: 0, default: %s", pszFilename));
-   return false;
+   return bRC;
 }
 
 void padBuffer(char *pszBuf, int nMaxLen, char c, int nTargLen)
@@ -16804,18 +17116,20 @@ int execGrep(Coi *pcoi)
             }
 
             // list the line
-            bool bdump2 = 0;
+            bool bPrefixed = 0;
+            
             if (bGlblGrepLineNum)
-               { sprintf(szLineBuf2, "   %04u ", nLocalLines); bdump2=1; }
+               { sprintf(szLineBuf2, "   %04u ", nLocalLines); bPrefixed=1; }
             else
             if (!cs.pure)
-               { sprintf(szLineBuf2, "   "); bdump2=1; }
+               { sprintf(szLineBuf2, "   "); bPrefixed=1; }
 
-            if (bdump2) {
+            if (bPrefixed) {
                if (chain.coldata) {
                   szAttrBuf2[0] = '\0';
                   padBuffer(szAttrBuf2, MAX_LINE_LEN, ' ', strlen(szLineBuf2));
-                  chain.addToCurLine(szLineBuf2, szAttrBuf2, 0);
+                  // FIX: 163: create new record here
+                  chain.addLine(szLineBuf2, szAttrBuf2);
                } else {
                   info.print("%s", szLineBuf2);
                }
@@ -16845,10 +17159,15 @@ int execGrep(Coi *pcoi)
                }
             }
 
-            if (chain.coldata)
-               chain.addLine((char*)abBuf, szAttrBuf);
-            else
+            if (chain.coldata) {
+               // FIX: 163: if prefix, append after that
+               if (bPrefixed)
+                  chain.addToCurLine((char*)abBuf, szAttrBuf, 0);
+               else
+                  chain.addLine((char*)abBuf, szAttrBuf);
+            } else {
                printColorText((char*)abBuf, szAttrBuf);
+            }
 
          }  // endif all patterns match
 
@@ -17813,7 +18132,7 @@ int execRunFile(Coi *pcoi, char *pszOutFile,
       }
       else
       if (!cs.quiet) {
-         // non-chaining: command will dump it's output to terminal
+         // non-chaining: command will dump its output to terminal
          if (cs.printcmd) {
             printf("%s\n", szRunCmdBuf);
             btoldcmd = 1;
@@ -18209,7 +18528,8 @@ int walkFiles(
    int &lDirs, num &lBytes,
    num &nLocalMaxTime, num &nTreeMaxTime
  )
-{__
+{__ _p("sf.wfiles")
+
    mtklog(("walkFiles %s", ptop->name()));
 
    // printf("wfl %s\n", ptop->name());
@@ -18358,14 +18678,11 @@ int walkFiles(
          }
          #endif // USE_SFK_BASE
  
-         // normal match: temporary attach '\\' char for exact path comparison
-         if (bMatch) {
-            int nlen = strlen(psub->name());
-            char *pcopy = new char[nlen+10];
-            strcpy(pcopy, psub->name());
-            strcat(pcopy, glblPathStr);
-            bMatch = matchesDirMask(pcopy, !cs.subdirs);
-            delete [] pcopy;
+         if (bMatch)
+         {
+            bMatch = matchesDirMask(psub->name(), 1, 0); // on subdir
+            // ,1 : take full path as it's a dir name
+            // ,0 : check only against negative dir masks
          }
 
          // general processing: recursion and the like
@@ -18429,8 +18746,10 @@ int walkFiles(
       }
       else
       {
-         // normal file: check path mask (if any) against full file path
-         bool bpmmatch = matchesPathMask(psub->name(), 0);
+         // normal file: check dir mask also against full file path
+         bool bpmmatch = matchesDirMask(psub->name(), cs.incFNameInPath, 1); // on file
+         // ,0 : default is not to include filename, extract path first
+         // ,1 : check both black and white masks against file path
 
          // normal file: check mask against file name WITHOUT path
          if (bpmmatch && (matchesFileMask(psub->relName(), psub->name()) > 0))
@@ -18986,7 +19305,7 @@ time_t zipTimeToMainTime(num nZipTime)
 #define L_LOCAL_HEADER_SIZE (L_EXTRA_FIELD_LENGTH+2)
 
 // build md5 over a zip file AND:
-// -  read all it's filenames
+// -  read all its filenames
 // -  check them against provided list
 
 // USES: szLineBuf2
@@ -19566,7 +19885,8 @@ int bGlblPassThroughSnap = 0;
 
 // snapto collect single file
 int execJamFile(Coi *pcoi)
-{__
+{__ _p("sf.jamfile")
+
    cchar *pPrefix = pszGlblJamPrefix ? pszGlblJamPrefix : ":file:";
    char *pHeadLine = (char*)pPrefix;
 
@@ -19758,7 +20078,7 @@ int execJamFile(Coi *pcoi)
 
       if (!bProcess) {
          char *pszRel = pcoi->relName();
-         if (matchesFileMask(pszRel, pcoi->name()) & 0x6) // matches by extension list OR name pattern
+         if (matchesFileMask(pszRel, pcoi->name()) > 1) // matches by non-wildcard pattern
             bProcess = 1;
       }
 
@@ -19827,18 +20147,17 @@ int execJamFile(Coi *pcoi)
 
     int nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
     memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
-    int nLocalLines = 0;
-    bool bWrapMode = (cs.wrapcol > 0) ? 1 : 0;
-    int nLineLen  = 0;
-    bool bPassSnap = 0;
+    int  nLocalLines = 0;
+    bool bWrapMode  = (cs.wrapcol > 0) ? 1 : 0;
+    int  nLineLen   = 0;
+    bool bPassSnap  = 0;
     bool bNoTrailer = 0;
 
-    while (pcoi->readLine((char*)abBuf, nMaxLineLen) > 0) // yes, exact len
+    while ((nLineLen = pcoi->readLine((char*)abBuf, nMaxLineLen)) > 0)
     {
       cs.lines++;
       nLocalLines++;
 
-      nLineLen = strlen((char*)abBuf);
       if (nLineLen == nMaxLineLen)
          pwarn("max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, pcoi->name(), nLocalLines);
 
@@ -19906,7 +20225,7 @@ int execJamFile(Coi *pcoi)
             lRC |= dumpJamLine((char*)abBuf, 0, 1);
       }
 
-      nGlblBytes += strlen((char*)abBuf);
+      nGlblBytes += nLineLen;
       abBuf[nMaxLineLen] = '\0';
 
       // check per line if stat update is required
@@ -20588,7 +20907,8 @@ int execFTPLocList(char *pszFileName)
 #endif
 
 int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
-{__
+{__ _p("sf.excfile")
+
    mtklog(("execSingleFile %s root %s", pcoi->name(), pcoi->root()));
 
    // printf(" esf %s\n", pcoi->name());
@@ -20963,7 +21283,7 @@ int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot=0)
             perr("cannot create dir: %s\n", pszDir);
             return 9;
          }
-         // if ref root is given, copy it's timestamp
+         // if ref root is given, copy its timestamp
          // doesn't work here: file created afterwards updates the dir timestamp
          // trace created dir in global list
          #ifdef SFK_CCDIRTIME
@@ -21476,7 +21796,8 @@ int execFileXCopy(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, int nDir
 }
 
 int execSingleDir(Coi *pcoi, int lLevel, int &nTreeFiles, FileList &oDirFiles, int &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
-{__
+{__ _p("sf.execdir")
+
    char *pszName     = pcoi->name();
    char *pszOptRoot  = pcoi->root(1);  // raw, returns 0 if none
 
@@ -21490,7 +21811,10 @@ int execSingleDir(Coi *pcoi, int lLevel, int &nTreeFiles, FileList &oDirFiles, i
       // -justdirs: if a path mask is given, we still have
       // to traverse all subfolders, but we don't list
       // or process non matching subfolders.
-      if (!matchesPathMask(pszName, 1)) {
+      // ,1 : take full path, is a directory name
+      // ,1 : apply also white masks (?)
+      if (!matchesDirMask(pszName, 1, 1)) // on subdir
+      {
          if (cs.debug) printf("]  esdir: path mask mismatch\n");
          return 0; // filter from output
       }
@@ -21613,19 +21937,6 @@ int execSingleDir(Coi *pcoi, int lLevel, int &nTreeFiles, FileList &oDirFiles, i
    nLocalMaxTime = 0;
 
    return lRC;
-}
-
-int checkMask(char *pszMask) {
-   if (isWildStr(pszMask))
-      return 1;
-   if (   strchr(pszMask, glblWildChar)
-       || strchr(pszMask, '*')
-      ) 
-   { 
-      perr("no masks with %s supported, except \"%s\" alone.\n", glblWildInfoStr, glblWildInfoStr); 
-      return 0; 
-   }
-   return 1;
 }
 
 int execTextJoinLines(char *pIn) {
@@ -23633,7 +23944,7 @@ int execDirCopy(char *pszSrc, FileList &oDirFiles)
       #ifdef SFK_CCDIRTIME
       int ipos = glblCreatedDirs.find(szRefNameBuf);
       if (ipos >= 0) {
-         // the dir was recently created: ignore it's new timestamp
+         // the dir was recently created: ignore its new timestamp
          glblCreatedDirs.removeEntry(ipos);
          bOnlyOnNewSrc = 0;
       }
@@ -24400,7 +24711,7 @@ int checkZipVersion(char *pszTmpFile)
    pszGlblZipCmd = strdup(pszCmd);
 
    // the following command will cause a proper zip 2.31
-   // to really tell it's version. zip 2.0 however will
+   // to really tell its version. zip 2.0 however will
    // try to compress stdin, therefore the <nul.
    sprintf(szLineBuf, "%s -v " STR_FROM_NUL " >%s 2>&1", pszGlblZipCmd, pszTmpFile);
    int lRC = system(szLineBuf);
@@ -24449,7 +24760,7 @@ int checkUnzipVersion(char *pszTmpFile)
    if (!pszCmd) return 9+perr("no unzip" EXE_EXT " found within PATH.\n");
    pszGlblUnzipCmd = strdup(pszCmd);
  
-   // the following command will cause a proper unzip 5.52 to tell it's version.
+   // the following command will cause a proper unzip 5.52 to tell its version.
    sprintf(szLineBuf, "%s -v " STR_FROM_NUL " >%s 2>&1", pszGlblUnzipCmd, pszTmpFile);
    int lRC = system(szLineBuf);
    if (lRC) {
@@ -26585,12 +26896,8 @@ int udpClient(char *phost, int ndstport, int nlisten, int nownport, uchar *abMsg
    struct sockaddr_in oTargetAddr;
    memset((char *)&oTargetAddr, 0,sizeof(oTargetAddr));
 
-   bool bMulticast = 0;
-   
    if (cs.multicast)
    {
-      bMulticast = 1;
-      
       char *pszGroup = phost;
 
       struct ip_mreq mreq;
@@ -31934,6 +32241,57 @@ int groupChainText(char *pcmd, bool brev, bool bcnt, int ndig)
    return 0;
 }
 
+int diffChainText(char *pszRefFile)
+{__
+   KeyMap omapFile,omapChain,omapMix;
+   omapFile.setcase(cs.usecase);
+   omapChain.setcase(cs.usecase);
+   omapMix.setcase(cs.usecase);
+
+   // read ref data, reducing dub lines
+   FILE *fin = fopen(pszRefFile, "r");
+   if (!fin)
+      return 9+perr("cannot open: %s\n", pszRefFile);
+   myfgets_init();
+   while (myfgets(szLineBuf, MAX_LINE_LEN, fin)) 
+   {
+      removeCRLF(szLineBuf);
+      omapFile.put(szLineBuf, 0);
+      omapMix.put(szLineBuf, 0);
+   }
+   fclose(fin);
+   
+   // read chain text, reducing dub lines
+   for (int i=0; i<chain.indata->numberOfEntries(); i++) 
+   {
+      char *pattr = str("");
+      char *ptext = chain.indata->getEntry(i, __LINE__, &pattr);
+      omapChain.put(ptext, 0);
+      omapMix.put(ptext, 0);
+   }
+   
+   // list differences
+   for (int i=0; i<omapMix.size(); i++)
+   {
+      char *pszMixLine = 0;
+      omapMix.iget(i, &pszMixLine);
+      if (!pszMixLine) continue; // safety
+      
+      bool bChainSet = omapChain.isset(pszMixLine);
+      bool bFileSet  = omapFile.isset(pszMixLine);
+      
+      if (bChainSet && bFileSet)
+         chain.print("- : %s\n", pszMixLine);
+      else
+      if (bChainSet)
+         chain.print("> : %s\n", pszMixLine);
+      else
+         chain.print("< : %s\n", pszMixLine);
+   }
+   
+   return 0;
+}
+
 #ifdef VFILENET
 int execWGet(Coi *psrc, char *pDstDir, uint nmode)
 {__
@@ -31974,7 +32332,7 @@ int execWGet(Coi *psrc, char *pDstDir, uint nmode)
       return 9+perr("wrong URL format: %s\n", pSrcName);
 
    if (bSetDefault && !nmode)
-      return 9+perr("need -path2name or -fullpath on URL's like : %s\n", pSrcName);
+      return 9+perr("need -path2name or -fullpath on URLs like : %s\n", pSrcName);
 
    char *pDstName = szDstBuf;
 
@@ -32792,9 +33150,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         located somewhere below src. note that \"*examples*\" defines a\n"
              "         path mask, whereas \"examples\" would be another root directory.\n"
              "         under linux, patterns with a * wildcard MUST have quotes \"\".\n"
-             "      #sfk list -late -dir . <wild>foo<wild> -file .jsp .java\n"
+             "      #sfk list -late -dir . -sub foo -file .jsp .java\n"
              "         list the most recent .jsp and .java files, in all dirs below\n"
              "         the current one (.) having \"foo\" in their pathname.\n"
+             "      #sfk list -late -dir . <wild>foo -file .jsp .java\n"
+             "         the same, only shorter to type.\n"
              "      #sfk list -justdirs -dir . <wild>foo<wild> -file .jsp .java\n"
              "         list all folders having \"foo\" in their pathname\n"
              "         and which contain any .jsp or .java files.\n"
@@ -33986,6 +34346,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "    allowing interactive search and filtering of the content.\n"
              "\n"
              "    $options\n"
+             "       -fileset x  instead of specifying long lists of -dir / -file\n"
+             "                   statements on the command line, you may write them\n"
+             "                   all into a text file, then use that. for more infos,\n"
+             "                   type \"sfk help fileset\".\n"
              );
              #ifdef VFILEBASE
       if (cs.xelike)
@@ -34022,6 +34386,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "       #sfk snapto=all-src.cpp -dir src2 <not>src2<sla>old -file -all .doc\n"
              "          includes all text files, and .doc binary extracts.\n"
+             "\n"
+             "       #sfk snapto=all-src.cpp -fileset zz-myset.txt\n"
+             "          includes whatever dirs and files are specified in the\n"
+             "          fileset definition \"zz-myset.txt\" (sfk help fileset).\n"
              "\n"
              "       #sfk select src5 .txt .exe +snapto=all.txt\n"
              "          filenames provided by command chaining are always included,\n"
@@ -34729,7 +35097,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -kbytes      list all sizes in kbytes.\n"
              "      -bytes       list all sizes in bytes.\n"
              "      -flat        show the no. of files and bytes per folder\n"
-             "                   without it's subfolders (do not accumulate).\n"
+             "                   without its subfolders (do not accumulate).\n"
              "\n"
              "   $aliases\n"
              "      #sfk stat10<def>       does the same as #sfk stat -minsize=10<def>\n"
@@ -35401,7 +35769,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("      #sfk filter in.txt -spat -sep \"\\t\" -rep _\\q__ -form \"INSERT INTO MYDOCS (DOC_ID,\n"
              "         #DESCRIPTION) VALUES ('TestDoc<run>03line','<run>col2');\"\n"
              "         this example (typed in one line) creates a list of SQL statements, using tab-\n"
-             "         separated, quoted input data, and using the input line number for document id's.\n"
+             "         separated, quoted input data, and using the input line number for document ids.\n"
              "         the -rep _\\q__ means the same as -rep _\\\"__ - it strips quotes from the input,\n"
              "         but using \\q is safer then \\\" as it doesn't let the shell miscount quotes.\n"
              );
@@ -37247,7 +37615,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         by .ppt files within movie.\n"
              "\n"
              "      #sfk reflist -wide=100 -dir bin -file .exe -dir bin -file .dll\n"
-             "         find out which .dll's are directly referenced by .exe files\n"
+             "         find out which .dlls are directly referenced by .exe files\n"
              "         within directory bin, listing up to 100 references per target.\n"
              "\n"
              "      #sfk reflist -dir . -file .flp -dir . -file .wav\n"
@@ -37263,11 +37631,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       else
       printx(
              "      #sfk deplist -dir bin -file .exe -dir lib1 lib2 lib3 -file .dll\n"
-             "         create a list of all .exe files in bin, and the dll's they depend on,\n"
-             "         searching for dll's in lib1, lib2 and lib3 directories.\n"
+             "         create a list of all .exe files in bin, and the dlls they depend on,\n"
+             "         searching for dlls in lib1, lib2 and lib3 directories.\n"
              "\n"
              "      #sfk deplist bin\\diff.exe -dir bin -file .dll +run \"copy <run>file tmp\"\n"
-             "         find out which .dll's are used by diff.exe, and copy them to tmp.\n"
+             "         find out which .dlls are used by diff.exe, and copy them to tmp.\n"
              "\n"
              "      #sfk deplist -relnames -case -path -noext -dir classes -dir classes\n"
              "         find dependencies between java .class files. -path uses path infos,\n"
@@ -37591,7 +37959,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         prints \"[Cyan]NOTE:[def] type the word [[red]] with brakets!\" onto terminal.\n"
              "\n"
              "      #sfk echo \"[[Green]]mytext contains:[[def]]\" +then filter mytext.txt\n"
-             "         $+then<def> forces echo $not<def> to pass it's text to filter, but to\n"
+             "         $+then<def> forces echo $not<def> to pass its text to filter, but to\n"
              "         print it immediately. filter then prints the content of mytext.\n"
              );
       ehelp;
@@ -38565,7 +38933,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             continue;
          }
          else
-         if (!strcmp(argv[iDir], "-sub")) {  // experimental
+         if (!strcmp(argv[iDir], "-withsub")) {  // experimental
             bSub = 1;
             continue;
          }
@@ -38901,7 +39269,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                 "   NOTE: detection of errors does NOT always mean that the MEDIA itself is corrupted.\n"
                 "         the reason may as well lie within the USB electronic of your PC, or within\n"
                 "         the disk drive controller. for USB sticks, always test them at least with\n"
-                "         two different PC's.\n"
+                "         two different PCs.\n"
                 "\n"
                 "      #sfk checkdisk E:\\ all\n"
                 "         checks all space available on drive E:\\, e.g. USB-stick.\n"
@@ -38988,8 +39356,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("      -echo    echo received packets back to sender.\n"
              "      -stop    or stop=n stops after n received packages.\n"
              "               with command chaining, default is -stop=1.\n"
-      //     "      -sep[arator] prints detailed separator between packages\n"
-      //     "               with message number, source IP and time.\n"
+             "      -sep[arator] prints detailed separator between packages\n"
+             "               with message number, source IP and time.\n"
             );
       else
       printx("      -forward specifies a host and port to which to forward\n"
@@ -39042,9 +39410,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       else
       if (budp)
       printx("\n"
-          // "   $see also:\n"
-          // "     #sfk sendudp<def>  - send UDP packets.\n"
-          // "\n"
+             "   $see also:\n"
+             "     #sfk udpsend<def> - send UDP packets.\n"
+             "\n"
              "   $examples:\n"
              "     #sfk udpdump 5000\n"
              "        waits on port 5000 for incoming udp packages.\n"
@@ -39071,7 +39439,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       cs.timeOutMSec = 60000;
       cs.timeOutAutoSelect = 1;
 
-      int   nPort      = -1;
+      int   nPort       = -1;
       char *pszForward  = 0;
       int   nForward    = 0;
       int   iChainNext  = 0;
@@ -39180,15 +39548,18 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
             break;
 
-         if (bnetdump) {
+         if (bnetdump) 
+         {
+            // non-option parameter: can be port or 224.0.0.x group
+            if (!pszGroup && strchr(argv[iDir], '.')) {
+               pszGroup = argv[iDir];
+               continue;
+            }
+            else
             if (nPort == -1) {
                nPort = atol(argv[iDir]);
                continue;
             }
-            if (!pszGroup) {
-               pszGroup = argv[iDir];
-               continue;
-            }               
          }
 
          break; // fall through to non-option processing
@@ -39900,7 +40271,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("<help>$sfk fuzz infile outfileBaseName [loops command]\n"
              "\n"
              "   change file contents at random, by intention, to test programs\n"
-             "   for errors in it's input file processing. a maximum of 10 percent\n"
+             "   for errors in its input file processing. a maximum of 10 percent\n"
              "   of the data is modified.\n"
              "\n"
              "   outfileBaseName is the output filename WITHOUT extension.\n"
@@ -40303,7 +40674,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -quiet     or -noprog shows no download progress indicator.\n"
              "\n"
              "   $limitations:\n"
-             "      although sfk wget can download a list of URL's, it is not\n"
+             "      although sfk wget can download a list of URLs, it is not\n"
              "      a real webpage downloader/archiver, as this would require\n"
              "      the conversion of html pages to adapt contained links.\n"
              "\n"
@@ -40316,7 +40687,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         connecting through a proxy server myproxy on port 8000.\n"
              "\n"
              "      #sfk filt urls.txt +wget mydir\n"
-             "         if urls.txt contains a list of http:// URL's, load it\n"
+             "         if urls.txt contains a list of http:// URLs, load it\n"
              "         and download all contents into mydir. the output names\n"
              "         will include path information found in the source URL.\n"
              "\n"
@@ -42549,7 +42920,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              #endif
              "\n"
              "   - now simply type \"list\" instead of \"sfk\": sfk will detect that\n"
-             "     it's name is no longer \"sfk\", and tries to run the supplied\n"
+             "     its name is no longer \"sfk\", and tries to run the supplied\n"
              "     command name automatically.\n"
              "\n"
              "   - this behaviour can be disabled by " SFK_SETENV_CMD " SFK_CONFIG=ignore-exec-name\n"
@@ -42573,7 +42944,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if ((nparm >= 1) && !strcmp(argv[iDir], "-list"))
       {
          // list all aliases located parallel to sfk.exe,
-         // by scanning the header of all files in it's directory.
+         // by scanning the header of all files in its directory.
 
          // first continue processing real parameters, if any
          for (iDir++; iDir<argc; iDir++)
@@ -44525,7 +44896,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (nparm < 1) {
       printx("<help>$sfk beep messageid\n"
              "\n"
-             "   play a system sound. possible id's are:\n"
+             "   play a system sound. possible ids are:\n"
              "\n"
              "       0  default sound\n"
              "      10  SystemHand\n"
@@ -44589,7 +44960,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("<help>$sfk filefind [or ff] pattern [pattern2 <not>pattern3 ...] [opts]\n"
              "\n"
              "   easy file name finder for the current directory tree.\n"
-             "   if you remember any words of a filename, or it's path,\n"
+             "   if you remember any words of a filename, or its path,\n"
              "   type \"sfk ff \" and the words to find matching filenames.\n"
              "   to type even less, try \"sfk :\" followed by the first word,\n"
              "   without blank: \"sfk :word1 word2 ...\"\n"
@@ -44693,8 +45064,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          cs.nohead = 1;
 
       nGlblListMode = 2;
-      cs.pathMaskAndMatch = 1;
-      cs.incFNameInPath   = 1;
+      cs.dirMaskAndMatch = 1;
+      cs.incFNameInPath  = 1;
       lRC = walkAllTrees(eFunc_FileStat, lFiles, lDirs, nBytes);
       info.clear();
 
@@ -44990,7 +45361,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "      #sfk fromclip +hextobin %%TEMP%%\\tmp1.dat +hexdump\n"
              "         takes a hex sequence like 22737769 73732066 from clipboard,\n"
-             "         printing it's text via a temporary file and hexdump.\n"
+             "         printing its text via a temporary file and hexdump.\n"
              #endif
             );
       ehelp;
@@ -45159,7 +45530,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "      #sfk dupfind -dir pic1 -dir pic2 -dir pic3\n"
              "         find duplicates across three different directory trees.\n"
-             "         specifying multiple -dir's is also a way of influencing\n"
+             "         specifying multiple -dirs is also a way of influencing\n"
              "         the result order; if a file is found both in pic1 and pic3,\n"
              "         the file from pic1 will be listed as original, the other one\n"
              "         as the duplicate.\n"
@@ -45216,7 +45587,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (btest) return 0;
 
       if (glblDupScan.clDiffDirs && (glblFileSet.numberOfRootDirs() < 2))
-         return 9+perr("need at least two -dir's with option -diffdir.");
+         return 9+perr("need at least two -dir parameters with option -diffdir.");
 
       lRC = walkAllTrees(eFunc_DupScan, lFiles, lDirs, nBytes);
       info.clear();
@@ -46027,7 +46398,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "        add(xadd,yadd,w,h, id, o);\n"
          "    }\n"
          "\n"
-         "    // easy access to any object by it's id\n"
+         "    // easy access to any object by its id\n"
          "    JTextField getTextField(String id) { return (JTextField)clComp.get(id); }\n"
          "    JTextArea  getTextArea (String id) { return (JTextArea )clComp.get(id); }\n"
          "    JLabel     getLabel    (String id) { return (JLabel    )clComp.get(id); }\n"
@@ -46709,7 +47080,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       // in case "call" is used inside script:
       CharAutoRestore oclear(&pGlblCurrentScript);
       pGlblCurrentScript = pScriptRaw;
-      // on return, pGlbl will have it's old value set.
+      // on return, pGlbl will have its old value set.
 
       lRC = 0;
 
@@ -47279,6 +47650,56 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
 
       if (groupChainText(pszCmd, brev, 0, 0)) return 9;
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+   
+   // internal
+   ifcmd (!strcmp(pszCmd, "difflines"))
+   {
+      ifhelp (!chain.usedata || (nparm >= 1 && isHelpOpt(argv[iDir])))
+      // printx("<help>$sfk ... +difflines filename\n"
+      //        "\n"
+      //        "   compare chain text against a text file.\n"
+      //        "\n"
+      //        );
+      ehelp;
+
+      if (!chain.usedata) {
+         perr("missing chain text input for +difflines");
+         pinf("need a previous command producing text output\n");
+         return 9;
+      }
+
+      char *pszRefFile = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         if (!strncmp(argv[iDir], "-", 1)) {
+            if (isDirParm(argv[iDir]))
+               break; // fall through
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argv[iDir]);
+         }
+         else
+         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (!pszRefFile) {
+            pszRefFile = argv[iDir];
+            continue;
+         }
+         return 9+perr("unexpected: %s\n", argv[iDir]);
+      }
+      if (!pszRefFile)
+         return 9+perr("missing text filename.");
+
+      if (diffChainText(pszRefFile)) return 9;
 
       STEP_CHAIN(iChainNext, 1);
 
@@ -47898,7 +48319,7 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          "   $-nosub<def>     or -norec does not include subdirectories (subfolders).\n"
          "              processing of subdirs is DEFAULT with most commands,\n"
          "              therefore you must specify -nosub to switch it off.\n"
-         "   $-sub<def>       include subdirs. is DEFAULT with most commands.\n"
+         "   $-withsub<def>   include subdirs. is DEFAULT with most commands.\n"
          "   $-verbose<def>   print additional infos while running a command.\n"
          "              helpful if a command doesn't work as expected.\n"
          "              only some commands support -verbose. try also -verbose=2.\n"
@@ -48307,7 +48728,7 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          "\n"
          "      #sfk list mydir foo bar <not>-tmp .txt .zip\n"
          "         selects all files\n"
-         "         - in directory mydir and all it's subdirectories\n"
+         "         - in directory mydir and all its subdirectories\n"
          "         - having foo OR bar in their filename (no * required)\n"
          "         - but not having -tmp in their filename\n"
          "         - and ending with .txt OR .zip (no *.txt required)\n"
@@ -48331,27 +48752,80 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          "\n"
          "      - a file mask set per root directory set, starting with -file.\n"
          "        this may also contain file exclusions starting with <not>\n"
-         "\n");
-  printx("      example:\n"
          "\n"
-         "      #sfk scantab -dir mydir1 mydir2 *include* -file foo bar .hpp\n"
+         "      supported by:\n"
+         "         nearly every command than can process file sets.\n"
+         "\n");
+  printx("      $to select all dirs of current dir except something:\n"
+         "      #-dir . <not>foo       <def>-> exclude subdirs like *foo*\n"
+         "      #-dir . <not>.foo      <def>-> exclude with extension .foo\n"
+         "      #-dir . <not><sla>foo      <def>-> exclude starting with foo\n"
+         "      #-dir . <not>foo<sla>      <def>-> exclude ending with foo\n"
+         "      #-dir . <not><sla>foo<sla>     <def>-> exclude exactly foo\n"
+         "      #-dir . <not><sla>foo<sla>bar<sla> <def>-> exclude subdir combi\n"
+         "      #-dir . <not><wild>.foo<wild>    <def>-> exclude with .foo anywhere\n"
+         "\n"
+         "      $to select only sub dirs of current dir with something:\n"
+         "\n"
+         "      using wide sub dir expressions:\n"
+         "      #-dir . -subdir foo       <def>-> include paths having *foo*\n"
+         "      #-dir . -subdir <sla>foo      <def>-> include paths having *<sla>foo\n"
+         "      #-dir . -subdir foo<sla>      <def>-> include paths having *foo\n"
+         "      #-dir . -subdir <sla>foo<sla>     <def>-> include paths exactly foo\n"
+         "      #-dir . -subdir .foo      <def>-> include with extension .foo\n"
+         "      #-dir . -subdir <sla>foo<sla>bar<sla> <def>-> include subdir combi\n"
+         "      instead of -subdir, you may also type just -sub\n"
+         "\n"
+         "      using compact sub dir expressions:\n"
+         "      #-dir . <wild>foo<wild>      <def>-> include paths having *foo*\n"
+         "      #-dir . <wild><sla>foo      <def>-> include paths having <sla>foo\n"
+         "      #-dir . <wild>foo<sla>      <def>-> include paths having foo<sla>\n"
+         "      #-dir . <wild><sla>foo<sla>     <def>-> include paths exactly foo\n"
+         "      #-dir . <wild>.foo      <def>-> include with extension .foo\n"
+         "      #-dir . <wild><sla>foo<sla>bar<sla> <def>-> include subdir combi\n"
+         "\n"
+         "      $exclusion by filename:\n"
+         "      #-file <not>foo        <def>-> exclude all files like *foo*\n"
+         "      #-file <not><sla>foo       <def>-> exclude starting with foo\n"
+         "      #-file <not>foo<sla>       <def>-> exclude ending with foo\n"
+         "      #-file <not><sla>foo<sla>      <def>-> exclude exactly foo\n"
+         "      #-file <not>.foo       <def>-> exclude extension foo\n"
+         "\n"
+         "      $inclusion by filename:\n"
+         "      #-file foo         <def>-> include all files like *foo*\n"
+         "      #-file <sla>foo        <def>-> include starting with foo\n"
+         "      #-file foo<sla>        <def>-> include ending with foo\n"
+         "      #-file <sla>foo<sla>       <def>-> include exactly foo\n"
+         "      #-file .foo .bar   <def>-> select .foo and .bar files\n"
+         "\n"
+         "      $examples:\n"
+         "\n"
+         "      #sfk scantab -dir mydir1 mydir2 <wild>include<wild> -file foo bar .hpp\n"
          "         scans all files for TAB characters\n"
-         "         - in directory mydir1 and all it's subdirectories\n"
+         "         - in directory mydir1 and all its subdirectories\n"
          "           AND\n"
-         "         - in directory mydir2 and all it's subdirectories\n"
+         "         - in directory mydir2 and all its subdirectories\n"
          "           IF\n"
          "           - 1. the file path contains the word \"include\",\n"
          "             e.g. mydir1\\core\\include\\foosys.hpp\n"
          "           - 2. the filename contains foo OR bar\n"
-         "           - 3. the filename ends with .hpp\n"
+         "           - 3. or the filename ends with .hpp\n"
          "\n"
          "      #sfk scantab -dir mydir1 <not>include -file <not>.tmp <not>.save\n"
          "         scans all files for TAB characters in folder mydir1,\n"
          "         excluding all sub dirs having \"include\" in their name,\n"
          "         and excluding all .tmp and .save files.\n"
          "\n"
-         "      supported by:\n"
-         "         nearly every command than can process file sets.\n"
+         "      #sfk list -dir source include -subdir save <not>.svn -file .bak\n"
+         "         list .bak files from directory trees source and include,\n"
+         "         within in sub directories having \"save\" in their name,\n"
+         "         excluding sub directories ending with \".svn\".\n"
+         "\n"
+         "      #sfk list -dir source include <wild>save <not>.svn -file .bak\n"
+         "         the same as above, written in compact subdir format:\n"
+         "         subdir inclusion masks require a wildcard <wild> anywhere\n"
+         "         to make it clear they're no root directories.\n"
+         "         subdir exclusion masks can stay as they are.\n"
          "\n"
          );
   printx("   $3. single parameter file set selection:\n"
@@ -48514,12 +48988,13 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
              "      ## this is a remark line.\n"
              "\n"
              "      -dir fooproj\\src\n"
-             "             !\\save\\\n"
-             "             !\\tmp\\\n"
-             "           -file .hpp .cpp !.bak\n"
+             "             <not>\\save\\\n"
+             "             <not>\\tmp\\\n"
+             "           -file .hpp .cpp <not>.bak\n"
              "\n"
              "      -dir \"C:\\Docs With Blanks\"\n"
-             "           -file !.tmp\n"
+             "           -subdir <sla>current<sla>\n"
+             "           -file <not>.tmp\n"
              "\n"
              "   $this can be used in a command like:\n"
              "\n"
@@ -48529,6 +49004,14 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
              "         and x:\\foodb to z:\\ . any directory \"\\save\" or \"\\tmp\" within\n"
              "         fooproj\\src is excluded. within foodb, everything is included,\n"
              "         except .tmp files. you can also add remarks starting with \"##\"\n"
+             "\n"
+             "      #sfk snapto=mycache.txt -fileset zz-fileset.txt\n"
+             "\n"
+             "         collects all text specified by zz-fileset.txt into a large\n"
+             "         snapfile \"mycache.txt\" (a snapshot of all text content).\n"
+             "         this can be loaded by any text editor, or even better,\n"
+             "         by the high speed text browser Depeche View which is\n"
+             "         optimized for loading snapfiles (type \"sfk view\" for more).\n"
              "\n"
              "   $using flat filename lists:\n"
              "\n"

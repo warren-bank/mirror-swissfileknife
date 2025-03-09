@@ -288,3 +288,73 @@
 
 %TEXE% filter testfiles\Formats\34-csv-data-lines.txt -spat -rep "_\x01__" -within "\q*\q" -rep "_,_\x01_" -sep "," -form "$col5\t$col3\t$col1\t$col2\t$col4" -rep "_\x01_,_" >res-271.txt
 %TEXE% test %TCMD% T27.1.csvdata res-271.txt
+
+cd testfiles
+cd myproj
+..\..\%TEXE% sel -dir .              +tofile    ..\..\myproj.txt
+..\..\%TEXE% sel -dir . -sub !myscm    +difflines ..\..\myproj.txt >..\..\res-30-1.txt
+..\..\%TEXE% sel -dir . -sub !\.myscm  +difflines ..\..\myproj.txt >..\..\res-30-2.txt
+..\..\%TEXE% sel -dir . !.myscm\     +difflines ..\..\myproj.txt >..\..\res-30-3.txt
+..\..\%TEXE% sel -dir . !\.myscm\    +difflines ..\..\myproj.txt >..\..\res-30-4.txt
+..\..\%TEXE% sel -dir . !.myscm      +difflines ..\..\myproj.txt >..\..\res-30-5.txt
+..\..\%TEXE% sel -dir . !\gui\login\ +difflines ..\..\myproj.txt >..\..\res-30-6.txt
+
+..\..\%TEXE% sel -dir . -subdir *myscm +difflines ..\..\myproj.txt >..\..\res-31-1.txt
+..\..\%TEXE% sel -dir . *\.myscm     +difflines ..\..\myproj.txt >..\..\res-31-2.txt
+..\..\%TEXE% sel -dir . *.myscm\     +difflines ..\..\myproj.txt >..\..\res-31-3.txt
+..\..\%TEXE% sel -dir . *\.myscm\    +difflines ..\..\myproj.txt >..\..\res-31-4.txt
+..\..\%TEXE% sel -dir . *\gui\login\ +difflines ..\..\myproj.txt >..\..\res-31-5.txt
+..\..\%TEXE% sel -dir . *.myscm      +difflines ..\..\myproj.txt >..\..\res-31-6.txt
+
+..\..\%TEXE% sel -dir . -file !myscm      +difflines ..\..\myproj.txt >..\..\res-32-1.txt
+..\..\%TEXE% sel -dir . -file !\.myscm    +difflines ..\..\myproj.txt >..\..\res-32-2.txt
+..\..\%TEXE% sel -dir . -file !.myscm\    +difflines ..\..\myproj.txt >..\..\res-32-3.txt
+..\..\%TEXE% sel -dir . -file !\.myscm\   +difflines ..\..\myproj.txt >..\..\res-32-4.txt
+..\..\%TEXE% sel -dir . -file !.myscm     +difflines ..\..\myproj.txt >..\..\res-32-5.txt
+..\..\%TEXE% sel -dir . -file !\oth*scm\  +difflines ..\..\myproj.txt >..\..\res-32-6.txt
+
+..\..\%TEXE% sel -dir . -file myscm       +difflines ..\..\myproj.txt >..\..\res-33-1.txt
+..\..\%TEXE% sel -dir . -file \.myscm     +difflines ..\..\myproj.txt >..\..\res-33-2.txt
+..\..\%TEXE% sel -dir . -file .myscm\     +difflines ..\..\myproj.txt >..\..\res-33-3.txt
+..\..\%TEXE% sel -dir . -file \.myscm\    +difflines ..\..\myproj.txt >..\..\res-33-4.txt
+..\..\%TEXE% sel -dir . -file .myscm      +difflines ..\..\myproj.txt >..\..\res-33-5.txt
+..\..\%TEXE% sel -dir . -file \oth*scm\   +difflines ..\..\myproj.txt >..\..\res-33-6.txt
+
+..\..\%TEXE% filefind oth scm       >..\..\res-34-1.txt
+..\..\%TEXE% filefind oth*scm       >..\..\res-34-2.txt
+..\..\%TEXE% filefind .myscm        >..\..\res-34-3.txt
+cd ..
+cd ..
+
+%TEXE% test %TCMD% T30.1.dex.any    res-30-1.txt
+%TEXE% test %TCMD% T30.2.dex.start  res-30-2.txt
+%TEXE% test %TCMD% T30.3.dex.end    res-30-3.txt
+%TEXE% test %TCMD% T30.4.dex.exact  res-30-4.txt
+%TEXE% test %TCMD% T30.5.dex.ext    res-30-5.txt
+%TEXE% test %TCMD% T30.6.dex.combi  res-30-6.txt
+
+%TEXE% test %TCMD% T31.1.din.any    res-31-1.txt
+%TEXE% test %TCMD% T31.2.din.start  res-31-2.txt
+%TEXE% test %TCMD% T31.3.din.end    res-31-3.txt
+%TEXE% test %TCMD% T31.4.din.exact  res-31-4.txt
+%TEXE% test %TCMD% T31.5.din.combi  res-31-5.txt
+%TEXE% test %TCMD% T31.6.din.any2   res-31-6.txt
+
+%TEXE% test %TCMD% T32.1.fex.any    res-32-1.txt
+%TEXE% test %TCMD% T32.2.fex.start  res-32-2.txt
+%TEXE% test %TCMD% T32.3.fex.end    res-32-3.txt
+%TEXE% test %TCMD% T32.4.fex.exact  res-32-4.txt
+%TEXE% test %TCMD% T32.5.fex.ext    res-32-5.txt
+%TEXE% test %TCMD% T32.6.fex.combi  res-32-6.txt
+
+%TEXE% test %TCMD% T33.1.fin.any    res-33-1.txt
+%TEXE% test %TCMD% T33.2.fin.start  res-33-2.txt
+%TEXE% test %TCMD% T33.3.fin.end    res-33-3.txt
+%TEXE% test %TCMD% T33.4.fin.exact  res-33-4.txt
+%TEXE% test %TCMD% T33.5.fin.combi  res-33-5.txt
+%TEXE% test %TCMD% T33.6.fin.any2   res-33-6.txt
+
+%TEXE% test %TCMD% T34.1.ff.and     res-34-1.txt
+%TEXE% test %TCMD% T34.2.ff.mask    res-34-2.txt
+%TEXE% test %TCMD% T34.3.ff.ext     res-34-3.txt
+

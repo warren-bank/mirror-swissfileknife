@@ -285,6 +285,76 @@ $TEXE -nocol addcr -quiet res-80.txt >/dev/null
 $TEXE -nocol md5 res-80.txt >res-81.txt
 $TEXE -nocol test $TCMD T26.2.cutinc res-81.txt
 
+
+cd testfiles
+cd myproj
+../../$TEXE -nocol sel -dir .              +tofile    ../../myproj.txt
+../../$TEXE -nocol sel -dir . -sub :myscm    +difflines ../../myproj.txt >../../res-30-1.txt
+../../$TEXE -nocol sel -dir . -sub :/.myscm  +difflines ../../myproj.txt >../../res-30-2.txt
+../../$TEXE -nocol sel -dir . :.myscm/     +difflines ../../myproj.txt >../../res-30-3.txt
+../../$TEXE -nocol sel -dir . :/.myscm/    +difflines ../../myproj.txt >../../res-30-4.txt
+../../$TEXE -nocol sel -dir . :.myscm      +difflines ../../myproj.txt >../../res-30-5.txt
+../../$TEXE -nocol sel -dir . :/gui/login/ +difflines ../../myproj.txt >../../res-30-6.txt
+
+../../$TEXE -nocol sel -dir . -subdir %myscm +difflines ../../myproj.txt >../../res-31-1.txt
+../../$TEXE -nocol sel -dir . %/.myscm     +difflines ../../myproj.txt >../../res-31-2.txt
+../../$TEXE -nocol sel -dir . %.myscm/     +difflines ../../myproj.txt >../../res-31-3.txt
+../../$TEXE -nocol sel -dir . %/.myscm/    +difflines ../../myproj.txt >../../res-31-4.txt
+../../$TEXE -nocol sel -dir . %/gui/login/ +difflines ../../myproj.txt >../../res-31-5.txt
+../../$TEXE -nocol sel -dir . %.myscm      +difflines ../../myproj.txt >../../res-31-6.txt
+
+../../$TEXE -nocol sel -dir . -file :myscm      +difflines ../../myproj.txt >../../res-32-1.txt
+../../$TEXE -nocol sel -dir . -file :/.myscm    +difflines ../../myproj.txt >../../res-32-2.txt
+../../$TEXE -nocol sel -dir . -file :.myscm/    +difflines ../../myproj.txt >../../res-32-3.txt
+../../$TEXE -nocol sel -dir . -file :/.myscm/   +difflines ../../myproj.txt >../../res-32-4.txt
+../../$TEXE -nocol sel -dir . -file :.myscm     +difflines ../../myproj.txt >../../res-32-5.txt
+../../$TEXE -nocol sel -dir . -file :/oth%scm/  +difflines ../../myproj.txt >../../res-32-6.txt
+
+../../$TEXE -nocol sel -dir . -file myscm       +difflines ../../myproj.txt >../../res-33-1.txt
+../../$TEXE -nocol sel -dir . -file /.myscm     +difflines ../../myproj.txt >../../res-33-2.txt
+../../$TEXE -nocol sel -dir . -file .myscm/     +difflines ../../myproj.txt >../../res-33-3.txt
+../../$TEXE -nocol sel -dir . -file /.myscm/    +difflines ../../myproj.txt >../../res-33-4.txt
+../../$TEXE -nocol sel -dir . -file .myscm      +difflines ../../myproj.txt >../../res-33-5.txt
+../../$TEXE -nocol sel -dir . -file /oth%scm/   +difflines ../../myproj.txt >../../res-33-6.txt
+
+../../$TEXE -nocol filefind oth scm       >../../res-34-1.txt
+../../$TEXE -nocol filefind oth%scm       >../../res-34-2.txt
+../../$TEXE -nocol filefind .myscm        >../../res-34-3.txt
+cd ..
+cd ..
+
+$TEXE -nocol test $TCMD T30.1.dex.any    res-30-1.txt
+$TEXE -nocol test $TCMD T30.2.dex.start  res-30-2.txt
+$TEXE -nocol test $TCMD T30.3.dex.end    res-30-3.txt
+$TEXE -nocol test $TCMD T30.4.dex.exact  res-30-4.txt
+$TEXE -nocol test $TCMD T30.5.dex.ext    res-30-5.txt
+$TEXE -nocol test $TCMD T30.6.dex.combi  res-30-6.txt
+
+$TEXE -nocol test $TCMD T31.1.din.any    res-31-1.txt
+$TEXE -nocol test $TCMD T31.2.din.start  res-31-2.txt
+$TEXE -nocol test $TCMD T31.3.din.end    res-31-3.txt
+$TEXE -nocol test $TCMD T31.4.din.exact  res-31-4.txt
+$TEXE -nocol test $TCMD T31.5.din.combi  res-31-5.txt
+$TEXE -nocol test $TCMD T31.6.din.any2   res-31-6.txt
+
+$TEXE -nocol test $TCMD T32.1.fex.any    res-32-1.txt
+$TEXE -nocol test $TCMD T32.2.fex.start  res-32-2.txt
+$TEXE -nocol test $TCMD T32.3.fex.end    res-32-3.txt
+$TEXE -nocol test $TCMD T32.4.fex.exact  res-32-4.txt
+$TEXE -nocol test $TCMD T32.5.fex.ext    res-32-5.txt
+$TEXE -nocol test $TCMD T32.6.fex.combi  res-32-6.txt
+
+$TEXE -nocol test $TCMD T33.1.fin.any    res-33-1.txt
+$TEXE -nocol test $TCMD T33.2.fin.start  res-33-2.txt
+$TEXE -nocol test $TCMD T33.3.fin.end    res-33-3.txt
+$TEXE -nocol test $TCMD T33.4.fin.exact  res-33-4.txt
+$TEXE -nocol test $TCMD T33.5.fin.combi  res-33-5.txt
+$TEXE -nocol test $TCMD T33.6.fin.any2   res-33-6.txt
+
+$TEXE -nocol test $TCMD T34.1.ff.and     res-34-1.txt
+$TEXE -nocol test $TCMD T34.2.ff.mask    res-34-2.txt
+$TEXE -nocol test $TCMD T34.3.ff.ext     res-34-3.txt
+
 $TEXE -nocol filter testfiles/Formats/20-tab-data-line.txt -spat -rep "_\q__" -sep "\t" -form "\"#col1\";\"#col2\";\"#col3\";\"#col4\";\"#col5\"" >res-24.txt
 $TEXE test $TCMD T11.1.tabform res-24.txt
 

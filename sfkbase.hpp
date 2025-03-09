@@ -588,7 +588,6 @@ public:
    void  dump           ( );
    void  info           (void (*pout)(int nrectype, char *pline));
    int  getDirCommand  ( );  // of current root
-   bool  isAnyExtensionMaskSet   ( );
    int  checkConsistency  ( );
 private:
    int  ensureBase     (int nTraceLine);
@@ -596,12 +595,12 @@ private:
    Array clRootDirs;    // row 0: names/str, row 1: command/int, row 2: layer/int
    Array clDirMasks;    // row == layer
    Array clFileMasks;   // row == layer
-   int  nClCurDir;
-   int  nClCurLayer;
+   int   nClCurDir;
+   int   nClCurLayer;
    char  *pClLineBuf;
-   int  bClGotAllMask;
-   int  bClGotPosFile;
-   int  bClGotNegFile;
+   int   bClGotAllMask;
+   int   bClGotPosFile;
+   int   bClGotNegFile;
 };
 
 class StringPipe
@@ -1140,6 +1139,89 @@ private:
    ListEntry *pClFirst;
    ListEntry *pClLast;
 };
+
+#ifdef SFK_PROFILING // windows only
+
+class StaticPerformancePoint;
+
+#define MAX_PERF_POINTS 100
+
+class StaticPerformanceStats
+{
+public:
+      StaticPerformanceStats  ( );
+
+   void  addPoint       (StaticPerformancePoint *pPoint);
+   int   numberOfPoints ( );
+   StaticPerformancePoint *getPoint(int iIndex);
+
+StaticPerformancePoint
+   *apClPoints [MAX_PERF_POINTS+10],
+   *pClCurrentPoint;
+int
+    iClPoints;
+};
+
+extern StaticPerformanceStats glblPerfStats;
+
+class StaticPerformancePoint
+{
+public:
+      StaticPerformancePoint  (const char *pszID, const char *pszFile, int iTraceLine);
+
+      inline void  blockEntry ( );
+      inline void  blockExit  (int iElapsedTicks);
+
+const char *pszClID;
+const char *pszClFile;
+int   iClTraceLine;
+num   iClHits;
+num   iClTotalTime;
+num   iClSubTimes;
+};
+
+class DynamicPerformancePoint
+{
+public:
+       DynamicPerformancePoint (StaticPerformancePoint *pStaticPoint);
+      ~DynamicPerformancePoint ( );
+
+StaticPerformancePoint
+      *pClStaticPoint,
+      *pClStaticParent;
+num
+       nClEntryTickCount;
+};
+
+#define _p2(id,file,line)  \
+   static StaticPerformancePoint oStatPoint##line(id,file,line); \
+   DynamicPerformancePoint oDynaPoint##line(&oStatPoint##line);
+
+#define _p(id) _p2(id,__FILE__,__LINE__)
+
+extern void logProfile();
+
+inline num getPerfCnt()
+{
+   LARGE_INTEGER val1;
+   QueryPerformanceCounter(&val1);
+   return val1.QuadPart;
+}
+
+inline num getPerfFreq()
+{
+   LARGE_INTEGER val1;
+   QueryPerformanceFrequency(&val1);
+   return val1.QuadPart;
+}
+
+#else
+
+#define _p(id)
+
+extern void logProfile();
+
+#endif
 
 #endif // _SFKBASE_HPP_
 

@@ -28,6 +28,11 @@ sfk label begin
       -rep /!/:/ 
       -rep "x>nulx>/dev/nullx" 
       -rep "_$TEXE_$TEXE -nocol_"
+      
+   +filter -literal
+      
+      -where "sel -dir" -rep _*_%_
+      -where "filefind" -rep _*_%_
 
    +end
 
