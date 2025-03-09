@@ -1,5 +1,8 @@
 # generic linux build. try this first on any machine.
-g++ -s sfk.cpp sfkext.cpp sfkpack.cpp -o sfk -Wformat-overflow=0 -Wformat-truncation=0
+g++ -s sfk.cpp sfkext.cpp sfkpack.cpp -o sfk
+
+# latest compilers may need this to disable useless junk warnings
+# -Wformat-overflow=0 -Wformat-truncation=0
 
 # to compile SFK for old linux systems with lib5:
 # g++-3.3 -s sfk.cpp sfkext.cpp sfkpack.cpp -DSFK_LIB5 -o sfk-linux-lib5.exe

@@ -191,7 +191,7 @@ void sfkmem_hexdump(void *pAddressIn, long  lSize)
       /*                        1         2         3         4          */
       /*              01234567890123456789012345678901234567890123456789 */
       sprintf(szBuf, " >                                                  "
-                     "    %08lX", pTmp-pAddress);
+                     "    %08llX", (num)(pTmp-pAddress));
       lOutLen2 = lOutLen;
 
       for(lIndex = 1+lIndent, lIndex2 = 53-15+lIndent, lRelPos = 0;

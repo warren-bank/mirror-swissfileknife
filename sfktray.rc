@@ -1,0 +1,35 @@
+VS_VERSION_INFO VERSIONINFO
+   FILEVERSION    1.0.0
+   PRODUCTVERSION 1.0.0
+   FILEFLAGSMASK  0x3fL
+   FILEFLAGS      0x0L
+   FILEOS         0x40004L
+   FILETYPE       0x2L
+   FILESUBTYPE    0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "04090000"
+        BEGIN
+            VALUE "Comments",          "For Windows\0"
+            VALUE "CompanyName",       "StahlWorks Technologies\0"
+            VALUE "FileDescription",   "Swiss File Knife Tray Notification\0"
+            VALUE "FileVersion",       1.0.0
+            VALUE "ProductName",       "SFKTray\0"
+            VALUE "ProductVersion",    1.0.0
+            VALUE "SpecialBuild",      1.0.0
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 0
+    END
+END
+
+490 ICON DISCARDABLE "traypic\\03ico\\19quad.ico"
+500 ICON DISCARDABLE "traypic\\03ico\\10stripes.ico"
+501 ICON DISCARDABLE "traypic\\03ico\\11tworect.ico"
+502 ICON DISCARDABLE "traypic\\03ico\\12qmark.ico"
+503 ICON DISCARDABLE "traypic\\03ico\\16triang1.ico"
+504 ICON DISCARDABLE "traypic\\03ico\\14screen.ico"
+505 ICON DISCARDABLE "traypic\\03ico\\18dots.ico"

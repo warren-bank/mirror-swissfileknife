@@ -147,6 +147,7 @@ int unzGetGlobalInfo (unzFile file, unz_global_info* pglobal_info32);
 
 int unzGoToNextFile (unzFile  file);
 int unzClose (unzFile file);
+
 }
 
 #endif // FOR_SFK_INCLUDE

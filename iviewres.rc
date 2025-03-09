@@ -1,0 +1,45 @@
+#include "windows.h"
+
+VS_VERSION_INFO VERSIONINFO
+   FILEVERSION    1.0.0
+   PRODUCTVERSION 1.0.0
+   FILEFLAGSMASK  0x3fL
+   FILEFLAGS      0x0L
+   FILEOS         0x40004L
+   FILETYPE       0x2L
+   FILESUBTYPE    0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "04090000"
+        BEGIN
+            VALUE "Comments",          "For Windows\0"
+            VALUE "CompanyName",       "StahlWorks Technologies\0"
+            VALUE "FileDescription",   "iView Lightweight Image Viewer\0"
+            VALUE "FileVersion",       1.0.0
+            VALUE "ProductName",       "iView\0"
+            VALUE "ProductVersion",    1.0.0
+            VALUE "SpecialBuild",      1.0.0
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 0
+    END
+END
+
+500 ICON DISCARDABLE "iviewres.ico"
+
+#define IDC_GOTO_IMAGE_TEXT 601
+#define IDC_GOTO 602
+#define IDC_CANCEL 603
+
+600 DIALOG 20,20,140,60
+STYLE DS_MODALFRAME | WS_CAPTION | WS_SYSMENU
+CAPTION "Goto image number:"
+FONT 10, "Arial"
+BEGIN
+    EDITTEXT        IDC_GOTO_IMAGE_TEXT,20,10,100,12,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "Goto",IDC_GOTO, 20,30,40,15,WS_GROUP
+    PUSHBUTTON      "Cancel",IDC_CANCEL,80,30,40,15
+END

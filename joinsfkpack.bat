@@ -1,6 +1,8 @@
 @echo off
 sfk script %~f0 -from begin %*
 rem %~f0 is the absolute batch file name
+rem on linux, use:
+rem    sfk script joinsfkpack.bat -from begin
 GOTO xend
 
 // required input folders:
@@ -69,6 +71,7 @@ sfk label begin -var
       #define UNZ_BUFSIZE (256*1024)
       #define NOCRYPT
       #define NOBYFOUR
+      #define register
       #ifdef _WIN32
       extern "C" {
          int _fseeki64(FILE *stream, __int64 offset, int origin);
@@ -129,16 +132,22 @@ sfk label begin -var
 
 sfk label addfile
 
-   // outfile infile handle
+   +setvar outfile=%1
+   +setvar infile=%2
+   +setvar handle=%3
+
+   +if "#(sys.slash) = /" begin
+      +getvar infile +xed "_\\_/_" +setvar infile
+      +endif
 
    +echo "
       /* 
-      :file %2 
+      :file #(infile)
       */
       "
-      +tofile -append %1
+      +tofile -append #(outfile)
 
-   +xed %2
+   +xed #(infile)
       "_/\*\*/__"
       "_/\*_\x10_" "_\*/_\x11_"
 
@@ -156,7 +165,7 @@ sfk label addfile
      "/const char inflate_/const char zlinf01_/"
      "/z_errmsg/z2_errmsg/"
 
-   +tif "%3 <> " tcall "%3"
+   +tif "#(handle) <> " tcall "#(handle)"
 
    +xed -case
       "_#*include *[eol]__"

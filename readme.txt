@@ -1,6 +1,6 @@
 
 This is the Swiss File Knife (SFK), a command line multi function tool
-created by StahlWorks Technologies, http://stahlworks.com/
+written by J Thumm 2006-2024.
 
 SFK was made to make things easy.
 
@@ -199,7 +199,7 @@ Where to place the SFK executable:
 License:
 ========
 
-   -  Swiss File Knife Base is provided completely for free,
+   -  Swiss File Knife is provided completely for free,
       and can be used unlimited, without any warranty.
 
    -  the source code provided in the sfk.zip download packages
@@ -212,13 +212,6 @@ License:
 See also:
 =========
 
-   -  Swiss File Knife Extended Edition (XE) is the commercial version
-      of SFK, allowing direct reading of (nested) .zip, .tar.gz and
-      .tar.bz2 file contents, and high performance replace of patterns
-      in text and binary files. Read more under:
-
-         http://stahlworks.com/sfkxe.html
-
    -  The whole SFK source code and documentation was created with
       Depeche View, the world's fastest text file browser and editor. 
       A free demo is available under:
@@ -229,22 +222,9 @@ See also:
       optimized for reading on mobile devices.
       For details see www.stahlworks.com
 
-   -  The whole SFK documentation is available as the paperback book
-      "100 Command Line Tools" on Amazon
 
-The SFKTray GUI Status Display
-==============================
 
-   is a small Windows tool installed by sfktray-set-up.exe.
-   the Freeware edition displays four independent status lights
-   in the system tray which can be controlled by the sfk status 
-   command like:
+          If this is useful, you are encouraged to
 
-      sfk status local "v1 slot=1 color=green text='service ok'"
-
-   type "sfk status" for the full syntax.
-   a status can be sent from the local or a remote machine by UDP.
-   the full edition with 9 status lights is available from:
-   
-      http://stahlworks.com/sfktray
+                  stahlworks.com/donate
 
