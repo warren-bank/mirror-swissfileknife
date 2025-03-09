@@ -80,3 +80,9 @@
 
 ..\sfk find testfiles\Formats the wrap >res-22.txt
 ..\sfk test %TCMD% T09.2.findwrap res-22.txt
+
+..\sfk list -zip testfiles\Formats .zip .jar >res-23.txt
+..\sfk test %TCMD% T10.1.ziplist res-23.txt
+
+..\sfk filter testfiles\Formats\20-tab-data-line.txt -sep "\t" -form "\"$col1\";\"$col2\";\"$col3\";\"$col4\";\"$col5\"" >res-24.txt
+..\sfk test %TCMD% T11.1.tabform res-24.txt

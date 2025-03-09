@@ -12,6 +12,15 @@
    -  unix bash interprets $, ! and probably other chars.
    -  german umlauts not supported in grep.
 
+   1.2.3
+   -  fix: ftp: timeouts after transfer of long files,
+           due to wrong sequence of reply and md5 check.
+   -  fix: ftp: now issuing error on sender side on non-ok reply.
+   -  fix: filter -sep "\t" -form now working.
+   -  opt: ftp: now issuing error on foo*bar names on mput, mget.
+   -  add: sfk list -zip: now listing both .zip and .jar contents.
+   -  add: (windows) toclip, fromclip.
+
    1.2.2
    -  fix: ftp error handling improved. testing and
            skipping unwritable files before transfer.
@@ -197,7 +206,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.2.2"
+#define SFK_VERSION  "1.2.3"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -208,6 +217,10 @@
  #define WITH_TCP
  #define SFK_FTP_TIMEOUT "30" // seconds, as string
 #endif
+
+// should you get problems with fsetpos/fgetpos compile,
+// activate this to disable zip/jar file content listing:
+// #define NO_ZIP_LIST
 
 // binary version tag, is also parsed in version command.
 static const char *pszGlblVersion = "sfk $version: " SFK_VERSION;
@@ -3877,6 +3890,15 @@ ulong currentKBPerSec() {
    return (ulong)(nGlblBytes / lMSElapsed);
 }
 
+long mystricmp(char *psz1, char *psz2)
+{
+   while (*psz1 && *psz2 && tolower(*psz1) == tolower(*psz2)) {
+      psz1++;
+      psz2++;
+   }
+   return *psz1 - *psz2;
+}
+
 char szCmpBuf1[4096];
 char szCmpBuf2[4096];
 long mystrstri(char *psz1, char *psz2, long *lpAtPosition)
@@ -5406,14 +5428,20 @@ long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num
 
    listSingleFile(lLevel, pszFileName, nFileTime, nFileSize, 0);
 
+   #ifndef NO_ZIP_LIST
    if (bGlblZipList) {
       char *psz1 = strrchr(pszFileName, '.');
-      if (psz1 && !strcmp(psz1, ".zip")) {
-         long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList);
-         SFKMD5 md5;
+      if (psz1 && 
+          (!mystricmp(psz1, ".zip") || !mystricmp(psz1, ".jar"))
+         )
+      {
+         // long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList);
+         long getZipList(char *pszFile, FileList &rFileList);
+         // SFKMD5 md5;
          FileList oFiles;
          // uses szLineBuf2
-         if (!getZipMD5(pszFileName, md5, oFiles, 1)) {
+         // if (!getZipMD5(pszFileName, md5, oFiles, 1)) {
+         if (!getZipList(pszFileName, oFiles)) {
             long nFiles = oFiles.clNames.numberOfEntries();
             for (long i=0; i<nFiles; i++) {
                char *psz = oFiles.clNames.getEntry(i, __LINE__);
@@ -5424,6 +5452,7 @@ long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num
          }
       }
    }
+   #endif
 
    // update maxtimes
    if (nFileTime > nLocalMaxTime)
@@ -6589,6 +6618,13 @@ long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList=0
       ulong nCmpSize     = getLong (abLocHdr, L_COMPRESSED_SIZE);
       ulong nFileNameLen = getShort(abLocHdr, L_FILENAME_LENGTH);
       ulong nExtraLen    = getShort(abLocHdr, L_EXTRA_FIELD_LENGTH);
+      ulong nGenFlags    = getShort(abLocHdr, L_GENERAL_PURPOSE_BIT_FLAG);
+
+      // if bit 3 of general purpose is set,
+      bool bDataDesc = ((nGenFlags & (1<<3)) != 0);
+      // then nCmpSize is null, and a data descriptor follows.
+
+      // printf("bDataDesc %lx nCmpSize %lx\n", bDataDesc, nCmpSize);
 
       // PkZip format seems not to support 64-bit sizes and timestamps.
       // num nTimeStamp = getLong (abLocHdr, L_LAST_MOD_DOS_DATETIME);
@@ -6664,6 +6700,160 @@ long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList=0
    fclose(fin);
    return 0;
 }
+
+#ifndef NO_ZIP_LIST
+
+#ifdef _WIN32
+long mygetpos(FILE *f, num &rpos, char *pszFile)
+{
+   fpos_t npos1;
+   if (fgetpos(f, &npos1))
+      return 9+perr("getpos failed on %s\n", pszFile);
+   rpos = (num)npos1;
+   return 0;
+}
+long mysetpos(FILE *f, num pos, char *pszFile)
+{
+   fpos_t npos1 = (fpos_t)pos;
+   if (fsetpos(f, &npos1))
+      return 9+perr("setpos failed on %s\n", pszFile);
+   return 0;
+}
+#else
+long mygetpos(FILE *f, num &rpos, char *pszFile)
+{
+   fpos_t npos1;
+   if (fgetpos(f, &npos1))
+      return 9+perr("getpos failed on %s\n", pszFile);
+   rpos = (num)npos1.__pos;
+   return 0;
+}
+long mysetpos(FILE *f, num pos, char *pszFile)
+{
+   // fetch "status" first
+   fpos_t npos1;
+   if (fgetpos(f, &npos1))
+      return 9+perr("getpos failed on %s\n", pszFile);
+   npos1.__pos = (__off_t)pos;
+   if (fsetpos(f, &npos1))
+      return 9+perr("setpos failed on %s\n", pszFile);
+   return 0;
+}
+#endif
+
+long getZipList(char *pszFile, FileList &rFileList)
+{
+   FILE *fin = fopen(pszFile, "rb");
+   if (!fin) return 9+perr("unable to open: %s\n", pszFile);
+   
+   long rc=0;
+   ulong sig;
+   fseek(fin, -18, SEEK_END);
+   fread(&sig, 1, sizeof(sig), fin);
+
+   #define ENDOFCDIR_SIZE 18
+   #define EOCDIR_CDOFFS  12
+
+   num g_diroff = 0; // offset of central directory
+
+   while (1)
+   {
+      num npos2 = 0;
+      if (mygetpos(fin, npos2, pszFile)) {
+         fclose(fin);
+         return 9;
+      }
+      if (npos2 <= 32)
+         break;
+
+      if (sig==0x06054b50) 
+      {
+         rc = fread(abBuf, 1, ENDOFCDIR_SIZE, fin);
+         if (rc == ENDOFCDIR_SIZE)
+            g_diroff = getLong(abBuf, EOCDIR_CDOFFS);
+         break;
+      } else {
+         fseek(fin, -5, SEEK_CUR);
+         fread(&sig, 1, sizeof(sig), fin);
+      }
+   }
+
+   #define ZIPFHEAD_SIZE   42
+   #define ZIPFNAMLEN_OFFS 24 // 2 bytes
+   #define ZIPFCRC_OFFS    12 // 4 bytes
+   #define ZIPFCMPS_OFFS   16 // 4 bytes
+   #define ZIPFORGS_OFFS   20 // 4 bytes
+   #define ZIPFEXTL_OFFS   26 // 2 bytes
+   #define ZIPFREML_OFFS   28 // 2 bytes
+
+   num npos1 = (num)g_diroff;
+   if (mysetpos(fin, npos1, pszFile)) {
+      fclose(fin);
+      return 9;
+   }
+
+   rc = fread(&sig, 1, sizeof(sig), fin);
+
+   while (rc > 3)
+   {
+      if (sig == 0x02014b50)
+      {
+         num npos1 = 0;
+         if (mygetpos(fin, npos1, pszFile))
+            break;
+
+         num boo = (num)npos1;
+   
+         rc = fread(abBuf, 1, ZIPFHEAD_SIZE, fin);
+         if (rc < ZIPFHEAD_SIZE)
+            break;
+   
+         ulong nNameLen = getShort(abBuf, ZIPFNAMLEN_OFFS);
+         if (nNameLen > MAX_LINE_LEN-10)
+            break;
+   
+         rc = fread(szLineBuf, 1, nNameLen, fin);
+         if (rc < nNameLen)
+            break;
+         szLineBuf[nNameLen] = '\0';
+   
+         ulong nCRCSum  = getLong(abBuf, ZIPFCRC_OFFS );
+         ulong nCmpSize = getLong(abBuf, ZIPFCMPS_OFFS);
+         ulong nOrgSize = getLong(abBuf, ZIPFORGS_OFFS);
+   
+         ulong nExtLen  = getShort(abBuf, ZIPFEXTL_OFFS);
+         ulong nRemLen  = getShort(abBuf, ZIPFREML_OFFS);
+
+         #define ZIPTIME_OFFS ZIPFCRC_OFFS-4
+         num nZipDOSTime = getLong (abBuf, ZIPTIME_OFFS);
+         num nTimeStamp  = zipTimeToMainTime(nZipDOSTime);
+
+         rFileList.addFile(szLineBuf, nTimeStamp, nOrgSize);
+   
+         if (nCmpSize) {
+            if (fseek(fin, nExtLen+nRemLen, SEEK_CUR))
+               { perr("fseek err #3\n"); break; }
+         } else {
+            npos1 = (num)(boo+1);
+            if (mysetpos(fin, npos1, pszFile))
+               break;
+         }
+      }
+      else {
+         if (fseek(fin, -3, SEEK_CUR))
+            { perr("fseek err #5\n"); break; }
+      }  // endif
+   
+      rc = fread(&sig, 1, sizeof(sig), fin);
+      if (rc < sizeof(sig))
+         break;
+   }  // endwhile
+
+   fclose(fin);
+
+   return 0;
+}
+#endif
 
 long execMD5write(char *pszFile)
 {
@@ -8569,13 +8759,21 @@ long putFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0)
    fflush(stdout);
    #endif
 
+   memset(abBuf, 0, 4);
    receiveBlock(hSock, abBuf, 4, 0); // 0 == silent mode
-   // we do IGNORE the rc here.
 
+   // possible replies:
+   //    OK\n\n   ok\n\n (older sft)
+   //    EE\n\n
+   if (   tolower((char)abBuf[0]) == 'o'
+       && tolower((char)abBuf[1]) == 'k') {
    #ifndef _WIN32
    printf("                                               \r");
    fflush(stdout);
    #endif
+   } else {
+      perr("transfer or write of file failed: %s     \n", pszFile);
+   }
 
    return 0;
 }
@@ -8644,16 +8842,21 @@ long getFileBySFT(SOCKET hSock, char *pszFile, bool bQuiet=0)
    if (receiveFileRaw(hSock, pszFile, nLen, bQuiet))
       return 9;
 
-   // send short confirmation when finished, so client can safely close socket.
-   long nSent = send(hSock, (char*)"ok\n\n", 4, 0);
-   if (nSent != 4) return 9+perr("failed to send reply, %ld\n", nSent);
-
+   // sender will wait now until we confirm successful transfer.
    SFKMD5 md5;
-   if (getFileMD5(pszFile, md5))
+   if (getFileMD5(pszFile, md5)) {
+      send(hSock, (char*)"EE\n\n", 4, 0);
       return 9;
+   }
    unsigned char *pmd5 = md5.digest();
+   if (memcmp(pmd5, abMD5, 16)) {
+      send(hSock, (char*)"EE\n\n", 4, 0);
+      return 9+perr("md5 mismatch - transfered file corrupted.\n");
+   }
 
-   if (memcmp(pmd5, abMD5, 16)) return 9+perr("md5 mismatch - transfered file corrupted.\n");
+   // send short confirmation, so client can safely close socket.
+   long nSent = send(hSock, (char*)"OK\n\n", 4, 0);
+   if (nSent != 4) return 9+perr("failed to send reply, %ld\n", nSent);
 
    return 0;
 }
@@ -8845,8 +9048,11 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd=0)
             pszMaskPre++; // for linux uniformity
          if ((pszMaskPre[0]=='*') && (pszMaskPre[1]!=0))
             pszMaskPre++; // skip *, take pattern
-         // if (strchr(pszMaskPre, '*'))
-         //   { perr("'*' is supported only at the beginning of masks.\n"); continue; }
+         if ((strlen(pszMaskPre)>1) && strchr(&pszMaskPre[1], '*')) {
+            perr("'*' not supported within filename masks.\n");
+            printf("info : specify common part of all names, without '*'.\n");
+            continue;
+         }
          char *pszMask = strdup(pszMaskPre);
          // NO RETURN FROM HERE
          long lFiles=0, lDirs=0, lRC=0;
@@ -8895,8 +9101,11 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd=0)
             pszMaskPre++; // for linux uniformity
          if ((pszMaskPre[0]=='*') && (pszMaskPre[1]!=0))
             pszMaskPre++; // skip *, take pattern
-         // if (strchr(pszMaskPre, '*'))
-         //   { perr("'*' is supported only at the beginning of masks.\n"); continue; }
+         if ((strlen(pszMaskPre)>1) && strchr(&pszMaskPre[1], '*')) {
+            perr("'*' not supported within filename masks.\n");
+            printf("info : specify common part of all names, without '*'.\n");
+            continue;
+         }
          char *pszMask = strdup(pszMaskPre);
          // NO RETURN FROM HERE
          sendLine(hSock, "SLST");
@@ -9936,6 +10145,42 @@ long checkDisk(char *pszPath, long nRangeMB)
    return 0;
 }
 
+#ifdef _WIN32
+long putClipboard(char *pszStr)
+{
+   if (!OpenClipboard(0)) // GetDesktopWindow()))
+      return 9+perr("clipboard #1");
+   if (!EmptyClipboard())
+      return 9+perr("clipboard #2");
+
+   long nStrLen = strlen(pszStr);
+
+   HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, nStrLen+10);
+   if (hMem == NULL) return 9+perr("clipboard #3");
+
+   LPTSTR pCopy = (char*)GlobalLock(hMem);
+   if (pCopy)
+   {
+      memcpy(pCopy, pszStr, nStrLen);
+      pCopy[nStrLen] = 0;
+   }
+   GlobalUnlock(hMem);
+
+   HANDLE hData = SetClipboardData(CF_TEXT, hMem);
+   if (hData == NULL)
+   {
+      CloseClipboard();
+      return 9+perr("clipboard #4");
+   }
+
+   // System is now owner of hMem.
+
+   CloseClipboard();
+
+   return 0;
+}
+#endif
+
 #ifndef USE_SFK_BASE
 int main(int argc, char *argv[])
 {
@@ -9997,7 +10242,7 @@ int main(int argc, char *argv[])
              "          #type dirlist.txt | sfk stat -quiet -i\n"
              "   $sfk list [-twinscan] [-time] [-size|-size=digits] dir [mask]\n"
              "       list files within directory tree. twinscan: find identical files.\n"
-             "       verbose: list non-regular files. zip: list zipfile contents.\n"
+             "       verbose: list non-regular files. zip: list also zip/jar contents.\n"
              "          #sfk list -dir src1 -file .cpp -dir src2 -file .hpp\n"
              "       to find most recent or largest files of directory tree:\n"
              "          #sfk list -time -size=10 | sort\n"
@@ -10108,6 +10353,15 @@ int main(int argc, char *argv[])
              "   $sfk inst [...]\n"
              "       instrument c++ source code with calls to micro tracing kernel.\n"
              "       type \"sfk inst\" for details.\n"
+             #endif
+
+             #ifdef _WIN32
+             "\n"
+             "   $sfk toclip<def>   (windows only)     - copy stdin to clipboard as plain text.\n"
+             "   $sfk fromclip [-wait] [-clear]<def>   - dump plain text from clipboard to terminal.\n"
+             "       wait: block until plain text is available. clear: empty clipboard afterwards.\n"
+             "          #sfk fromclip | sfk filter -rep x/x\\x | sfk toclip\n"
+             "\n"
              #endif
 
              "   $sfk help ascii<def> - list ascii character set.\n"
@@ -11551,7 +11805,22 @@ int main(int argc, char *argv[])
                   bBlockSep = (!strcmp(pszPat, "-blocksep")) ? 1 : 0;
                   if (i >= nPat-1) return 9+perr("-sep must be followed by separators, e.g. -sep ;\n", glblRunChar);
                   char *pszStrForm = argv[iPat+i+1]; // e.g. "; \t"
-                  sprintf(aMaskSep, pszStrForm);
+                  // "\t" is NOT replaced by sprintf (belongs to preprocessor),
+                  // so we have to replace it by native 0x09 here.
+                  long iout=0;
+                  char *pszin=pszStrForm;
+                  while (*pszin && (iout < sizeof(aMaskSep)-10)) {
+                     if (!strncmp(pszin, "\\\\", 2))
+                        { aMaskSep[iout++] = '\\'; pszin += 2; continue; }
+                     else
+                     if (!strncmp(pszin, "\\t", 2))
+                        { aMaskSep[iout++] = '\t'; pszin += 2; continue; }
+                     else
+                        aMaskSep[iout++] = *pszin;
+                     pszin++;
+                  }
+                  aMaskSep[iout] = '\0';
+                  // printf("masksep: %02x %02x %02x %s\n",aMaskSep[0],aMaskSep[1],aMaskSep[2],pszStrForm);
                   i++;
                   continue;
                }
@@ -11673,14 +11942,36 @@ int main(int argc, char *argv[])
       bDone = 1;
    }
 
+   #ifndef NO_ZIP_LIST
+   // internal, to test zip/jar listing via central dir
    if (!strcmp(pszCmd, "ziplist"))
    {
-      // this internal function is merely to check if sfk is
-      // (still) able of reading zip file local headers.
       if (checkArgCnt(argc, 3)) return 9;
+
+      FileList oFiles;
+      getZipList(argv[2], oFiles);
+
+      long nFiles = oFiles.clNames.numberOfEntries();
+      for (long i=0; i<nFiles; i++) 
+      {
+         char *psz = oFiles.clNames.getEntry(i, __LINE__);
+         num nSize = oFiles.clSizes.getEntry(i, __LINE__);
+         num nTime = oFiles.clTimes.getEntry(i, __LINE__);
+         printf("%s %s %s\n", timeAsString(nTime), numtoa(nSize,10), psz);
+      }
+      bDone = 1;
+   }
+   #endif
+
+   // internal, to test zip listing as stream
+   if (!strcmp(pszCmd, "ziplist2"))
+   {
+      if (checkArgCnt(argc, 3)) return 9;
+
       SFKMD5 md5;
       FileList oFiles;
       getZipMD5(argv[2], md5, oFiles, 1);
+
       long nFiles = oFiles.clNames.numberOfEntries();
       for (long i=0; i<nFiles; i++) 
       {
@@ -12807,6 +13098,97 @@ int main(int argc, char *argv[])
       printf("\n");
       bDone = 1;
    }
+
+   #ifdef _WIN32
+   if (!strcmp(pszCmd, "toclip"))
+   {
+      // copy stdin to clipboard
+      if (argc > 2) return 9+perr("no additional parms supported with toclip.\n");
+
+      StringTable st;
+      long nSize = 0;
+
+      while (fgets(szLineBuf, MAX_LINE_LEN, stdin))
+      {
+         szLineBuf[MAX_LINE_LEN] = '\0';
+         removeCRLF(szLineBuf);
+         st.addEntry(szLineBuf);
+         nSize += strlen(szLineBuf) + 2;
+      }
+
+      char *pszTmp = new char[nSize+1000];
+      if (!pszTmp) return 9+perr("out of memory");
+      pszTmp[0] = '\0';
+      long nLines = st.numberOfEntries();
+      long iout=0;
+      for (long i=0; i<nLines; i++)
+      {
+         char *psz = st.getEntry(i, __LINE__);
+         ulong nLen = strlen(psz);
+         if (iout+nLen < nSize)
+         {
+            strcat(pszTmp, psz);
+            strcat(pszTmp, "\r\n");
+            iout = strlen(pszTmp);
+         }
+         else
+            break;
+      }
+      putClipboard(pszTmp);
+      delete [] pszTmp;
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "fromclip"))
+   {
+      bool bWait = 0;
+      bool bClear = 0;
+      int iDir = 2;
+      for (; iDir < argc; iDir++) {
+         if (!strcmp(argv[iDir], "-wait"))
+            bWait = 1;
+         else
+         if (!strcmp(argv[iDir], "-clear"))
+            bClear = 1;
+         else
+            return 9+perr("unknown option: %s\n", argv[iDir]);
+      }
+
+      char *pszClip = 0;
+
+      while (!IsClipboardFormatAvailable(CF_TEXT)) {
+         if (!bWait)
+            return 5+perr("no plain text in clipboard");
+         Sleep(250);
+      }
+
+      if (!OpenClipboard(0)) // GetDesktopWindow())) 
+         return 5+perr("failed to open clipboard");
+      HGLOBAL hglb = GetClipboardData(CF_TEXT); 
+      if (hglb == NULL) {
+         perr("no clipboard data available");
+      } else {
+         char *pMem = (char*)GlobalLock(hglb); 
+         if (pMem != NULL)
+            pszClip = strdup(pMem);
+         GlobalUnlock(hglb);
+      }
+
+      // clear the clipboard?
+      if (bClear)
+         EmptyClipboard();
+
+      CloseClipboard();
+
+      // we're now owner of pszClip.
+      fwrite(pszClip, 1, strlen(pszClip), stdout);
+
+      delete [] pszClip;
+
+      bDone = 1;
+   }
+   #endif
 
    if (!bDone)
       perr("unknown command: %s\n", pszCmd);
