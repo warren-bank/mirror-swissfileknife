@@ -1,4 +1,4 @@
-@rem windows compile of swiss file knife using msvc 7.
+@rem windows compile of swiss file knife using msvc 14.
 @rem compile under MinGW/Cygwin is also possible, see below.
 @rem configure/make will not work under Windows as it is now.
 @echo off
