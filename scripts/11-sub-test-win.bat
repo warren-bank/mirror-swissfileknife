@@ -70,3 +70,6 @@
 
 ..\sfk patch -qs ..\scripts\50-patch-all-src.cpp >nul
 ..\sfk test %TCMD% T07.1.patch all-src.cpp
+
+..\sfk snapto=all-src-4.cpp testfiles\Formats 11-wide-line.txt 13-eof-null.txt 14-all-codes.txt >nul
+..\sfk test %TCMD% T08.1.snapform all-src-4.cpp

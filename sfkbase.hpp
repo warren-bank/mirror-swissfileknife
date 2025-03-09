@@ -84,12 +84,16 @@ public:
    long  checkConsistency  ( );
 private:
    long  ensureBase     (int nTraceLine);
+   void  resetAddFlags  ( ); // per layer
    Array clRootDirs;    // row 0: names/str, row 1: command/int, row 2: layer/int
    Array clDirMasks;    // row == layer
    Array clFileMasks;   // row == layer
-   long nClCurDir;
-   long nClCurLayer;
+   long  nClCurDir;
+   long  nClCurLayer;
    char  *pClLineBuf;
+   long  bClGotAllMask;
+   long  bClGotPosFile;
+   long  bClGotNegFile;
 };
 
 long isDir(char *pszName);
@@ -98,3 +102,8 @@ char *sfkLastError();
 #define MAX_ABBUF_SIZE 100000
 #define MAX_LINE_LEN 4096
 
+bool sfkisalnum(uchar uc);
+bool sfkisprint(uchar uc);
+
+extern long (*pGlblJamLineCallBack)(char *pszLine, long nLineLen, bool bAddLF);
+extern long (*pGlblJamStatCallBack)(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes, ulong nSkipped, char *pszSkipInfo);
