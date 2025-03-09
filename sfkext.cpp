@@ -199,6 +199,7 @@ extern bool  bGlblMemLimitWasSet ;
 extern bool  bGlblNoMemCheck     ;
 extern bool  bGlblSFKCreateFiles ;
 extern char  *pGlblCurrentScript ;
+extern char  *pGlblCurScriptName ;
 
 extern int nGlblHeadColor      ;
 extern int nGlblExampColor     ;
@@ -225,7 +226,6 @@ extern char szRefNameBuf[MAX_LINE_LEN+10];
 extern char szRefNameBuf2[MAX_LINE_LEN+10];
 extern char szTopURLBuf[MAX_LINE_LEN+10];
 
-// internal
 int iGlblWebCnt=0;
 FILE *fGlblWebDump=0;
 
@@ -437,6 +437,18 @@ uchar *sfkgetvar(char *pname, int *plen)
       else if (!strcmp(pname, "sys.numcols")) { // sfk1932 #(sys.numcols)
          sprintf(szBuf, "%d", nGlblConsColumns);
          psz = szBuf;
+      }
+      else if (!strcmp(pname, "sys.ownscript.name")) { // sfk196
+         if (pGlblCurScriptName)
+            psz = pGlblCurScriptName;
+         else
+            psz = str("");
+      }
+      else if (!strcmp(pname, "sys.ownscript.text")) { // sfk196
+         if (pGlblCurrentScript)
+            psz = pGlblCurrentScript;
+         else
+            psz = str("");
       }
       if (psz) {
          if (plen)
@@ -15115,7 +15127,7 @@ static cchar *pszPicReaderTpl2 =
 "   oarea.coords = \"\"+(w/2)+\",0,\"+w+\",\"+(h*2);\n"
 "}\n"
 "</script></head>\n"
-"<body id=\"doc\" leftmargin=\"0\" topmargin=\"0\" marginwidth=\"0\" marginheight=\"0\" onload=\"javascript:doinit()\">\n"
+"<body bgcolor=\"#aaaaaa\" id=\"doc\" leftmargin=\"0\" topmargin=\"0\" marginwidth=\"0\" marginheight=\"0\" onload=\"javascript:doinit()\">\n"
 " <center>\n"
 " <img id=\"pic\" src=\"tmp.png\" ";
 
@@ -15130,7 +15142,7 @@ static cchar *pszPicReaderTpl3 =
 ;
 
 static cchar *pszPicListTpl1 =
-"<html><body>\n"
+"<html><body bgcolor=\"#cccccc\">\n"
 ;
 
 static cchar *pszPicListTpl2 =
@@ -15189,10 +15201,14 @@ int execToHtml(int imode, int iaspect, char *plist, char *pszOutFile)
       if (imode==1) {
          fprintf(fout, "   \"%s\",\n", pcur);
       } else {
-         if (iaspect==1) // fitw
-            fprintf(fout, "<img src=\"%s\" width=\"100%%\"><p/>\n", pcur);
-         else
-            fprintf(fout, "<img src=\"%s\"><p/>\n", pcur);
+         fprintf(fout, 
+            "<a href=\"%s\" target=\"_blank\">"
+            "<img src=\"%s\" width=\"20%%\" title=\"%s\">"
+            "</a> "
+            , pcur
+            , pcur
+            , pcur
+            );
       }
 
       pcur=pnext;
@@ -22799,6 +22815,8 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
              #endif // VFILEBASE
              "      #sfk times mydir .txt\n"
              "         list times of all .txt files within mydir\n"
+             "      #sfk sel -flist mylist.txt -time -size\n"
+             "         read filenames from mylist.txt and show their time and size\n"
              );
       printx("      #sfk list <nofo>. >lslr\n"
              "         list files of the current directory and all subdirectories into\n"
@@ -23328,223 +23346,225 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
              );
    }
 
-   if (!strncmp(pszSub, "opt", 3))
+   if (!strncmp(pszSub, "opt", 3)) // .
    {
       printx("$sfk general options reference%s:\n",
              bhelp ? " (type \"sfk help options\")":"");
+
       printx("\n"
          "   Please note: some of these options are supported only by some commands.\n"
+         "\n"
          );
-      printx("\n"
-         "   $-var<def>       insert SFK variables by using ##(varname). type this\n"
-         "              option directly after \"sfk\" to use it globally with all\n"
-         "              commands in a chain or script. to print \"##(\" literally\n"
-         "              then escape it like ####(\n"
+
+      printx(
+         "   #general processing options\n"
+         "   $-var<def>        insert SFK variables by using ##(varname). type this\n"
+         "               option directly after \"sfk\" to use it globally with all\n"
+         "               commands in a chain or script. to print \"##(\" literally\n"
+         "               then, escape it like ####(. for more on variables\n"
+         "               type: sfk help var\n"
+         "   $-yes<def>        fully execute the command. some commands like \"run\" are\n"
+         "               running in simulation mode by default, to avoid damage to your\n"
+         "               files, as long as you're unsure which files and dirs to select.\n"
+         "               as soon as you add -yes, however, everything is fully executed.\n"
+         "   $-keepchain<def>  never stop the command chain, even if commands that expect\n"
+         "               filenames get none. for details: sfk help chain\n"
          #ifdef _WIN32
-         "   $-upat<def>      unix compatible file or text selection and patterns.\n"
-         "              allows to use -subdir :/tmp instead of !\\tmp, filter -:foo\n"
-         "              instead of -!foo and run \"##file\" instead of \"$$file\",\n"
-         "              to create unified .sh batch files for Windows and Linux.\n"
-         "   $-upat2<def>     same as -upat but also support wildcard %% instead of *\n"
-         "              you may also set this by an environment variable like:\n"
-         "              <exp> SFK_CONFIG=upat2\n"
+         "   $-upat<def>       unix compatible file or text selection and patterns.\n"
+         "               allows to use -subdir :/tmp instead of !\\tmp, filter -:foo\n"
+         "               instead of -!foo and run \"##file\" instead of \"$$file\",\n"
+         "               to create unified .sh batch files for Windows and Linux.\n"
+         "   $-upat2<def>      same as -upat but also support wildcard %% instead of *\n"
+         "               you may also set this by an environment variable like:\n"
+         "               <exp> SFK_CONFIG=upat2\n"
+         "   $-noesckey<def>   disable stop by escape key. (windows only)\n"
          #endif
-         "   $-nosub<def>     or -norec does not include subdirectories (subfolders).\n"
-         "              processing of subdirs is DEFAULT with most commands,\n"
-         "              therefore you must specify -nosub to switch it off.\n"
-      // "   $-nosub2<def>    do not include subfolders, and hide subdir names,\n"
-      // "              e.g. like sfk list -withdirs -nosub2 mydir\n"
-         "   $-withsub<def>   include subdirs. is DEFAULT with most commands.\n"
-         /*
-         "   $-strict<def>    with run, perline, -to: produce an error if unknown\n"
-         "              tokens like <run>foo are found. these must then be\n"
-         "              escaped like <run><run>foo\n"
-         "   $-nostrict<def>  with run, perline, -to: keep unknown tokens as is.\n"
-         "              may cause script failures with future versions of sfk\n"
-         "              that may add new sfk builtin tokens.\n"
-         */
-         );
-  #ifdef _WIN32
-  printx("   $-more<def>      pause output based on terminal height.\n");
-  #else
-  printx("   $-more<def>      pause output every %d lines approx.\n", nGlblConsRows);
-  #endif  
-  printx("   $-more50<def>    paged output with 50 lines per page.\n"
-         "              -more is experimental and may fail to count exactly.\n"
-         );
-  printx("   $-verbose<def>   print additional infos while running a command.\n"
-         "              helpful if a command doesn't work as expected.\n"
-         "              only some commands support -verbose. try also -verbose=2.\n"
-         "   $-tracechain<def>  tell in detail how the command chain is executed.\n"
-         "   $-keepchain<def>   never stop the command chain, even if commands\n"
-         "                that expect filenames get none.\n"
+         "\n");
+
+      printx(
+         "   #file input options\n"
+         "   $-nosub<def>      or -norec does not include subdirectories (subfolders).\n"
+         "               processing of subdirs is DEFAULT with most commands,\n"
+         "               therefore you must specify -nosub to switch it off.\n"
+         "   $-withsub<def>    include subdirs. is DEFAULT with most commands.\n"
+         "   $-withdirs<def>   include (sub) folder names in processing.\n"
+         "   $-justdirs<def>   use just (sub) folder names for processing.\n"
          #if (!defined(SFK_LIB5))
-         "   $-nofollow<def>  or -nofo does not follow symbolic directory links.\n"
-         "              this option may NOT work with older Linux versions,\n"
-         "              esp. those needing the \"lib5\" binary version of sfk.\n"
+         "   $-nofollow<def>   or -nofo does not follow symbolic directory links.\n"
+         "               this option may NOT work with older Linux versions,\n"
+         "               esp. those needing the \"lib5\" binary version of sfk.\n"
          #endif
-         #ifndef _WIN32
-         "   $-showskip<def>  tell whenever directory contents are skipped to avoid\n"
-         "              double processing caused by symbolic links.\n"
-         "   $-allowdups<def> disable detection of duplicate directory contents.\n"
-         "                 may cause endless recursion on links like \"X11\"->\".\"\n"
-         #endif
-         "   $-quiet<def>     reduce output on some commands. e.g. the find command will\n"
-         "              not display the \"scan\" status info while searching files.\n"
-         "   $-quiet=2<def>   reduce output even more on some commands.\n"
-         #ifdef SFK_MEMTRACE
-         "   $-memcheck<def>  check memory list at the end of every command\n"
-         "              to detect overwrites. reduces performance.\n"
-         #endif
-         "   $-debug<def>     print extra program flow infos to track errors.\n"
-         #ifdef SFK_MEMTRACE
-         "              also activates -memcheck under Windows.\n"
-         #endif
-         );
-  printx("   $-nohead<def>    no not list header/trailer info on some commands: the run cmd\n"
-         "              will not tell \"simulating\" even if it's in simulation mode.\n"
-         "   $-case<def>      activate case sensitive text comparison with some commands.\n"
-         "              most text processing commands are case-insensitive by default.\n"
-         "              filename comparison is always case insensitive.\n"
-         "              for details see: sfk help nocase\n"
-         #ifdef _WIN32
-         "   $-deacc<def>     use accent insensitive text search and filename selection,\n"
-         "              i.e. a == a_accent or o == o_umlaut.\n"
-         #endif
-         "   $-hidden<def>    include hidden and system files.\n"
-         "   $-nohidden<def>  exclude hidden and system files.\n"
-         "   $-yes<def>       fully execute the command. some commands like \"run\" are\n"
-         "              running in simulation mode by default, to avoid damage to your\n"
-         "              files, as long as you're unsure which files and dirs to select.\n"
-         "              as soon as you add -yes, however, everything is fully executed.\n"
-      // "   $-nonames<def>   or -nofile[names] does not create :file name records when\n"
-      // "              chaining text data from one command to another.\n"
-         );
-  printx("   $-minsize=s<def> select only files >= size, like 10b or 100k\n"
-         "   $-maxsize=s<def> select only files <= size, like 10m or 4g\n"
-         "              b=bytes k=kbytes m=megabytes g=gigabytes=10^9 bytes\n"
-         "              K=2^10 bytes M=2^20 bytes G=2^30 bytes\n"
-         "   $-weblimit=n<def>  change web access download limit to n mbytes,\n"
-         "              with functions like sfk web, filter, xex. default is 30 mb.\n"
-         "              you may also <exp> SFK_CONFIG=weblimit:20\n"
-         "   $-webtimeout=n<def>  web access timeout in msec. default is 10000.\n" // wto.general
-         "              you may also <exp> SFK_CONFIG=webtimeout:3000\n"
-         "   $-headers<def>   print http headers with commands accessing the web.\n"
-      // "   $-showreq<def>   print sent http request url with web commands.\n"
-      // "   $-ftptimeout=n<def>  ftp access timeout in msec. default is 10000.\n"
-         "   $-textfiles<def> process only text files, no binaries. -text is the same,\n"
-         "              but this may interfere with some command's local -text option.\n"
-         "              text/binary detection only checks the file's first 4 kbytes.\n"
-         "   $-binfiles<def>  process only binary files. -bin is the same, but this may\n"
-         "              interfere with some command's local -bin option.\n"
-      // "   $-umlauts<def>   with binary-to-text conversion, include german characters.\n"
-         "   $-binallchars<def>   with binary-to-text conversion, include all printable\n"
-         "                  characters, like accents or non latin.\n"
-         "   $-nocol<def>     disable all colored output. important if your shell has\n"
-         "              a background color incompatible to the default color scheme,\n"
-         "              or (under linux) if the sfk output text must be processed\n"
-         "              further through pipelining, and needs to be stripped from\n"
-         "              the color escape sequences.\n"
-         "   $-col<def>       switch on colored output. \"sfk help colors\" for more.\n"
-         "   $-html<def>      dump sfk help text (color control) in html format.\n"
-         "              -html must be typed directly after \"sfk\".\n"
-         "   $-htmlpage<def>  the same, but include a header to view it in a browser.\n"
-         );
-  printx("   $-sincedir<def>  or -sincedif/add/chg: compare directory tree against\n"
-         "              a reference tree, process only changed or added files.\n"
-         "              see \"sfk list\" for details.\n"
-         "   $-tracesel<def>  give verbose infos why directories and files have been\n"
-         "              selected or excluded. -tracedirs lists only directories,\n"
-         "              -tracefiles lists only files.\n"
-         "   $-since<def>     process only files changed on or after the supplied\n"
-         "              date/timestamp. \"sfk list\" for details.\n"
-         "   $-before<def>    process only files changed before that date/timestamp.\n"
-         "   $-flist fn<def>  or \"-fl fn\" reads list of filenames from file fn.\n"
-      // "   $-fileset<def>   use a textfile with dir- and filenames, instead of\n"
-      // "              providing them as parameters. \"sfk help fileset\" for more.\n"
-         "   $-spat<def>      activates interpretation of slash patterns:\n"
-         "              \\t=TAB \\q=\" \\r=CR \\n=LF \\\\=\\ \\xnn=any char w/hex code nn\n"
-         "              with some commands like replace, filter -form and -replace.\n"
-         "   $-literal<def>   or -lit disables interpretation of wildcards * and ?\n"
-         "              and slash patterns, if they were activated previously.\n"
-         "   $-nospat<def>    disables only slash patterns.\n"
-         );
-         #ifdef _WIN32
-  printx("   $-nocconv<def>   when printing output to the windows console, sfk tries\n"
-         "              to convert umlaut and accent characters to display them\n"
-         "              correctly with codepage 850. set -nocconv to disable this.\n"
-         "              whenever output is redirected to file, no conversion is done.\n"
-         "   $-cconv<def>     force codepage conversions: if command output is redirected\n"
-         "              to a file, codepage conversion is disabled by default.\n"
-         "              use this option to activate, e.g. when post-processing\n"
-         "              sfk run output which produced filename lists.\n"
-         );
-         #endif
-  printx("   $-noipex<def>    disable automatic IP expansion with some commands.\n");
-  printx("   $-qarc<def>      quick read top level archives but not nested ones.\n");
-  printx("   $-wchar<def>     activate EXPERIMENTAL utf-16 (ucs-2, wide char) decoding,\n"
-         "              allowing sfk find or filter to search text in utf-16 files.\n"
-         "              should not be used when (re)writing files. get more infos\n"
-         "              by typing \"sfk help unicode\".\n"
-         "   $-to mask<def>   specify where to write output files with some commands.\n"
-         "              mask supports <run>file, <run>path, <run>base, <run>ext and more,\n"
-         "              like -to outdir<sla><run>base-modified.<run>ext\n"
-         "              say \"sfk run\" for a list of possible keywords.\n"
-         "   $-tofile x<def>  specify a single output filename, which is taken as is\n"
-         "              and not checked for any <run> patterns.\n"
-         "   $-tomake .ext<def>  select only files that have no, or an older,\n"
-         "              counterpart file with extension .ext in the same folder.\n"
+         "   $-textfiles<def>  process only text files, no binaries. -text is the same,\n"
+         "               but this may interfere with command-local -text options.\n"
+         "               text/binary detection only checks the file's first 4 kbytes.\n"
+         "   $-binfiles<def>   process only binary files. -bin is the same, but this may\n"
+         "               interfere with some command's local -bin option.\n"
+         "   $-hidden<def>     include hidden and system files.\n"
+         "   $-nohidden<def>   exclude hidden and system files.\n"
+         "   $-minsize=s<def>  select only files >= size, like 10b or 100k\n"
+         "   $-maxsize=s<def>  select only files <= size, like 10m or 4g\n"
+         "               b=bytes k=kbytes m=megabytes g=gigabytes=10^9 bytes\n"
+         "               K=2^10 bytes M=2^20 bytes G=2^30 bytes\n"
+         "   $-sincedir<def>   or -sincedif/add/chg: compare directory tree against\n"
+         "               a reference tree, process only changed or added files.\n"
+         "               see \"sfk list\" for details.\n"
+         "   $-since<def>      process only files changed on or after the supplied\n"
+         "               date/timestamp. \"sfk list\" for details.\n"
+         "   $-before<def>     process only files changed before that date/timestamp.\n"
+         "   $-flist fn<def>   or \"-fl fn\" reads list of filenames from file fn.\n"
+         "   $-tomake .ext<def>   select only files that have no, or an older,\n"
+         "               counterpart file with extension .ext in the same folder.\n"
          "   $-tomake outdir<sla><run>base.ext<def>  select only files that have no or\n"
-         "              an older counterpart file in outdir with extension .ext.\n"
-         "              see \"sfk run\" for example: .wav to .mp3 conversion\n"
-         "   $-tmpdir x<def>  set directory x as temporary file directory. default is\n"
+         "               an older counterpart file in outdir with extension .ext.\n"
+         "               see \"sfk run\" for example: .wav to .mp3 conversion\n"
+         "   $-wchar<def>      activate EXPERIMENTAL utf-16 (ucs-2, wide char) decoding,\n"
+         "               allowing sfk find or filter to search text in utf-16 files.\n"
+         "               should not be used when (re)writing files. get more infos\n"
+         "               by typing \"sfk help unicode\".\n"
+         "\n");
+
+      printx(
+         "   #text input and filtering options\n"
+         "   $-case<def>       activate case sensitive text comparison with some commands.\n"
+         "               most text processing commands are case-insensitive by default.\n"
+         "               filename comparison is always case insensitive.\n"
+         "               for details see: sfk help nocase\n"
+         "   $-spat<def>       activates interpretation of slash patterns:\n"
+         "               \\t=TAB \\q=\" \\r=CR \\n=LF \\\\=\\ \\xnn=any char w/hex code nn\n"
+         "               with some commands like replace, filter -form and -replace.\n"
+         "   $-spats<def>      strict slash patterns, show error on wrong patterns like \\a.\n"
+         "   $-literal<def>    or -lit disables interpretation of wildcards * and ?\n"
+         "               and slash patterns, if they were activated previously.\n"
+         "   $-nospat<def>     disables only slash patterns.\n"
          #ifdef _WIN32
-         "              to use the path specified by TEMP or TMP env variable.\n"
-         #else
-         "              to use the path specified by TEMP or TMP env variable,\n"
-         "              or the /tmp directory, if no such variable is defined.\n"
+         "   $-deacc<def>      use accent insensitive text search and filename selection,\n"
+         "               i.e. a == a_accent or o == o_umlaut.\n"
          #endif
-         "   $-showtmp<def>   tell verbosely which temporary files are created.\n"
-         "   $-keeptmp<def>   do not delete the temporary files, if possible.\n"
-         "   $-nowarn<def>    and -noerr, -nonote disable warn, error and note messages.\n");
+         "   $-binallchars<def>  with binary-to-text conversion, include all printable\n"
+         "                 characters, like accents or non latin.\n"
+         "\n");
+
+      printx(
+         "   #user information options\n"
+         "   $-verbose<def>    print additional infos while running a command.\n"
+         "               helpful if a command doesn't work as expected.\n"
+         "               only some commands support -verbose. try also -verbose=2.\n");
+  #ifdef _WIN32
+  printx("   $-more<def>       pause output based on terminal height.\n");
+  #else
+  printx("   $-more<def>       pause output every %d lines approx.\n", nGlblConsRows);
+  #endif
+  printx("   $-more50<def>     paged output with 50 lines per page.\n"
+         "               -more is experimental and may fail to count exactly.\n"
+         "   $-quiet<def>      reduce output on some commands. e.g. the find command will\n"
+         "               not display the \"scan\" status info while searching files.\n"
+         "   $-quiet=2<def>    reduce output even more on some commands.\n"
+         "   $-nowarn<def>     and -noerr, -nonote disable warn, error and note messages.\n"
+         "   $-nohead<def>     no not list header/trailer info on some commands: the run cmd\n"
+         "               will not tell \"simulating\" even if it's in simulation mode.\n"
+         "   $-tracechain<def>   tell in detail how the command chain is executed.\n"
+         "   $-tracesel<def>   give verbose infos why directories and files have been\n"
+         "               selected or excluded. -tracedirs lists only directories,\n"
+         "               -tracefiles lists only files.\n"
+         "   $-debug<def>      print extra program flow infos to track errors.\n"
+         #ifdef SFK_MEMTRACE
+         "               also activates -memcheck under Windows.\n"
+         #endif
+         #ifdef SFK_MEMTRACE
+         "   $-memcheck<def>   check memory list at the end of every command\n"
+         "               to detect overwrites. reduces performance.\n"
+         #endif
+         "   $-exectime<def>   tell command execution time at program end.\n"
+         "   $-headers<def>    print http headers with commands accessing the web.\n"
+         "\n");
+
+      printx(
+         "   #file output options\n"
+         "   $-tofile x<def>   specify a single output filename, which is taken as is\n"
+         "               and not checked for any <run> patterns.\n"
+         "   $-to mask<def>    specify where to write output files with some commands.\n"
+         "               mask supports <run>file, <run>path, <run>base, <run>ext and more,\n"
+         "               like -to outdir<sla><run>base-modified.<run>ext\n"
+         "               say \"sfk run\" for a list of possible keywords.\n"
+         "   $-tmpdir x<def>   set directory x as temporary file directory. default is\n"
+         #ifdef _WIN32
+         "               to use the path specified by TEMP or TMP env variable.\n"
+         #else
+         "               to use the path specified by TEMP or TMP env variable,\n"
+         "               or the /tmp directory, if no such variable is defined.\n"
+         #endif
+         "   $-showtmp<def>    tell verbosely which temporary files are created.\n"
+         "   $-keeptmp<def>    do not delete the temporary files, if possible.\n"
+         "\n");
+
+      printx(
+         "   #terminal output options\n"
+         "   $-nocol<def>      disable all colored output. important if your shell has\n"
+         "               a background color incompatible to the default color scheme,\n"
+         "               or (under linux) if the sfk output text must be processed\n"
+         "               further through pipelining, and needs to be stripped from\n"
+         "               the color escape sequences.\n"
+         "   $-col<def>        switch on colored output. \"sfk help colors\" for more.\n"
+         #ifdef _WIN32
+         "   $-nocconv<def>    when printing output to the windows console, sfk tries\n"
+         "               to convert umlaut and accent characters to display them\n"
+         "               correctly with codepage 850. set -nocconv to disable this.\n"
+         "               whenever output is redirected to file, no conversion is done.\n"
+         "   $-cconv<def>      force codepage conversions: if command output is redirected\n"
+         "               to a file, codepage conversion is disabled by default.\n"
+         "               use this option to activate, e.g. when post-processing\n"
+         "               sfk run output which produced filename lists.\n"
+         #endif
+         "   $-html<def>       dump sfk help text (color control) in html format.\n"
+         "               -html must be typed directly after \"sfk\".\n"
+         "   $-htmlpage<def>   the same, but include a header to view it in a browser.\n"
+         "\n");
+
+      printx(
+         "   #return code and error options\n"
+         "   $-showrc<def>     print sfk return code at end of command or program.\n"
+         "               may not print anything in case of fatal errors,\n"
+         "               like wrong syntax (usually rc 9).\n"
+         "   $-justrc<def>     let some commands print nothing and just produce an rc.\n"
+         "   $-exterr<def>     in case of operating system related errors like file access,\n"
+         "               prints extended error information, if available.\n"
+         "   $-waitonerr<def>  wait for user input on every error.\n"
+         "   $-waitonend<def>  wait for user input at program end.\n"
+         "   $-stoponerr<def>  stop directory tree processing on first unreadable file.\n"
+         "               default is to process as many files as possible, skipping\n"
+         "               unreadable files and directories.\n"
+         "   $-rcfromerr<def>  some commands like filter, find, hexfind tell by shell rc\n"
+         "               that something was found. by default, skipped errors like\n"
+         "               unreadable files do NOT change this rc. with -rcfromerr,\n"
+         "               skipped errors do override the resulting shell rc.\n"
+         "   $-echoonerr<def>  echo whole command to stderr when an error occurs.\n"
+         "               see also the SFK_CONFIG setting \"echoonstart\" below.\n"
+         "   to experiment with the above options, try \"sfk errortest\".\n"
+         "\n");
+
+      printx(
+         "   #diverse options\n"
+         "   $-qarc<def>       quick read top level archives but not nested ones.\n");
+  printx("   $-weblimit=n<def>    change web access download limit to n mbytes, with\n"
+         "                  functions like sfk web, filter, xex. default is 100 mb.\n"
+         "                  you may also <exp> SFK_CONFIG=weblimit:30\n"
+         "   $-webtimeout=n<def>  web access timeout in msec. default is 10000.\n" // wto.general
+         "                  you may also <exp> SFK_CONFIG=webtimeout:3000\n");
   printx("   $-memlimit=n<def> set the caching memory limit to n mbytes (default=%d).\n"
-         "              used if a function needs to load whole files into memory.\n"
+         "               used if a function needs to load whole files into memory.\n"
          ,(int)(nGlblMemLimit / 1048576));
          #ifdef VFILEBASE
-  printx("              if zip etc. archive processing is very slow, it may be caused by\n"
-         "              a cache overflow. try to increase the -memlimit then.\n"
-         "              if you think sfk uses too much memory while processing files,\n"
-         "              try to reduce -memlimit (values below 200 are not recommended).\n"
-         "              you may also set SFK_CONFIG (see end of this text).\n"
-         "   $-cachestat<def> tell amount of memory used by archive file cache.\n"
-         "   $-nocache<def>   disable the disk cache (for network files).\n"
+  printx("               if zip etc. archive processing is very slow, it may be caused by\n"
+         "               a cache overflow. try to increase the -memlimit then.\n"
+         "               if you think sfk uses too much memory while processing files,\n"
+         "               try to reduce -memlimit (values below 200 are not recommended).\n"
+         "               you may also set SFK_CONFIG (see end of this text).\n"
+         "   $-cachestat<def>  tell amount of memory used by archive file cache.\n"
+         "   $-nocache<def>    disable the disk cache (for network files).\n"
          );
          #endif // VFILEBASE
-  printx("   $-exectime<def>  tell command execution time at program end.\n");
-         #ifdef _WIN32
-  printx("   $-noesckey<def>  disable stop by escape key. (windows only)\n");
-         #endif
-  printx("\n"
-         "   $shell return code handling and error processing:\n"
-         "\n"
-         "   $-showrc<def>    print sfk return code at end of command or program.\n"
-         "              may not print anything in case of fatal errors,\n"
-         "              like wrong syntax (usually rc 9).\n"
-         "   $-exterr<def>    in case of operating system related errors like file access,\n"
-         "              prints extended error information, if available.\n"
-         "   $-waitonerr<def> wait for user input on every error.\n"
-         "   $-waitonend<def> wait for user input at program end.\n"
-         "   $-stoponerr<def> stop directory tree processing on first unreadable file.\n"
-         "              default is to process as many files as possible, skipping\n"
-         "              unreadable files and directories.\n"
-         "   $-rcfromerr<def> some commands like filter, find, hexfind tell by shell rc\n"
-         "              that something was found. by default, skipped errors like\n"
-         "              unreadable files do NOT change this rc. with -rcfromerr,\n"
-         "              skipped errors do override the resulting shell rc.\n"
-         "   $-echoonerr<def> echo whole command to stderr when an error occurs.\n"
-         "              see also the SFK_CONFIG setting \"echoonstart\" below.\n"
-         "\n"
-         "   to experiment with the above options, try \"sfk errortest\".\n"
+  printx("   $-noipex<def>     disable automatic IP expansion with some commands.\n"
+         "   $-noop<def>       do nothing (no operation). sometimes helpful as a fill-in.\n"
          "\n");
 
   printx("   $command local versus global scope:\n"
@@ -23565,8 +23585,7 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
          "         #sfk -case filt x.txt -high red FooCase +filt -high blue TheBar\n"
          "\n"
          "      the \"-case\" is valid for ALL commands in the command chain.\n"
-         "\n"
-         );
+         "\n");
 
   printx("   $environment configuration:\n"
          "\n"
@@ -23591,8 +23610,7 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
          #else
          "          e.g. set SFK_CONFIG=tmpdir:~/mytmp,memlimit:500\n"
          #endif
-         "\n"
-         );
+         "\n");
          if (bGlblIgnore3600)
             printx("   info: files with a time difference of 1 hour AND an age > %d days\n"
                    "         are skipped by some commands, e.g. list -sincedir.\n\n", nGlblActiveFileAgeLimit);
@@ -23998,6 +24016,10 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
          #ifdef _WIN32
          "      <examp>##(sys.numcols)<def>  number of console columns.\n"
          #endif
+         "      <examp>##(sys.ownscript.name)<def>  filename of current script.\n"
+         "\n"
+         "      to get the text of the current script, use for example:\n"
+         "      <examp>sfk ... +getvar sys.ownscript.text +filter ...\n"
          "\n");
   printx("   $environment variable access\n"
          "\n"
@@ -24490,6 +24512,85 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
          "depending on DST, ignoring OS or file system.\n"
          "this is experimental, and may help or not.\n"
          );
+   }
+
+   if (!strcmp(pszSub, "basic"))
+   {
+   printx("$sfk basic informations (type \"sfk basic\"):\n"
+          "\n");
+   printx("   $All tree walking commands support file selection this way:\n"
+          "\n"
+          "   1. short format with ONE directory tree and MANY file name patterns:\n"
+          "\n"
+          "      #src1dir .cpp .hpp .xml bigbar <not>footmp\n"
+          "\n"
+          "   2. short format with a list of explicite file names:\n"
+          "\n"
+          "      #letter1.txt revenues9.xls report3<sla>turnover5.ppt\n"
+          "\n"
+          "   3. long format with MANY dir trees and file masks PER dir tree:\n"
+          "\n"
+          "      #-dir src1 src2 <not>src<sla>save -file foosys .cpp -dir bin5 -file .exe\n"
+          "\n"
+          "   For detailed help on file selection, type #\"sfk help select\"<def>.\n"
+          "\n");
+   printx("   %c and ? wildcards are supported within filenames. \"foo\" is interpreted\n"
+          "   as \"%cfoo%c\", so you can leave out %c completely to search a part of a name.\n"
+          "   For name start comparison, say \"%cfoo\" (finds foo.txt but not anyfoo.txt).\n"
+          "\n"
+          "   When you supply a directory name, by default this means \"take all files\".\n"
+          ,glblWildChar,glblWildChar,glblWildChar,glblWildChar,glblPathChar);
+   #ifndef _WIN32
+   if (!bhelp) setTextColor(nGlblWarnColor);
+   printx("   Use %c or \\* instead of *, and \\? instead of ?, as * and ? are eaten by the\n"
+          "   command shell. You may also redefine %c through export SFK_CONFIG=wildstar:c\n"
+          ,glblWildChar,glblWildChar);
+   if (!bhelp) setTextColor(-1);
+   #endif
+   printx("\n"
+          "      #sfk list mydir<def>                lists all files of mydir.\n"
+          "      #sfk list mydir foo<def>            lists files having 'foo' in their name.\n"
+          "      #sfk list mydir .cpp .hpp<def>      lists files ending .cpp or .hpp.\n"
+          "      #sfk list mydir <not>.cfg<def>          lists all files of mydir except .cfg\n"
+          "\n"
+          );
+   printx("   $general options:\n"
+          "      -nosub     do not include files within subdirectories.\n"
+          "      -tracesel  tells in detail which files and/or directories are included\n"
+          "                 or excluded, and why (due to which user-supplied mask).\n"
+          "      -quiet     or -nohead shows less output on some commands.\n"
+          "      -nocol     before any command switches off color output.\n"
+          #ifdef _WIN32
+          "      -hidden    includes hidden and system files and dirs.\n"
+          #endif
+          "      For detailed help on all options, type #\"sfk help options\".\n"
+          "\n");
+   #ifdef _WIN32
+   printx("   $configure your windows CMD.exe properly.\n"
+          "      select many display columns, 3000 lines for scrollback\n"
+          "      and copy/paste of displayed text. #\"sfk help shell\"<def> for more.\n"
+          "\n");
+   #endif
+   printx("   $beware of Shell Command Characters.\n" // main help, just reference
+          "      parameters containing #spaces<def> or characters #<>|!&?*<def> must be #sur-\n"
+          "      #rounded by quotes \"\"<def>. type \"#sfk filter<def>\" for details and examples.\n"
+          "\n");
+   #ifdef _WIN32
+   printx("   $beware of Automated Data Processing on different machines.\n"
+          "      if you write scripts for distribution on many Windows machines\n"
+          "      they may behave different, depending on the system codepage.\n"
+          "      to avoid this use -isochars. for details see: #sfk help nocase\n"
+          "\n");
+   #else
+   printx("   $More output columns?\n"
+          "      <exp> SFK_CONFIG=columns:160\n"
+          "\n");
+   #endif
+   printx("   $WRONG COLORS? Use one of:\n"
+          "      <exp> SFK_COLORS=on             for generic colors\n"
+          "      <exp> SFK_COLORS=theme:black    for DARK    backgrounds\n"
+          "      <exp> SFK_COLORS=theme:white    for BRIGHT  backgrounds\n"
+          "      see also \"sfk help colors\"\n");
    }
 
    if (!strcmp(pszSub, "faq"))
@@ -31192,6 +31293,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bool  bTCP = strcmp(pszCmd, "tcpsend") ? 0 : 1;
       bool  bknx = strcmp(pszCmd, "knxsend") ? 0 : 1;
       bool  bRaw = 0;
+      bool  bempty = 0;
 
       mclear(szDstIP);
       mclear(abMsg);
@@ -31217,28 +31319,23 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             nownport = atol(pszParm);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-timeout", &pszParm)) { // udpsend
             if (!pszParm) return 9;
             nTimeout = atol(pszParm);
             continue;
          }
-         else
          if (!strcmp(pszArg, "-listen")) {
             nlisten = 1;
             continue;
          }
-         else
          if (strBegins(pszArg, "-listen=")) {
             nlisten = atol(pszArg+8);
             continue;
          }
-         else
          if (!strcmp(pszArg, "-listenall")) {
             nlisten = -1;
             continue;
          }
-         else
          if (   !strcmp(pszArg, "-show-line-endings")
              || !strcmp(pszArg, "-showle")
             )
@@ -31246,32 +31343,22 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.leattr = 'e';
             continue;
          }
-         else
          if (!strcmp(pszArg, "-wide")) {
             bGlblHexDumpWide = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-lean") || !strcmp(pszArg, "-narrow"))
          {
             bGlblHexDumpWide = 0;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-pure"))   { nGlblHexDumpForm=1; continue; }
-         else
          if (!strcmp(pszArg, "-hexsrc")) { nGlblHexDumpForm=2; continue; }
-         else
          if (!strcmp(pszArg, "-decsrc")) { nGlblHexDumpForm=3; continue; }
-         else
          if (!strcmp(pszArg, "-flat")) { nGlblHexDumpForm=4; continue; }
-         else
          if (strBegins(pszArg, "-multi")) { cs.multicast=1; continue; }
-         else
          if (!strcmp(pszArg, "-mcast")) { cs.multicast=1; continue; }
-         else
          if (!strcmp(pszArg, "-raw")) { bRaw=1; continue; }
-         else
          if (!strcmp(pszArg, "-knx")) {
             cs.multicast=1;
             if (!szDstIP[0]) strcpy(szDstIP, "224.0.23.12");
@@ -31279,7 +31366,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.knx=1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-ntp")) {
             nlisten = 1;
             if (ndstport < 0) ndstport = 123;
@@ -31287,7 +31373,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.ntp=1;
             continue;
          }
-         else
          if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(argx[iDir]))
                break; // fall through
@@ -31296,7 +31381,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             else
                return 9+perr("unknown option: %s\n", argx[iDir]);
          }
-         else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
 
@@ -31382,7 +31466,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          delete [] pInText;
       }
 
-      if (!nMsg) {
+      if (!nMsg && !cs.force) {
          if (cs.knx)
             return 9+perr("missing data to send. type \"sfk help knx\" for examples.");
          return 9+perr("no data given to send.\n");
@@ -31410,8 +31494,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       }
       else
       if (bTCP) {
-         memcpy(abMsg+nMsg, "\r\n", 2);
-         nMsg += 2;
+         if (nMsg) {
+            memcpy(abMsg+nMsg, "\r\n", 2);
+            nMsg += 2;
+         }
          tcpClient(szDstIP, ndstport, nlisten, nownport, abMsg, nMsg, nTimeout);
       } else {
          udpSend(szDstIP, ndstport, nlisten, nownport, abMsg, nMsg, nTimeout, 0);
@@ -33506,8 +33592,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
    #endif // WITH_TCP
 
-   // internal, experimental
-   if (!strcmp(pszCmd, "checkdisk"))
+   if (!strcmp(pszCmd, "checkdisk")) // internal
    {
       ifhelp (argc < 4)
          printx("<help>$sfk checkdisk volumepath rangesizemb|all\n"
@@ -35057,9 +35142,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
    #ifdef SFKPACK
 
-   // internal
-   if (   !strcmp(pszCmd, "gzip")
-       || !strcmp(pszCmd, "gunzip")
+   if (   !strcmp(pszCmd, "gzip")   // internal
+       || !strcmp(pszCmd, "gunzip") // internal
       )
    {
       ifhelp (chain.usefiles == 0 && nparm < 1)
@@ -35311,6 +35395,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "     #sfk zip out -since 3d mydir\n"
              "       add files changed in the last three days.\n"
              "\n"
+             "     #sfk zip out.zip -flist mylist.txt\n"
+             "       read a list of filenames from mylist.txt\n"
+             "       and add these files to out.zip\n"
+             "\n"
              "     #sfk list -late=5 mydir +zipto out -force\n"
              "       write the 5 newest files to out.zip,\n"
              "       overwriting an existing out.zip\n"
@@ -35319,8 +35407,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "       zip mydir, mark files named exactly conf,\n"
              "       or being in a folder conf, or having .sh\n"
              "       in their name as executable on linux.\n"
-             "\n"
-             "     #sfk unzip -todir tmpdoc in.odt\n"
+             "\n");
+      printx("     #sfk unzip -todir tmpdoc in.odt\n"
              "     #sfk zip -rel out.odt tmpdoc\n"
              "       extract an openoffice writer document\n"
              "       into a folder tmpdoc, then repack it to\n"
@@ -35598,7 +35686,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (bcmdzipto==0) {
          if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iChainNext, &bAnyDirParms)))
             return lRC;
-         if (!bAnyDirParms) {
+         if (!cs.usingflist && !bAnyDirParms) {
             perr("missing input directory name.");
             if (pszInfoOutArg)
                pinf("to zip a folder %s type %s again.\n", pszInfoOutArg, pszInfoOutArg);
@@ -36138,7 +36226,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                snprintf(szInFile, SFK_MAX_PATH, "%s.zip", pszArg);
             continue;
          }
-         #if 1
          if (istate) {
             strcopy(szPat, pszArg);
             fixPathChars(szPat);
@@ -36148,16 +36235,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          perr("unexpected: %s",pszArg);
          pinf("use -pat %s to extract just files with this name.\n",pszArg);
          return 9;
-         #else
-         if (istate == 0) {
-            istate++;
-            if (glblFileSet.beginLayer(false, __LINE__)) return 9;
-            if (glblFileSet.addRootDir(str("."), __LINE__, false)) return 9;
-            glblFileSet.addDirMask(pszArg);
-            continue;
-         }
-         glblFileSet.addFileMask(pszArg);
-         #endif
       }
 
       int iDirNext = 0;

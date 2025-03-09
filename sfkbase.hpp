@@ -1744,6 +1744,7 @@ public:
    int quiet;              // quiet mode
    bool ftpupdate;         // mput, mget: explicite -update
    bool ftpall;            // mput, mget: disable -update mode
+   bool ftpwidelist;       // with webserv
    bool noclone;           // disable time stamp replication
    bool preserve;          // copy full attributes with sft
    int fast;               // command dependent optimization
@@ -1937,6 +1938,10 @@ public:
    char *notifyto;         // sft(serv)
    int  justevery;
    int  everycnt;
+   bool sanecheck;         // crccheck -sane
+   num  sanetime;          // of crc list file
+   int  usehta;            // webserv internal
+   bool usingflist;        // sfk196 with -flist
 };
 
 // extern struct CommandStats gs;
