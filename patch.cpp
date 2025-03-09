@@ -4,6 +4,9 @@
    originally written as a separate tool,
    then integrated into sfk with the least possible effort.
 
+   changes:
+   add: MAX_OUT_LINES extended to 50000, apOut no longer stackbased
+   add: -nopid support
    sfk 1.1.2: linux fixes
 */
 
@@ -42,10 +45,10 @@
 #define bool  unsigned char
 
 #define MAX_LINE_LEN    4096
-#define MAX_CMD_LINES   10000
-#define MAX_CACHE_LINES 10000
-#define MAX_CMD         500
-#define MAX_OUT_LINES   10000
+#define MAX_CMD_LINES   10000 // max lines per :file ... :done block
+#define MAX_CACHE_LINES 10000 // max lines per :from ... :to pattern
+#define MAX_CMD         500   // max number of :from commands per patchfile
+#define MAX_OUT_LINES   50000 // max lines per target file
 
 #ifdef _WIN32
 static const char  glblPathChar    = '\\';
@@ -81,6 +84,9 @@ int  bGlblCheckSelRep = 0;
 int  bGlblStats = 0;
 int  nGlblDetabOutput = 0;
 int  bGlblVerify = 0;
+int  bGlblNoPID  = 0;
+
+char **apOut = 0; // [MAX_OUT_LINES];
 
 // select-replace table over all targets
 #define MAX_GLOBAL_CHANGES 50
@@ -159,53 +165,85 @@ static int fileExists(char *pszFileName) {
 }
 
 int processCmdFile(char *psz);
+extern long printx(const char *pszFormat, ...);
+
+// ensure allocation of buffers when entering patchMain,
+// and freeing of buffers when leaving:
+class PatchMemCover {
+public:
+   PatchMemCover  ( ) {
+      bdead = 0;
+      apOut = new char*[MAX_OUT_LINES+10];
+      if (!apOut) bdead = 1;
+   }
+   ~PatchMemCover ( ) {
+      if (apOut) { delete [] apOut; apOut = 0; }
+   }
+   int bdead;
+};
 
 int patchMain(int argc, char *argv[], int offs)
 {
    int processPatchFile(char *pszPatchFileName);
 
-   if (argc < 2) {
-      printf(
-          "usage: sfk patch [-revoke|-redo] yourpatchfile.cpp\n\n"
-          "without any options supplied, sfk patch\n"
-          "   - runs the patchfile.\n"
-          "   - makes backups of the specified target files.\n"
-          "   - patches the specified target files.\n\n"
-          "options supported:\n"
-          "   -revoke: undo all patches.\n"
-          "            this simply copies all backups back over the targets.\n"
-          "            NOTE: targets are TOUCHED afterwards (current date/time set)\n"
-          "                  to enforce proper recompile. use -keepdates to avoid.\n"
+   PatchMemCover mem;
+   if (mem.bdead) {
+      log(0, "error: out of memory in patchMain\n");
+      return 9;
+   }
+
+   if (argc < 2)
+   {
+      printx(
+          "<help>$sfk patch [-revoke|-redo] yourpatchfile.cpp [-sim|-verify]\n"
+          "\n"
+          "   search text blocks in file(s) and replace them by other text blocks,\n"
+          "   including backup creation and optional restore of original files.\n"
+          "\n"
+          "   -revoke: undo all patches, by replacing the modified targets\n"
+          "            by the backup files which sfk stores in save_patch.\n"
+          "            the target files are touched afterwards (date/time update)\n"
+          "            to enforce proper recompile. use -keepdates to avoid this.\n"
           "   -redo  : undo all patches and then re-apply patches.\n"
           "            best used whenever you change the patchfile itself,\n"
           "            to have your changes updated in the target files.\n"
           "   -exact-match: by default, leading whitespaces are ignored.\n"
           "                 use this option enforce exact 1:1 line matching.\n"
-          "   -keep-dates: by default, revoked files get touched.\n"
-          "                use this option enforce original file date.\n"
+          "   -keep-dates: by default, revoked files get touched. use this option\n"
+          "                to enforce original file dates (yet windows only).\n"
           "   -sim   : simulate what the patch would do, don't change anything.\n"
           "   -qs    : quick summary, just tell a one-line status.\n"
           "   -stats : show statistics of select-replace usage.\n"
           "   -verify: check if an applied patch is still intact.\n"
+          "   -nopid : apply irrevocable patch without [patch-id].\n"
           "\n"
          );
-      printf("patchfile rules:\n"
-         "- patches are executed extactly in the order as given in the file.\n"
-         "- each FROM/TO statement is executed exactly ONCE.\n"
-         "- if ANY of the FROM/TO statements doesn't match the input,\n"
-         "  the whole file is NOT patched.\n"
-         "- if ANY of the FROM/TO statements doesn't match the input,\n"
-         "  the whole file is NOT patched.\n"
-         "- in the first TO for a new target file, include the word [patch-id]\n"
-         "  by using a comment in the target file's syntax, e.g. in C++: // [patch-id]\n"
-         "  this marks the file as being patched -> sfk will not patch it again.\n"
+      printx(
+         "   patchfile rules:\n"
+         "   - patches are executed exactly in the order as given in the patchfile.\n"
+         "   - each :from/:to statement is executed exactly once.\n"
+         "   - if ANY of the :from/:to statements doesn't match the input,\n"
+         "     the whole file is NOT patched.\n"
+         "   - the first :to block for a new target file must contain the word [patch-id],\n"
+         "     by using a comment in the target file's syntax, e.g. in C++: // [patch-id].\n"
+         "     this marks the file as being patched -> sfk will not patch it again.\n"
          "\n"
-         "it is recommended that your patchfiles have the ending .cpp\n"
-         "to enable syntax highlighting with most text editors.\n"
+         "   it is recommended that your patchfiles have the ending .cpp (or .java etc.)\n"
+         "   to enable syntax highlighting with your favourite text editor.\n"
          "\n"
          );
-      printf(
-         "patchfile example, containing all supported patchfile commands:\n\n"
+      printx("   #sfk patch -example\n"
+             "      shows a detailed patchfile example.\n"
+             "   #sfk patch -template\n"
+             "      gives a simple, empty patchfile template.\n"
+             );
+      return -1;
+   }
+
+   if (!strcmp(argv[1+offs], "-example"))
+   {
+      printx(
+         "#patchfile example, containing all supported patchfile commands:\n\n"
          ":patch \"fix method types for local use\"\n"
          ":info auto-adapt return types\n"
          "\n"
@@ -222,7 +260,8 @@ int patchMain(int argc, char *argv[], int offs)
          "    UInt32                getAppType                ( UInt8 );\n"
          ":done\n"
          "\n"
-         ":# this is a remark, allowed only outside :file blocks.\n"
+         ":## this is a remark, allowed only outside :file blocks.\n"
+         "\n"
          ":file include\\Another.cpp\n"
          ":select-replace /lineSelectPattern/from/to/\n"
          ":select-replace /MY_TRACE(/\\n\"/\"/\n"
@@ -236,12 +275,38 @@ int patchMain(int argc, char *argv[], int offs)
          "\n"
          ":mkdir sources\n"
          ":create sources\\MyOwnFix.hpp\n"
-         "#define OTHER_SYMBOL MY_OWN_SYMBOL\n"
+         "// this file is generated by sfk patch.\n"
+         "##define OTHER_SYMBOL MY_OWN_SYMBOL\n"
          ":done\n"
          "\n"
          ":skip-begin\n"
          "this is outcommented stuff. the skip-end is optional.\n"
          ":skip-end\n"
+         );
+      return -1;
+   }
+
+   if (!strcmp(argv[1+offs], "-template") || !strcmp(argv[1+offs], "-tpl"))
+   {
+      printf(
+         ":patch \"thepatch\"\n"
+         "\n"
+         ":root theproject\n"
+         "\n"
+         ":file include\\file1.hpp\n"
+         ":from \n"
+         ":to\n"
+         "    // [patch-id]\n"
+         ":from \n"
+         ":to\n"
+         ":done\n"
+         "\n"
+         ":file sources\\file1.cpp\n"
+         ":from \n"
+         ":to\n"
+         "    // [patch-id]\n"
+         ":done\n"
+         "\n"
          );
       return -1;
    }
@@ -302,6 +367,10 @@ int patchMain(int argc, char *argv[], int offs)
       else
       if (!strcmp(argv[iarg+offs], "-stat")) {
          bGlblStats = 1;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-nopid")) {
+         bGlblNoPID = 1;
       }
       else
       if (!strncmp(argv[iarg+offs], "-", 1)) {
@@ -376,7 +445,7 @@ int patchMain(int argc, char *argv[], int offs)
          if (bGlblQuickSum)
           printf("* patch %s: %s\n", bGlblVerify ? "intact" : "valid", pszPatchFileName);
          else
-          printf("* all checked. the patch is %s.\n", bGlblVerify ? "still intact" : "valid and might be used");
+          printf("* all checked. the patch is %s.\n", bGlblVerify ? "still intact" : "valid and may be applied.");
          return 0;
       } else {
          if (bGlblQuickSum)
@@ -389,7 +458,7 @@ int patchMain(int argc, char *argv[], int offs)
    bGlblSimulate = 0;
 
    // pass 3: create backups
-   if (!iRC) {
+   if (!iRC && !bGlblNoPID) {
       log(5, "* creating backups\n");
       bGlblBackup = 1;
       iRC = processPatchFile(pszPatchFileName);
@@ -398,7 +467,7 @@ int patchMain(int argc, char *argv[], int offs)
 
    // pass 3: apply patches
    if (!iRC) {
-      log(5, "* applying patches\n");
+      log(5, "* applying patches%s\n", bGlblNoPID?" permanently":"");
       bGlblCheckSelRep = 1;
       iRC = processPatchFile(pszPatchFileName);
       if (!iRC) {
@@ -951,7 +1020,7 @@ int processFileUntilDone(char *pszTargFileName)
 
    }  // endfor outer loop (bDone)
 
-   if (!bHavePatchIDForThisFile) {
+   if (!bHavePatchIDForThisFile && !bGlblNoPID) {
       log(0, "error  : line %d: [patch-id] missing!\n",nGlblLine);
       log(0, "info   : you must supply at least one [patch-id] within a :to block per :file,\n"
              "info   : otherwise i cannot identify already-patched files.\n");
@@ -1153,7 +1222,6 @@ int processFileUntilDone(char *pszTargFileName)
    if (!ftarg) { log(0, "error  : cannot read target file: %s\n", pszTargFileName); return 2+4; }
 
    // we cache the output in memory
-   char *apOut[MAX_OUT_LINES];
    int iout = 0;
 
    int isrcbuf=0, ipatmatch=0;
@@ -1185,8 +1253,10 @@ int processFileUntilDone(char *pszTargFileName)
                log(5, "checked: %s is still patched\n",pszTargFileName);
             return 0;
          }
-         log(0, "error  : %s already patched\n",pszTargFileName);
-         return 1;
+         if (!bGlblNoPID) {
+            log(0, "error  : %s already patched\n",pszTargFileName);
+            return 1;
+         }
       }
 
       // does current in-line match the CURRENT pattern's current line?

@@ -10,6 +10,36 @@
       is not yet tested and may require further adaptions.
    -  ntfs handling of links is not yet tested.
    -  unix bash interprets $, ! and probably other chars.
+   -  german umlauts not supported in grep.
+   -  sfk ftp put from linux may sometimes wait endless
+      until connection is closed by pressing CTRL+C.
+
+   1.1.6
+   -  add: accept general options before any command.
+   -  add: some example documentation.
+   -  opt: global code rework, added perr and pwarn.
+   -  fix: grep: last record of (binary) files ignored.
+   -  fix: md5check: -skip n didn't work (-skip=n did).
+   -  add: color command to change terminal text color.
+   -  add: filter: text processing option -form.
+   -  add: grep: windows: now with coloured highlighting of result
+           filenames and text hits. sfk help colors for color config.
+   -  add: filter: windows: color highlighting of hits.
+   -  opt: mystrstri speed improved.
+   -  add: snapview: shift+esc always closes all views.
+   -  ren: syncto: option -stest renamed to -stop.
+   -  fix: mapto: now also counts notes-begin section.
+   -  add: sfk grep: now also processing binary files.
+           to switch to old behaviour, use grep -text.
+   -  add: (internal) freezeto: stale archive list.
+   -  add: micro tracing kernel: file logging support.
+   -  add: sview: direct file tree reading w/o snapfile.
+   -  add: sview: detab text before copy to clipboard.
+   -  add: patch: -nopid support to apply permanent patches.
+   -  fix: unix colors by default for help text only.
+   -  add: reflist: internal option -case, for autotest.
+   -  add: patch: output buffer extended to 50000 lines.
+   -  add: patch: help text rework, template generation.
 
    1.1.5
    -  fix: stat: sizes >4GB truncated in listing.
@@ -179,13 +209,15 @@
 
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
-#define SFK_BRANCH   "yourlabel"
-#define SFK_VERSION  "yourversion"
-#define SFK_PROVIDER "yourname"
+#define SFK_BRANCH   ""
+#define SFK_VERSION  "1.1.6"
+#define SFK_PROVIDER "unknown"
 
 // in case of linking problems concerning libsocket etc.,
 // you may out-comment this to compile without tcp support:
-#define WITH_TCP
+#ifndef USE_SFK_BASE
+ #define WITH_TCP
+#endif
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -212,6 +244,7 @@
   #ifndef socklen_t
    #define socklen_t int
   #endif
+  #define vsnprintf _vsnprintf
 #else
   #include <unistd.h>
   #include <dirent.h>
@@ -224,6 +257,7 @@
   #include <netdb.h>
   #include <errno.h>
   #include <sched.h>
+  #include <signal.h>
   #ifndef  _S_IFDIR
    #define _S_IFDIR 0040000 // = 0x4000
   #endif
@@ -248,12 +282,18 @@
 #define ulong unsigned long
 #define bool  unsigned char
 
-#define WITH_FN_INST
+#ifndef USE_SFK_BASE
+ #define WITH_FN_INST
+#endif
+
 #define SFK_BOTH_RUNCHARS
 
 #ifdef _WIN32
  #include "memdeb.cpp"
 #endif
+
+#include "mtk/mtktrace.hpp"
+#include "mtk/mtktrace.cpp"
 
 #include "sfkmd5.cpp"
 #include "binpack.cpp"
@@ -368,6 +408,8 @@ mytime_t getSystemTime()
 
 // ========== 64 bit abstraction layer end ============
 
+long mystrstri(char *psz1, char *psz2, long *lpAtPosition = 0);
+
 void doSleep(long nmsec) 
 {
    #ifdef _WIN32
@@ -379,7 +421,7 @@ void doSleep(long nmsec)
 
 enum eWalkTreeFuncs {
    eFunc_MD5Write = 1,
-   eFunc_JamFile     ,
+   eFunc_JamFile  = 2,  // fixed, see sview
    eFunc_Detab       ,
    eFunc_JamIndex    ,
    eFunc_SnapAdd     ,
@@ -425,6 +467,8 @@ unsigned char abBuf[100000]; // must be far greater than szLineBuf
 #define MAX_LINE_LEN 4096
 char szLineBuf[MAX_LINE_LEN+10];
 char szLineBuf2[MAX_LINE_LEN+10];
+char szAttrBuf[MAX_LINE_LEN+10];
+char szAttrBuf2[MAX_LINE_LEN+10];
 char *pszGlblJamPrefix = 0;
 char *pszGlblJamRoot = 0;
 bool  bGlblJamPure = 0;
@@ -489,6 +533,36 @@ bool bGlblYes            = 0;
 SOCKET hGlblTCPOutSocket = 0;
 bool bGlblFTPReadWrite   = 0;
 #endif
+bool bGlblBinGrep          = 0;
+uchar nGlblBinTextBinRange = 0xFF;
+#ifdef _WIN32
+bool bGlblUseColor       =  1;
+bool bGlblUseHelpColor   =  1;
+// windows default colors for black background
+// functional part
+long nGlblFileColor      = 15; // white
+long nGlblHitColor       =  5; // green
+long nGlblRepColor       =  7; // yellow
+long nGlblErrColor       =  3; // red
+long nGlblWarnColor      =  7; // magenta
+// help part
+long nGlblHeadColor      =  5; // white
+long nGlblExampColor     =  7; // magenta
+#else
+bool bGlblUseColor       =  0;
+bool bGlblUseHelpColor   =  1;
+// unix default colors for white background
+long nGlblFileColor      = 10; // magenta
+long nGlblHitColor       =  4; // green
+long nGlblRepColor       =  8; // blue
+long nGlblErrColor       =  2; // red
+long nGlblWarnColor      =  2; // red
+long nGlblHeadColor      =  4; // green
+long nGlblExampColor     = 10; // magenta
+#endif
+bool bGlblGrepLineNum    = 0;
+bool bGlblUseCase        = 0;  // grep, filter, reflist
+bool bGlblHtml           = 0;  // for html help creation
 
 long nGlblFzMisArcFiles = 0;
 long nGlblFzConArcFiles = 0;
@@ -496,7 +570,7 @@ long nGlblFzConArchives = 0;
 long nGlblFzMisCopFiles = 0;
 long nGlblFzConCopFiles = 0;
 
-#define _ { printf("[%d]\n",__LINE__); fflush(stdout); }
+#define _ mtklog("[%d]",__LINE__);
 
 class FileList;
 
@@ -521,6 +595,312 @@ char *readDirEntry(DIR *d) {
   return e == NULL ? (char *) NULL : e->d_name;
 }
 #endif
+
+void setTextColor(long n, bool bStdErr=0);
+
+#ifdef _WIN32
+HANDLE hGlblConsole     = 0;
+WORD   nGlblConsAttrib  = 0;
+
+// need this to ensure that commands dumping colored output
+// do never leave the shell in a non-std color.
+BOOL WINAPI ctrlcHandler(DWORD type)
+{
+   if (type != CTRL_C_EVENT && type != CTRL_BREAK_EVENT)
+      return 0;
+
+   setTextColor(-1);
+
+   // printf("[user interrupt]\n");
+   ExitProcess(8);
+   return 1;
+}
+#else
+// unix todo: ctrl+c handler to reset color
+void ctrlcHandler(int sig_number)
+{
+   setTextColor(-1, 0); // stdout
+   setTextColor(-1, 1); // stderr
+
+   // printf("[user interrupt]\n");
+   exit(8);
+}
+#endif
+
+void setColorScheme(char *psz1)
+{
+   char *psz2 = 0;
+   if (!strcmp(psz1, "off"))
+   {  bGlblUseColor = bGlblUseHelpColor = 0; }
+   else
+   if (!strcmp(psz1, "on"))
+      bGlblUseColor = 1;
+   else {
+      psz2 = strstr(psz1, "file:");
+      if (psz2) { nGlblFileColor = atol(psz2+5); }
+      psz2 = strstr(psz1, "hit:");
+      if (psz2) { nGlblHitColor = atol(psz2+4); }
+      psz2 = strstr(psz1, "rep:");
+      if (psz2) { nGlblRepColor = atol(psz2+4); }
+      psz2 = strstr(psz1, "err:");
+      if (psz2) { nGlblErrColor = atol(psz2+4); }
+      psz2 = strstr(psz1, "warn:");
+      if (psz2) { nGlblWarnColor = atol(psz2+5); }
+      psz2 = strstr(psz1, "head:");
+      if (psz2) { nGlblHeadColor = atol(psz2+5); }
+      psz2 = strstr(psz1, "examp:");
+      if (psz2) { nGlblExampColor = atol(psz2+6); }
+   }
+}
+
+void initConsole()
+{
+   #ifdef _WIN32
+   hGlblConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+   CONSOLE_SCREEN_BUFFER_INFO oConInf;
+   GetConsoleScreenBufferInfo(hGlblConsole, &oConInf);
+   nGlblConsAttrib = oConInf.wAttributes;
+   #endif
+
+   char *psz1 = getenv("SFK_COLORS");
+   if (psz1) setColorScheme(psz1);
+
+   #ifdef _WIN32
+   if (bGlblUseColor)
+      SetConsoleCtrlHandler(ctrlcHandler, 1);
+   #else
+   signal(SIGINT, ctrlcHandler);
+   #endif
+}
+
+void setTextColor(long n, bool bStdErr)
+{
+   if (!bGlblUseColor)
+      return;
+
+   if (bGlblHtml) {
+      static bool bAnySet = 0;
+      static bool bIsBold = 0;
+      ulong ncol = 0;
+      if (n == -1) {
+         if (bAnySet) printf("</font>"); bAnySet=0;
+         if (bIsBold) printf("</b>"); bIsBold=0; 
+         return;
+      }
+      bAnySet=1;
+      if (n == 1) { bIsBold=1; printf("<b>"); }
+      if (n & 2) ncol |= (n&1) ? 0xFF0000 : 0x990000;
+      if (n & 4) ncol |= (n&1) ? 0x00FF00 : 0x009900;
+      if (n & 8) ncol |= (n&1) ? 0x0000FF : 0x000099;
+      printf("<font color=\"%06X\">", ncol);
+      return;
+   }
+
+   #ifdef _WIN32
+
+   WORD nAttrib = 0;
+   if (n & 1) nAttrib |= FOREGROUND_INTENSITY;
+   if (n & 2) nAttrib |= FOREGROUND_RED;
+   if (n & 4) nAttrib |= FOREGROUND_GREEN;
+   if (n & 8) nAttrib |= FOREGROUND_BLUE;
+   if (n == -1)
+      SetConsoleTextAttribute(hGlblConsole, nGlblConsAttrib & (FOREGROUND_RED|FOREGROUND_GREEN|FOREGROUND_BLUE|FOREGROUND_INTENSITY));
+   else
+      SetConsoleTextAttribute(hGlblConsole, nAttrib);
+
+   #else
+
+   #define UXATTR_RESET     0
+   #define UXATTR_BRIGHT    1
+   #define UXATTR_DIM       2
+   #define UXATTR_UNDERLINE 3
+   #define UXATTR_BLINK     4
+   #define UXATTR_REVERSE   7
+   #define UXATTR_HIDDEN    8
+
+   #define UXCOL_BLACK      0
+   #define UXCOL_RED        1
+   #define UXCOL_GREEN      2
+   #define UXCOL_YELLOW     3
+   #define UXCOL_BLUE       4
+   #define UXCOL_MAGENTA    5
+   #define UXCOL_CYAN       6
+   #define UXCOL_WHITE      7
+
+   FILE *fout = stdout;
+   if (bStdErr)
+         fout = stderr;
+
+   if (n==-1) {
+      fprintf(fout, "%c[%d;30m", 0x1B, UXATTR_RESET);
+      return;
+   }
+
+   int nAttr = (n & 1) ? UXATTR_BRIGHT : UXATTR_RESET;
+
+   switch (n & 14) {
+      case  2: n = UXCOL_RED;     break;
+      case  4: n = UXCOL_GREEN;   break;
+      case  6: n = UXCOL_YELLOW;  break;
+      case  8: n = UXCOL_BLUE;    break;
+      case 10: n = UXCOL_MAGENTA; break;
+      case 12: n = UXCOL_CYAN;    break;
+      case 14: n = UXCOL_WHITE;   break;
+      default: n = UXCOL_BLACK;   break;
+   }
+   fprintf(fout, "%c[%d;%dm", 0x1B, nAttr, n+30);
+
+   #endif
+}
+
+void printHtml(char *pszText, int iTextLen)
+{
+   for (int i=0; i<iTextLen; i++) {
+      char c = pszText[i];
+      switch (c) {
+         case '>': printf("&gt;"); break;
+         case '<': printf("&lt;"); break;
+         case '&': printf("&amp;"); break;
+      // case '\n': printf("<br>\n"); break;
+         default : putchar(c); break;
+      }
+   }
+}
+
+void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1)
+{
+   long nTextLen = strlen(pszText);
+   long i1=0,i2=0,i3=0;
+   while (i1 < nTextLen)
+   {
+      // identify next phrase of same color
+      uchar a1 = pszAttrib[i1];
+      for (i2=1; i1+i2<nTextLen; i2++)
+         if (pszAttrib[i1+i2] != a1)
+            break;
+      // dump next phrase with len i2.
+      switch (a1) {
+         case 'f': setTextColor(nGlblFileColor); break;
+         case 'h': setTextColor(nGlblHeadColor); break;
+         case 'i': setTextColor(nGlblHitColor); break;
+         case 'r': setTextColor(nGlblRepColor); break;
+         case 'x': setTextColor(nGlblExampColor); break;
+         default : setTextColor(-1); break;
+      }
+      if (bGlblHtml)
+         printHtml(pszText+i1, (int)i2);
+      else
+         printf("%.*s", (int)i2, pszText+i1);
+      // step forward
+      i1 += i2;
+   }
+   setTextColor(-1);
+   if (bWithLF)
+      putchar('\n');
+}
+
+char szPrintBuf1[4096+10];
+char szPrintBuf2[4096+10];
+char szPrintAttr[4096+10];
+long printx(const char *pszFormat, ...)
+{
+   va_list argList;
+   va_start(argList, pszFormat);
+   ::vsnprintf(szPrintBuf1, sizeof(szPrintBuf1)-10, pszFormat, argList);
+   szPrintBuf1[sizeof(szPrintBuf1)-10] = '\0';
+   char *pszSrc = szPrintBuf1;
+   long iDst = 0;
+   char nAttr = ' ';
+   bool bResetOnLF = 0;
+   while (*pszSrc && (iDst < sizeof(szPrintBuf2)-10)) 
+   {
+      if (!strncmp(pszSrc, "<help>", 6)) { pszSrc += 6; if (bGlblUseHelpColor) bGlblUseColor = 1; } else
+      if (!strncmp(pszSrc, "<file>", 6)) { pszSrc += 6; nAttr = 'f'; } else
+      if (!strncmp(pszSrc, "<head>", 6)) { pszSrc += 6; nAttr = 'h'; } else
+      if (!strncmp(pszSrc, "$"     , 1)) { pszSrc += 1; nAttr = 'h'; bResetOnLF = 1; } else
+      if (!strncmp(pszSrc, "##"    , 2)) {
+         pszSrc += 2;
+         szPrintBuf2[iDst] = '#';
+         szPrintAttr[iDst] = nAttr;
+         iDst++;
+      }
+      else
+      if (!strncmp(pszSrc, "#"     , 1)) { pszSrc += 1; nAttr = 'x'; bResetOnLF = 1; } else
+      if (!strncmp(pszSrc, "<hit>" , 5)) { pszSrc += 5; nAttr = 'i'; } else
+      if (!strncmp(pszSrc, "<rep>" , 5)) { pszSrc += 5; nAttr = 'r'; } else
+      if (!strncmp(pszSrc, "<def>" , 5)) { pszSrc += 5; nAttr = ' '; } else
+      if (!strncmp(pszSrc, "<not>" , 5)) {
+         pszSrc += 5;
+         szPrintBuf2[iDst] = glblNotChar;
+         szPrintAttr[iDst] = nAttr;
+         iDst++;
+      }
+      else
+      if (!strncmp(pszSrc, "<run>" , 5)) {
+         pszSrc += 5;
+         szPrintBuf2[iDst] = glblRunChar;
+         szPrintAttr[iDst] = nAttr;
+         iDst++;
+      }
+      else {
+         szPrintBuf2[iDst] = *pszSrc;
+         szPrintAttr[iDst] = nAttr;
+         if (*pszSrc == '\n' && bResetOnLF) {
+            nAttr = ' ';
+            szPrintAttr[iDst] = nAttr;
+            bResetOnLF = 0;
+         }
+         pszSrc++;
+         iDst++;
+      }
+   }
+   szPrintBuf2[iDst] = '\0';
+   printColorText(szPrintBuf2, szPrintAttr, 0);
+   return 0;
+}
+
+long perr(const char *pszFormat, ...)
+{
+   va_list argList;
+   va_start(argList, pszFormat);
+   ::vsnprintf(szPrintBuf1, sizeof(szPrintBuf1)-10, pszFormat, argList);
+   szPrintBuf1[sizeof(szPrintBuf1)-10] = '\0';
+   setTextColor(nGlblErrColor, 1); // on stderr
+   fprintf(stderr, "error: %s", szPrintBuf1);
+   setTextColor(-1, 1);
+   return 0;
+}
+
+long pwarn(const char *pszFormat, ...)
+{
+   va_list argList;
+   va_start(argList, pszFormat);
+   ::vsnprintf(szPrintBuf1, sizeof(szPrintBuf1)-10, pszFormat, argList);
+   szPrintBuf1[sizeof(szPrintBuf1)-10] = '\0';
+   setTextColor(nGlblWarnColor, 1);
+   fprintf(stderr, "warning: %s", szPrintBuf1);
+   setTextColor(-1, 1);
+   return 0;
+}
+
+bool mystrhit(char *pszStr, char *pszPat, bool bCase, long *pOutHitIndex)
+{
+   if (bCase) {
+      char *psz = strstr(pszStr, pszPat);
+      if (psz) {
+         if (pOutHitIndex) *pOutHitIndex = (long)(psz-pszStr);
+         return true;
+      } else {
+         if (pOutHitIndex) *pOutHitIndex = -1;
+         return false;
+      }
+   } else {
+      if (mystrstri(pszStr, pszPat, pOutHitIndex))
+         return true;
+      else
+         return false;
+   }
+}
 
 // uses szLineBuf:
 num getOldDirTime(char *pszName) 
@@ -637,7 +1017,7 @@ long StringTable::numberOfEntries() {
 }
 
 bool StringTable::isSet(long iIndex) {
-   if (iIndex < 0) { fprintf(stderr, "warning: illegal index: %d\n", iIndex); return 0; }
+   if (iIndex < 0) return 0+pwarn("illegal index: %d\n", iIndex);
    return (iIndex < nClArrayUsed) ? 1 : 0;
 }
 
@@ -685,10 +1065,8 @@ long StringTable::addEntryPrefixed(char *psz, char cPrefix) {
 }
 
 long StringTable::setEntry(long nIndex, char *psz) {
-   if (nIndex >= nClArrayUsed) {
-      fprintf(stderr, "error: illegal set index: %d\n", nIndex);
-      return 9;
-   }
+   if (nIndex >= nClArrayUsed)
+      return 9+perr("illegal set index: %d\n", nIndex);
    if (apClArray[nIndex])
       delete [] apClArray[nIndex];
    apClArray[nIndex] = strdup(psz);
@@ -696,10 +1074,8 @@ long StringTable::setEntry(long nIndex, char *psz) {
 }
 
 long StringTable::setEntryPrefixed(long nIndex, char *psz, char cPrefix) {
-   if (nIndex >= nClArrayUsed) {
-      fprintf(stderr, "error: illegal set index: %d\n", nIndex);
-      return 9;
-   }
+   if (nIndex >= nClArrayUsed)
+      return 9+perr("illegal set index: %d\n", nIndex);
    // create extended copy with prefix at beginning
    long nLen = strlen(psz);
    char *pszCopy = new char[nLen+2];
@@ -717,11 +1093,12 @@ long StringTable::setEntryPrefixed(long nIndex, char *psz, char cPrefix) {
 char *StringTable::getEntry(long nIndex, int nTraceLine) {
    if (nIndex >= 0 && nIndex < nClArrayUsed)
       return apClArray[nIndex];
-   fprintf(stderr, "error: illegal StringTable index: %d tline %d\n", nIndex, nTraceLine);
+   perr("illegal StringTable index: %d tline %d\n", nIndex, nTraceLine);
    return 0;
 }
 
 StringTable glblErrorLog;
+StringTable glblStaleLog;
 
 void logError(const char *format, ...)
 {
@@ -733,6 +1110,30 @@ void logError(const char *format, ...)
 
    glblErrorLog.addEntry(szTmpBuf);
    printf("%s\n", szTmpBuf);
+}
+
+void trackStaleZip(char *pszFileName)
+{
+   if (!strncmp(pszFileName, glblDotSlash, 2))
+      pszFileName += 2;
+
+   long nEntries = glblStaleLog.numberOfEntries();
+   for (long i=0; i<nEntries; i++)
+   {
+      char *psz = glblStaleLog.getEntry(i, __LINE__);
+      if (!strcmp(psz, pszFileName))
+         return; // is already registered
+   }
+
+   // add zip containing stale files to stale list
+   glblStaleLog.addEntry(pszFileName);
+}
+
+bool endsWithPathChar(char *pszPath) {
+   long nLen = strlen(pszPath);
+   if (nLen>0 && pszPath[nLen-1] == glblPathChar)
+      return 1;
+   return 0;
 }
 
 // ============================================================
@@ -841,7 +1242,8 @@ long Array::numberOfEntries() {
 
 long Array::numberOfEntries(long lRow) {
    if (ensureBase()) return 0;
-   if (lRow < 0 || lRow > nClRowsUsed) { fprintf(stderr, "error: %s: illegal row %d\n",pszClID,lRow); return 9; }
+   if (lRow < 0 || lRow > nClRowsUsed)
+      return 9+perr("%s: illegal row %d\n",pszClID,lRow);
    return apClRows[lRow]->numberOfEntries();
 }
 
@@ -855,7 +1257,8 @@ long Array::addString(char *psz) {
 
 long Array::addString(long lRow, char *psz) {
    if (ensureBase()) return 0;
-   if (lRow < 0 || lRow > nClRowsUsed) { fprintf(stderr, "error: %s: illegal row %d\n",pszClID,lRow); return 9; }
+   if (lRow < 0 || lRow > nClRowsUsed)
+      return 9+perr("%s: illegal row %d\n",pszClID,lRow);
    if (bGlblDebug) printf("] array %s: add to row %d entry %s. [%d rows total]\n",pszClID,lRow,psz,nClRowsUsed);
    long lRC = apClRows[lRow]->addEntryPrefixed(psz, 's');
    return lRC;
@@ -863,7 +1266,8 @@ long Array::addString(long lRow, char *psz) {
 
 long Array::setString(long lRow, long nIndex, char *psz) {
    if (ensureBase()) return 0;
-   if (lRow < 0 || lRow > nClRowsUsed) { fprintf(stderr, "error: %s: illegal row %d\n",pszClID,lRow); return 9; }
+   if (lRow < 0 || lRow > nClRowsUsed)
+      return 9+perr("%s: illegal row %d\n",pszClID,lRow);
    if (bGlblDebug) printf("] array %s: set row %d:%d entry %s. [%d rows total]\n",pszClID,lRow,nIndex,psz,nClRowsUsed);
    long lRC = apClRows[lRow]->setEntryPrefixed(nIndex, psz, 's');
    return lRC;
@@ -875,17 +1279,17 @@ char *Array::getString(long nIndex) {
    char *pszRaw = apClRows[nClCurRow]->getEntry(nIndex, __LINE__);
    if (!pszRaw)
       return 0;
-   if (pszRaw[0] != 's') { fprintf(stderr, "error: %s: no string entry type at %u %u\n", pszClID, nClCurRow, nIndex); return 0; }
+   if (pszRaw[0] != 's') { perr("%s: no string entry type at %u %u\n", pszClID, nClCurRow, nIndex); return 0; }
    return pszRaw+1;
 }
 
 char *Array::getString(long lRow, long nIndex) {
    if (ensureBase()) return 0;
-   if (lRow < 0 || lRow >= nClRowsUsed) { fprintf(stderr, "error: %s: illegal row %d\n",pszClID,lRow); return 0; }
+   if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    char *pszRaw = apClRows[lRow]->getEntry(nIndex, __LINE__);
    if (!pszRaw)
       return 0;
-   if (pszRaw[0] != 's') { fprintf(stderr, "error: %s: no string entry type at %u %u\n", pszClID, lRow, nIndex); return 0; }
+   if (pszRaw[0] != 's') { perr("%s: no string entry type at %u %u\n", pszClID, lRow, nIndex); return 0; }
    return pszRaw+1;
 }
 
@@ -907,7 +1311,7 @@ long Array::addLong(long nValue, int nTraceLine) {
 long Array::addLong(long lRow, long nValue, int nTraceLine) {
    if (ensureBase()) return 0;
    if (bGlblDebug) printf("] array %s: add to row %d entry %d [tline %d]\n",pszClID,lRow,nValue,nTraceLine);
-   if (lRow < 0 || lRow > nClRowsUsed) { fprintf(stderr, "error: %s: illegal row %d\n",pszClID,lRow); return 9; }
+   if (lRow < 0 || lRow > nClRowsUsed) return 9+perr("%s: illegal row %d\n",pszClID,lRow);
    char szBuf[100];
    ulong uValue = (ulong)nValue;
    #ifdef _WIN32
@@ -923,7 +1327,7 @@ long Array::getLong(long nIndex) {
    char *pszRaw = apClRows[nClCurRow]->getEntry(nIndex, __LINE__);
    if (!pszRaw)
       return 0;
-   if (pszRaw[0] != 'i') { fprintf(stderr, "error: no long entry type at row %u col %u\n", nClCurRow, nIndex); return 0; }
+   if (pszRaw[0] != 'i') { perr("no long entry type at row %u col %u\n", nClCurRow, nIndex); return 0; }
    // unsigned long strtoul( const char *nptr, char **endptr, int base );
    ulong uValue = strtoul(pszRaw+1, 0, 16);
    return (long)uValue;
@@ -931,11 +1335,11 @@ long Array::getLong(long nIndex) {
 
 long Array::getLong(long lRow, long nIndex, int nTraceLine) {
    if (ensureBase()) return 0;
-   if (lRow < 0 || lRow >= nClRowsUsed) { fprintf(stderr, "error: %s: illegal row %d\n",pszClID,lRow); return 0; }
+   if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    char *pszRaw = apClRows[lRow]->getEntry(nIndex, nTraceLine);
    if (!pszRaw)
       return 0;
-   if (pszRaw[0] != 'i') { fprintf(stderr, "error: no long entry type at row %u col %u\n", lRow, nIndex); return 0; }
+   if (pszRaw[0] != 'i') { perr("no long entry type at row %u col %u\n", lRow, nIndex); return 0; }
    // unsigned long strtoul( const char *nptr, char **endptr, int base );
    ulong uValue = strtoul(pszRaw+1, 0, 16);
    return (long)uValue;
@@ -943,7 +1347,7 @@ long Array::getLong(long lRow, long nIndex, int nTraceLine) {
 
 long Array::setLong(long lRow, long nIndex, long nValue, int nTraceLine) {
    if (ensureBase()) return 0;
-   if (lRow < 0 || lRow >= nClRowsUsed) { fprintf(stderr, "error: %s: illegal row %d\n",pszClID,lRow); return 0; }
+   if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    char szBuf[100];
    ulong uValue = (ulong)nValue;
    // char *_ultoa( unsigned long value, char *string, int radix );
@@ -980,7 +1384,7 @@ long Array::addRow(int nTraceLine) {
 long Array::setRow(long iCurRow, int nTraceLine) {
    if (ensureBase()) return 9;
    if (iCurRow < 0 || iCurRow >= nClRowsUsed)
-   {  fprintf(stderr, "error: %s: illegal row index: %d on setRow, tline %d\n",pszClID,iCurRow,nTraceLine); return 9; }
+      return 9+perr("%s: illegal row index: %d on setRow, tline %d\n",pszClID,iCurRow,nTraceLine);
    nClCurRow = iCurRow;
    if (bGlblDebug) printf("array %s setrow %d\n",pszClID,nClCurRow);
    return 0;
@@ -1009,7 +1413,7 @@ bool Array::isStringSet(long iIndex) {
       return 0;
    }
    if (pszRaw[0] != 's') {
-      fprintf(stderr, "error: no string type at %s:%d:%d\n",pszClID,nClCurRow,iIndex);
+      perr("no string type at %s:%d:%d\n",pszClID,nClCurRow,iIndex);
       return 0;
    }
    return 1;
@@ -1017,7 +1421,7 @@ bool Array::isStringSet(long iIndex) {
 
 bool Array::isStringSet(long lRow, long iIndex) {
    if (ensureBase()) return 0;
-   if (lRow < 0 || lRow >= nClRowsUsed) { fprintf(stderr, "error: %s: illegal row %d\n",pszClID,lRow); return 0; }
+   if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    if (!apClRows[lRow]->isSet(iIndex))
       return 0;
    char *pszRaw = apClRows[lRow]->getEntry(iIndex, __LINE__);
@@ -1034,7 +1438,7 @@ bool Array::isStringSet(long lRow, long iIndex) {
 // public: tell if index in current row is set with a long
 bool Array::isLongSet(long lRow, long iIndex) {
    if (ensureBase()) return 0;
-   if (lRow < 0 || lRow >= nClRowsUsed) { fprintf(stderr, "error: %s: illegal row %d\n",pszClID,lRow); return 0; }
+   if (lRow < 0 || lRow >= nClRowsUsed) { perr("%s: illegal row %d\n",pszClID,lRow); return 0; }
    if (!apClRows[lRow]->isSet(iIndex))
       return 0;
    char *pszRaw = apClRows[lRow]->getEntry(iIndex, __LINE__);
@@ -1046,7 +1450,7 @@ bool Array::isLongSet(long lRow, long iIndex) {
 // public: tell if row exists
 bool Array::hasRow(long iRow) {
    if (ensureBase()) return 0;
-   if (iRow < 0) {  fprintf(stderr, "error: %s: illegal row index: %d on hasRow\n",pszClID,iRow); return 9; }
+   if (iRow < 0) {  perr("%s: illegal row index: %d on hasRow\n",pszClID,iRow); return 0; }
    return (iRow < nClRowsUsed) ? 1 : 0;
 }
 
@@ -1115,7 +1519,7 @@ long LongTable::addEntry(long nValue) {
 long LongTable::getEntry(long nIndex, int nTraceLine) {
    if (nIndex >= 0 && nIndex < nClArrayUsed)
       return pClArray[nIndex];
-   fprintf(stderr, "error: illegal LongTable index: %d %d tline %d\n", nIndex, nClArrayUsed, nTraceLine);
+   perr("illegal LongTable index: %d %d tline %d\n", nIndex, nClArrayUsed, nTraceLine);
    return -1;
 }
 
@@ -1184,7 +1588,7 @@ long NumTable::addEntry(num nValue) {
 num NumTable::getEntry(long nIndex, int nTraceLine) {
    if (nIndex >= 0 && nIndex < nClArrayUsed)
       return pClArray[nIndex];
-   fprintf(stderr, "error: illegal NumTable index: %d %d tline %d\n", nIndex, nClArrayUsed, nTraceLine);
+   perr("illegal NumTable index: %d %d tline %d\n", nIndex, nClArrayUsed, nTraceLine);
    return -1;
 }
 
@@ -1357,7 +1761,7 @@ public:
    long  addFileMask    (char *pszName);
    long  autoCompleteFileMasks   ( );
    void  setBaseLayer   ( );
-   void  reset ( );
+   void  shutdown       ( );
    bool  hasRoot        (long iIndex);
    char* setCurrentRoot (long iIndex);
    char* getCurrentRoot ( );
@@ -1375,6 +1779,7 @@ private:
    Array clFileMasks;   // row == layer
    long nClCurDir;
    long nClCurLayer;
+   char  *pClLineBuf;
 };
 
 FileSet::FileSet() 
@@ -1384,10 +1789,11 @@ FileSet::FileSet()
 {
    nClCurDir   =  0;
    nClCurLayer = -1;
+   pClLineBuf  = new char[MAX_LINE_LEN+10];
 }
 
 FileSet::~FileSet() {
-   reset();
+   shutdown();
 }
 
 bool FileSet::isAnyExtensionMaskSet() 
@@ -1479,11 +1885,13 @@ long FileSet::ensureBase(int nTraceLine) {
    return 0;
 }
 
-void FileSet::reset() {
+void FileSet::shutdown() {
    clRootDirs.reset();
    clDirMasks.reset();
    clFileMasks.reset();
    nClCurLayer = -1;
+   delete [] pClLineBuf;
+   pClLineBuf = 0;
 }
 
 // a layer is one set of dir masks and file masks.
@@ -1515,8 +1923,17 @@ long FileSet::beginLayer(bool bWithEmptyCommand)
    return 0;
 }
 
-long FileSet::addRootDir(char *pszRoot, int nTraceLine, bool bNoCmdFillup) {
+long FileSet::addRootDir(char *pszRoot, int nTraceLine, bool bNoCmdFillup) 
+{
    if (bGlblDebug) printf("] add root dir: %s, referencing layer: %d [tline %d]\n", pszRoot, nClCurLayer, nTraceLine);
+
+   // purify root: no patch char appended
+   strncpy(pClLineBuf, pszRoot, MAX_LINE_LEN);
+   pClLineBuf[MAX_LINE_LEN] = '\0';
+   pszRoot = pClLineBuf;
+   if (endsWithPathChar(pszRoot))
+      pszRoot[strlen(pszRoot)-1] = '\0';
+
    if (ensureBase(__LINE__)) return 9;
    if (nClCurLayer == -1) {
       if (bGlblDebug) printf("] impl. create first fileset layer\n");
@@ -1528,7 +1945,7 @@ long FileSet::addRootDir(char *pszRoot, int nTraceLine, bool bNoCmdFillup) {
       if (clRootDirs.numberOfEntries(1) < nMax)
           clRootDirs.addLong(1, 0, __LINE__); // add empty command
    if (clRootDirs.numberOfEntries(2) < nMax)
-   {  fprintf(stderr, "error: internal #20\n"); return 9; }
+      return 9+perr("internal #20\n");
    // add another root dir, forward-referencing
    // the current layer in which masks will follow.
    clRootDirs.addString(0,pszRoot);
@@ -1587,6 +2004,221 @@ FileSet glblFileSet;
 
 Array glblGrepPat("grep");
 
+class BinTexter
+{
+public:
+   BinTexter         (FILE *fInFile, char *pszFileName);
+  ~BinTexter         ( );
+
+   enum eDoWhat {
+      eBT_Print   = 1,
+      eBT_Grep    = 2
+   };
+
+   // uses szLineBuf, szLineBuf2.
+   long  process     (int nDoWhat);
+   void  processLine (char *pszBuf, int nDoWhat, long nLine);
+
+private:
+   FILE *pClInFile;
+   char *pszClFileName;
+   char  szOutBuf[200];
+   char  szAttBuf[200];
+   bool  bDumpedFileName;
+};
+
+BinTexter::BinTexter(FILE *fIn, char *pszFileName)
+{
+   pClInFile = fIn;
+   pszClFileName = pszFileName;
+   if (!strncmp(pszClFileName, glblDotSlash, 2))
+      pszClFileName += 2;
+   memset(szOutBuf, 0, sizeof(szOutBuf));
+   bDumpedFileName = false;
+}
+
+BinTexter::~BinTexter()
+{
+   pClInFile = 0;
+}
+
+// uses szLineBuf. Result in szLineBuf2.
+long BinTexter::process(int nDoWhat)
+{
+   long icol   = 0;
+   long istate = 0;
+   long iword  = 0;
+   long ihi    = 0;
+   bool bflush = 0;
+   bool bisws  = 0;
+   bool bwasws = 0;
+   bool bisbin = 0;
+   bool bishi  = 0;
+   bool bispunct = 0;
+   char c = 0;
+   unsigned char uc = 0;
+   long nLine = 0;
+
+   szOutBuf[0] = '\0';
+
+   bool bbail = 0;
+   while (!bbail)
+   {
+      long nRead = fread(szLineBuf, 1, sizeof(szLineBuf)-10, pClInFile);
+
+      if (nRead <= 0) {
+         bbail = 1;
+         nRead = 1;
+      }
+
+      for (long i=0; i<nRead; i++)
+      {
+         if (bbail) {
+            c  = 0x00;
+            uc = (unsigned char)c;
+            bflush = 1;
+         } else {
+            c  = szLineBuf[i];
+            uc = (unsigned char)c;
+            bflush = 0;
+         }
+
+         if (c=='\r')
+            continue;
+
+         if (c=='\n') {
+            nLine++;
+            if (nDoWhat == eBT_Print)
+               c = ' ';
+            else
+               bflush = 1;
+         }
+
+         bisbin = ((uc >= 0x80) && (uc < nGlblBinTextBinRange));
+         bishi  =  (uc >= 0xC0);
+
+         if (isprint(c) && !bisbin) {
+            // printable char
+            if (istate == 1) {
+               istate = 0;
+               // start collecting next word
+               iword = 0;
+               ihi   = 0;
+            }
+            // continue collecting current word,
+            // reduce multi-whitespace sequences.
+            bisws    = (c==' ' || c=='\t');
+            bispunct = (c=='.' || c==',' || c==';');
+            if (!(bisws && bwasws)) {
+               szLineBuf2[iword++] = c;
+               if (bishi)
+                  ihi++;
+            }
+            // hard or soft word break?
+            if (iword >= 80)
+               bflush = 1;
+            else
+            if ((iword >= 20) && (bisws || bispunct))
+               bflush = 1;
+         } else {
+            // non-printable (binary) char
+            if (istate == 0)
+               bflush = 1;
+            istate = 1;
+            bwasws = 0;
+            bisws  = 0;
+            bispunct = 0;
+         }
+
+         // dump current word?
+         if (bflush) 
+         {
+            bflush = 0;
+            if (iword > 2 || c == '\n' || bbail)
+            {
+               szLineBuf2[iword] = '\0';
+
+               if (bisws || bispunct || c == '\n' || bbail) {
+                  // do not add blank
+               } else {
+                  // add blank
+                  strcat(szLineBuf2, " ");
+               }
+
+               if (strlen(szOutBuf) + strlen(szLineBuf2) < sizeof(szOutBuf)-10)
+                  strcat(szOutBuf, szLineBuf2);
+
+               icol += (iword+1);
+
+               if (icol >= 80 || c == '\n' || bbail)
+               {
+                  // line flush.
+                  processLine(szOutBuf, nDoWhat, nLine);
+                  icol = 0;
+                  szOutBuf[0] = '\0';
+               }
+            }
+            iword  = 0;
+            ihi    = 0;
+            bwasws = 0;
+         }
+         else
+            bwasws = bisws;
+      }
+   }
+
+   return 0;
+}
+
+void BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine)
+{
+   if (nDoWhat == eBT_Print)
+      printf("%s\n", szOutBuf);
+   else
+   if (nDoWhat == eBT_Grep)
+   {
+      long nMatch = 0;
+      long nGrepPat = glblGrepPat.numberOfEntries();
+      for (long i=0; (nMatch < nGrepPat) && (i<nGrepPat); i++)
+         if (mystrhit((char*)pszBuf, glblGrepPat.getString(i), bGlblUseCase, 0))
+            nMatch++;
+
+      if (nMatch == nGrepPat) 
+      {
+         if (!bDumpedFileName) {
+            bDumpedFileName = 1;
+            setTextColor(nGlblFileColor);
+            printf("%s :\n", pszClFileName);
+            setTextColor(-1);
+         }
+         // create coloured display of hits
+         if (bGlblGrepLineNum)
+            printf("   %04lu ", nLine);
+         else
+            printf("   ");
+         memset(szAttBuf, ' ', sizeof(szAttBuf));
+         szAttBuf[sizeof(szAttBuf)-1] = '\0';
+         long k=0;
+         for (k=0; k<nGrepPat; k++) {
+            char *pszPat = glblGrepPat.getString(k);
+            long nPatLen = strlen(pszPat);
+            long nBufLen = strlen(pszBuf);
+            long nCur = 0, nRel = 0;
+            while (mystrhit(pszBuf+nCur, pszPat, bGlblUseCase, &nRel)) {
+               // printf("%ld.%ld ",nCur,nRel);
+               if (nCur+nRel+nPatLen < sizeof(szAttBuf)-10)
+                  memset(&szAttBuf[nCur+nRel], 'i', nPatLen);
+               nCur += nRel+nPatLen;
+               if (nCur >= nBufLen-1)
+                  break;
+            }
+         }
+         printColorText(pszBuf, szAttBuf);
+         // printf("   %s\n", pszBuf);
+      }
+   }
+}
+
 // only for processDirParms and walkAllTrees:
 long bGlblError = 0;
 StringTable *pGlblFileParms = 0;
@@ -1628,7 +2260,71 @@ bool setGeneralOption(char *psz1)
    if (!strcmp(psz1, "-verbose=3")) { nGlblVerbose = 3; return true; }
    if (!strcmp(psz1, "-hidden"))    { bGlblHiddenFiles = 1; return true; }
    if (!strcmp(psz1, "-yes"))       { bGlblYes = 1; return true; }
+   if (!strcmp(psz1, "-umlauts"))   { nGlblBinTextBinRange = 0xC0; return true; }
+   if (!strcmp(psz1, "-nocol"))     { bGlblUseColor = bGlblUseHelpColor = 0; return true; }
+   if (!strcmp(psz1, "-col"))       { bGlblUseColor = 1; return true; }
+   if (!strcmp(psz1, "-case"))      { bGlblUseCase = 1; return true; }
+   if (!strncmp(psz1, "-html", 5)) {
+      bGlblHtml = 1;
+      if (!getenv("SFK_COLORS"))
+         setColorScheme("file:1,head:4,examp:8");
+      if (!strcmp(psz1, "-html-head"))
+         printf("<font face=\"courier\" size=\"2\"><pre>\n");
+      return true; 
+   }
    return false;
+}
+
+long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, bool bAutoCompleteMasks);
+
+// called by sview. uses szLineBuf.
+long processFlatDirParms(char *pszCmd, char *pszCmdLine)
+{
+   // make copy of input to allow overwriting.
+   strncpy(szLineBuf, pszCmdLine, sizeof(szLineBuf)-10);
+   szLineBuf[sizeof(szLineBuf)-10] = '\0';
+   pszCmdLine = szLineBuf;
+ 
+   pGlblFileParms = new StringTable();
+ 
+   char *psz1 = pszCmdLine;
+   while (*psz1) 
+   {
+      // find next token.
+      char *pszo = psz1;
+      skipSpaceRem(&psz1);
+ 
+      // find end of token. support "-parm with blanks".
+      char *psz2 = psz1;
+      if (*psz2 == '"')
+         while (*psz2 && *psz2!='"')
+            psz2++;
+      while (*psz2 && *psz2!=' ' && *psz2!='\t' && *psz2!='\r' && *psz2!='\n')
+         psz2++;
+
+      // isolate token
+      if (*psz2)
+         *psz2++ = '\0';
+
+      // line-end may lead to empty entry, therefore
+      if (strlen(psz1)) { // only if not line-end
+         mtklog("pfdp addentry %s", psz1);
+         pGlblFileParms->addEntry(psz1);
+      }
+
+      // continue with next token, if any
+      psz1 = psz2;
+   }
+
+   // pGlblFileParms now holds all parms
+   long nParms = pGlblFileParms->numberOfEntries();
+   mtklog("pfdp nparms %ld", nParms);
+   apGlblFileParms = new char*[nParms];
+   for (long i=0; i<nParms; i++)
+      apGlblFileParms[i] = pGlblFileParms->getEntry(i, __LINE__);
+   nGlblFileParms = nParms;
+
+   return processDirParms(pszCmd, nParms, apGlblFileParms, 0, true);
 }
 
 long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, bool bAutoCompleteMasks)
@@ -1653,7 +2349,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, bool bAutoC
          // re-create parameter array from input file
          pszFirstParm += strlen("-from=");
          char *pszParmFile = loadFile(pszFirstParm,__LINE__);
-         if (!pszParmFile) { fprintf(stderr, "error: unable to read: %s\n",pszFirstParm); return 9; }
+         if (!pszParmFile) return 9+perr("unable to read: %s\n",pszFirstParm);
          pGlblFileParms = new StringTable();
          char *psz1 = pszParmFile;
          while (*psz1) 
@@ -1765,7 +2461,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, bool bAutoC
 
             if (!strcmp(psz1, "-file")) {
                if (!strncmp(pszCmd, "freezeto=", strlen("freezeto=")))
-                  { fprintf(stderr, "error: no -file masks supported with freezeto command.\n"); return 9; }
+                  return 9+perr("no -file masks supported with freezeto command.\n");
                lState = 2;
                continue;
             }
@@ -1780,11 +2476,11 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, bool bAutoC
             if (setGeneralOption(psz1))
                continue;
 
-            if (*psz1 == '-') { fprintf(stderr, "error: unknown option: %s\n", psz1); return 9; }
+            if (*psz1 == '-') return 9+perr("unknown option: %s\n", psz1);
 
             // handle all non-command parameters
             switch (lState) {
-               case 1: glblFileSet.addRootDir(psz1, __LINE__, true);  break;
+               case 1: if (glblFileSet.addRootDir(psz1, __LINE__, true)) return 9; break;
                case 2: glblFileSet.addFileMask(psz1); break;
                case 3: glblGrepPat.addString(argv[iDir]); break;
             }
@@ -2220,16 +2916,19 @@ ulong currentKBPerSec() {
 
 char szCmpBuf1[4096];
 char szCmpBuf2[4096];
-long mystrstri(char *psz1, char *psz2)
+long mystrstri(char *psz1, char *psz2, long *lpAtPosition)
 {
-   strncpy(szCmpBuf1, psz1, sizeof(szCmpBuf1)-10);
-   szCmpBuf1[sizeof(szCmpBuf1)-10] = '\0';
+   long slen1 = strlen(psz1);
+   if (slen1 > sizeof(szCmpBuf1)-10)
+       slen1 = sizeof(szCmpBuf1)-10;
+   memcpy(szCmpBuf1, psz1, slen1);
+   szCmpBuf1[slen1] = '\0';
 
-   strncpy(szCmpBuf2, psz2, sizeof(szCmpBuf2)-10);
-   szCmpBuf2[sizeof(szCmpBuf2)-10] = '\0';
-
-   long slen1 = strlen(szCmpBuf1);
-   long slen2 = strlen(szCmpBuf2);
+   long slen2 = strlen(psz2);
+   if (slen2 > sizeof(szCmpBuf2)-10)
+       slen2 = sizeof(szCmpBuf2)-10;
+   memcpy(szCmpBuf2, psz2, slen2);
+   szCmpBuf2[slen2] = '\0';
 
    for (long i1=0; i1<slen1; i1++)
       szCmpBuf1[i1] = tolower(szCmpBuf1[i1]);
@@ -2237,7 +2936,16 @@ long mystrstri(char *psz1, char *psz2)
    for (long i2=0; i2<slen2; i2++)
       szCmpBuf2[i2] = tolower(szCmpBuf2[i2]);
 
-   return (strstr(szCmpBuf1, szCmpBuf2) != 0) ? 1 : 0;
+   char *pszHit = strstr(szCmpBuf1, szCmpBuf2);
+
+   if (lpAtPosition) {
+      if (pszHit)
+         *lpAtPosition = (long)(pszHit - szCmpBuf1);
+      else
+         *lpAtPosition = -1;
+   }
+
+   return (pszHit != 0) ? 1 : 0;
 }
 
 // returns 0 if equal.
@@ -2358,7 +3066,8 @@ char *apBlockedKeys[] =
 };
 
 bool TextFile::isContentValid() {
-   if (!pClData || !apClLines) { fprintf(stderr, "error: internal #40\n"); return 9; }
+   if (!pClData || !apClLines)
+      return 9+perr("internal #40\n");
    for (long i1=0; i1<nClLines; i1++) {
       char *psz1 = apClLines[i1];
       for (long i2=0; apBlockedKeys[i2]; i2++) {
@@ -2380,7 +3089,7 @@ bool TextFile::fileStatChanged() {
    num  lFileTime = 0;
    num  nFileSize = 0;
    if (getFileStat(pszClFileName, bIsDir, bCanRead, bCanWrite, lFileTime, nFileSize)) {
-      // fprintf(stderr, "error: unable to re-read file: %s\n", pszClFileName);
+      // perr("unable to re-read file: %s\n", pszClFileName);
       return 2;
    }
    // change in file attributes?
@@ -2424,13 +3133,13 @@ bool TextFile::equals(TextFile *pOther) {
 }
 
 void TextFile::checkIntegrity() {
-   if (!pszClFileName) { fprintf(stderr, "error: internal #20\n"); exit(1); }
-   if (!nClLines     ) { return; } // fprintf(stderr, "error: internal #21\n"); exit(1); }
-   if (!apClLines    ) { fprintf(stderr, "error: internal #22\n"); exit(1); }
-   if (!pClData      ) { fprintf(stderr, "error: internal #23\n"); exit(1); }
+   if (!pszClFileName) { perr("internal #20\n"); exit(1); }
+   if (!nClLines     ) { return; } // perr("internal #21\n"); exit(1); }
+   if (!apClLines    ) { perr("internal #22\n"); exit(1); }
+   if (!pClData      ) { perr("internal #23\n"); exit(1); }
    for (long i=0; i<nClLines; i++)
       if (!apClLines[i])
-         { fprintf(stderr, "error: internal #24\n"); exit(1); }
+         { perr("internal #24\n"); exit(1); }
 }
 
 TextFile *TextFile::clone() {
@@ -2476,11 +3185,11 @@ char *loadFile(char *pszFile, int nLine)
    char *pOut = new char[lFileSize+10];
    // printf("loadFile %p %d\n", pOut, nLine);
    FILE *fin = fopen(pszFile, "rb");
-   if (!fin) { fprintf(stderr, "error: cannot read: %s\n", pszFile); return 0; }
+   if (!fin) { perr("cannot read: %s\n", pszFile); return 0; }
    long nRead = fread(pOut, 1, lFileSize, fin);
    fclose(fin);
    if (nRead != lFileSize) {
-      fprintf(stderr, "error: cannot read: %s (%d %d)\n", pszFile, nRead, lFileSize);
+      perr("cannot read: %s (%d %d)\n", pszFile, nRead, lFileSize);
       delete [] pOut;
       return 0;
    }
@@ -2496,14 +3205,14 @@ uchar *loadBinaryFile(char *pszFile, long &rnFileSize) {
    char *pOut = new char[lFileSize+10];
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) {
-      fprintf(stderr, "error: cannot read: %s\n", pszFile); 
+      perr("cannot read: %s\n", pszFile); 
       delete [] pOut; 
       return 0; 
    }
    long nRead = fread(pOut, 1, lFileSize, fin);
    fclose(fin);
    if (nRead != lFileSize) {
-      fprintf(stderr, "error: cannot read: %s (%d %d)\n", pszFile, nRead, lFileSize);
+      perr("cannot read: %s (%d %d)\n", pszFile, nRead, lFileSize);
       delete [] pOut;
       return 0;
    }
@@ -2515,7 +3224,7 @@ uchar *loadBinaryFile(char *pszFile, long &rnFileSize) {
 long TextFile::loadFromFile() 
 {
    if (fileSize(pszClFileName) == 0) {
-      printf("warning: zero-sized file, skipping: %s\n", pszClFileName);
+      pwarn("zero-sized file, skipping: %s\n", pszClFileName);
       return 1;
    }
 
@@ -2526,7 +3235,7 @@ long TextFile::loadFromFile()
    num  lFileTime = 0;
    num  nFileSize = 0;
    if (getFileStat(pszClFileName, bIsDir, bCanRead, bCanWrite, lFileTime, nFileSize)) {
-      printf("warning: cannot read file, skipping: %s\n", pszClFileName);
+      pwarn("cannot read file, skipping: %s\n", pszClFileName);
       return 1;
    }
    // remember only the stats we care about
@@ -2545,7 +3254,7 @@ long TextFile::loadFromFile()
 
 long TextFile::writeToFile() {
    FILE *fout = fopen(pszClFileName, "w");
-   if (!fout) { fprintf(stderr, "error: unable to write: %s\n", pszClFileName); return 9; }
+   if (!fout) return 9+perr("unable to write: %s\n", pszClFileName);
    dumpTo(fout);
    fclose(fout);
    lClFileTime = getFileTime(pszClFileName);
@@ -2593,7 +3302,7 @@ long TextFile::createFromMemory(char *pszRaw)
       if (pszCR) *pszCR = '\0';
       psz1 = psz2;
    }
-   if (iLine != nClLines) { fprintf(stderr, "error: internal error #10 %d %d %p\n",iLine,nClLines,psz1); return 9; }
+   if (iLine != nClLines) return 9+perr("internal #10 %d %d %p\n",iLine,nClLines,psz1);
 
    // printf("[%d lines read, %s]\n", nClLines, pszClFileName);
    if (!isContentValid())
@@ -2678,9 +3387,9 @@ SnapShot::~SnapShot() {
 void SnapShot::addNotesLine(char *pszLine) {
    if (nClNotes < MAX_NOTES_LINES) {
       apNotes[nClNotes++] = strdup(pszLine);
-   } else {
-      fprintf(stderr, "warning: max. number of notes lines exceeded (%ld), ignoring\n", (long)MAX_NOTES_LINES);
    }
+   else
+      pwarn("max. number of notes lines exceeded (%ld), ignoring\n", (long)MAX_NOTES_LINES);
 }
 
 void SnapShot::shutdown() {
@@ -2774,6 +3483,10 @@ void SnapShot::mapCompilerOutput(bool bMixMappedWithUnmappedOutput, char *pszCmd
       nBaseLine += nClTargets;   // index lines
       nBaseLine += 2;            // header after index
 
+      // fix: if notes-begin given, count this section as well
+      if (nClNotes > 0)
+         nBaseLine += 3 + nClNotes;
+
       // now search for matching patch expressions
       char *pszHit = 0;
       TextFile *pTarget = 0;
@@ -2820,7 +3533,7 @@ void SnapShot::mapCompilerOutput(bool bMixMappedWithUnmappedOutput, char *pszCmd
             sprintf(szLineBuf2, "%s %s %d", pszCmd, getFileName(), nBaseLine+aRelLine);
             // printf("RUN: %s\n", szLineBuf2);
             int iRC = system(szLineBuf2);
-            if (iRC) { fprintf(stderr, "error: unable to run: %s, rc %d\n", szLineBuf2, iRC); }
+            if (iRC) { perr("unable to run: %s, rc %d\n", szLineBuf2, iRC); }
          }
          nMaps++;
       }
@@ -2855,7 +3568,7 @@ long SnapShot::dropTarget(char *pszFileName) {
       }
    }
    if (!bDone) {
-      fprintf(stderr, "warning: not in target list: %s\n", pszFileName);
+      pwarn("not in target list: %s\n", pszFileName);
       dumpTargets();
    }
    return 0;
@@ -2872,7 +3585,7 @@ void SnapShot::setAllTouched() {
 }
 
 long SnapShot::removeTargetEntry(long n) {
-   if (n >= nClTargets) { fprintf(stderr, "error: internal #53\n"); return 9; }
+   if (n >= nClTargets) return 9+perr("internal #53\n");
    delete apClTargets[n];
    for (long k=n; k<nClTargets-1; k++)
       apClTargets[k] = apClTargets[k+1];
@@ -2885,23 +3598,21 @@ long SnapShot::syncDownTargets(SnapShot &oMaster, long &rnSync)
 {
    resetLastSync();
 
-   if (nClTargets != oMaster.nClTargets) {
-      fprintf(stderr, "error: target number differs (%s %d, %s %d)\n", oMaster.pszClID, oMaster.nClTargets, pszClID, nClTargets);
-      return 9;
-   }
+   if (nClTargets != oMaster.nClTargets)
+      return 9+perr("target number differs (%s %d, %s %d)\n", oMaster.pszClID, oMaster.nClTargets, pszClID, nClTargets);
 
    long nSynced = 0;
 
    // on every difference to master, take master's target
-   if (nClTargets != oMaster.nClTargets) { fprintf(stderr, "error: number of targets changed (%u %u)\n", nClTargets, oMaster.nClTargets); return 9; }
+   if (nClTargets != oMaster.nClTargets)
+      return 9+perr("number of targets changed (%u %u)\n", nClTargets, oMaster.nClTargets);
+
    // we expect an absolutely identical list of targets, with same sequence
    for (long iTarg=0; iTarg<nClTargets; iTarg++) {
       TextFile *pMemTarget    = apClTargets[iTarg];
       TextFile *pMasterTarget = oMaster.apClTargets[iTarg];
-      if (strcmp(pMemTarget->getFileName(), pMasterTarget->getFileName())) {
-         fprintf(stderr, "error: change in target names or sequence:\n%s\n%s\n",pMemTarget->getFileName(), pMasterTarget->getFileName());
-         return 9;
-      }
+      if (strcmp(pMemTarget->getFileName(), pMasterTarget->getFileName()))
+         return 9+perr("change in target names or sequence:\n%s\n%s\n",pMemTarget->getFileName(), pMasterTarget->getFileName());
       // printf("[check: %s]\n",pMemTarget->getFileName());
       if (!pMemTarget->equals(pMasterTarget)) {
          // pre-check: is target writeable at all?
@@ -2912,7 +3623,7 @@ long SnapShot::syncDownTargets(SnapShot &oMaster, long &rnSync)
             long lLineDiff = pMasterTarget->numberOfLines() - pMemTarget->numberOfLines(); 
             // printf("[internal-replace: %s]\n", oMaster.getFileName());
             TextFile *pDownClone = oMaster.apClTargets[iTarg]->clone();
-            if (!pDownClone) { fprintf(stderr, "error: internal #11\n"); return 9; }
+            if (!pDownClone) return 9+perr("internal #11\n");
             delete apClTargets[iTarg];
             apClTargets[iTarg] = pDownClone;
             // and write down to file
@@ -2967,15 +3678,13 @@ long SnapShot::mirrorTargetsFrom(SnapShot &oMaster, long &nMissing)
 long SnapShot::syncUpTargets(SnapShot &oMaster, long &rnSynced) {
    long nSynced = 0;
    // on every difference to master, take master's target
-   if (nClTargets != oMaster.nClTargets) { fprintf(stderr, "error: number of targets changed (%u %u)\n", nClTargets, oMaster.nClTargets); return 9; }
+   if (nClTargets != oMaster.nClTargets) return 9+perr("number of targets changed (%u %u)\n", nClTargets, oMaster.nClTargets);
    // we expect an absolutely identical list of targets, with same sequence
    for (long iTarg=0; iTarg<nClTargets; iTarg++) {
       TextFile *pMemTarget      = oMaster.apClTargets[iTarg];
       TextFile *pSnapFileTarget = apClTargets[iTarg];
-      if (strcmp(pMemTarget->getFileName(), pSnapFileTarget->getFileName())) {
-         fprintf(stderr, "error: change in target names or sequence:\n%s\n%s\n",pMemTarget->getFileName(), pSnapFileTarget->getFileName());
-         return 9;
-      }
+      if (strcmp(pMemTarget->getFileName(), pSnapFileTarget->getFileName()))
+         return 9+perr("change in target names or sequence:\n%s\n%s\n",pMemTarget->getFileName(), pSnapFileTarget->getFileName());
       if (!pMemTarget->isTouched())
          continue;
       pMemTarget->setTouched(0);
@@ -2988,7 +3697,7 @@ long SnapShot::syncUpTargets(SnapShot &oMaster, long &rnSynced) {
          long lLineDiff = pMemTarget->numberOfLines() - pSnapFileTarget->numberOfLines();
          // printf("[internal-replace: %s]\n", oMaster.getFileName());
          TextFile *pUpClone = pMemTarget->clone();
-         if (!pUpClone) { fprintf(stderr, "error: internal #30\n"); return 9; }
+         if (!pUpClone) return 9+perr("internal #30\n");
          delete apClTargets[iTarg];
          apClTargets[iTarg] = pUpClone;
          printf("[ READ : %s %s%d size %s%d lines]\n", 
@@ -3080,7 +3789,7 @@ void SnapShot::setRootDir(char *pszDirName) {
 
 long SnapShot::writeToFile() 
 {
-   if (!pClFileName || !pClRootName) { fprintf(stderr, "error: missing filename, or root\n"); return 9; }
+   if (!pClFileName || !pClRootName) return 9+perr("missing filename, or root\n");
 
    FILE *fout = fopen(pClFileName, "w");
 
@@ -3132,7 +3841,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
    resetTargets("read");
    resetNotes();
 
-   if (!pClFileName) { fprintf(stderr, "error: missing filename, or root\n"); return 9; }
+   if (!pClFileName) return 9+perr("missing filename, or root\n");
 
    char *pszRaw = 0;
    long lRetryCnt = 0;
@@ -3187,7 +3896,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
    }
 
    long lRawSize = strlen(pszRaw);
-   if (lRawSize < 100) { fprintf(stderr, "error: insufficient bytes from %s, %u\n", pClFileName, lRawSize); return 9; }
+   if (lRawSize < 100) return 9+perr("insufficient bytes from %s, %u\n", pClFileName, lRawSize);
 
    // pass 1: parse control block, build target index
    char *psz1 = pszRaw;
@@ -3272,8 +3981,8 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
          if (!strncmp(szLineBuf, ":root ", strlen(":root "))) {
             // verify root of cluster
             char *pszTmpRoot = &szLineBuf[strlen(":root ")];
-            if (!pClRootName) { fprintf(stderr, "error: internal #50\n"); return 9; }
-            if (strcmp(pszTmpRoot, pClRootName)) { fprintf(stderr, "error: root mismatch: make sure you are within the directory: %s\n", pszTmpRoot); return 9; }
+            if (!pClRootName) return 9+perr("internal #50\n");
+            if (strcmp(pszTmpRoot, pClRootName)) return 9+perr("root mismatch: make sure you are within the directory: %s\n", pszTmpRoot);
             // if (bGlblDebug) printf("fetched :root\n");
          }
          else
@@ -3312,7 +4021,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
          psz1 = pszContinue;
       } else {
          if (strlen(psz1) > 10) {
-            fprintf(stderr, "error: unexpected content in %s:\n", pClFileName);
+            perr("unexpected content in %s:\n", pClFileName);
             fprintf(stderr, "\"%.100s\"\n", psz1);
             return 9;
          }
@@ -3332,7 +4041,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
          // found another :create, isolate target name
          char *pszTargetName = psz2 + strlen("\n:create ");
          char *psz3 = strchr(pszTargetName, '\n');
-         if (!psz3) { fprintf(stderr, "error: wrong syntax: \"%.100s\"\n", pszTargetName); return 9; }
+         if (!psz3) return 9+perr("wrong syntax: \"%.100s\"\n", pszTargetName);
          *psz3++ = '\0'; // remove and skip LF, go to start of content
          char *psz3b = strchr(pszTargetName, '\r');
          if (psz3b) *psz3b = '\0'; // remove possible CR
@@ -3342,7 +4051,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
          char *pszContentBegin = psz3;
          char *pszDone = strstr(pszContentBegin, "\n:done\n");
          if (!pszDone) pszDone = strstr(pszContentBegin, "\n:done\r\n");
-         if (!pszDone) { fprintf(stderr, "error: missing :done after :create in %s\n\"%.100s\"\n",pszTargetName,pszContentBegin); return 9; }
+         if (!pszDone) return 9+perr("missing :done after :create in %s\n\"%.100s\"\n",pszTargetName,pszContentBegin);
          char *pszContentEnd = pszDone+1;
          *pszContentEnd = '\0'; // set end of content, including last LF
          char *pszContinue = pszContentEnd+1; // not perfect, but simple
@@ -3446,7 +4155,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
    delete [] pszRaw;
 
    // printf("%s re-read, %u targets\n", pszClID, numberOfTargets());
-   if (numberOfTargets() < 1) { fprintf(stderr, "error: no targets found after cluster re-read\n"); return 9; }
+   if (numberOfTargets() < 1) return 9+perr("no targets found after cluster re-read\n");
 
    return 0;
 }
@@ -3582,41 +4291,54 @@ long matchesDirMask(char *pszStr)
 
 long execGrep(char *pszFileName) 
 {
-   FILE *fin = fopen(pszFileName, "r");
-   if (!fin) { fprintf(stderr, "warning: cannot read: %s\n", pszFileName); return 0; }
-   long nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
-   memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
-
-   long nLocalLines = 0;
-   bool bDumpedFileName = 0;
-   while (fgets((char*)abBuf, nMaxLineLen, fin)) // yes, exact len
+   if (bGlblBinGrep)
    {
-      nGlblLines++;
-      nLocalLines++;
+      FILE *fin = fopen(pszFileName, "rb");
+      if (!fin) { pwarn("cannot read: %s\n", pszFileName); return 0; }
 
-      if (strlen((char*)abBuf) == nMaxLineLen)
-         fprintf(stderr, "warning: max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, pszFileName, nLocalLines);
+      BinTexter bt(fin, pszFileName);
+      bt.process(BinTexter::eBT_Grep);
 
-      removeCRLF((char*)abBuf);
-
-      long nMatch = 0;
-      long nGrepPat = glblGrepPat.numberOfEntries();
-      for (long i=0; (nMatch < nGrepPat) && (i<nGrepPat); i++)
-         if (mystrstri((char*)abBuf, glblGrepPat.getString(i)))
-            nMatch++;
-
-      if (nMatch == nGrepPat) {
-         if (!bDumpedFileName) {
-            bDumpedFileName = 1;
-            if (!strncmp(pszFileName, glblDotSlash, 2))
-               pszFileName += 2;
-            printf("%s :\n", pszFileName);
-         }
-         printf("   %s\n", abBuf);
-      }
+      fclose(fin);
    }
-
-   fclose(fin);
+   else
+   {
+      FILE *fin = fopen(pszFileName, "r");
+      if (!fin) { pwarn("cannot read: %s\n", pszFileName); return 0; }
+      long nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
+      memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
+   
+      long nLocalLines = 0;
+      bool bDumpedFileName = 0;
+      while (fgets((char*)abBuf, nMaxLineLen, fin)) // yes, exact len
+      {
+         nGlblLines++;
+         nLocalLines++;
+   
+         if (strlen((char*)abBuf) == nMaxLineLen)
+            pwarn("max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, pszFileName, nLocalLines);
+   
+         removeCRLF((char*)abBuf);
+   
+         long nMatch = 0;
+         long nGrepPat = glblGrepPat.numberOfEntries();
+         for (long i=0; (nMatch < nGrepPat) && (i<nGrepPat); i++)
+            if (mystrstri((char*)abBuf, glblGrepPat.getString(i)))
+               nMatch++;
+   
+         if (nMatch == nGrepPat) {
+            if (!bDumpedFileName) {
+               bDumpedFileName = 1;
+               if (!strncmp(pszFileName, glblDotSlash, 2))
+                  pszFileName += 2;
+               printf("%s :\n", pszFileName);
+            }
+            printf("   %s\n", abBuf);
+         }
+      }
+   
+      fclose(fin);
+   }
 
    return 0;
 }
@@ -3982,12 +4704,7 @@ long execRunFile(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num 
    }
 
    if (!bDoneAny) 
-   {
-      fprintf(stderr, "error: no valid token in run command. type \"sfk run\" for help.\n");
-      return 9;
-      // strcat(szLineBuf, " ");
-      // strcat(szLineBuf, pszFileName);
-   }
+      return 9+perr("no valid token in run command. type \"sfk run\" for help.\n");
 
    if (!bGlblQuiet && !bGlblSim) {
       printf("%s\n", szLineBuf);
@@ -4059,10 +4776,7 @@ long execRunDir(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num &
    }
 
    if (!bDoneAny) 
-   {
-      fprintf(stderr, "error: no valid token in run command. type \"sfk run\" for help.\n");
-      return 9;
-   }
+      return 9+perr("no valid token in run command. type \"sfk run\" for help.\n");
 
    if (!bGlblQuiet && !bGlblSim) {
       printf("%s\n", szLineBuf);
@@ -4486,7 +5200,7 @@ fprintf(fGlblOut,
 long getFileMD5(char *pszFile, SFKMD5 &md5, bool bSilent)
 {
    FILE *fin = fopen(pszFile, "rb");
-   if (!fin) { if (!bSilent) fprintf(stderr, "error: cannot read: %s\n", pszFile); return 9; }
+   if (!fin) { if (!bSilent) perr("cannot read: %s\n", pszFile); return 9; }
    size_t nRead = 0;
    while ((nRead = fread(abBuf,1,sizeof(abBuf)-10,fin)) > 0) {
       md5.update(abBuf,nRead);
@@ -4507,7 +5221,7 @@ long getFuzzyTextSum(char *pszFile, uchar *pOutBuf)
    // both accross platforms, and independent from the sequence
    // in which files happen to be read from the file system.
    FILE *fin = fopen(pszFile, "r");
-   if (!fin) { fprintf(stderr, "error: cannot read: %s\n", pszFile); return 9; }
+   if (!fin) return 9+perr("cannot read: %s\n", pszFile);
    uchar abSum[16];
    memset(abSum, 0, sizeof(abSum));
    while (fgets(szLineBuf, sizeof(szLineBuf)-10, fin))
@@ -4628,8 +5342,9 @@ long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList=0
             logError("info   : outdated file \"%s\" in archive \"%s\"", szLineBuf2, pszFile);
             if (!bInfoDone) {
                bInfoDone = 1;
-               logError("info   : you may want to cleanup your archive tree.");
+               logError("info   : if you want to cleanup your archive tree later, see 10-stale-list.txt");
             }
+            trackStaleZip(pszFile);
          }
          if (lRC == 2) {
             static bool bInfoDone2 = 0;
@@ -4726,7 +5441,7 @@ long execMD5check(char *pIn)
       }
       char *psz = strstr(szLineBuf, " *"); // md5sum format
       if (!psz) {
-         fprintf(stderr, "error: illegal format in line %d:\n\"%s\"\n",nLine,szLineBuf);
+         perr("illegal format in line %d:\n\"%s\"\n",nLine,szLineBuf);
          nError++; 
          continue;
       }
@@ -4752,7 +5467,7 @@ long execMD5check(char *pIn)
             for (int i=0; i<16; i++)
                sprintf(szBuf2+i*2,"%02x",pmd5[i]);
             if (strcmp(pszHex,szBuf2)) {
-               fprintf(stderr, "error: MD5 mismatch: %s\n", pszFile); // ,*%s*,*%s*\n", pszFile, pszHex, szBuf2);
+               perr("MD5 mismatch: %s\n", pszFile); // ,*%s*,*%s*\n", pszFile, pszHex, szBuf2);
                nError++;
             }            
          }
@@ -4770,7 +5485,7 @@ long execMD5check(char *pIn)
          break;
    }
    if (nError) {
-      fprintf(stderr, "error: %u files of %u failed verification.\n", nError, glblFileCount.value());
+      perr("%u files of %u failed verification.\n", nError, glblFileCount.value());
       fprintf(stdout, "info : %u files checked, %u mb, %u sec, %u kb/sec.\n", glblFileCount.value(), (ulong)(nGlblBytes/1000000UL), currentElapsedMSec()/1000, currentKBPerSec());
    } else {
       fprintf(stdout, "OK. %u files checked, all checksums matched. %u mb, %u sec, %u kb/sec.\n", glblFileCount.value(), (ulong)(nGlblBytes/1000000UL), currentElapsedMSec()/1000, currentKBPerSec());
@@ -4789,12 +5504,10 @@ long execJamIndex(char *pszFile)
    fprintf(fGlblOut, ":# %s\n", psz1);
 
    // remember in array of targets
-   if (nJamTargets < MAX_JAM_TARGETS-10) {
+   if (nJamTargets < MAX_JAM_TARGETS-10)
       apJamTargets[nJamTargets++] = strdup(psz1);
-   } else {
-      fprintf(stderr, "error: too many snapfile targets\n");
-      return 9;
-   }
+   else
+      return 9+perr("too many snapfile targets\n");
 
    return 0;
 }
@@ -4810,24 +5523,68 @@ long execSnapAdd(char *pszFile)
    return 0; // continue scan!
 }
 
+// snapto optional callback functions, used by sview.
+long (*pGlblJamLineCallBack)(char *pszLine, long nLineLen, bool bAddLF) = 0;
+long (*pGlblJamStatCallBack)(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes) = 0;
+
+// snapto dump of a single text line
+long dumpJamLine(char *pszLine, long nLineLen, bool bAddLF) // len 0: zero-terminated
+{
+   if (pGlblJamLineCallBack)
+      return pGlblJamLineCallBack(pszLine, nLineLen, bAddLF);
+   else
+   if (nLineLen > 0)
+      fprintf(fGlblOut, "%.*s%s", (int)nLineLen, pszLine, bAddLF?"\n":"");
+   else {
+      fputs(pszLine, fGlblOut);
+      if (bAddLF) fputs("\n", fGlblOut);
+   }
+   return 0;
+}
+
+// simple check: if a file contains some nulls, it must be binary.
+bool isBinaryFile(char *pszFile)
+{
+   FILE *fin = fopen(pszFile, "rb");
+   if (!fin) return 0;
+
+   long nCheckLen = sizeof(abBuf)-10;
+   if (nCheckLen > 4096) nCheckLen = 4096;
+   long nRead = fread(abBuf, 1, nCheckLen, fin);
+   fclose(fin);
+
+   for (long i=0; i<nRead; i++)
+      if (abBuf[i] == 0x00)
+         return 1;
+
+   return 0;
+}
+
+// snapto collect single file
 long execJamFile(char *pszFile)
 {
    FILE *fin = 0;
 
+   if (isBinaryFile(pszFile))
+      return 0;
+
    // add file content, check for illegal entries
    if (!fin) fin = fopen(pszFile, "r");
-   if (!fin) { fprintf(stderr, "warning: cannot read: %s\n", pszFile); return 0; }
+   if (!fin) { pwarn("cannot read: %s\n", pszFile); return 0; }
    long nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
    memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
    long nLocalLines = 0;
    bool bWrapMode = (nGlblSnapWrap > 0) ? 1 : 0;
+   long nLineLen = 0;
+   long lRC = 0;
    while (fgets((char*)abBuf, nMaxLineLen, fin)) // yes, exact len
    {
       nGlblLines++;
       nLocalLines++;
 
-      if (strlen((char*)abBuf) == nMaxLineLen)
-         fprintf(stderr, "warning: max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, pszFile, nLocalLines);
+      nLineLen = strlen((char*)abBuf);
+      if (nLineLen == nMaxLineLen)
+         pwarn("max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, pszFile, nLocalLines);
 
       if (   (!strncmp((char*)abBuf, ":snapfile sfk,", strlen(":snapfile sfk,")))
           || (!strncmp((char*)abBuf, ":cluster sfk,", strlen(":cluster sfk,")))
@@ -4843,10 +5600,13 @@ long execJamFile(char *pszFile)
       {
          // first local line: also write header
          if (!bGlblJamPure)
+         {
             if (pszGlblJamPrefix)
-               fprintf(fGlblOut, "%s\n%s\n", pszGlblJamPrefix, pszFile);
+               lRC |= dumpJamLine(pszGlblJamPrefix, 0, 1);
             else
-               fprintf(fGlblOut, ":file:\n%s\n", pszFile);
+               lRC |= dumpJamLine(":file:", 0, 1);
+            lRC |= dumpJamLine(pszFile, 0, 1);
+         }
       }
 
       if (bWrapMode && (strlen((char*)abBuf) > nGlblSnapWrap))
@@ -4878,11 +5638,14 @@ long execJamFile(char *pszFile)
                   psz1 = pszGap+1;
             }
             int nLen = psz1-pszOld;
-            fprintf(fGlblOut, "%.*s\n", nLen, pszOld);
+            lRC |= dumpJamLine(pszOld, nLen, 1);
             // continue past whitespace or word break.
          }
       } else {
-         fputs((char*)abBuf, fGlblOut);
+         if (nLineLen > 0 && abBuf[nLineLen-1] == '\n')
+            lRC |= dumpJamLine((char*)abBuf, 0, 0); // has own LF
+         else
+            lRC |= dumpJamLine((char*)abBuf, 0, 1);
       }
 
       nGlblBytes += strlen((char*)abBuf);
@@ -4891,23 +5654,29 @@ long execJamFile(char *pszFile)
    fclose(fin);
 
    // trailer
-   fprintf(fGlblOut, "\n");
+   lRC |= dumpJamLine("", 0, 1);
 
-   if (glblFileCount.count()) {
-      if (nGlblBytes > 1000000)
-         printf("[collected %u files, %u lines, %u mb]  \r", glblFileCount.value(), nGlblLines, (ulong)(nGlblBytes/1000000UL));
-      else
-         printf("[collected %u files, %u lines, %u kb] \r", glblFileCount.value(), nGlblLines, (ulong)(nGlblBytes/1000UL));
-      fflush(stdout);
+   if (glblFileCount.count()) 
+   {
+      if (pGlblJamStatCallBack)
+         pGlblJamStatCallBack(pszFile, glblFileCount.value(), nGlblLines, (ulong)(nGlblBytes/1000000UL));
+      else {
+         if (nGlblBytes > 1000000)
+            printf("[collected %u files, %u lines, %u mb]  \r", glblFileCount.value(), nGlblLines, (ulong)(nGlblBytes/1000000UL));
+         else
+            printf("[collected %u files, %u lines, %u kb] \r", glblFileCount.value(), nGlblLines, (ulong)(nGlblBytes/1000UL));
+         fflush(stdout);
+      }
    }
-   return 0;
+
+   return lRC;
 }
 
 long execBinPatch(char *pszFile) 
 {
    long nFileSize = 0;
    uchar *pInFile = loadBinaryFile(pszFile, nFileSize);
-   if (!pInFile) { fprintf(stderr, "error: cannot read %s\n", pszFile); return 9; }
+   if (!pInFile) return 9+perr("cannot read %s\n", pszFile);
 
    uchar *pszSrc = (uchar*)pszGlblRepSrc;
    uchar *pszDst = (uchar*)pszGlblRepDst;
@@ -4940,10 +5709,10 @@ long execBinPatch(char *pszFile)
 
    if (nHits > 0) {
       FILE *fout = fopen(pszFile, "wb");
-      if (!fout) { fprintf(stderr, "error: cannot write %s\n", pszFile); delete [] pInFile; return 9; }
+      if (!fout) { perr("cannot write %s\n", pszFile); delete [] pInFile; return 9; }
       long nWritten = fwrite(pInFile, 1, nFileSize, fout);
       fclose(fout);
-      if (nWritten != nFileSize) { fprintf(stderr, "error: unable to fully rewrite %s\n", pszFile); delete [] pInFile; return 9; }
+      if (nWritten != nFileSize) { perr("unable to fully rewrite %s\n", pszFile); delete [] pInFile; return 9; }
       nGlblFiles++;
       // printf("patched: %s, %d changes, \"%s\" => \"%s\"\n", pszFile, nHits, pszGlblRepSrc, pszGlblRepDst);
       printf("patched: %s, %d changes.\n", pszFile, nHits);
@@ -4975,11 +5744,13 @@ long execRefColDst(char *pszFile)
 
    #ifdef _WIN32
    // create lowercase filename, we want to compare case-insensitive
-   char *psz1 = szLineBuf;
-   while (*psz1) {
-      if (isalpha(*psz1))
-         *psz1 = tolower(*psz1);
-      psz1++;
+   if (!bGlblUseCase) {
+      char *psz1 = szLineBuf;
+      while (*psz1) {
+         if (isalpha(*psz1))
+            *psz1 = tolower(*psz1);
+         psz1++;
+      }
    }
    #endif
 
@@ -5028,14 +5799,14 @@ long execRefProcSrc(char *pszFile)
    char *pInFile = new char[nFileSize+10];
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) { 
-      fprintf(stderr, "error: cannot read: %s\n", pszFile); 
+      perr("cannot read: %s\n", pszFile); 
       delete [] pInFile; 
       return 0; 
    }
    unsigned long nRead = fread(pInFile, 1, nFileSize, fin);
    fclose(fin);
    if (nRead != nFileSize) {
-      fprintf(stderr, "error: cannot read: %s (%d %d)\n", pszFile, nRead, nFileSize);
+      perr("cannot read: %s (%d %d)\n", pszFile, nRead, nFileSize);
       delete [] pInFile;
       return 0;
    }
@@ -5044,6 +5815,9 @@ long execRefProcSrc(char *pszFile)
    // convert content to allow strstr.
    // in case of windows prepare case-insensitive comparison.
    // force all path chars to use system path char.
+   #ifdef _WIN32
+   bool bCase = bGlblUseCase;
+   #endif
    for (ulong i=0; i<nFileSize; i++) {
       char c = pInFile[i];
       if (c == '\0')
@@ -5053,7 +5827,7 @@ long execRefProcSrc(char *pszFile)
          pInFile[i] = glblPathChar;
       #ifdef _WIN32
       else
-      if (isalpha(c))
+      if (isalpha(c) && !bCase)
          pInFile[i] = tolower(c);
       #endif
    }
@@ -5147,7 +5921,7 @@ long execDeblank(char *pszFile)
 
    if (bGlblYes) {
       int nRC = rename(pszFile, szLineBuf);
-      if (nRC) { fprintf(stderr, "error: rename failed on %s\n", pszFile); return 1; }
+      if (nRC) return 1+perr("rename failed on %s\n", pszFile);
    }
 
    return 0;
@@ -5311,7 +6085,7 @@ long createSubDirTree(char *pszDstRoot, char *pszDirTree)
          if (mkdir(pszDir, S_IREAD | S_IWRITE | S_IEXEC))
          #endif
          {
-            fprintf(stderr, "error: cannot create dir: %s\n", pszDir);
+            perr("cannot create dir: %s\n", pszDir);
             return 9;
          }
       }
@@ -5326,7 +6100,7 @@ long createSubDirTree(char *pszDstRoot, char *pszDirTree)
       if (mkdir(pszDir, S_IREAD | S_IWRITE | S_IEXEC))
       #endif
       {
-         fprintf(stderr, "error: cannot create dir: %s\n", pszDir);
+         perr("cannot create dir: %s\n", pszDir);
          return 9;
       }
    }
@@ -5420,7 +6194,10 @@ long execDirFreeze(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalM
    }
 
    // recreate target archive name
-   sprintf(szLineBuf, "%s%s%c01-arc-part.zip", pszGlblDstRoot, pszName, glblPathChar);
+   if (!strcmp(pszName, "."))
+      sprintf(szLineBuf, "%s01-arc-part.zip", pszGlblDstRoot);
+   else
+      sprintf(szLineBuf, "%s%s%c01-arc-part.zip", pszGlblDstRoot, pszName, glblPathChar);
 
    // 1. write single file entry:
    // not done here, but in execFileFreeze.
@@ -5490,8 +6267,7 @@ long execFileMirror(char *pszName, num &nLocalMaxTime, num &ntime2, long nDirFil
    else
    if (glblFileSet.getDirCommand() == eCmd_FreezeDir)
       return execFileFreeze(pszName, nLocalMaxTime, ntime2, nDirFileCnt);
-   fprintf(stderr, "error: no command supplied for directory\n");
-   return 9;
+   return 9+perr("no command supplied for directory\n");
 }
 
 long execDirMirror(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalMaxTime, num &ntime2)
@@ -5501,8 +6277,7 @@ long execDirMirror(char *pszName, long lLevel, FileList &oDirFiles, num &nLocalM
    else
    if (glblFileSet.getDirCommand() == eCmd_FreezeDir)
       return execDirFreeze(pszName, lLevel, oDirFiles, nLocalMaxTime, ntime2);
-   fprintf(stderr, "error: no command supplied for directory\n");
-   return 9;
+   return 9+perr("no command supplied for directory\n");
 }
 
 long execFileFreeze(char *pszName, num &nLocalMaxTime, num &nTreeMaxTime, long nDirFileCnt)
@@ -5761,7 +6536,7 @@ long execSingleDir(char *pszName, long lLevel, long &lGlobFiles, FileList &oDirF
 long checkMask(char *pszMask) {
    if (!strcmp(pszMask, "*"))
       return 1;
-   if (strchr(pszMask, '*')) { fprintf(stderr, "error: no masks with * supported, except \"*\" alone.\n"); return 0; }
+   if (strchr(pszMask, '*')) { perr("no masks with * supported, except \"*\" alone.\n"); return 0; }
    return 1;
 }
 
@@ -5824,7 +6599,7 @@ long execDetab(char *pszFile)
    // printf("probe1: %s\n", pszFile);
 
    char *pInFile = loadFile(pszFile, __LINE__);
-   if (!pInFile) { fprintf(stderr, "error: cannot read %s\n", pszFile); return 9; }
+   if (!pInFile) return 9+perr("cannot read %s\n", pszFile);
 
    // printf("probe2: %s, %d\n", pszFile, strlen(pInFile));
 
@@ -5843,7 +6618,7 @@ long execDetab(char *pszFile)
          printf("list of files containing tabs:\n");
       if (!strncmp(pszFile, glblDotSlash, 2))
          pszFile += 2;
-      printf("%s\n", pszFile);
+      printx("<file>%s<def>\n", pszFile);
       delete [] pInFile;
       return 0;
    }
@@ -5852,7 +6627,7 @@ long execDetab(char *pszFile)
 
    // if so, overwrite.
    FILE *fOut = fopen(pszFile, "w");
-   if (!fOut) { fprintf(stderr, "error: cannot overwrite %s\n", pszFile); return 9; }
+   if (!fOut) return 9+perr("cannot overwrite %s\n", pszFile);
 
    char *pCur   = pInFile;
    int bBail    = 0;
@@ -5904,7 +6679,7 @@ long execDetab(char *pszFile)
 long execFormConv(char *pszFile)
 {
    char *pInFile = loadFile(pszFile, __LINE__);
-   if (!pInFile) { fprintf(stderr, "error: cannot read %s\n", pszFile); return 9; }
+   if (!pInFile) return 9+perr("cannot read %s\n", pszFile);
 
    nGlblFiles++;
 
@@ -5912,7 +6687,7 @@ long execFormConv(char *pszFile)
 
    // if so, overwrite in BINARY mode
    FILE *fOut = fopen(pszFile, "wb");
-   if (!fOut) { fprintf(stderr, "error: cannot overwrite %s\n", pszFile); return 9; }
+   if (!fOut) return 9+perr("cannot overwrite %s\n", pszFile);
 
    uchar abCRLF[] = { 0xD, 0xA };
 
@@ -5952,10 +6727,8 @@ long execFormConv(char *pszFile)
 }
 
 long checkArgCnt(long argc, long lMinCnt) {
-   if (argc < lMinCnt) {
-      fprintf(stderr, "error: missing arguments. type \"sfk\" without parms for help.\n");
-      return 9;
-   }
+   if (argc < lMinCnt)
+      return 9+perr("missing arguments. type \"sfk\" without parms for help.\n");
    return 0;
 }
 
@@ -5970,7 +6743,7 @@ bool isWriteable(char *pszTmpFile) {
 char *findPathLocation(char *pszCmd)
 {
    char *pszPath = getenv("PATH");
-   if (!pszPath) { fprintf(stderr, "error: no PATH variable found.\n"); return 0; }
+   if (!pszPath) { perr("no PATH variable found.\n"); return 0; }
    char *psz1 = pszPath;
    while (*psz1) {
       char *psz2 = psz1;
@@ -6040,7 +6813,7 @@ long checkXCopy(char *pszTmpFile, char *pszMask)
 long checkZipVersion(char *pszTmpFile)
 {
    char *pszCmd = findPathLocation("zip" EXE_EXT);
-   if (!pszCmd) { fprintf(stderr, "error: no zip" EXE_EXT " found within PATH.\n"); return 9; }
+   if (!pszCmd) return 9+perr("no zip" EXE_EXT " found within PATH.\n");
    pszGlblZipCmd = strdup(pszCmd);
 
    // the following command will cause a proper zip 2.31
@@ -6049,7 +6822,7 @@ long checkZipVersion(char *pszTmpFile)
    sprintf(szLineBuf, "%s -v " STR_FROM_NUL " >%s 2>&1", pszGlblZipCmd, pszTmpFile);
    long lRC = system(szLineBuf);
    if (lRC) {
-      fprintf(stderr, "error: ZIP RC: %ld - %s probably too old\n", lRC, pszGlblZipCmd);
+      perr("ZIP RC: %ld - %s probably too old\n", lRC, pszGlblZipCmd);
       return lRC;
    }
  
@@ -6076,31 +6849,28 @@ long checkZipVersion(char *pszTmpFile)
    if (nGlblZipVersionHi > 2)
       return 0; // OK: Zip 3.x or higher
 
-   if (nGlblZipVersionHi < 2) {
-      fprintf(stderr, "error: %s version too old (%ld.%ld)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo);
-      return 9; // NOK, stone-old zip 1.x
-   }
+   if (nGlblZipVersionHi < 2)
+      return 9+perr("%s version too old (%ld.%ld)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo);
 
    if (nGlblZipVersionLo >= 31)
       return 0; // OK: Zip 2.31
 
    // else below 2.31: too old
-   fprintf(stderr, "error: %s version too old (%ld.%ld)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo);
-   return 9;
+   return 9+perr("%s version too old (%ld.%ld)\n", pszGlblZipCmd, nGlblZipVersionHi, nGlblZipVersionLo);
 }
 
 // uses szLineBuf
 long checkUnzipVersion(char *pszTmpFile)
 {
    char *pszCmd = findPathLocation("unzip" EXE_EXT);
-   if (!pszCmd) { fprintf(stderr, "error: no unzip" EXE_EXT " found within PATH.\n"); return 9; }
+   if (!pszCmd) return 9+perr("no unzip" EXE_EXT " found within PATH.\n");
    pszGlblUnzipCmd = strdup(pszCmd);
  
    // the following command will cause a proper unzip 5.52 to tell it's version.
    sprintf(szLineBuf, "%s -v " STR_FROM_NUL " >%s 2>&1", pszGlblUnzipCmd, pszTmpFile);
    long lRC = system(szLineBuf);
    if (lRC) {
-      fprintf(stderr, "error: UNZIP RC: %ld - %s probably too old\n", lRC, pszGlblUnzipCmd);
+      perr("UNZIP RC: %ld - %s probably too old\n", lRC, pszGlblUnzipCmd);
       return lRC;
    }
  
@@ -6127,17 +6897,15 @@ long checkUnzipVersion(char *pszTmpFile)
    if (nGlblUnzipVersionHi > 5)
       return 0; // OK: Unzip 6.x or higher
 
-   if (nGlblUnzipVersionHi < 5) {
-      fprintf(stderr, "error: %s version too old (%ld.%ld)\n", pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
-      return 9; // NOK, stone-old unzip 4.x
-   }
+   if (nGlblUnzipVersionHi < 5)
+      return 9+perr("%s version too old (%ld.%ld)\n", pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
+      // NOK, stone-old unzip 4.x
 
    if (nGlblUnzipVersionLo >= 52)
       return 0; // OK: Unzip 5.52
 
    // else below 5.52: too old
-   fprintf(stderr, "error: %s version too old (%ld.%ld)\n", pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
-   return 9;
+   return 9+perr("%s version too old (%ld.%ld)\n", pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
 }
 
 #ifdef WITH_TCP
@@ -6187,7 +6955,7 @@ long receiveBlock(SOCKET hSock, uchar *pBlock, ulong nLen, char *pszInfo)
       long nRead = recv(hSock, (char*)pBlock+nCursor, nRemain, 0);
       if (nRead <= 0) {
          if (pszInfo) // else silent mode
-            fprintf(stderr, "error: failed to receive %s\n", pszInfo);
+            perr("failed to receive %s\n", pszInfo);
          return -1;
       }
       nRemain -= nRead;
@@ -6221,7 +6989,7 @@ long readLine(SOCKET hSock, char *pszLineBuf = szLineBuf)
       // recv blocks until at least 1 byte is available.
       long nRead = recv(hSock, pszLineBuf+nCursor, 1, 0);
       if (nRead <= 0) {
-         // fprintf(stderr, "error: readLine failed %ld %ld", nCursor, nRead);
+         // perr("readLine failed %ld %ld", nCursor, nRead);
          return 9;
       }
       nCursor += nRead;
@@ -6272,7 +7040,7 @@ long sendLong(SOCKET hSock, ulong nOut, char *pszInfo)
    abBuf[1] = ((uchar)(nOut >>  8));
    abBuf[0] = ((uchar)(nOut >>  0));
    long nSent = send(hSock, (char*)abBuf, 4, 0);
-   if (nSent != 4) { fprintf(stderr, "error: failed to send %s\n", pszInfo); return 9; }
+   if (nSent != 4) return 9+perr("failed to send %s\n", pszInfo);
    return 0;
 }
 
@@ -6298,7 +7066,7 @@ long sendNum(SOCKET hSock, num nOut, char *pszInfo)
       nOut >>= 8;
    }
    long nSent = send(hSock, (char*)abBuf, 8, 0);
-   if (nSent != 8) { fprintf(stderr, "error: failed to send %s\n", pszInfo); return 9; }
+   if (nSent != 8) return 9+perr("failed to send %s\n", pszInfo);
    return 0;
 }
 
@@ -6307,15 +7075,15 @@ long sendFileRaw(SOCKET hSock, char *pszFile)
    num nLen = getFileSize(pszFile);
 
    FILE *fin = fopen(pszFile, "rb");
-   if (!fin) { fprintf(stderr, "error: cannot read %s\n", pszFile); return 9; }
+   if (!fin) return 9+perr("cannot read %s\n", pszFile);
 
    num nLen2 = 0;
    num nTellStep = 10;
    num nTellNext = nTellStep;
    while (nLen2 < nLen) {
       int nRead = fread(abBuf, 1, sizeof(abBuf)-10, fin);
-      if (nRead <= 0) { fprintf(stderr, "error: cannot fully read %s\n", pszFile); return 9; }
-      if (send(hSock, (char*)abBuf, nRead, 0) != nRead) { fprintf(stderr, "error: while sending %s\n", pszFile); return 9; }
+      if (nRead <= 0) return 9+perr("cannot fully read %s\n", pszFile);
+      if (send(hSock, (char*)abBuf, nRead, 0) != nRead) return 9+perr("while sending %s\n", pszFile);
       nLen2 += nRead;
       if (nLen2 >= nTellNext) {
          nTellNext += nTellStep;
@@ -6336,7 +7104,7 @@ long putFileBySFT(SOCKET hSock, char *pszFile)
 {
    num nLen = getFileSize(pszFile);
    if (nLen <= 0)
-      { fprintf(stderr, "error: cannot read %s\n", pszFile); return 9; }
+      return 9+perr("cannot read %s\n", pszFile);
 
    ulong nMetaSize = 8+16;
    if (sendLong(hSock, nMetaSize, "metalen")) return 9;
@@ -6350,12 +7118,16 @@ long putFileBySFT(SOCKET hSock, char *pszFile)
       return 9;
    unsigned char *pmd5 = md5.digest();
    long nSent = send(hSock, (char*)pmd5, 16, 0);
-   if (nSent != 16) { fprintf(stderr, "error: failed to send md5\n"); return 9; }
+   if (nSent != 16) return 9+perr("failed to send md5\n");
 
    sendFileRaw(hSock, pszFile);
 
    // wait until receival of ack, to avoid transmission break by premature close.
-   // printf("> wait for ack\n");
+   #ifndef _WIN32
+   // known issue: bytes sent from linux may sometimes not receive other side
+   //              until connection is closed, e.g. through CTRL+C.
+   printf("> waiting for ack. if this blocks, try CTRL+C.\n");
+   #endif
    receiveBlock(hSock, abBuf, 4, 0); // 0 == silent mode
    // we do IGNORE the rc here.
 
@@ -6369,7 +7141,7 @@ long putFileBySFT(SOCKET hSock, char *pszFile)
 long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes)
 {
    FILE *fout = fopen(pszFile, "wb");
-   if (!fout) { fprintf(stderr, "error: cannot write to %s\n", pszFile); return 9; }
+   if (!fout) return 9+perr("cannot write to %s\n", pszFile);
 
    num nLen2 = 0;
    num nTellStep = 10;
@@ -6403,17 +7175,15 @@ long getFileBySFT(SOCKET hSock, char *pszFile)
    ulong nMetaSize = 0;
    if (readLong(hSock, nMetaSize, "metalen")) return 9;
 
-   if (nMetaSize != 8+16) {
-      fprintf(stderr, "error: unsupported SFT protocol version\n");
-      return 9;
-   }
+   if (nMetaSize != 8+16)
+      return 9+perr("unsupported SFT protocol version\n");
 
    // meta 1: 8 bytes filesize
    num nLen = 0;
    if (readNum(hSock, nLen, "len")) return 9;
    if (nGlblTCPMaxSizeMB)
       if (nLen > nGlblTCPMaxSizeMB * 1000000)
-         { fprintf(stderr, "error: illegal length received, %s\n", numtoa(nLen)); return 9; }
+         return 9+perr("illegal length received, %s\n", numtoa(nLen));
    printf("< len %s\n", numtoa(nLen));
 
    // meta 2: 16 bytes md5
@@ -6424,14 +7194,14 @@ long getFileBySFT(SOCKET hSock, char *pszFile)
 
    // send short confirmation when finished, so client can safely close socket.
    long nSent = send(hSock, (char*)"ok\n\n", 4, 0);
-   if (nSent != 4) { fprintf(stderr, "error: failed to send reply, %ld\n", nSent); return 9; }
+   if (nSent != 4) return 9+perr("failed to send reply, %ld\n", nSent);
 
    SFKMD5 md5;
    if (getFileMD5(pszFile, md5))
       return 9;
    unsigned char *pmd5 = md5.digest();
 
-   if (memcmp(pmd5, abMD5, 16)) { fprintf(stderr, "error: md5 mismatch - transfered file corrupted.\n"); return 9; }
+   if (memcmp(pmd5, abMD5, 16)) return 9+perr("md5 mismatch - transfered file corrupted.\n");
 
    return 0;
 }
@@ -6442,16 +7212,16 @@ long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT)
    WORD wVersionRequested = MAKEWORD(1,1);
    WSADATA wsaData;
    if (WSAStartup(wVersionRequested, &wsaData)!=0)
-      { fprintf(stderr, "error: WSAStartup failed\n"); return 9; }
+      return 9+perr("WSAStartup failed\n");
    #endif
 
    struct hostent *pTarget;
    struct sockaddr_in sock;
    hSock = socket(AF_INET, SOCK_STREAM, 0);
-   if (hSock == INVALID_SOCKET) { fprintf(stderr, "error: cannot create socket\n"); return 9; }
+   if (hSock == INVALID_SOCKET) return 9+perr("cannot create socket\n");
 
    if ((pTarget = gethostbyname(pszHost)) == NULL)
-      { fprintf(stderr, "error: cannot get host\n"); return 9; }
+      return 9+perr("cannot get host\n");
 
    memcpy(&sock.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
    sock.sin_family = AF_INET;
@@ -6460,9 +7230,9 @@ long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT)
    if ((connect(hSock, (struct sockaddr *)&sock, sizeof(sock))) == -1) {
       #ifdef _WIN32
       int nErr = WSAGetLastError();
-      fprintf(stderr, "error: cannot connect to %s:%lu, rc %d\n", pszHost, nPort, nErr);
+      perr("cannot connect to %s:%lu, rc %d\n", pszHost, nPort, nErr);
       #else
-      fprintf(stderr, "error: cannot connect to %s:%lu\n", pszHost, nPort);
+      perr("cannot connect to %s:%lu\n", pszHost, nPort);
       #endif
       return 9;
    }
@@ -6636,10 +7406,10 @@ long makeServerSocket(ulong &nNewPort, struct sockaddr_in &ServerAdr, SOCKET &hS
 
    hServSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hServSock == INVALID_SOCKET)
-      { fprintf(stderr, "error: cannot create %s (%lu)\n", pszInfo, nPort); return 9; }
+      return 9+perr("cannot create %s (%lu)\n", pszInfo, nPort);
 
    if (bind(hServSock, (struct sockaddr *)&ServerAdr, sizeof(sockaddr_in)) == SOCKET_ERROR) {
-      fprintf(stderr, "error: cannot bind %s (%lu)\n", pszInfo, nPort);
+      perr("cannot bind %s (%lu)\n", pszInfo, nPort);
       fprintf(stderr, "info : maybe a different app is running, or firewall blocks access.\n");
       fprintf(stderr, "info : you may retry with a different port, e.g. -port=30199.\n");
       return 9; 
@@ -6652,8 +7422,7 @@ long makeServerSocket(ulong &nNewPort, struct sockaddr_in &ServerAdr, SOCKET &hS
       #else
       nerr = errno;
       #endif
-      fprintf(stderr, "error: getsockname failed, %d\n", nerr);
-      return 9;
+      return 9+perr("getsockname failed, %d\n", nerr);
    }
 
    bool bTell = (nPort == 0);
@@ -6666,7 +7435,7 @@ long makeServerSocket(ulong &nNewPort, struct sockaddr_in &ServerAdr, SOCKET &hS
    setBlocking(hServSock, 0);
 
    if (listen(hServSock, 4) == SOCKET_ERROR)
-      { fprintf(stderr, "error: cannot listen on %s (%lu)\n", pszInfo, nPort); return 9; }
+      return 9+perr("cannot listen on %s (%lu)\n", pszInfo, nPort);
 
    return 0;
 }
@@ -6675,18 +7444,18 @@ long connectSocket(char *pszHost, ulong nPort, struct sockaddr_in &ClntAdr, SOCK
 {
    hSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hSock == INVALID_SOCKET)
-      { fprintf(stderr, "error: cannot create %s\n", pszInfo); return 9; }
+      return 9+perr("cannot create %s\n", pszInfo);
 
    struct hostent *pTarget = 0;
    if ((pTarget = gethostbyname(pszHost)) == NULL)
-      { fprintf(stderr, "error: cannot get host for %s\n", pszInfo); return 9; }
+      return 9+perr("cannot get host for %s\n", pszInfo);
 
    memcpy(&ClntAdr.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
    ClntAdr.sin_family = AF_INET;
    ClntAdr.sin_port = htons((unsigned short)nPort);
    printf("< connect to %s:%lu\n", pszHost, nPort);
    if ((connect(hSock, (struct sockaddr *)&ClntAdr, sizeof(struct sockaddr_in))) == -1)
-      { fprintf(stderr, "error: cannot establish connection for %s\n", pszInfo); return 9; }
+      return 9+perr("cannot establish connection for %s\n", pszInfo);
 
    return 0;
 }
@@ -6697,7 +7466,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
    WORD wVersionRequested = MAKEWORD(1,1);
    WSADATA wsaData;
    if (WSAStartup(wVersionRequested, &wsaData)!=0)
-      { fprintf(stderr, "error: WSAStartup failed\n"); return 9; }
+      return 9+perr("WSAStartup failed\n");
    #endif
 
    bGlblFTPReadWrite = bRW;
@@ -6730,7 +7499,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
          int nerr = errno;
          #endif
          if (nerr == WSAEWOULDBLOCK) { doSleep(500); continue; }
-         fprintf(stderr, "error: accept on server main port failed\n");
+         perr("accept on server main port failed\n");
          lRC = 9;
          break;
       }
@@ -6850,18 +7619,18 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
                   int nerr = errno;
                   #endif
                   if (nerr == WSAEWOULDBLOCK) { doSleep(500); continue; }
-                  fprintf(stderr, "error: accept on passive port failed\n");
+                  perr("accept on passive port failed\n");
                   break;
                }
                else
                   break;
             }
-            if (k==6) { fprintf(stderr, "error: accept timeout for passive port\n"); break; }
+            if (k==6) { perr("accept timeout for passive port\n"); break; }
             setBlocking(hData, 1);
             printf("> accept done\n");
 
             if (hData == INVALID_SOCKET)
-               { fprintf(stderr, "error: passive accept failed\n"); break; }
+               { perr("passive accept failed\n"); break; }
          }
          else
          if (!strncmp(szLineBuf, "PORT ", 5)) 
@@ -7076,7 +7845,7 @@ long TestDB::load(bool bSilent) {
    FILE *fin = fopen(pszClFile, "r");
    if (!fin) {
       if (!bSilent)
-         fprintf(stderr, "error: unable to load %s\n", pszClFile); 
+         perr("unable to load %s\n", pszClFile); 
       return 9; 
    }
    long nLine = 0;
@@ -7085,7 +7854,7 @@ long TestDB::load(bool bSilent) {
       removeCRLF(szLineBuf);
       char *psz = strchr(szLineBuf, ':');
       if (!psz) {
-         fprintf(stderr, "error: wrong record format in %s line %ld\n", pszClFile, nLine); 
+         perr("wrong record format in %s line %ld\n", pszClFile, nLine); 
          fclose(fin);
          return 9; 
       }
@@ -7101,7 +7870,7 @@ long TestDB::load(bool bSilent) {
 
 long TestDB::write() {
    FILE *fout = fopen(pszClFile, "w");
-   if (!fout) { fprintf(stderr, "error: unable to write %s\n", pszClFile); return 9; }
+   if (!fout) return 9+perr("unable to write %s\n", pszClFile);
    long nRec = clKeys.numberOfEntries();
    for (long i=0; i<nRec; i++) {
       char *pszKey = clKeys.getEntry(i, __LINE__);
@@ -7142,14 +7911,17 @@ char *TestDB::getValue(char *pszInKey) {
    return 0;
 }
 
+#ifndef USE_SFK_BASE
 extern int patchMain(int argc, char *argv[], int noffs);
+#endif
 
 // in: szLineBuf. also uses szLineBuf2.
 long applyReplace(char *pszPat)
 {
    // _src_dest_
-   char szSrc[100];
-   char szDst[100];
+   char szSrc[200];
+   char szDst[200];
+
    // isolate source and destination.
    char *psz1 = pszPat;
    char cbnd = '\0'; // boundary char
@@ -7157,38 +7929,155 @@ long applyReplace(char *pszPat)
    char *pszSrc1 = psz1;
    while (*psz1 && (*psz1 != cbnd))
       psz1++;
-   if (!*psz1) { fprintf(stderr, "error: illegal replacement string \"%s\"\n", pszPat); return 9; }
+   if (!*psz1) return 9+perr("illegal replacement string \"%s\"\n", pszPat);
    char *pszSrc2 = psz1;
    psz1++;
    char *pszDst1 = psz1;
    while (*psz1 && (*psz1 != cbnd))
       psz1++;
-   if (!*psz1) { fprintf(stderr, "error: illegal replacement string \"%s\"\n", pszPat); return 9; }
+   if (!*psz1) return 9+perr("illegal replacement string \"%s\"\n", pszPat);
    char *pszDst2 = psz1;
    int nSrcLen = pszSrc2-pszSrc1;
    int nDstLen = pszDst2-pszDst1;
-   if (nSrcLen > sizeof(szSrc)-10) { fprintf(stderr, "error: source pattern too large \"%.*s\"\n", nSrcLen, pszSrc1); return 9; }
-   if (nDstLen > sizeof(szDst)-10) { fprintf(stderr, "error: destination pattern too large \"%.*s\"\n", nDstLen, pszDst1); return 9; }
+   if (nSrcLen > sizeof(szSrc)-10) return 9+perr("source pattern too large \"%.*s\"\n", nSrcLen, pszSrc1);
+   if (nDstLen > sizeof(szDst)-10) return 9+perr("destination pattern too large \"%.*s\"\n", nDstLen, pszDst1);
    strncpy(szSrc, pszSrc1, nSrcLen);
    szSrc[nSrcLen] = '\0';
    strncpy(szDst, pszDst1, nDstLen);
    szDst[nDstLen] = '\0';
+
    // apply replacements.
    psz1 = szLineBuf;
    while (psz1 = strstr(psz1, szSrc))
    {
-      memset(szLineBuf2, 0, sizeof(szLineBuf2));
-      strncpy(szLineBuf2, szLineBuf, psz1-szLineBuf);
+      // left
+      long nLenLeft = psz1-szLineBuf;
+      strncpy(szLineBuf2, szLineBuf, nLenLeft);
+      szLineBuf2[nLenLeft] = '\0';
+      strncpy(szAttrBuf2, szAttrBuf, nLenLeft);
+      szAttrBuf2[nLenLeft] = '\0';
+
       // middle
-      char *psz2 = psz1+nSrcLen;
+      long nLenRep = strlen(szDst);
+      char *pszSrcRite = psz1+nSrcLen;
       strcat(szLineBuf2, szDst);
-      // remember position past insert
+      memset(&szAttrBuf2[nLenLeft], 'r', nLenRep);
+      szAttrBuf2[nLenLeft+nLenRep] = '\0';
+
+      // step continue position to post-insert
       psz1 = szLineBuf+strlen(szLineBuf2);
+
       // right
-      strcat(szLineBuf2, psz2);
+      strcat(szLineBuf2, pszSrcRite);
+      strcat(szAttrBuf2, szAttrBuf+nLenLeft+nSrcLen);
+
       // copy back result
-      strncpy(szLineBuf, szLineBuf2, sizeof(szLineBuf));
+      strcpy(szLineBuf, szLineBuf2);
+      strcpy(szAttrBuf, szAttrBuf2);
    }
+   return 0;
+}
+
+char aMaskSep[200];
+bool isMaskSep(char c) {
+   if (strchr(aMaskSep, c))
+      return true;
+   return false;
+}
+
+// in: szLineBuf. also uses szLineBuf2.
+long applyMask(char *pszPat, bool bBlockSep)
+{
+   StringTable oCol;
+
+   // parse szLineBuf, split into columns
+   char *psz1 = szLineBuf;
+   char *psz2 = 0;
+
+   if (bBlockSep)
+      while (*psz1 && isMaskSep(*psz1))
+         psz1++;
+
+   while (*psz1)
+   {
+      psz2 = psz1;
+      while (*psz2 && !isMaskSep(*psz2))
+         psz2++;
+
+      // have column from psz1 to psz2
+      strncpy(szLineBuf2, psz1, psz2-psz1);
+      szLineBuf2[psz2-psz1] = '\0';
+      oCol.addEntry(szLineBuf2);
+
+      // continue past separator, find next token
+      if (bBlockSep) {
+         // treat adjacent separators as one
+         while (*psz2 && isMaskSep(*psz2))
+            psz2++;
+      } else {
+         if (isMaskSep(*psz2))
+            psz2++;
+      }
+
+      psz1 = psz2;
+   }
+
+   // oCol now holds all columns. apply mask.
+   psz1 = pszPat;
+   szLineBuf[0] = '\0';
+   long iOut = 0;
+   char *psz3 = 0;
+   char szFormat1[100];
+   char szFormat2[100];
+   while (*psz1) {
+      if (*psz1==glblRunChar) {
+         // parse format info, if any
+         psz2 = psz1+1;
+         while (*psz2 && strncmp(psz2, "col", 3))
+            psz2++;
+         long nFormLen = psz2-psz1-1;
+         if (nFormLen > sizeof(szFormat1)-10)
+            break;
+         strncpy(szFormat1, psz1+1, nFormLen);
+         szFormat1[nFormLen] = '\0';
+         if (strncmp(psz2, "col", 3))
+            break;
+         // parse column number
+         psz2 += 3;
+         psz3 = szLineBuf2;
+         while (*psz2 && isdigit(*psz2))
+            *psz3++ = *psz2++;
+         *psz3 = '\0';
+         long ncol = atol(szLineBuf2);
+         if (ncol-1 >= oCol.numberOfEntries()) {
+            static bool btold = 0;
+            if (!btold) {
+               btold = 1;
+               perr("wrong column index: %ld\n", ncol);
+            }
+         } else {
+            // add column
+            if (strlen(szFormat1)) {
+               // use specified printf-like format.
+               // we cannot check this - user must know.
+               sprintf(szFormat2, "%%%ss", szFormat1);
+               // printf("use format %s\n", szFormat2);
+               sprintf(szLineBuf2, szFormat2, oCol.getEntry(ncol-1, __LINE__));
+               strcat(szLineBuf, szLineBuf2);
+            }
+            else
+               strcat(szLineBuf, oCol.getEntry(ncol-1, __LINE__));
+         }
+         iOut = strlen(szLineBuf);
+         // continue past token, including separator
+         psz1 = psz2;
+         continue;
+      } else {
+         szLineBuf[iOut++] = *psz1++;
+         szLineBuf[iOut] = '\0';
+      }
+   }
+
    return 0;
 }
 
@@ -7200,11 +8089,20 @@ int main(int argc, char *argv[])
    bool bDone = 0;
    long bFatal = 0;
 
-   if (argc < 2) 
+   initConsole();
+
+   // parse and remove general prefix options
+   while (argc >= 2 && setGeneralOption(argv[1])) {
+      argc--;
+      argv++;
+   }
+
+   if (argc < 2)
    {
-      printf("sfk/" SFK_BRANCH " " SFK_VERSION " - a swiss file knife derivate.\n"); // [patch-id]
-      printf("this version provided by " SFK_PROVIDER ".\n");
-      printf("based on the free sfk 1.1.5 by stahlworks art & technology.\n");
+      printx("<help>$sfk" SFK_BRANCH " " SFK_VERSION " - the swiss file knife text processor.\n");
+      printf("this binary was compiled and provided by " SFK_PROVIDER ".\n");
+      printf("original source and binary package available on sourceforge,\n");
+      printf("http://sourceforge.net/projects/swissfileknife\n");
       printf("Distributed for free under the GNU General Public License,\n"
              "without any warranty. Use with care and on your own risk.\n");
 
@@ -7216,174 +8114,149 @@ int main(int argc, char *argv[])
       }
       #endif
 
-      printf("\n"
-             "usage:\n"
+      printx("\n"
+             "<file>usage:<def>\n"
              );
-      printf("   sfk detab=tabsize dir mask [%cmask2]\n"
+      printx("   $sfk detab=tabsize dir ext1 [ext2 ...]\n"
              "       replace tabs by spaces within file(s).\n"
-             "          sfk detab=3 . .cpp .hpp\n"
-             "          sfk detab=3 singleFileName.txt\n"
-             "   sfk scantab dir mask [%cmask2]\n"
+             "          #sfk detab=3 sources .cpp .hpp\n"
+             "          #sfk detab=3 singleFileName.txt\n"
+             "   $sfk scantab -dir dir1 dir2 -file ext1 [ext2 ...]\n"
              "       check if files contain tabs.\n"
-             "          sfk scantab -dir src1 src2 -file .cpp .hpp\n",
-             glblNotChar, glblNotChar
+             "          #sfk scantab -dir src1 src2 -file .cpp .hpp\n"
+             "          #sfk scantab . .cpp .hpp\n"
              );
-      printf("   sfk lf-to-crlf or crlf-to-lf [or addcrlf, remcrlf]\n"
-             "       just like detab, for CRLF conversion\n"
-             "   sfk text-join-lines infile outfile\n"
+      printx("   $sfk lf-to-crlf [or addcrlf] [dir ext1 [ext2]] or [singlefile]\n"
+             "   $sfk crlf-to-lf [or remcrlf] [dir ext1 [ext2]] or [singlefile]\n"
+             "       convert between CR/LF and just LF text format.\n"
+             "          #sfk remcrlf batches .bat .cmd\n"
+             "          #sfk remcrlf mybatch.bat\n"
+             "   $sfk text-join-lines infile outfile\n"
              "       for text with lines split by email reformatting.\n"
-             "   sfk stat [-minsize=mb] [dir] [-i]\n"
+             "   $sfk stat [-minsize=mb] [dir] [-i]\n"
              "       show directory size statistics in mbytes.\n"
              "       minsize: list only dirs and files >= minsize mbytes.\n"
              "       -i: read list of files and directories from stdin.\n"
-             "          sfk stat -minsize=10m\n"
-             "          type dirlist.txt | sfk stat -quiet -i\n"
-             "   sfk list [-twinscan] [-time] [-size|-size=digits] dir [mask]\n"
+             "          #sfk stat -minsize=10m\n"
+             "          #type dirlist.txt | sfk stat -quiet -i\n"
+             "   $sfk list [-twinscan] [-time] [-size|-size=digits] dir [mask]\n"
              "       plain listing of files within directory tree.\n"
              "       twinscan: list only identical files, if any.\n"
              "       quiet: suppress some msg. verbose: list non-regular files.\n"
-             "          sfk list -dir src1 -file .cpp -dir src2 -file .hpp\n"
+             "          #sfk list -dir src1 -file .cpp -dir src2 -file .hpp\n"
              "       to find most recent or largest files of directory tree:\n"
-             "          sfk list -time -size=10 | sort\n"
-             "          sfk list -size=10 -time | sort\n"
-             "   sfk grep [-pat] pattern [pattern2] [-dir] [dir1] [mask1] ...\n"
-             "       very simple, case-insensitive pattern search for text files.\n"
+             "          #sfk list -time -size=10 | sort\n"
+             "          #sfk list -size=10 -time | sort\n"
+             "   $sfk grep [-c] [-pat] pattern [pattern2] [-dir] [dir1] [mask1] ...\n"
+             "       case-insensitive pattern search for text and binary.\n"
              "       only lines containing all patterns are listed.\n"
-             "          sfk grep mytext . .hpp\n"
-             "          sfk grep -pat text1 text2 -dir src1 src2 -file .cpp .hpp\n"
-             "   sfk bin-to-src [-pack] infile outfile\n"
-             "       create sourcefile containing a binary object\n"
-             "          sfk bin-to-src myimg.dat imgsrc.cpp\n"
+             "       type \"sfk grep\" for details.\n"
+             "          #sfk grep foobar docs\n"
+             "          #sfk grep -pat text1 text2 -dir src1 src2 -file .cpp .hpp\n"
+             "   $sfk bin-to-src [-pack] infile outfile\n"
+             "       create sourcefile containing a binary data block.\n"
+             "          #sfk bin-to-src myimg.dat imgsrc.cpp\n"
              );
-      printf("   sfk filter <input >output [-lnum] [-c] -+orpat [++andpat] [-%cnopat] [...]\n"
-             "   sfk filter infile -+pattern\n"
-             "       filter lines from standard input, case-insensitive.\n"
-             "       -+   this pattern MAY  be  part of a result line\n"
-             "       ++   this pattern MUST be  part of a result line\n"
-             "       +ls+ this pattern MUST be start of a result line\n"
-             "       -%c   this pattern must NOT be  part of a result line\n"
-             "       -ls%c this pattern must NOT be start of a result line\n"
-             "       -no-empty-lines removes all empty lines from stream\n"
-             "       -lnum preceed all result lines by input line number\n"
-             "       -case compare case-sensitive (not default)\n"
-             "       -replace|-rep xSrcxDestx  =replace string Src by Dest\n"
-             "          anyprog | sfk filter -+mypat -%cotherpat\n"
-             "          sfk filter result.txt -rep _\\_/_ -rep xC:\\xD:\\x\n",
-             glblNotChar, glblNotChar, glblNotChar, glblNotChar
+      printx("   $sfk filter <input >output [-lnum] [-c] -+orpat [++andpat] [-<not>nopat] [...]\n"
+             "   $sfk filter infile -+pattern\n"
+             "       filter and process lines, from a file, or from standard input.\n"
+             "       -+   this pattern MAY  be  part of a result line (OR  pattern)\n"
+             "       ++   this pattern MUST be  part of a result line (AND pattern)\n"
+             "       -<not>   this pattern must NOT be  part of a result line\n"
+             "       -rep[lace] xSrcxDestx   = replace string Src by Dest\n"
+             "       type \"sfk filter\" for all filter options.\n"
+             "          #anyprog | sfk filter -+mypat -<not>otherpat\n"
+             "          #sfk filter result.txt -rep _\\_/_ -rep xC:\\xD:\\x\n"
              );
-      printf("   sfk addhead <in >out [-noblank] string1 string2 ...\n"
-             "   sfk addtail <in >out [-noblank] string1 string2 ...\n"
+      printx("   $sfk addhead <in >out [-noblank] string1 string2 ...\n"
+             "   $sfk addtail <in >out [-noblank] string1 string2 ...\n"
              "       add string(s) at start or end of lines.\n"
              "       with noblank specified, does not add blank char.\n"
-             "   sfk strings filename\n"
+             "   $sfk strings [-umlauts] filename\n"
              "       extract strings from a binary file.\n"
-             "          sfk strings test.exe | sfk filter -+VersionInfo\n"
-             "   sfk pathfind anycmd.exe | sfk where anycmd.exe\n"
+             "          #sfk strings test.exe | sfk filter -+VersionInfo\n"
+             "   $sfk pathfind anycmd.exe | sfk where anycmd.exe\n"
              "       tells location of anycmd.exe within PATH.\n"
-             "   sfk deblank [-yes]\n"
+             "   $sfk deblank [-yes]\n"
              "       replace blanks in filenames by \"_\" character.\n"
              "       command only simulates. specify -yes to really rename.\n"
-             "\n"
              );
-      printf("   sfk snapto=outfile [-pure] [-norec] -dir mydir1 -file .ext1 .ext2\n"
+      printx("   $sfk color colorname\n"
+             "       set text color to white, grey, red, green, blue, yellow, black.\n"
+             );
+      printx("   $sfk snapto=outfile [-pure] [-norec] -dir mydir1 -file .ext1 .ext2\n"
              "       collect many files into one large text file.\n"
              "       -pure: don't insert filenames. -prefix=x: insert this before every block.\n"
              "       -norec: do not recurse into subdirs. -stat: show time stats at end.\n"
              "       -wrap=n: auto-wrap long lines near column n, e.g. -wrap=80\n"
-             "       many dirs may be specified. names beginning with %c are excluded.\n"
-             "          sfk snapto=all-src.cpp . .cpp .hpp\n"
-             "          sfk snapto=all-src.cpp -dir src1 src2 %csrc2%cold -file .cpp .hpp .xml\n",
-             glblNotChar, glblNotChar, glblPathChar
+             "       many dirs may be specified. names beginning with <not> are excluded.\n"
+             "          #sfk snapto=all-src.cpp . .cpp .hpp\n"
+             "          #sfk snapto=all-src.cpp -dir src1 src2 <not>src2%cold -file .cpp .hpp .xml\n",
+             glblPathChar
             );
-      printf("   sfk syncto=dbfile dir mask [%cmask2]\n"
-             "       gather files into one large editable clusterfile.\n"
-             "       changes in the cluster are written back to sourcefiles automatically.\n"
-             "       changes in the source files are synced into the cluster automatically.\n"
-             "          sfk syncto=cluster.cpp . .cpp .hpp\n", glblNotChar
+      printx("   $sfk syncto=dbfile [-stop] dir mask [<not>mask2]\n"
+             "       edit many files in parallel, by editing a single collection file.\n"
+             "       type \"sfk syncto\" for details.\n"
             );
-      printf("   sfk syncto=dbfile [-up]\n"
-             "       reuse an existing clusterfile.\n"
-             "       on start, by default, cluster diffs are written to the sourcefiles.\n"
-             "       on start, with -up, sourcefile diffs are written into the cluster.\n"
-             "          sfk syncto=cluster.cpp\n"
-             "   sfk syncto=dbfile -from=myconfig.sfk\n"
-             "       read command line parameters from config file, e.g.\n"
-             "          -dir\n"
-             "             foosys\\bar1\\include\n"
-             "             foosys\\bar1\\source\n"
-             "             %csave_patch\n"
-             "          -file\n"
-             "             .cpp .hpp\n"
-             "   mapping of compiler error output line numbers:\n"
-             "       make yoursys.mak >err.txt 2>&1\n"
-             "       sfk mapto=yourcluster.cpp [-nomix] [-cmd=...] <err.txt\n"
-             "          nomix: list only the mapped output lines. cmd: on first mapped line,\n"
-             "          call supplied command, with clustername and line as parameters.\n"
-             "\n", glblNotChar
-             );
-      printf("   sfk md5gento=outfile dir mask [mask2] [%cmask3] [...]\n"
-             "   sfk md5gento=outfile -dir dir1 dir2 -file mask1 mask2 %cmask3 [...]\n"
+      printx("   $sfk md5gento=outfile dir mask [mask2] [<not>mask3] [...]\n"
+             "   $sfk md5gento=outfile -dir dir1 dir2 -file mask1 mask2 <not>mask3 [...]\n"
              "       create list of md5 checksums over all files.\n"
-             "          sfk md5gento=md5.dat . *\n"
-             "   sfk md5check=infile [-skip=n] [-skip n]\n"
+             "          #sfk md5gento=md5.dat . *\n"
+             "   $sfk md5check=infile [-skip=n] [-skip n]\n"
              "       verify list of md5 checksums. to speed up verifys by spot checking,\n"
              "       specify -skip=n: after every checked file, n files will be skipped.\n"
-             "          sfk md5check=md5.dat\n"
-             "   sfk md5 filename\n"
+             "          #sfk md5check=md5.dat\n"
+             "   $sfk md5 filename\n"
              "       create md5 of a single file.\n"
-             "\n", glblNotChar, glblNotChar
              );
 
-         printf(
-             "   sfk run \"your command %cpfile [%cqfile] [...]\" [-quiet] [-sim]\n"
+         printx(
+             "   $sfk run \"your command <run>pfile [<run>qfile] [...]\" [-quiet] [-sim]\n"
              "       run self-defined command on files or directories.\n"
-             "       type \"sfk run\" for help.\n", glblRunChar, glblRunChar
+             "       type \"sfk run\" for details.\n"
              );
 
 /*
-         printf(
-             "\n"
-             "   sfk freezeto=targetdir [-quiet][-hidden][-verbose] -dir src1 -copy|zip\n"
+         printx(
+             "   $sfk freezeto=targetdir [-quiet][-hidden][-verbose] -dir src1 -copy|zip\n"
              "       create self-verifying archive tree, prepared for dvd burning.\n"
-             "       type \"sfk freezeto\" for help.\n"
+             "       type \"sfk freezeto\" for details.\n"
              );
 */
 
-         printf(
-             "\n"
-             "   sfk reflist [-abs] [-wide] -dir tdir -file .text -dir sdir -file .sext\n"
+         printx(
+             "   $sfk reflist [-abs] [-wide] -dir tdir -file .text -dir sdir -file .sext\n"
              "       find file references and dependencies. \"sfk reflist\" for help.\n"
 
              #ifdef WITH_TCP
-             "\n"
-             "   sfk ftpserv [-h|-help] [-port=nport] [-rw] [-maxsize=n]\n"
+             "   $sfk ftpserv [-h|-help] [-port=nport] [-rw] [-maxsize=n]\n"
              "       run simple ftp server, providing access to current directory.\n"
-             "       type \"sfk ftpserv -help\" for help.\n"
-             "\n"
-             "   sfk ftp host[:port] [put|get filename]\n"
+             "       type \"sfk ftpserv -help\" for details.\n"
+             "   $sfk ftp host[:port] [put|get filename]\n"
              "       simple ftp client. if connecting to sfk server, this client uses\n"
              "       sfk/sft protocol, which should always work even if ftp doesn't.\n"
-             "       type \"sfk ftp\" for help.\n"
+             "       type \"sfk ftp\" for details.\n"
              #endif
 
-             "\n"
-             "   sfk patch [...]\n"
-             "       dynamic source file patching. type \"sfk patch\" for help.\n"
+             "   $sfk patch [...]\n"
+             "       dynamic source file patching. type \"sfk patch\" for details.\n"
 
              #ifdef WITH_FN_INST
-             "\n"
-             "   sfk inst [...]\n"
+             "   $sfk inst [...]\n"
              "       instrument c++ source code with calls to micro tracing kernel.\n"
-             "       type \"sfk inst\" for help.\n"
+             "       type \"sfk inst\" for details.\n"
              #endif
 
              "\n"
+             "   general option -nocol before any command switches off color output.\n"
              "   general option -norec avoids recursion into subdirectories.\n"
              "   general option -quiet shows less output on some commands.\n"
 
              #ifdef _WIN32
              "   general option -hidden includes hidden and system files and dirs.\n"
              #endif
+
+             "   type \"sfk help colors\" about how to change result colors.\n"
             );
 
       return 0;
@@ -7393,11 +8266,61 @@ int main(int argc, char *argv[])
 
    char *pszCmd = argv[1];
 
+   if (!strcmp(pszCmd, "help"))
+   {
+      if (argc < 3) { fprintf(stderr, "type just \"sfk\" for details.\n"); return 0; }
+
+      char *pszSub = argv[2];
+      if (!strcmp(pszSub, "colors")) {
+         #ifdef _WIN32
+         char *pszSet = "set";
+         #else
+         char *pszSet = "export";
+         #endif
+         printf("%s SFK_COLORS=off|on,err:n,warn:n,head:n,examp:n,file:n,hit:n,rep:n\n"
+                "\n"
+                "   color identifiers are\n"
+                "      err    error   messages\n"
+                "      warn   warning messages\n"
+                "      head   headlines in help text\n"
+                "      examp  examples  in help text\n"
+                "      file   filename listings in grep\n"
+                "      hit    text pattern hits in grep and filter\n"
+                "      rep    replaced patterns in filter\n"
+                "\n"
+                "   color code n is a combination of these values:\n"
+                "      0 = black\n"
+                "      1 = bright\n"
+                "      2 = red\n"
+                "      4 = green\n"
+                "      8 = blue\n"
+                "\n"
+                "e.g. %s SFK_COLORS=file:15,head:15,hit:5,rep:7\n"
+                "     %s SFK_COLORS=off\n"
+                "\n"
+                , pszSet, pszSet, pszSet);
+         #ifdef _WIN32
+         printf("   the default color scheme for windows is optimized for black background.\n");
+         printf("   to switch off color highlighting, use general option -nocol with any command.\n");
+         #else
+         printf("   the default color scheme for unix is optimized for white background.\n"
+                "   by default, unix colors are active only for help text, as the required control\n"
+                "   escape sequences may create problems when mixed with command output.\n"
+                "   to activate output coloring per command, specify option -col.\n"
+                );
+         #endif
+         return 0;
+      } else {
+         fprintf(stderr, "unknown subject: %s. type just \"sfk\" for help.\n", pszSub);
+         return 0;
+      }
+   }
+
    if (!strncmp(pszCmd, "md5gento=", strlen("md5gento="))) 
    {
       pszGlblOutFile = pszCmd+strlen("md5gento=");
       fGlblOut = fopen(pszGlblOutFile, "w");
-      if (!fGlblOut) { fprintf(stderr, "error: cannot write %s\n", pszGlblOutFile); return 9; }
+      if (!fGlblOut) return 9+perr("cannot write %s\n", pszGlblOutFile);
 
       processDirParms(pszCmd, argc, argv, 2, 1);
       lRC = walkAllTrees(eFunc_MD5Write, lFiles, lDirs, nBytes);
@@ -7411,7 +8334,7 @@ int main(int argc, char *argv[])
    {
       char *pszInFile = pszCmd+strlen("md5check=");
       char *pInFile = loadFile(pszInFile, __LINE__);
-      if (!pInFile) { fprintf(stderr, "error: cannot read %s\n", pszInFile); return 9; }
+      if (!pInFile) return 9+perr("cannot read %s\n", pszInFile);
 
       int iDir = 2;
       for (; iDir < argc; iDir++)
@@ -7421,10 +8344,11 @@ int main(int argc, char *argv[])
          }
          else
          if (!strcmp(argv[iDir],"-skip")) {
+            iDir++;
             if (iDir < argc)
                nGlblMD5Skip = atol(argv[iDir]);
             else
-               { fprintf(stderr, "error: missing parm after -skip\n"); return 9; }
+               return 9+perr("missing parm after -skip\n");
          }
          else
          if (!setGeneralOption(argv[iDir]))
@@ -7453,7 +8377,7 @@ int main(int argc, char *argv[])
          if (!setGeneralOption(argv[iDir]))
             break;
 
-      if (!pszFile) { fprintf(stderr, "error: supply filename for reading\n"); return 9; }
+      if (!pszFile) return 9+perr("supply filename for reading\n");
 
       SFKMD5 md5;
       if (getFileMD5(pszFile, md5))
@@ -7470,8 +8394,10 @@ int main(int argc, char *argv[])
    if (!strcmp(pszCmd, "test"))
    {
       if (argc < 3) {
-      printf("usage:\n"
-             "   sfk test mode dbfile tctitle infile\n"
+      printx("<help>$sfk test mode dbfile tctitle infile\n"
+             "\n"
+             "   record/compare automated test results on a database.\n"
+             "\n"
              "      mode  :\n"
              "         rec   record checksum of infile\n"
              "         upd   record only if not yet contained in db\n"
@@ -7481,10 +8407,10 @@ int main(int argc, char *argv[])
              "      infile: an output file resulting from a testcase\n"
              "\n"
              "   example:\n"
-             "      sfk test rec mycrc.db T01.1.encoding out1.dat\n"
+             "      #sfk test rec mycrc.db T01.1.encoding out1.dat\n"
              "      -> creates checksum of out1.dat, writes to mycrc.db\n"
              "         under the title T01.1.encoding\n"
-             "      sfk test cmp mycrc.db T01.1.encoding out1.dat\n"
+             "      #sfk test cmp mycrc.db T01.1.encoding out1.dat\n"
              "      -> creates checksum of out1.dat, reads 2nd checksum\n"
              "         from mycrc.db, and compares both.\n"
              );
@@ -7513,7 +8439,7 @@ int main(int argc, char *argv[])
          return 0;
       }
 
-      if (argc < 6) { fprintf(stderr, "error: missing arguments. type \"sfk test\" for help.\n"); return 9; }
+      if (argc < 6) return 9+perr("missing arguments. type \"sfk test\" for help.\n");
 
       char *pszMode   = argv[2];
       char *pszDBFile = argv[3];
@@ -7555,7 +8481,7 @@ int main(int argc, char *argv[])
       if (!strcmp(pszMode, "cmp")) {
          if (tdb.load(0)) return 9;
          char *pszVal = tdb.getValue(pszTitle);
-         if (!pszVal) { fprintf(stderr, "error: no such entry: %s\n", pszTitle); return 9; }
+         if (!pszVal) return 9+perr("no such entry: %s\n", pszTitle);
          if (!strcmp(pszVal, szLineBuf2)) {
             // match
             printf(": OK : %s\n", pszTitle);
@@ -7565,9 +8491,8 @@ int main(int argc, char *argv[])
             lRC = 9;
          }
       }
-      else {
-         fprintf(stderr, "error: unknown test mode: %s\n", pszMode); return 9;
-      }
+      else
+         return 9+perr("unknown test mode: %s\n", pszMode);
     }
 
       bDone = 1;
@@ -7577,7 +8502,7 @@ int main(int argc, char *argv[])
    {
       pszGlblOutFile = pszCmd+strlen("snapto=");
       fGlblOut = fopen(pszGlblOutFile, "w");
-      if (!fGlblOut) { fprintf(stderr, "error: cannot write %s\n", pszGlblOutFile); return 9; }
+      if (!fGlblOut) return 9+perr("cannot write %s\n", pszGlblOutFile);
 
       bool bstat = 0;
       int iDir = 2;
@@ -7646,17 +8571,17 @@ int main(int argc, char *argv[])
          if (!setGeneralOption(argv[iDir]))
             break;
 
-      if (iDir >= argc-1) { fprintf(stderr, "error: missing arguments\n"); return 9; }
+      if (iDir >= argc-1) return 9+perr("missing arguments\n");
 
       char *pszInFile  = argv[iDir+0];
       char *pszOutFile = argv[iDir+1];
 
       char *pInFile = loadFile(pszInFile, __LINE__);
-      if (!pInFile) { fprintf(stderr, "error: cannot read %s\n", pszInFile); return 9; }
+      if (!pInFile) return 9+perr("cannot read %s\n", pszInFile);
 
       fGlblOut = fopen(pszOutFile, "w");
       if (!fGlblOut) {
-         fprintf(stderr, "error: cannot write %s\n", pszOutFile);
+         perr("cannot write %s\n", pszOutFile);
          delete [] pInFile;
          return 9; 
       }
@@ -7678,12 +8603,18 @@ int main(int argc, char *argv[])
       bDone = 1;
    }
 
+   if (!strcmp(pszCmd, "detab"))
+   {
+      printf("specify tabsize: sfk detab=n dir mask\n");
+      return 9;
+   }
+
    if (!strncmp(pszCmd, "detab=", strlen("detab="))) 
    {
       if (checkArgCnt(argc, 3)) return 9;
 
       char *pszTabSize = pszCmd+strlen("detab=");
-      if (!(nGlblTabSize = atol(pszTabSize))) { fprintf(stderr, "error: invalid tab size\n"); return 9; }
+      if (!(nGlblTabSize = atol(pszTabSize))) return 9+perr("invalid tab size\n");
       bGlblScanTabs = 0;
       if (argc == 3 && strcmp(argv[2], "-i")) {
          // single file name given
@@ -7755,7 +8686,7 @@ int main(int argc, char *argv[])
       if (*psz2 != cDelim) { fprintf(stderr, "illegal format, use /src/dest/\n"); return 9; }
       *psz2 = '\0';
       // now we hold src and dest in pszSrc, pszDst
-      if (strlen(pszSrc) != strlen(pszDst)) { fprintf(stderr, "error: src must have the same length as dst\n"); return 9; }
+      if (strlen(pszSrc) != strlen(pszDst)) return 9+perr("src must have the same length as dst\n");
       pszGlblRepSrc = strdup(pszSrc);
       pszGlblRepDst = strdup(pszDst);
       // printf("replace: \"%s\" by \"%s\"\n",pszGlblRepSrc,pszGlblRepDst);
@@ -7776,6 +8707,43 @@ int main(int argc, char *argv[])
       bDone = 1;
    }
 
+   if (!strcmp(pszCmd, "syncto"))
+   {
+      printx("<help>$sfk syncto=dbfile [-stop] dir mask [<not>mask2]\n"
+             "   collect several files into one editable clusterfile, for rapid global editing.\n"
+             "   1. load the created clusterfile with your favourite text editor,\n"
+             "      then apply global changes, and save:\n"
+             "      -> changes in the clusterfile are written back to targets automatically.\n"
+             "   2. load any of the target files in your editor, apply changes, save:\n"
+             "      -> changes in the targets are synced into the clusterfile automatically.\n"
+             "   option -stop: exit after initial file collection, e.g. for post-processing.\n"
+             "      #sfk syncto=cluster.cpp . .cpp .hpp\n"
+             "\n"
+             "$sfk syncto=dbfile [-up]\n"
+             "    reuse an existing clusterfile.\n"
+             "    on start, by default, cluster diffs are written to the target files.\n"
+             "    on start, with -up, target file diffs are written into the cluster.\n"
+             "       sfk syncto=cluster.cpp\n"
+             "\n"
+             "$sfk syncto=dbfile -from=myconfig.sfk\n"
+             "    read command line parameters from config file, e.g.\n"
+             "       -dir\n"
+             "          foosys\\bar1\\include\n"
+             "          foosys\\bar1\\source\n"
+             "          <not>save_patch\n"
+             "       -file\n"
+             "          .cpp .hpp\n"
+             "\n"
+             "<head>syncto mapping of compiler error output line numbers:<def>\n"
+             "    make yoursys.mak >err.txt 2>&1\n"
+             "    sfk mapto=yourcluster.cpp [-nomix] [-cmd=...] <err.txt\n"
+             "       nomix: list only the mapped output lines. cmd: on first mapped line,\n"
+             "       call supplied command, with clustername and line as parameters.\n"
+             "\n"
+             );
+      return 0;
+   }
+
    if (!strncmp(pszCmd, "syncto=", strlen("syncto="))) 
    {
       char *pszSnapFile = pszCmd+strlen("syncto=");
@@ -7789,24 +8757,22 @@ int main(int argc, char *argv[])
       getcwd(szLineBuf,sizeof(szLineBuf)-10);
       #endif
       char *psz = strrchr(szLineBuf, glblPathChar);
-      if (!psz) {
-         fprintf(stderr, "error: you can do this only from within a directory, not from root.\n");
-         return 9;
-      }
+      if (!psz)
+         return 9+perr("you can do this only from within a directory, not from root.\n");
       psz++;
       pszGlblJamRoot = strdup(psz);
       glblFileSnap.setRootDir(pszGlblJamRoot);
 
       bool bInitialUpSync = 0;
-      bool bSelfTest      = 0;
+      bool bStop = 0;
       int iDir = 2;
       for (; iDir < argc; iDir++) {
          if (!strcmp(argv[iDir], "-up")) {
             bInitialUpSync = 1;
          }
          else
-         if (!strcmp(argv[iDir], "-stest")) {
-            bSelfTest = 1; // stop after collecting files
+         if (!strcmp(argv[iDir], "-stop")) {
+            bStop = 1; // stop after collecting files
          }
          else
          if (!setGeneralOption(argv[iDir]))
@@ -7871,7 +8837,7 @@ int main(int argc, char *argv[])
       char *pszInfo  = "";
       num  lSnapFileTime = getFileTime(glblFileSnap.getFileName());
       long bLFDone = 0;
-      long bbail = bSelfTest; // 0 by default
+      long bbail = bStop; // 0 by default
       while (!bbail)
       {
          #ifdef _WIN32
@@ -8029,10 +8995,8 @@ int main(int argc, char *argv[])
       getcwd(szLineBuf,sizeof(szLineBuf)-10);
       #endif
       char *psz = strrchr(szLineBuf, glblPathChar);
-      if (!psz) {
-         fprintf(stderr, "error: you can do this only from within a directory, not from root.\n");
-         return 9;
-      }
+      if (!psz)
+         return 9+perr("you can do this only from within a directory, not from root.\n");
       psz++;
       pszGlblJamRoot = strdup(psz);
       glblFileSnap.setRootDir(pszGlblJamRoot);
@@ -8134,16 +9098,50 @@ int main(int argc, char *argv[])
    if (!strcmp(pszCmd, "grep"))
    {
       int iDir = 2;
-      if (checkArgCnt(argc, 3)) return 9;
-      if (strncmp(argv[iDir], "-", 1)) {
-         // first argument supplied is a single pattern.
-         glblGrepPat.addString(argv[iDir]);
-         iDir++;
-         if (iDir >= argc)
-            setProcessCurrentDir();
+      if (argc < 3) {
+      printx("<help>$sfk grep [-c] [-pat] pattern [pattern2] [-dir] [dir1] [mask1] ...\n"
+             "\n"
+             "    case-insensitive pattern search for text and binary. if multiple patterns\n"
+             "    are supplied, then only lines containing all patterns are listed (AND mask).\n"
+             "    by default, distance between patterns must be <80 chars.\n"
+             "\n"
+             "    -text    process only text files, find patterns also over long lines.\n"
+             "    -c       case-sensitive search (not default).\n"
+             "    -lnum    list line numbers of hits.\n"
+             "    -nocol   disable color highlighting of output (sfk help colors)\n"
+             "\n"
+             "       grep all files in current dir for the words foo+bar+include:\n"
+             "       #sfk grep foo bar include\n"
+             "\n"
+             "       grep explicite directories and file masks:\n"
+             "       #sfk grep -pat text1 text2 -dir src1 src2 -file .cpp .hpp\n"
+             );
+         return 0;
+      }
+
+      bGlblBinGrep = 1;
+      for (; iDir < argc; iDir++) {
+         if (!strcmp(argv[iDir], "-text"))
+            bGlblBinGrep = 0;
+         else
+         if (!strcmp(argv[iDir], "-lnum"))
+            bGlblGrepLineNum = 1;
+         else
+         if (!strcmp(argv[iDir], "-c"))
+            bGlblUseCase = 1;
+         else
+         if (setGeneralOption(argv[iDir]))
+            continue;
+         else
+         if (!strncmp(argv[iDir], "-", 1))
+            break;
+         else
+            glblGrepPat.addString(argv[iDir]);
       }
       if (iDir < argc)
          processDirParms(pszCmd, argc, argv, iDir, 1);
+      else
+         setProcessCurrentDir();
       lRC = walkAllTrees(eFunc_Grep, lFiles, lDirs, nBytes);
       bDone = 1;
    }
@@ -8167,11 +9165,11 @@ int main(int argc, char *argv[])
 
       long  nFileSize = 0;
       uchar *pInFile = loadBinaryFile(pszInFile, nFileSize);
-      if (!pInFile) { fprintf(stderr, "error: cannot read %s\n", pszInFile); return 9; }
+      if (!pInFile) return 9+perr("cannot read %s\n", pszInFile);
 
       fGlblOut = fopen(pszOutFile, "w");
       if (!fGlblOut) {
-         fprintf(stderr, "error: cannot write %s\n", pszOutFile);
+         perr("cannot write %s\n", pszOutFile);
          delete [] pInFile;
          return 9; 
       }
@@ -8186,16 +9184,55 @@ int main(int argc, char *argv[])
 
    if (!strcmp(pszCmd, "filter"))
    {
-      // simple input stream filter
-      // -+pat1 -+pat2 -!pat3
-
-      if (checkArgCnt(argc, 3)) return 9;
+      if (argc < 3) {
+      printx("<help>$sfk filter <input >output [-lnum] [-c] -+orpat [++andpat] [-<not>nopat] [...]\n"
+             "$sfk filter infile -+pattern\n"
+             "\n"
+             "   filter and change text lines, from a file, or from standard input.\n"
+             "\n"
+             "   $line selection options\n"
+             "      -+mypat     this pattern MAY  be  part of a result line\n"
+             "      ++mypat     this pattern MUST be  part of a result line\n"
+             "      +ls+mypat   this pattern MUST be start of a result line\n"
+             "      -<not>mypat     this pattern must NOT be  part of a result line\n"
+             "      -ls<not>mypat   this pattern must NOT be start of a result line\n"
+             "      -lnum       preceed all result lines by line number\n"
+             "      -case       compare case-sensitive (not default)\n"
+             "      -no-empty-lines      exclude empty lines\n"
+             "\n"
+             "   $text processing options\n"
+             "      applied after line selection only.\n"
+             "      -rep[lace] xSrcxDestx\n"
+             "          replace string Src by Dest. first character is separator character (e.g. x)\n"
+             "          the search for Src is currently case-sensitive.\n"
+             "      -form[at] \"<run>col1 mytext <run>col2 ...\"\n"
+             "          break every line into columns separated by whitespace, then reformat the text\n"
+             "          according to user-defined mask.\n"
+             "      -form \"<run>40col1 <run>-50col2\"\n"
+             "          reformat column 1 as right-ordered with at least 40 chars (C printf similar)\n"
+             "      -sep[arate] \"; \\t\" -form \"<run>col1 <run>col2\"\n"
+             "          select separator characters used to split input columns, e.g. semicolon, blank, tab\n"
+             "          this must be specified before a -form option.\n"
+             "      -blocksep \" \" = treat blocks of whitespace as single whitespace separator.\n"
+             "\n"
+             "   $examples\n"
+             "      #anyprog | sfk filter -+error: -<not>warning\n"
+             "         run command anyprog, filter output for error messages, remove warning messages.\n"
+             "      #sfk filter result.txt -rep _\\_/_ -rep xC:/xD:/x\n"
+             "         read result.txt, turn all \\ slashes into /, and C:/ expressions to D:/\n"
+             "      #sfk filter cluster.cpp -+:edit -form \"<run>col2\" | sfk run \"attrib -R <run>qfile\" -ifiles -sim\n"
+             "         remove readonly attribute on all files referenced by a cluster file.\n"
+             "      #sfk filter export.csv -sep \";\" -format \"title: <run>-40col2 remark: <run>-60col5\"\n"
+             "         reformat comma-separated data, exported from spreadsheet, as ascii text.\n"
+             "      #sfk stat | sfk filter -blocksep \" \" -format \"<run>-3col3 mb in folder: <run>col5\"\n"
+             );
+         return 0;
+      }
 
       int iPat = 2;
       int nPat = argc - 2;
 
       bool bLNum = 0;
-      bool bCase = 0;
       char *pszInFile = 0;
 
       while (iPat < argc) {
@@ -8205,11 +9242,9 @@ int main(int argc, char *argv[])
             nPat--;
          }
          else
-         if (   !strcmp(argv[iPat], "-case")
-             || !strcmp(argv[iPat], "-c")
-            ) 
+         if (!strcmp(argv[iPat], "-c")) // -case done in setGeneralOption
          {
-            bCase = 1;
+            bGlblUseCase = 1;
             iPat++;
             nPat--;
          }
@@ -8225,68 +9260,72 @@ int main(int argc, char *argv[])
             break;
          }
          else
+         if (setGeneralOption(argv[iPat])) {
+            iPat++;
+            nPat--; 
+         }
+         else
             break; // any other option: proceed as well
       }
 
       FILE *fin = stdin;
       if (pszInFile)
          if (!(fin = fopen(pszInFile, "r")))
-            { fprintf(stderr, "error: cannot read: %s\n", pszInFile); return 9; }
+            return 9+perr("cannot read: %s\n", pszInFile);
 
       long nMaxLineLen = sizeof(szLineBuf)-10;
       long nLine = 0;
+      long nHitPosition = 0;
+      bool bUseColor = bGlblUseColor;
+      bool bCase = bGlblUseCase;
       while (fgets(szLineBuf, nMaxLineLen, fin))
       {
+         szLineBuf[nMaxLineLen] = '\0';
          nLine++;
          removeCRLF(szLineBuf);
+         long nLineLen = strlen(szLineBuf);
+         memset(szAttrBuf, ' ', nLineLen);
+         szAttrBuf[nLineLen] = '\0';
          bool bHasPositive = 0;
          bool bHasNegative = 0;
          bool bHavePosFilt = 0;
          bool bHaveNegFilt = 0;
+         long nHitIndex = 0;
          for (int i=0; i<nPat; i++) 
          {
             char *pszPat = argv[iPat+i];
             if (!strncmp(pszPat, "-+", 2)) {
                bHavePosFilt = 1;
-               if (bCase) {
-                  if (strstr(szLineBuf, pszPat+2))
-                     bHasPositive = 1;
-               } else {
-                  if (mystrstri(szLineBuf, pszPat+2))
-                     bHasPositive = 1;
+               if (mystrhit(szLineBuf, pszPat+2, bCase, &nHitIndex)) {
+                  bHasPositive = 1;
+                  memset(&szAttrBuf[nHitIndex], 'i', strlen(pszPat+2));
                }
             }
             else
             if (!strncmp(pszPat, "-ls+", 4)) {
                bHavePosFilt = 1;
-               if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase))
+               if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase)) {
                   bHasPositive = 1;
+                  memset(szAttrBuf, 'i', strlen(pszPat)-4);
+               }
             }
             else
             if (!strncmp(pszPat, "++", 2)) {
                bHavePosFilt = 1;
-               if (bCase) {
-                  if (strstr(szLineBuf, pszPat+2))
-                     bHasPositive = 1;
-                  else {
-                     bHasNegative = 1;
-                     break;
-                  }
+               if (mystrhit(szLineBuf, pszPat+2, bCase, &nHitIndex)) {
+                  bHasPositive = 1;
+                  memset(&szAttrBuf[nHitIndex], 'i', strlen(pszPat+2));
                } else {
-                  if (mystrstri(szLineBuf, pszPat+2))
-                     bHasPositive = 1;
-                  else {
-                     bHasNegative = 1;
-                     break;
-                  }
+                  bHasNegative = 1;
                }
             }
             else
             if (!strncmp(pszPat, "+ls+", 4)) {
                bHavePosFilt = 1;
-               if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase))
+               if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase)) {
                   bHasPositive = 1;
-               else {
+                  memset(szAttrBuf, 'i', strlen(pszPat)-4);
+               } else {
                   bHasNegative = 1;
                   break;
                }
@@ -8294,17 +9333,8 @@ int main(int argc, char *argv[])
             else
             if (!strncmp(pszPat, SFK_FILT_NOT1, 2)) {
                bHaveNegFilt = 1;
-               if (bCase) {
-                  if (strstr(szLineBuf, pszPat+2)) {
-                     bHasNegative = 1;
-                     break;
-                  }
-               } else {
-                  if (mystrstri(szLineBuf, pszPat+2)) {
-                     bHasNegative = 1;
-                     break;
-                  }
-               }
+               if (mystrhit(szLineBuf, pszPat+2, bCase, &nHitIndex))
+                  bHasNegative = 1;
             }
             else
             if (!strncmp(pszPat, SFK_FILT_NOT2, 4)) {
@@ -8324,20 +9354,15 @@ int main(int argc, char *argv[])
                }
             }
             else
-            if (!strncmp(pszPat, "-rep", 4)) {
-               // next argument is a sed-like replacement pattern
-               if (i >= nPat-1) { fprintf(stderr, "error: -rep must be followed by a pattern\n"); return 9; }
-               char *pszRep = argv[iPat+i+1];
-               // in+out: szLineBuf. also uses szLineBuf2.
-               if (applyReplace(pszRep)) return 9;
-               i++;
-               continue;
-            }
+            if (!strncmp(pszPat, "-rep", 4))  { i++; }   // AND -replace
             else
-            {
-               fprintf(stderr, "error: unknown option or wrong position: %s\n", pszPat);
-               return 9;
-            }
+            if (!strncmp(pszPat, "-sep", 4))  { i++; }   // AND -separate
+            else
+            if (!strncmp(pszPat, "-blocksep", 9))  { i++; } // AND -blockseparate
+            else
+            if (!strncmp(pszPat, "-form", 5)) { i++; }   // AND -format
+            else
+               return 9+perr("unknown option or wrong position: %s\n", pszPat);
          }
 
          bool bMatch = 0;
@@ -8351,11 +9376,61 @@ int main(int argc, char *argv[])
          if (!bHavePosFilt && !bHasNegative)
             bMatch = 1;
 
-         if (bMatch) {
+         if (bMatch) 
+         {
+            // post-processing of selected lines
+            aMaskSep[0] = ' ';
+            aMaskSep[1] = '\t';
+            aMaskSep[2] = '\0';
+            bool bBlockSep = 0;
+            for (int i=0; i<nPat; i++)
+            {
+               char *pszPat = argv[iPat+i];
+               if (!strncmp(pszPat, "-rep", 4)) // AND -replace
+               {
+                  // next argument is a sed-like replacement pattern
+                  if (i >= nPat-1) return 9+perr("-rep must be followed by a pattern\n");
+                  char *pszRep = argv[iPat+i+1];
+                  // in+out: szLineBuf. also uses szLineBuf2.
+                  if (applyReplace(pszRep)) return 9;
+                  i++;
+                  continue;
+               }
+               else
+               if (!strncmp(pszPat, "-sep", 4) || !strncmp(pszPat, "-blocksep", 9)) // AND -separate
+               {
+                  // parse user-defined separators for format input.
+                  // blocksep is experimental (takes several separators as a single one).
+                  bBlockSep = (!strcmp(pszPat, "-blocksep")) ? 1 : 0;
+                  if (i >= nPat-1) return 9+perr("-sep must be followed by separators, e.g. -sep ;\n", glblRunChar);
+                  char *pszStrForm = argv[iPat+i+1]; // e.g. "; \t"
+                  sprintf(aMaskSep, pszStrForm);
+                  i++;
+                  continue;
+               }
+               else
+               if (!strncmp(pszPat, "-form", 5)) // AND -format
+               {
+                  bUseColor = 0;
+                  // split lines into whitespace-separated columns, selecting some.
+                  if (i >= nPat-1) return 9+perr("-form must be followed by %ccol1 etc., e.g. -form \"%ccol2 %ccol5\"\n", glblRunChar, glblRunChar, glblRunChar);
+                  char *pszMask = argv[iPat+i+1];
+                  // in+out: szLineBuf. also uses szLineBuf2.
+                  if (applyMask(pszMask, bBlockSep)) return 9;
+                  i++;
+                  continue;
+               }
+            }
+
             if (bLNum)
-               printf("%03u %s\n", nLine, szLineBuf);
-            else
+               printf("%03u ", nLine);
+
+            // with replacements, we support no coloring.
+            if (!bUseColor)
                printf("%s\n", szLineBuf);
+            else
+               printColorText(szLineBuf, szAttrBuf);
+
             fflush(stdout);
          }
       }
@@ -8372,7 +9447,7 @@ int main(int argc, char *argv[])
       pszGlblOutFile = argv[2];
 
       fGlblOut = fopen(pszGlblOutFile, "w");
-      if (!fGlblOut) { fprintf(stderr, "error: cannot write %s\n", pszGlblOutFile); return 9; }
+      if (!fGlblOut) return 9+perr("cannot write %s\n", pszGlblOutFile);
 
       long nMaxLineLen = sizeof(szLineBuf)-10;
       while (fgets(szLineBuf, nMaxLineLen, stdin))
@@ -8464,8 +9539,8 @@ int main(int argc, char *argv[])
    }
 
    if (!strcmp(pszCmd, "freezeto")) {
-      printf(
-         "sfk freezeto=targetdir [-quiet][-hidden][-verbose[=2]] -dir src1 -copy|zip\n"
+      printx(
+         "<help>$sfk freezeto=targetdir [-quiet][-hidden][-verbose[=2]] -dir src1 -copy|zip\n"
          "\n"
          "    create self-verifying, self-unpacking archive tree, for dvd burning.\n"
          "    this copies or zips all or updated files from src to target,\n"
@@ -8481,8 +9556,8 @@ int main(int argc, char *argv[])
          "    verbose: show [=2 list] every zip or copy action.\n"
          "\n"
          "    examples:\n"
-         "       sfk freezeto=d:\\freeze -dir mysrc !mysrc\\old\\ -zip -dir myprog -copy\n"
-         "       sfk freezeto=d:\\freeze -from=freeze-script.sfk\n"
+         "       #sfk freezeto=d:\\freeze -dir mysrc <not>mysrc\\old\\ -zip -dir myprog -copy\n"
+         "       #sfk freezeto=d:\\freeze -from=freeze-script.sfk\n"
          "\n"
          "       this creates an archive tree d:\\freeze. files from mysrc are zipped,\n"
          "       except mysrc\\old, which is excluded. files from myprog are copied.\n"
@@ -8512,16 +9587,18 @@ int main(int argc, char *argv[])
 
    if (!strncmp(pszCmd, "freezeto=", strlen("freezeto=")))
    {
-      if (argc < 3) { fprintf(stderr, "error: missing parms\n"); return 9; }
+      if (argc < 3) return 9+perr("missing parms\n");
 
       char *pszDstRoot = pszCmd+strlen("freezeto=");
+      if (strlen(pszDstRoot) <= 0)
+         return 9+perr("missing target dir");
       if (!isDir(pszDstRoot))
-         {  fprintf(stderr, "error: no such directory: %s\n", pszDstRoot); return 9; }
+         return 9+perr("no such directory: %s\n", pszDstRoot);
 
-      // copy destination root, auto-add "\\" if missing
+      // copy destination root, auto-add path char
       pszGlblDstRoot = new char[strlen(pszDstRoot)+10];
-      strcpy (pszGlblDstRoot, pszDstRoot);
-      if (pszGlblDstRoot[strlen(pszGlblDstRoot)-1] != glblPathChar)
+      strcpy(pszGlblDstRoot, pszDstRoot);
+      if (!endsWithPathChar(pszDstRoot))
          strcat(pszGlblDstRoot, glblPathStr);
 
       int iDir = 2;
@@ -8532,25 +9609,25 @@ int main(int argc, char *argv[])
       bool bBail = 0;
 
       sprintf(szLineBuf2, "%s09-freeze-log.txt", pszGlblDstRoot);
-      if (!isWriteable(szLineBuf2)) { fprintf(stderr, "error: cannot write to: %s\n", szLineBuf2); return 9; }
+      if (!isWriteable(szLineBuf2)) return 9+perr("cannot write to: %s\n", szLineBuf2);
 
       long lToolRC = 0;
 
       #ifdef _WIN32
       lToolRC = checkXCopy(szLineBuf2, "[/D");
-      if (lToolRC) { fprintf(stderr, "error: cannot run XCOPY command. please check your path. (rc %ld)\n", lToolRC); bBail=1; }
+      if (lToolRC) { perr("cannot run XCOPY command. please check your path. (rc %ld)\n", lToolRC); bBail=1; }
       #else
       pszGlblXCopyCmd = strdup("cp");
       #endif
 
       lToolRC = checkZipVersion(szLineBuf2);
-      if (lToolRC) { fprintf(stderr, "error: cannot run ZIP command. please get InfoZIP 2.31 or higher.\n"); bBail=1; }
+      if (lToolRC) { perr("cannot run ZIP command. please get InfoZIP 2.31 or higher.\n"); bBail=1; }
 
       lToolRC = checkUnzipVersion(szLineBuf2);
-      if (lToolRC) { fprintf(stderr, "error: cannot run UNZIP command. please get Unzip 5.52 or higher.\n"); bBail=1; }
+      if (lToolRC) { perr("cannot run UNZIP command. please get Unzip 5.52 or higher.\n"); bBail=1; }
 
       char *pszSFKCmd = findPathLocation("sfk" EXE_EXT);
-      if (!pszSFKCmd) { fprintf(stderr, "error: cannot find location of sfk" EXE_EXT " within PATH.\n"); bBail=1; }
+      if (!pszSFKCmd) { perr("cannot find location of sfk" EXE_EXT " within PATH.\n"); bBail=1; }
       else
          pszGlblSFKCmd = strdup(pszSFKCmd);
 
@@ -8569,6 +9646,7 @@ int main(int argc, char *argv[])
       char szMD5OrgName[1024];
       char szTimesName[1024];
       char szToolsDir[1024];
+      char szStaleList[1024];
 
       const char *pszVerArcBatch = "01-verify-arc.bat";
       const char *pszUnpArcBatch = "02-unpack-arc.bat";
@@ -8580,6 +9658,7 @@ int main(int argc, char *argv[])
       #ifdef SFK_USE_DIR_TIMES
       const char *pszTimesFile   = "10-dir-times.txt";
       #endif
+      const char *pszStaleList   = "10-stale-list.txt";
 
       sprintf(szContentsName, "%s%s", pszGlblDstRoot, pszContentFile);
       sprintf(szMD5ArcName  , "%s%s", pszGlblDstRoot, pszMD5ArcFile );
@@ -8611,7 +9690,7 @@ int main(int argc, char *argv[])
       #endif
       printf("] copy : %s -> %s\n", pszGlblSFKCmd, szToolsDir);
       nRCmd = system(szLineBuf);
-      if (nRCmd) printf("warning: RC %d while copying sfk" EXE_EXT " to archive tree.\n", nRCmd);
+      if (nRCmd) pwarn("RC %d while copying sfk" EXE_EXT " to archive tree.\n", nRCmd);
 
       #ifdef _WIN32
       sprintf(szLineBuf, "copy %s %s /Y 1>%s 2>&1", pszGlblUnzipCmd, szToolsDir, szLineBuf2);
@@ -8620,7 +9699,7 @@ int main(int argc, char *argv[])
       #endif
       printf("] copy : %s -> %s\n", pszGlblUnzipCmd, szToolsDir);
       nRCmd = system(szLineBuf);
-      if (nRCmd) printf("warning: RC %d while copying unzip" EXE_EXT " to archive tree.\n", nRCmd);
+      if (nRCmd) pwarn("RC %d while copying unzip" EXE_EXT " to archive tree.\n", nRCmd);
 
       #ifdef _WIN32
       if (!bGlblHiddenFiles)
@@ -8629,12 +9708,12 @@ int main(int argc, char *argv[])
 
       // ----- file preparations end -----
 
-      if (!(fGlblCont   = fopen(szContentsName, "w"))) { fprintf(stderr, "error: unable to write: %s\n", szContentsName); return 9; }
-      if (!(fGlblMD5Arc = fopen(szMD5ArcName  , "w"))) { fprintf(stderr, "error: unable to write: %s\n", szMD5ArcName  ); return 9; }
-      if (!(fGlblBatch  = fopen(szBatchName   , "w"))) { fprintf(stderr, "error: unable to write: %s\n", szBatchName   ); return 9; }
-      if (!(fGlblMD5Org = fopen(szMD5OrgName  , "w"))) { fprintf(stderr, "error: unable to write: %s\n", szMD5OrgName  ); return 9; }
+      if (!(fGlblCont   = fopen(szContentsName, "w"))) return 9+perr("unable to write: %s\n", szContentsName);
+      if (!(fGlblMD5Arc = fopen(szMD5ArcName  , "w"))) return 9+perr("unable to write: %s\n", szMD5ArcName  );
+      if (!(fGlblBatch  = fopen(szBatchName   , "w"))) return 9+perr("unable to write: %s\n", szBatchName   );
+      if (!(fGlblMD5Org = fopen(szMD5OrgName  , "w"))) return 9+perr("unable to write: %s\n", szMD5OrgName  );
       #ifdef SFK_USE_DIR_TIMES
-      if (!(fGlblTimes  = fopen(szTimesName   , "w"))) { fprintf(stderr, "error: unable to write: %s\n", szTimesName   ); return 9; }
+      if (!(fGlblTimes  = fopen(szTimesName   , "w"))) return 9+perr("unable to write: %s\n", szTimesName   );
       #endif
 
       lRC = walkAllTrees(eFunc_Mirror, lFiles, lDirs, nBytes);
@@ -8648,23 +9727,23 @@ int main(int argc, char *argv[])
       #endif
 
       sprintf(szBatchName, "%s%s", pszGlblDstRoot, pszVerArcBatch);
-      if (!(fGlblBatch = fopen(szBatchName   , "w"))) { fprintf(stderr, "error: unable to write: %s\n", szBatchName   ); return 9; }
+      if (!(fGlblBatch = fopen(szBatchName   , "w"))) return 9+perr("unable to write: %s\n", szBatchName   );
       fprintf(fGlblBatch, "%s%csfk md5check=%s %%1 %%2 %%3\n", pszToolsDir, glblPathChar, pszMD5ArcFile);
       fclose(fGlblBatch);
 
       sprintf(szBatchName, "%s%s", pszGlblDstRoot, pszVerOrgBatch);
-      if (!(fGlblBatch = fopen(szBatchName   , "w"))) { fprintf(stderr, "error: unable to write: %s\n", szBatchName   ); return 9; }
+      if (!(fGlblBatch = fopen(szBatchName   , "w"))) return 9+perr("unable to write: %s\n", szBatchName   );
       fprintf(fGlblBatch, "%s%csfk md5check=%s %%1 %%2 %%3\n", pszToolsDir, glblPathChar, pszMD5OrgFile);
       fclose(fGlblBatch);
 
       if (bGlblEscape)
          logError("error: user interrupt. archive tree is INCOMPLETE.");
 
+      long nInfo = 0;
+      long nErr  = 0;
       if (glblErrorLog.numberOfEntries() > 0) 
       {
-         long nMsg  = glblErrorLog.numberOfEntries();
-         long nInfo = 0;
-         long nErr  = 0;
+         long nMsg = glblErrorLog.numberOfEntries();
          long i = 0;
          for (i=0; i<nMsg; i++) {
             char *psz = glblErrorLog.getEntry(i, __LINE__);
@@ -8699,8 +9778,37 @@ int main(int argc, char *argv[])
       printf("info: %lu files are frozen within %lu zip archives.\n", nGlblFzConArcFiles, nGlblFzConArchives);
       printf("info: %lu files have a copy in the target tree.\n", nGlblFzConCopFiles);
 
-      if (glblErrorLog.numberOfEntries() > 0)
-         printf("warn: there are %lu error messages. read error logs above.\n", glblErrorLog.numberOfEntries());
+      if (nErr > 0)
+         printf("warn: there are %ld error messages. read error logs above.\n", nErr);
+
+      sprintf(szStaleList, "%s%s", pszGlblDstRoot, pszStaleList);
+      if (glblStaleLog.numberOfEntries() > 0) 
+      {
+         // write stale list
+         FILE *fout = fopen(szStaleList, "w");
+         if (!fout)
+            perr("unable to write %s\n", szStaleList);
+         else {
+            fprintf(fout,
+               "# list of archive parts containing outdated files.\n"
+               "# AFTER you burned the current archive tree to DVD,\n"
+               "# you may preceed the next backup with a cleanup:\n"
+               #ifdef _WIN32
+               "# type 10-stale-list.txt | sfk run -ifiles \"del %cpfile\"\n", glblRunChar
+               #else
+               "# cat 10-stale-list.txt | sfk run -ifiles \"rm %cpfile\"\n", glblRunChar
+               #endif
+               );
+            long nEntries = glblStaleLog.numberOfEntries();
+            for (long i=0; i<nEntries; i++)
+               fprintf(fout, "%s\n", glblStaleLog.getEntry(i, __LINE__));
+            fclose(fout);
+         }
+      }
+      else
+      {
+         remove(szStaleList); // in case any old list is given
+      }
 
       printf("note: check your most important files now manually,\n");
       printf("note: by listing some archives within %s.\n", pszGlblDstRoot);
@@ -8723,11 +9831,13 @@ int main(int argc, char *argv[])
       bDone = 1;
    }
 
+   #ifndef USE_SFK_BASE
    if (!strcmp(pszCmd, "patch")) 
    {
       lRC = patchMain(argc-1, argv, 1);
       bDone = 1;
    }
+   #endif
 
    if (!strcmp(pszCmd, "run"))
    {
@@ -8735,34 +9845,26 @@ int main(int argc, char *argv[])
       {
          char c1 = glblRunChar;
 
-         printf(
-             "sfk run \"your command %cpfile [%cprfile] [...]\" [-quiet] [-sim] [...]\n"
+         printx(
+             "<help>$sfk run \"your command <run>pfile [<run>prfile] [...]\" [-quiet] [-sim] [...]\n"
              "\n"
              "    run a self-defined command on every file- or directory name.\n"
              "    within your command string, you may specify:\n"
-             "\n", c1, c1
-             );
-
-         printf(
-             "       %cquotfile    or %cqfile  - insert filename with path and \"\" quotes.\n"
-             "       %cpurefile    or %cpfile  - insert filename with path and NO quotes.\n"
-             "       %cquotrelfile or %cqrfile - insert relative filename without path.\n"
-             "       %cquotbase    or %cqbase  - the relative base filename, without extension.\n"
-             "       %cquotext     or %cqext   - filename extension. foo.bar.txt has extension .txt.\n"
-             "       %cquotpath    or %cqpath  - the path (directory) without filename.\n",
-             c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1
-             );
-
-         printf(
-             "       also valid: %cpurerelfile, %cprfile, %cpurebase, %cpbase, %cpureext, %cpext,\n"
-             "                   %cpurepath, %cppath.\n\n", c1, c1, c1, c1, c1, c1, c1, c1
-             );
-
-         printf(
+             "\n"
+             "       <run>quotfile    or <run>qfile  - insert filename with path and \"\" quotes.\n"
+             "       <run>purefile    or <run>pfile  - insert filename with path and NO quotes.\n"
+             "       <run>quotrelfile or <run>qrfile - insert relative filename without path.\n"
+             "       <run>quotbase    or <run>qbase  - the relative base filename, without extension.\n"
+             "       <run>quotext     or <run>qext   - filename extension. foo.bar.txt has extension .txt.\n"
+             "       <run>quotpath    or <run>qpath  - the path (directory) without filename.\n"
+             "\n"
+             "       also valid: <run>purerelfile, <run>prfile, <run>purebase, <run>pbase, <run>pureext, <run>pext,\n"
+             "                   <run>purepath, <run>ppath.\n"
+             "\n"
              "    if you supply only path expressions, only directories will be processed.\n"
              "    option -ifiles allows processing of a filename  list from stdin.\n"
              "    option -idirs  allows processing of a directory list from stdin.\n"
-             "    on stdin, '#' remark lines and empty lines are skipped.\n"
+             "    on stdin, '##' remark lines and empty lines are skipped.\n"
              "    note that \"sfk.exe <list.txt\" supports max. 4 KB for list.txt under windows.\n"
              "    note that \"type list.txt | sfk.exe\" supports unlimited stream length.\n"
              "\n"
@@ -8770,17 +9872,15 @@ int main(int argc, char *argv[])
              "          2) if and where to use quoted or non-quoted (pure) expressions.\n"
              "          if you combine things, you may often have to use 'p'ure forms\n"
              "          embraced by slightly complicated \\\" quotes like this:\n"
-             );
-
-         printf(
-             "             sfk run \"ren \\\"%cpbase.%cpext\\\" \\\"%cpbase-old.%cpext\\\"\" testfiles\n"
+             "             sfk run \"ren \\\"<run>pbase.<run>pext\\\" \\\"<run>pbase-old.<run>pext\\\"\" testfiles\n"
              "          in any way, have a -sim run first to simulate what may happen.\n"
              "\n"
-             "       sfk run \"attrib -R %cqfile\" -quiet testfiles\\FooBank\\BarDriver\n"
-             "       sfk run \"<img src=%cquotfile>\" -dir . -file .jpg -sim >index.html\n"
-             "       sfk run \"xcopy %cqpath \\\"G:\\%cppath\\\" /S /H /I /R /K /Y /D\" -dir sources\n"
-             "       type dirlist.txt | sfk run -idirs \"xcopy \\\"x:\\%cppath\\\" \\\"z:\\%cppath\\\" /I /D\"\n",
-             c1, c1, c1, c1, c1, c1, c1, c1, c1, c1
+             "       #sfk run \"attrib -R <run>qfile\" -quiet testfiles\\FooBank\\BarDriver\n"
+             "          removes readonly attribute on all files within BarDriver\n"
+             "       #sfk run \"<img src=<run>quotfile>\" -dir . -file .jpg -sim >index.html\n"
+             "          create html-style image list of all jpegs\n"
+             "       #type dirlist.txt | sfk run -idirs \"xcopy \\\"x:\\<run>ppath\\\" \\\"z:\\<run>ppath\\\" /I /D\"\n"
+             "          update-copy all directories from dirlist.txt from x: to z:\n"
              );
          return 0;
       }
@@ -8788,13 +9888,13 @@ int main(int argc, char *argv[])
       for (; iDir < argc; iDir++)
       {
          if (!strcmp(argv[iDir], "-ifiles")) {
-            if (bGlblStdInDirs) { fprintf(stderr, "error: cannot use -ifiles and -idirs together.\n"); return 9; }
+            if (bGlblStdInDirs) return 9+perr("cannot use -ifiles and -idirs together.\n");
             bGlblStdInFiles = 1;
          }
          else
          if (!strcmp(argv[iDir], "-idirs"))  {
-            if (bGlblStdInFiles) { fprintf(stderr, "error: cannot use -ifiles and -idirs together.\n"); return 9; }
-            if (anyFileInRunCmd(pszGlblRunCmd)) { fprintf(stderr, "error: -idirs only allowed with #ppath, not with file commands.\n"); return 9; }
+            if (bGlblStdInFiles) return 9+perr("cannot use -ifiles and -idirs together.\n");
+            if (anyFileInRunCmd(pszGlblRunCmd)) return 9+perr("-idirs only allowed with #ppath, not with file commands.\n");
             bGlblStdInDirs    = 1;
             bGlblWalkJustDirs = 1;
          }
@@ -8812,7 +9912,7 @@ int main(int argc, char *argv[])
             break; // fall through to short dir processing
       }
       processDirParms(pszCmd, argc, argv, iDir, 1);
-      if (bGlblStdInAny) { fprintf(stderr, "error: sfk run: -i not allowed, use -ifiles or -idirs.\n"); return 9; }
+      if (bGlblStdInAny) return 9+perr("sfk run: -i not allowed, use -ifiles or -idirs.\n");
       if (bGlblStdInFiles || bGlblStdInDirs) {
          lRC = walkStdInListFlat(eFunc_Run, lFiles, nBytes);
       } else {
@@ -8827,14 +9927,20 @@ int main(int argc, char *argv[])
    if (!strcmp(pszCmd, "inst"))
    {
       if (argc < 4) {
-      printf("usage:\n"
-             "    sfk inst [-revoke] [-redo] [-keep-dates] mtkinc mtkmac -dir ...\n"
-             "       mtkinc: path and name of mtktrace.hpp file\n"
-             "       mtkmac: mtk block entry macro name, _mtkb_\n"
-             "       revoke: undo all changes (copy backups back)\n"
-             "       keep-dates: on revoke, also reactivate original file dates\n"
-             "       redo  : redo all changes\n"
-             "          sfk inst mtk/mtktrace.hpp _mtkb_ -dir . !save_ -file .cpp\n"
+      printx("<help>$sfk inst [-revoke] [-redo] [-keep-dates] mtkinc mtkmac -dir ...\n"
+             "\n"
+             "  instrument c++ sourcecode with calls to sfk micro tracing kernel.\n"
+             "\n"
+             "    mtkinc: path and name of mtktrace.hpp file\n"
+             "    mtkmac: mtk block entry macro name, _mtkb_\n"
+             "    revoke: undo all changes (copy backups back)\n"
+             "    keep-dates: on revoke, also reactivate original file dates\n"
+             "    redo  : redo all changes\n"
+             "\n"
+             "       #sfk inst mtk/mtktrace.hpp _mtkb_ -dir testfiles !save_ -file .cpp\n"
+             "\n"
+             "    NOTE: is is recommended that you do NOT say \"-dir .\" in your batch files\n"
+             "          to ensure that instrumenting is always done on the correct path.\n"
              "\n"
              "    read more about the sfk micro tracing kernel in the mtk/ dir.\n"
             );
@@ -8880,94 +9986,19 @@ int main(int argc, char *argv[])
       // extract strings from single binary file
       if (checkArgCnt(argc, 3)) return 9;
 
-      char *pszFile = argv[2];
-      FILE *fin = fopen(pszFile, "rb");
-      if (!fin) { fprintf(stderr, "error: cannot read: %s\n", pszFile); return 9; }
-      long icol   = 0;
-      long istate = 0;
-      long iword  = 0;
-      long ihi    = 0;
-      bool bflush = 0;
-      bool bisws  = 0;
-      bool bwasws = 0;
-      bool bisbin = 0;
-      bool bishi  = 0;
-      bool bispunct = 0;
-      char c = 0;
-      unsigned char uc = 0;
-      while (1) 
-      {
-         long nRead = fread(szLineBuf, 1, sizeof(szLineBuf)-10, fin);
-         if (nRead <= 0)
+      int iDir = 2;
+      for (; iDir < argc; iDir++)
+         if (!setGeneralOption(argv[iDir]))
             break;
-         for (long i=0; i<nRead; i++)
-         {
-            c  = szLineBuf[i];
-            uc = (unsigned char)c;
-            bflush = 0;
 
-            if (c=='\r'||c=='\n')
-               c = ' ';
+      char *pszFile = argv[iDir];
+      FILE *fin = fopen(pszFile, "rb");
+      if (!fin) return 9+perr("cannot read: %s\n", pszFile);
 
-            bisbin = ((uc >= 0x80) && (uc < 0xC0));
-            bishi  =  (uc >= 0xC0);
-
-            if (isprint(c) && !bisbin) {
-               // printable char
-               if (istate == 1) {
-                  istate = 0;
-                  // start collecting next word
-                  iword = 0;
-                  ihi   = 0;
-               }
-               // continue collecting current word,
-               // reduce multi-whitespace sequences.
-               bisws    = (c==' ' || c=='\t');
-               bispunct = (c=='.' || c==',' || c==';');
-               if (!(bisws && bwasws)) {
-                  szLineBuf2[iword++] = c;
-                  if (bishi)
-                     ihi++;
-               }
-               // hard or soft word break?
-               if (iword >= 80)
-                  bflush = 1;
-               else
-               if ((iword >= 20) && (bisws || bispunct))
-                  bflush = 1;
-            } else {
-               // non-printable (binary) char
-               if (istate == 0)
-                  bflush = 1;
-               istate = 1;
-               bwasws = 0;
-               bisws  = 0;
-               bispunct = 0;
-            }
-            // dump current word?
-            if (bflush) {
-               bflush = 0;
-               if (iword > 2)
-               {
-                  if (bisws || bispunct)
-                     printf("%.*s", (int)iword, szLineBuf2);
-                  else
-                     printf("%.*s ", (int)iword, szLineBuf2);
-                  icol += (iword+1);
-                  if (icol >= 80) {
-                     fputc('\n', stdout);
-                     icol = 0;
-                  }
-               }
-               iword  = 0;
-               ihi    = 0;
-               bwasws = 0;
-            }
-            else
-               bwasws = bisws;
-         }
-      }
+      BinTexter bt(fin, pszFile);
+      bt.process(BinTexter::eBT_Print);
       fclose(fin);
+
       bDone = 1;
    }
 
@@ -8986,7 +10017,7 @@ int main(int argc, char *argv[])
          if (!setGeneralOption(argv[iDir]))
             break;
       }
-      if (!pszCmd) { fprintf(stderr, "error: supply a command name to search within PATH.\n"); return 9; }
+      if (!pszCmd) return 9+perr("supply a command name to search within PATH.\n");
 
       char *pszAbs = findPathLocation(pszCmd);
       if (!pszAbs) {
@@ -9017,7 +10048,8 @@ int main(int argc, char *argv[])
    if (!strcmp(pszCmd, "reflist"))
    {
       if (argc <= 2) {
-      printf("sfk reflist [-abs] [-wide] -dir tdir -file .text -dir sdir -file .sext\n"
+      printx("<help>$sfk reflist [-abs] [-wide] -dir tdir -file .text -dir sdir -file .sext\n"
+             "\n"
              "   find references to target files (tdir) within the source file set (sdir).\n"
              "   a list of target files is created. then all sources are loaded and checked\n"
              "   if the names of the targets appear within the source files. then each target\n"
@@ -9029,7 +10061,8 @@ int main(int argc, char *argv[])
              "   -wide: show highly detailed infos for better analysis.\n"
              "   -abs : compare absolute filenames with path information.\n"
              "   -base: compare just basenames without path and extension.\n"
-             "      sfk reflist -dir pic -file .png -dir movie -file .ppt\n"
+             "\n"
+             "      #sfk reflist -dir pic -file .png -dir movie -file .ppt\n"
             );
       return 0;
       }
@@ -9055,10 +10088,8 @@ int main(int argc, char *argv[])
       processDirParms(pszCmd, argc, argv, iDir, 1);
 
       // check input: only two dir roots allowed
-      if (glblFileSet.numberOfRootDirs() != 2) {
-         fprintf(stderr, "error: need exactly 2 root dirs, for targets and sources.\n");
-         return 9;
-      }
+      if (glblFileSet.numberOfRootDirs() != 2)
+         return 9+perr("need exactly 2 root dirs, for targets and sources.\n");
 
       // tree layer 0: targets
       // tree layer 1: sources
@@ -9129,8 +10160,8 @@ int main(int argc, char *argv[])
    if (!strcmp(pszCmd, "ftpserv"))
    {
       if (argc >= 3 && !strncmp(argv[2], "-h", 2)) {
-      printf(
-         "sfk ftpserv [-h[elp]] [-port=nport] [-rw] [-maxsize=n]\n"
+      printx(
+         "<help>$sfk ftpserv [-h[elp]] [-port=nport] [-rw] [-maxsize=n]\n"
          "\n"
          "   creates an instant ftp server to enable easy file transfer.\n"
          "   * the CURRENT DIRECTORY is made accessible, without subdirs.\n"
@@ -9182,7 +10213,7 @@ int main(int argc, char *argv[])
             if (!setGeneralOption(argv[iDir]))
                break;
          }
-         if (!pszPath) { fprintf(stderr, "error: missing path.\n"); return 9; }
+         if (!pszPath) return 9+perr("missing path.\n");
          // ftp server may act on current dir only.
          if (glblFileSet.beginLayer(false)) return 9;
          glblFileSet.addRootDir(pszPath, __LINE__, false);
@@ -9194,22 +10225,99 @@ int main(int argc, char *argv[])
       }
    }
 
+   if (!strcmp(pszCmd, "make-random-file"))
+   {
+      if (argc < 4) { 
+         printx("<help>$sfk make-random-file outfilename bytesize [-text] [-seed=n]\n"
+                "\n"
+                "   creates a file full of random data for testing.\n"
+                "   binary by default. specify -text for ascii data.\n"
+                "   uses time based seed. specify -seed=n to change.\n"
+                "\n"
+                "      #sfk make-random-file tmp1.dat 1048576 -seed=1234\n"
+               );
+         return 0;
+      }
+      char *pszFile = argv[2];
+      char *pszSize = argv[3];
+      num nSize = atonum(pszSize);
+      bool bText = 0;
+      unsigned nSeed = (unsigned)time(NULL);
+
+      int iDir = 4;
+      for (; iDir < argc; iDir++) {
+         if (!strncmp(argv[iDir], "-seed=", strlen("-seed="))) {
+            nSeed = (unsigned)atol(argv[iDir]+strlen("-seed="));
+         }
+         else
+         if (!strcmp(argv[iDir], "-text")) {
+            bText = 1;
+         }
+         else
+            return 9+perr("unknown option: %s\n", argv[iDir]);
+      }
+
+      FILE *fout = 0;
+      if (bText) fout = fopen(pszFile, "w");
+      else       fout = fopen(pszFile, "wb");
+      if (!fout) return 9+perr("unable to write %s\n", pszFile);
+
+      srand(nSeed);
+
+      num nRemain = nSize;
+      long nBlockSize = sizeof(abBuf)-10;
+      long i=0;
+      while (nRemain > 0) {
+         if (bText) {
+            for (i=0; i<nBlockSize; i++)
+               abBuf[i] = (uchar)(rand()%26+'a');
+         } else {
+            for (i=0; i<nBlockSize; i++)
+               abBuf[i] = (uchar)rand();
+         }
+         long nWriteSize = nBlockSize;
+         if (nWriteSize > nRemain)
+             nWriteSize = nRemain;
+         fwrite(abBuf, 1, nWriteSize, fout);
+         nRemain -= nWriteSize;
+      }
+
+      fclose(fout);
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "color"))
+   {
+      if (argc < 3) { perr("supply color name, e.g. sfk color white\n"); return 0; }
+      char *pszCol = argv[2];
+      if (!strcmp(pszCol, "white" )) { setTextColor(15); return 0; }
+      if (!strcmp(pszCol, "grey"  )) { setTextColor(14); return 0; }
+      if (!strcmp(pszCol, "red"   )) { setTextColor( 3); return 0; }
+      if (!strcmp(pszCol, "green" )) { setTextColor( 5); return 0; }
+      if (!strcmp(pszCol, "blue"  )) { setTextColor( 9); return 0; }
+      if (!strcmp(pszCol, "yellow")) { setTextColor( 7); return 0; }
+      if (!strcmp(pszCol, "black" )) { setTextColor( 0); return 0; }
+      printf("unsupported color: %s\n", pszCol);
+      return 1;
+   }
+
    if (!strcmp(pszCmd, "ftp"))
    {
       if (argc < 3) {
-      printf(
-         "sfk ftp host[:port] put|get filename\n"
+      printx(
+         "<help>$sfk ftp host[:port] put|get filename\n"
          "\n"
          "   simple anonymous ftp client. if connected to sfk server,\n"
          "   this uses sfk/sft protocol, requiring fewer connections.\n"
          "\n"
-         "      sfk ftp farpc put test.zip\n"
+         "      #sfk ftp farpc put test.zip\n"
          "         send test.zip to farpc\n"
          "\n"
-         "      sfk ftp 192.168.1.99:30199 get test.zip\n"
+         "      #sfk ftp 192.168.1.99:30199 get test.zip\n"
          "         receive test.zip from 192.168.1.99 port 30199\n"
          "\n"
-         "      sfk ftp hostname\n"
+         "      #sfk ftp hostname\n"
          "         enter interactive mode, supporting commands:\n"
          "            dir, get filename, put filename.\n"
          );
@@ -9242,12 +10350,12 @@ int main(int argc, char *argv[])
    #endif
 
    if (!bDone)
-      fprintf(stderr, "error: unknown command: %s\n", pszCmd);
+      perr("unknown command: %s\n", pszCmd);
 
    // cleanup for all commands
    glblMemSnap.shutdown();
    glblFileSnap.shutdown();
-   glblFileSet.reset();
+   glblFileSet.shutdown();
    if (pGlblFileParms)
       delete pGlblFileParms;
    if (apGlblFileParms)

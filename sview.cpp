@@ -4,8 +4,17 @@
    known issues:
    -  not all browser instances deleted on exit
       (however cleaned up implicitely by process end)
-   -  general review of all things (not) copied
-      from old to new view.
+
+   0.3.4
+   -  add: detab text before copy to clipboard.
+   -  add: instant reading of file trees w/o snapfiles.
+           say "sview -dir dir -file ext1 ext2 ..." or simply "sview ."
+           to read all files. this function is still alpha,
+           and much slower than using snapfiles.
+
+   0.3.3
+   -  add: shift+esc now closes everything, no matter
+           which view is currently selected.
 
    0.3.2
    -  fix: added blank when clipping topline filename.
@@ -68,7 +77,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#define VER_NUM  "0.3.2"
+#define VER_NUM  "0.3.4"
 #define VER_STR  "sfk snapview " VER_NUM
 #define INFO_STR "f1:fullscr f8:help < sfk snapview " VER_NUM
 
@@ -97,12 +106,14 @@
 
 #ifdef _WIN32
  #ifdef WITH_MEM_TRACE
+  #ifdef USE_SFK_BASE
+   #define MEMDEB_JUST_DECLARE
+  #endif
   #include "memdeb.cpp"
  #endif
 #endif
 
 #include "mtk/mtktrace.hpp"
-#include "mtk/mtktrace.cpp"
 
 #define _ mtklog("[%d]",__LINE__);
 
@@ -113,13 +124,6 @@ char *pszGlblHelp =
 VER_STR "\n"
 "realtime text browser\n"
 "stahlworks art & technology\n"
-"\n"
-"F1: FULLSCREEN MODE ON/OFF \n"
-"F2: move result focus up   \n"
-"F3: move result focus down \n"
-"F4: case-sensitive search  \n"
-"F6: hide all viewer windows\n"
-"F8: toggle help            \n"
 "\n"
 "Select-And-Search:  LeftMouseClick ON A WORD.\n"
 "SAS in new view  : RightMouseClick ON A WORD.\n"
@@ -136,6 +140,13 @@ VER_STR "\n"
 "or Left/Right/Home/End/Insert. The search   \n"
 "mask may contain * wildcards, for example:  \n"
 "\"class *bar\" finds \"class CAnyFooBar\"\n"
+"\n"
+"F1: FULLSCREEN MODE ON/OFF \n"
+"F2: move result focus up   \n"
+"F3: move result focus down \n"
+"F4: case-sensitive search  \n"
+"F6: hide all viewer windows\n"
+"F8: toggle help            \n"
 "\n"
 "CTRL+Home: jump to previous :file:  \n"
 "CTRL+SHFT+Home: jump to top of file.\n"
@@ -189,6 +200,26 @@ char *pszGlblHelp2 =
 "To configure some defaults via environment:\n"
 "set SFK_SNAPVIEW=tabsize:3,case:0\n"
 "\n"
+"Press F8 now for next help page.\n"
+;
+
+char *pszGlblHelp3 =
+"to instantly view a directory tree without a snapfile, say:\n"
+"\n"
+"sview .               \n"
+"\n"
+"this collects and views all text files from the current tree.\n"
+"to restrict the file types you want to view, say for example:\n"
+"\n"
+"sview . .hpp .cpp     \n"
+"\n"
+"to collect just files of type .hpp or .cpp. the long syntax is:\n"
+"\n"
+"sview -dir mydir1 mydir2 !exdir -file .mytype1 .mytype2\n"
+"\n"
+"on SMALL directory trees, it is best to read the tree directly by sview.\n"
+"on LARGE directory trees, it is recommended to create and view snapfiles.\n"
+"\n"
 "Press F8 now to exit help.\n"
 ;
 
@@ -234,11 +265,33 @@ long  nGlblColHeight  = 500;
 char  *pszGlblFile = "";
 
 #ifdef _WIN32
- typedef __int64 num;
-#else
- typedef long long num;
+ #if _MSC_VER >= 1310
+  #define SFK_W64
+ #endif
 #endif
 
+#ifdef _WIN32
+ typedef __int64 num;
+ #ifdef SFK_W64
+ typedef __time64_t mytime_t;
+ #else
+ typedef time_t mytime_t;
+ #endif
+#else
+ typedef long long num;
+ typedef time_t mytime_t;
+#endif
+
+#ifdef USE_SFK_BASE
+extern long processFlatDirParms(char *pszCmd, char *pszCmdLine);
+extern long walkAllTrees(long nFunc, long &rlTreeFiles, long &rlDirs, num &rlBytes);
+extern char szLineBuf[];
+extern bool bGlblEscape;
+#endif
+
+#ifdef USE_SFK_BASE
+extern num getCurrentTime();
+#else
 num getCurrentTime()
 {
    #ifdef _WIN32
@@ -247,6 +300,7 @@ num getCurrentTime()
    return 0;
    #endif
 }
+#endif
 
 #define BCOL_MAX 200
 #define BROW_MAX 100
@@ -271,6 +325,9 @@ public:
    void  copyConfig  (Browser *pSrc); // bool bStdSnapFile, bool bCluster, char *pszPrefix, bool bCase);
    void  config      (bool bsnap, bool bclust, char *pszPre);
    void  activate    ( );
+   void  setLineTable(char **apLineTable, ulong nLines);
+   long  getMiddle   ( ) { return aClTopFix[1]; }
+   void  openHelp    ( ) { nClHelpMode = 1; }
 
 private:
    void  setStatus   (char *pszStatus);
@@ -468,6 +525,9 @@ Browser::~Browser()
 {
 }
 
+#ifdef USE_SFK_BASE
+extern long mystrstri(char *psz1, char *psz2, long *lpAtPosition = 0);
+#else
 char szCmpBuf1[4096];
 char szCmpBuf2[4096];
 static long mystrstri(char *psz1, char *psz2)
@@ -490,6 +550,7 @@ static long mystrstri(char *psz1, char *psz2)
 
    return (strstr(szCmpBuf1, szCmpBuf2) != 0) ? 1 : 0;
 }
+#endif
 
 void Browser::destroy()
 {
@@ -668,6 +729,15 @@ int Browser::create(Browser *pLeftIn, ulong nid, ulong x, ulong y, ulong w, ulon
    update();
 
    return 0;
+}
+
+void Browser::setLineTable(char **apLineTable, ulong nLines)
+{
+   apClLines   = apLineTable;
+   nClLines    = nLines;
+   nClTopLine  = 0;
+   updatePanel();
+   update();
 }
 
 void Browser::update() {
@@ -1442,7 +1512,12 @@ _
                      0xFFFFFFUL);
             }
 
-            char *pszHelp = (nClHelpMode==2) ? pszGlblHelp2 : pszGlblHelp;
+            char *pszHelp = 0;
+            switch (nClHelpMode) {
+               case 1: pszHelp = pszGlblHelp;  break;
+               case 2: pszHelp = pszGlblHelp2; break;
+               case 3: pszHelp = pszGlblHelp3; break;
+            }
 
             for (ulong y=0; y<nMaxRow; y++)
             {
@@ -1914,8 +1989,12 @@ _
                break;
 
             case VK_ESCAPE: // esc
-               if (!pLeft)
+               if (!pLeft || bClShift) {
+                  #ifdef USE_SFK_BASE
+                  bGlblEscape = 1;
+                  #endif
                   PostQuitMessage(0);
+               }
                else
                if (!pRight)
                {
@@ -1926,7 +2005,7 @@ _
                   // NO further message processing done
                }
                else {
-                  sprintf(szClStatusLine, "select first view to exit.");
+                  sprintf(szClStatusLine, "use first view, or shift+esc.");
                   updatePanel();
                   update();
                }
@@ -1998,7 +2077,7 @@ _
                break;
 
             case VK_F8:
-               nClHelpMode = (nClHelpMode+1)%3;
+               nClHelpMode = (nClHelpMode+1)%4;
                update();
                break;
 
@@ -2274,6 +2353,9 @@ void Browser::fillRect(HDC hdc,long x1,long y1,long x2,long y2,ulong nCol)
    DeleteObject(hBlank);
 }
 
+#ifdef USE_SFK_BASE
+extern char *loadFile(char *pszFile, int nLine);
+#else
 long fileSize(char *pszFile) {
    struct stat sinfo;
    if (stat(pszFile, &sinfo))
@@ -2300,6 +2382,114 @@ char *loadFile(char *pszFile, int nLine)
    pOut[lFileSize] = '\0';
    return pOut;
 }
+#endif
+
+#ifdef USE_SFK_BASE
+ulong nLoadFiles = 0;
+ulong nLoadLines = 0;
+ulong nLoadTell  = 0;
+ulong nLoadTellStep = 10;
+num   nLoadBytes = 0;
+char szColBuf[4096+10];
+long  nInfoDumpIdx = 0;
+
+long cbCollectStatFunc(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes)
+{
+   if (bGlblEscape)
+      return 9;
+
+   if (apGlblBrowsers[0] != 0)
+   {
+      Browser *p1 = apGlblBrowsers[0];
+
+      long ybase = p1->getMiddle() * 1 / 2;
+      long nInfoSpread = p1->getMiddle() - 4;
+
+      sprintf(szColBuf, "          loading ...");
+      p1->setLine(ybase-2, szColBuf);
+      memset(szColBuf, 'g', 80);
+      szColBuf[80] = '\0';
+      p1->setAttr(ybase-2, szColBuf);
+
+      sprintf(szColBuf, "          collected %lu files, %lu lines, %lu mb.", nFiles, nLines, nMBytes);
+      p1->setLine(ybase+0, szColBuf);
+      memset(szColBuf, 's', 80);
+      szColBuf[80] = '\0';
+      p1->setAttr(ybase+0, szColBuf);
+
+      sprintf(szColBuf, "          %s", pszInfo);
+      char *psz1 = strrchr(szColBuf, '\\');
+      if (psz1) *psz1 = '\0';
+      p1->setLine(ybase+2+nInfoDumpIdx, szColBuf);
+      memset(szColBuf, 'g', 80);
+      szColBuf[80] = '\0';
+      p1->setAttr(ybase+2+nInfoDumpIdx, szColBuf);
+
+      p1->update();
+
+      nInfoDumpIdx = (nInfoDumpIdx + 1) % nInfoSpread;
+   }
+
+   return 0;
+}
+
+char *pBulkMem = 0;
+long nBulkSize = 0;
+long nBulkUsed = 0;
+
+long cbCollectLineTab(char *pszLine, long nLineLen, bool bAddLF)
+{
+   static bool bDead = 0;
+   if (bDead)
+      return 9;
+
+   if (!nLineLen)
+      nLineLen = strlen(pszLine);
+
+   if (nLineLen > sizeof(szColBuf)-10) nLineLen = sizeof(szColBuf)-10;
+   strncpy(szColBuf, pszLine, nLineLen);
+   szColBuf[nLineLen] = '\0';
+
+   if (nLineLen > 0 && szColBuf[nLineLen-1] == '\r')
+      {  szColBuf[nLineLen-1] = ' '; }
+
+   // if (nLineLen > 0 && szColBuf[nLineLen-1] == '\n')
+   //   {  szColBuf[nLineLen-1] = '\0'; nLineLen--; }
+
+   if (bAddLF)
+      {  szColBuf[nLineLen] = '\n'; nLineLen++; szColBuf[nLineLen] = '\0'; }
+
+   if (nBulkUsed + nLineLen > nBulkSize - 100)
+   {
+      long nNewSize  = nBulkSize * 2;
+      char *pBulkNew = new char[nNewSize];
+      if (!pBulkNew) { MessageBox(0, "out of memory", "error", MB_OK); bDead=1; return 9; }
+      char *pBulkOld = pBulkMem;
+      memcpy(pBulkNew, pBulkOld, nBulkUsed);
+      pBulkMem  = pBulkNew;
+      nBulkSize = nNewSize;
+      delete [] pBulkOld;
+   }
+   memcpy(pBulkMem+nBulkUsed, szColBuf, nLineLen+1);
+   nBulkUsed += nLineLen;
+
+   // process windows events?
+   MSG msg;
+   while (PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE))
+   {
+      if (GetMessage(&msg, NULL, 0, 0)) 
+      {
+         // if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg)) 
+         {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+         }
+      }
+   }
+
+   return 0;
+}
+#endif
 
 int APIENTRY WinMain(HINSTANCE hInstance,
                      HINSTANCE hPrevInstance,
@@ -2368,38 +2558,99 @@ HFONT CreateFont(
       return FALSE;
    }
 
-   // load text
+   bool bDoneLoad   = 0;
+   bool bHelp       = 0;
+   char **apLineTab = 0;
+   ulong nLines     = 0;
+   char *pszText    = 0;
 
-   if (!lpCmdLine || (strlen(lpCmdLine) < 1))
-      { MessageBox(0, "supply a filename for reading:\nsview filename.txt", "error", MB_OK); return FALSE; }
+   #ifdef USE_SFK_BASE
 
-   pszGlblFile = lpCmdLine;
-   char *pszText = loadFile(lpCmdLine, __LINE__);
-   if (!pszText) { MessageBox(0, "cannot load file", "error", MB_OK); return FALSE; }
-   ulong nLines = 0;
-   ulong i;
-   for (i=0; pszText[i]; i++) {
-      if (pszText[i] == '\n')
-         nLines++;
+   // if using direct tree read, do it later.
+   if (!strncmp(lpCmdLine, "-dir ", 4) || !strcmp(lpCmdLine, ".") || !strncmp(lpCmdLine, ". ", 2))
+   {
+      // just init a temporary line table.
+      nLines = 1;
+      apLineTab = new char*[nLines+10];
+      memset(apLineTab, 0, sizeof(apLineTab));
+      apLineTab[0] = "reading directory tree, press ESC to exit.";
+      bDoneLoad = 1;
    }
 
-   char **apLineTab = new char*[nLines+10];
-   memset(apLineTab, 0, sizeof(apLineTab));
-   nLines = 0;
-   char *psz1 = pszText;
-   char *psz2 = psz1;
-   while (*psz1)
+   #endif
+
+   if (   !strcmp(lpCmdLine, "-help") || !strcmp(lpCmdLine, "-h")
+       || !strcmp(lpCmdLine, "-?")    || !strcmp(lpCmdLine, "/?")
+       || !strcmp(lpCmdLine, "/h")    || !strcmp(lpCmdLine, "/help")
+      )
    {
-      if (*psz1 == '\n') {
-         apLineTab[nLines++] = psz2;
-         *psz1++ = '\0';
-         psz2 = psz1;
+      bDoneLoad = 1;
+      bHelp  = 1; 
+      nLines = 3;
+      apLineTab = new char*[nLines+10];
+      memset(apLineTab, 0, sizeof(apLineTab));
+      apLineTab[0] = "nothing loaded yet.";
+      apLineTab[1] = "> press F8 to switch help pages.";
+      apLineTab[2] = "> press ESC to exit.";
+      bDoneLoad = 1;
+   }
+
+   // is using snapfile read, do it now.
+   if (!bDoneLoad)
+   {
+      char *pszSnapFile = lpCmdLine;
+
+      // load text
+      if (!pszSnapFile || (strlen(pszSnapFile) < 1)) {
+      MessageBox(0, 
+         "supply a dir name to read from:\n"
+         "sview .\n"
+         "\n"
+         "or supply dir and file extensions:\n"
+         "sview . .hpp .cpp\n"
+         "\n"
+         "or supply the name of an sfk snapfile:\n"
+         "sview mysnapfile.cpp\n"
+         "\n"
+         "or start snapview with help screens:\n"
+         "sview -help\n"
+         ,
+         "missing parameters",
+         MB_OK);
+         return FALSE; 
       }
-      else
-      if (*psz1 == '\r')
-         *psz1++ = ' '; // trick: allow easy search for expressions at line end
-      else
-         psz1++;
+   
+      pszGlblFile = pszSnapFile;
+   
+      pszText = loadFile(pszSnapFile, __LINE__);
+      if (!pszText) { MessageBox(0, "cannot load file", "error", MB_OK); return FALSE; }
+
+      // create line table from snapfile.
+      ulong i;
+      for (i=0; pszText[i]; i++) {
+         if (pszText[i] == '\n')
+            nLines++;
+      }
+   
+      if (apLineTab) delete [] apLineTab;
+      apLineTab = new char*[nLines+10];
+      memset(apLineTab, 0, sizeof(apLineTab));
+      nLines = 0;
+      char *psz1 = pszText;
+      char *psz2 = psz1;
+      while (*psz1)
+      {
+         if (*psz1 == '\n') {
+            apLineTab[nLines++] = psz2;
+            *psz1++ = '\0';
+            psz2 = psz1;
+         }
+         else
+         if (*psz1 == '\r')
+            *psz1++ = ' '; // trick: allow easy search for expressions at line end
+         else
+            psz1++;
+      }
    }
 
    // check text format by header line
@@ -2458,14 +2709,95 @@ HFONT CreateFont(
       return FALSE;
    }
    b1.config(bStdSnapFile, bCluster, szSnapPrefix);
+   if (bHelp) b1.openHelp();
    b1.update();
+
+   #ifdef USE_SFK_BASE
+   if (!strncmp(lpCmdLine, "-dir ", 4) || !strcmp(lpCmdLine, ".") || !strncmp(lpCmdLine, ". ", 2))
+   {
+      char *pszParms = lpCmdLine;
+
+      if (!strcmp(pszParms, "."))
+         // just "." isn't working, have to extend to -dir .
+         processFlatDirParms("sview", "-dir .");
+      else
+         // but ". .hpp .cpp" is working directly, as well as long formats
+         processFlatDirParms("sview", pszParms);
+
+      // create initial collect buffer
+      nBulkSize = 50000;
+      pBulkMem  = new char[nBulkSize];
+      nBulkUsed = 0;
+
+      // set callback connection from sfk walktree core to us
+      extern long (*pGlblJamLineCallBack)(char *pszLine, long nLineLen, bool bAddLF);
+      extern long (*pGlblJamStatCallBack)(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes);
+      pGlblJamLineCallBack = cbCollectLineTab;
+      pGlblJamStatCallBack = cbCollectStatFunc;
+
+      // create memory snapfile header
+      pGlblJamLineCallBack(":snapfile sfk,1.0.7,lprefix=:file:,memory\n", 0, 1);
+
+      // call sfk to walk file tree, and call us back.
+      long lFiles=0, lDirs=0, lRC=0;
+      num nBytes=0;
+      if (walkAllTrees(2, lFiles, lDirs, nBytes)) // eFunc_JamFile
+      {
+         if (!bGlblEscape)
+         //   MessageBox(0, "file collection aborted", "user interrupt", MB_OK);
+         // else
+            MessageBox(0, "file collection aborted", "error", MB_OK);
+         return FALSE;
+      }
+
+      // convert resulting bulk memory to linetab.
+
+      // count lines
+      nLines = 0;
+      ulong i;
+      for (i=0; pBulkMem[i]; i++) {
+         if (pBulkMem[i] == '\n')
+            nLines++;
+      }
+
+      // create line table
+      if (apLineTab) delete [] apLineTab;
+      apLineTab = new char*[nLines+10];
+      memset(apLineTab, 0, sizeof(apLineTab));
+      nLines = 0;
+      char *psz1 = pBulkMem;
+      char *psz2 = psz1;
+      while (*psz1)
+      {
+         if (*psz1 == '\n') {
+            apLineTab[nLines++] = psz2;
+            *psz1++ = '\0';
+            psz2 = psz1;
+         }
+         else
+         if (*psz1 == '\r')
+            *psz1++ = ' '; // trick: allow easy search for expressions at line end
+         else
+            psz1++;
+      }
+
+      // replace old linetable by new
+      b1.setLineTable(apLineTab, nLines);
+      b1.config(1, 0, ":file:");
+
+      // recount number of local files contained
+      long nPreLen = strlen(szSnapPrefix);
+      for (ulong i2=0; i2<nLines; i2++)
+         if (!strncmp(apLineTab[i2], szSnapPrefix, nPreLen))
+            nGlblSubFiles++;
+   }
+   #endif
 
    // hAccelTable = LoadAccelerators(hInstance, (LPCTSTR)IDC_XV);
    // ACCEL a[10];
    // hAccelTable = CreateAcceleratorTable(a, 5);
 
-   // Main message loop:
-   while (GetMessage(&msg, NULL, 0, 0)) 
+   while (GetMessage(&msg, NULL, 0, 0))
    {
       // if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg)) 
       {
@@ -2475,8 +2807,12 @@ HFONT CreateFont(
    }
 
    // cleanup
-   delete [] apLineTab;
-   delete [] pszText;
+   if (apLineTab) delete [] apLineTab;
+   if (pszText)   delete [] pszText;
+
+   #ifdef USE_SFK_BASE
+   if (pBulkMem)  delete [] pBulkMem;
+   #endif
 
    #ifdef WITH_MEM_TRACE
    if (anyMemoryLeaks())
@@ -2637,37 +2973,6 @@ void Browser::handleTimer()
       updateMatchingFiles();
    gotoFirstMaskHit();
 }
-
-#ifdef _WIN32
-long getKeyPress()
-{
-   DWORD dwNumEvents, dwEventsPeeked, dwInputEvents;
-   DWORD iEvent, iPrevEvent;
-   INPUT_RECORD aInputBuffer[1];
-
-   HANDLE hStdIn = GetStdHandle(STD_INPUT_HANDLE);
-
-   if (!GetNumberOfConsoleInputEvents(hStdIn, &dwNumEvents))
-      return -1;
-
-   if (dwNumEvents <= 0)
-      return -1;
-
-   if (!PeekConsoleInput(hStdIn, aInputBuffer, 1, &dwEventsPeeked))
-      return -1;
-   
-   if (!ReadConsoleInput(hStdIn, &aInputBuffer[0], 1, &dwInputEvents))
-      return -1;
-
-   if (dwInputEvents != 1)
-      return -1;
-
-   if (aInputBuffer[0].EventType == KEY_EVENT)
-      return aInputBuffer[0].Event.KeyEvent.wVirtualKeyCode;
-
-   return -1;
-}
-#endif
 
 void Browser::gotoFirstMaskHit()
 {
@@ -2896,6 +3201,9 @@ void Browser::clipSelCopy()
             break;
 
          char *psz = apClLines[iLine];
+         detab(psz, szClClipTabBuf, MAX_LINE_LEN);
+         psz = szClClipTabBuf;
+
          ulong nLen = strlen(psz);
          if (iout+nLen < 10000-100) 
          {

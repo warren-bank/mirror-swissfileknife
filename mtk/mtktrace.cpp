@@ -1,5 +1,5 @@
 /*
-   Micro Tracing Kernel 0.5.5 by stahlworks technologies.
+   Micro Tracing Kernel 0.6.0 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    the following line protects this file against instrumentation:
@@ -8,12 +8,15 @@
    So far, this kernel was mainly tested with a Unix derivate.
    Win32 functionality is still alpha.
 
-   Known Issues:
-   -  Win32: most mtk-internal error infos are not shown with GUI apps
-   -  Win32: logging to file in a slow, primitive way using "a"ppend
+   NOTE: Win32 GUI apps should never use "term:" tracing, but only "file:".
 
-   20060420 Win32 adaptions, currently rather primitive
-   20060412 fix: tracePre/Post: wrong mask check
+   Changes:
+   -  fflush on flog writing.
+   -  full tracing support via file:
+         export MTK_TRACE=file:twex,filename:test.log
+      without the need to have any terminal output.
+   -  no longer writing default logname, user must explicitely
+      specify filename: to create a tracefile.
 */
 
 #ifdef _WIN32
@@ -59,6 +62,7 @@ public:
    void dumpLastSteps   (bool bOnlyOfCurrentThread);
    void setRingTrace    (char *pszMask);
    void setTermTrace    (char *pszMask);
+   void setFileTrace    (char *pszMask);
 
    ulong nthreads;
    ulong asysid[MTKMAXTHREADS+2];
@@ -76,9 +80,11 @@ public:
    ulong ncurthrsid;
    ulong ncurthridx;
    uchar nlockmode;
-   ulong ntracex; // trace extended interface input into ringbuffer
-   ulong ndumpx;  // dump  extended interface input onto terminal
+   ulong nringx; // trace extended interface input into ringbuffer
+   ulong ntermx;  // dump  extended interface input onto terminal
+   ulong nfilex;  // dump  extended interface input info file
    const char *pszFilename;
+   FILE *flog;
 };
 
 static const char *glblPszBlank =
@@ -109,8 +115,11 @@ MTKMain::MTKMain()
    ncurthridx = 0;
    nlockmode = 0;
 
-   ntracex = 0;
-   ndumpx  = 0;
+   nringx = 0;
+   ntermx = 0;
+   nfilex = 0;
+
+   flog = 0;
 
    const char *pszEnv = getenv("MTK_TRACE");
    if (pszEnv)
@@ -132,11 +141,22 @@ MTKMain::MTKMain()
          setTermTrace((char*)psz1);
       }
 
+      if ((psz1 = strstr(pszEnv, "file:")) != 0)
+      {
+         psz1 += strlen("file:");
+         setFileTrace((char*)psz1);
+      }
+
       if ((psz1 = strstr(pszEnv, "filename:")) != 0) {
          psz1 += strlen("filename:");
          pszFilename = psz1;
-      } else {
-         pszFilename = "mtktrace.log";
+         flog = fopen(pszFilename, "w");
+         if (!flog)
+            fprintf(stderr, "# # # MTKTRACE ERROR: UNABLE TO WRITE: %s # # #\n", pszFilename);
+         else {
+            printf("MTKTrace: writing log output into %s\n", pszFilename);
+            fflush(stdout);
+         }
       }
    }
 
@@ -145,14 +165,14 @@ MTKMain::MTKMain()
 
 void MTKMain::setRingTrace(char *psz1) 
 {
-   ntracex = 0;
+   nringx = 0;
    while (*psz1 && (*psz1 != ','))
       switch (*psz1++) {
-         case 't': ntracex |=  1; break;
-         case 'b': ntracex |=  2; break;
-         case 'x': ntracex |=  4; break;
-         case 'w': ntracex |=  8; break;
-         case 'e': ntracex |= 16; break;
+         case 't': nringx |=  1; break;
+         case 'b': nringx |=  2; break;
+         case 'x': nringx |=  4; break;
+         case 'w': nringx |=  8; break;
+         case 'e': nringx |= 16; break;
          default:
             fprintf(stderr, "ERROR: MTK unsupported ring settings, use tbxwe\n");
             break;
@@ -161,18 +181,36 @@ void MTKMain::setRingTrace(char *psz1)
 
 void MTKMain::setTermTrace(char *psz1)
 {
-   ndumpx = 0;
+   ntermx = 0;
    while (*psz1 && (*psz1 != ','))
       switch (*psz1++) {
-         case 't': ndumpx |=  1; break;
-         case 'b': ndumpx |=  2; break;
-         case 'x': ndumpx |=  4; break;
-         case 'w': ndumpx |=  8; break;
-         case 'e': ndumpx |= 16; break;
+         case 't': ntermx |=  1; break;
+         case 'b': ntermx |=  2; break;
+         case 'x': ntermx |=  4; break;
+         case 'w': ntermx |=  8; break;
+         case 'e': ntermx |= 16; break;
          default:
             fprintf(stderr, "ERROR: MTK unsupported term settings, use tbxwe\n");
             break;
       }
+   nringx |= ntermx;
+}
+
+void MTKMain::setFileTrace(char *psz1)
+{
+   nfilex = 0;
+   while (*psz1 && (*psz1 != ','))
+      switch (*psz1++) {
+         case 't': nfilex |=  1; break;
+         case 'b': nfilex |=  2; break;
+         case 'x': nfilex |=  4; break;
+         case 'w': nfilex |=  8; break;
+         case 'e': nfilex |= 16; break;
+         default:
+            fprintf(stderr, "ERROR: MTK unsupported file settings, use tbxwe\n");
+            break;
+      }
+   nringx |= nfilex;
 }
 
 void MTKMain::traceMethodEntry(void *pRefInst, const char *pszFile, int nLine, const char *pszFunc)
@@ -228,7 +266,7 @@ void MTKMain::traceMethodEntry(void *pRefInst, const char *pszFile, int nLine, c
    alevel[ithread] = ilevel;
 
    // trace block entry event?
-   if (ntracex & 2) {
+   if (nringx & 2) {
       traceMessageRaw(pszFile, nLine, 'B', (char*)pszFunc);
    }
 }
@@ -359,30 +397,39 @@ void MTKMain::traceMessageRaw(const char *pszFile, int nLine, char cPrefix, char
       }
    }
 
+   // tracing to file selected?
+   if (nfilex != 0)
+   {
+      bool bSkip = 0;
+      switch (cPrefix) {
+         case 'X': if (!(nfilex &  4)) bSkip = 1; break; // extended input, general
+         case 'W': if (!(nfilex &  8)) bSkip = 1; break; // extended input, warnings
+         case 'E': if (!(nfilex & 16)) bSkip = 1; break; // extended input, errors
+         case 'B': if (!(nfilex &  2)) bSkip = 1; break; // block entry
+         default : if (!(nfilex &  1)) bSkip = 1; break; // all other messages
+      }
+      if (!bSkip && (flog != 0)) {
+         fprintf(flog, "[%02lX:%c] %.*s%s\n", ithread, cPrefix, (int)ilevel, glblPszBlank, pszRaw);
+         fflush(flog);
+      }
+   }
+
    // instant tracing to terminal selected?
-   if (ndumpx != 0)
+   if (ntermx != 0)
    {
       bool bRet = 0;
       switch (cPrefix) {
-         case 'X': if (!(ndumpx &  4)) bRet = 1; break; // extended input, general
-         case 'W': if (!(ndumpx &  8)) bRet = 1; break; // extended input, warnings
-         case 'E': if (!(ndumpx & 16)) bRet = 1; break; // extended input, errors
-         case 'B': if (!(ndumpx &  2)) bRet = 1; break; // block entry
-         default : if (!(ndumpx &  1)) bRet = 1; break; // all other messages
+         case 'X': if (!(ntermx &  4)) bRet = 1; break; // extended input, general
+         case 'W': if (!(ntermx &  8)) bRet = 1; break; // extended input, warnings
+         case 'E': if (!(ntermx & 16)) bRet = 1; break; // extended input, errors
+         case 'B': if (!(ntermx &  2)) bRet = 1; break; // block entry
+         default : if (!(ntermx &  1)) bRet = 1; break; // all other messages
       }
       if (bRet) {
          // if (!strncmp(pszRaw, "P:", 2))
-         //    printf("SKIP.1: %s %c %x\n", pszRaw, cPrefix, ndumpx);
+         //    printf("SKIP.1: %s %c %x\n", pszRaw, cPrefix, ntermx);
          return;
       }
-      #ifdef _WIN32
-      // Win32 GUI apps cannot dump to terminal, therefore write to log this primitive way:
-      FILE *fout = fopen(pszFilename, "a");
-      if (fout) {
-         fprintf(fout, "[%02lX:%c] %.*s%s\n", ithread, cPrefix, (int)ilevel, glblPszBlank, pszRaw);
-         fclose(fout);
-      }
-      #endif
       PROJECT_PRINTF("[%02lX:%c] %.*s%s\n", ithread, cPrefix, (int)ilevel, glblPszBlank, pszRaw);
    }
    else
@@ -439,10 +486,10 @@ uchar MTKMain::tracePre(const char *pszFile, int nLine, char cPrefix)
 
    // are we currently interested in this kind of trace messages?
    bool bRC = 0, bRCSet = 0;
-   if (cPrefix == 'X') { bRC = ((ntracex &  4) != 0) ? 1 : 0; bRCSet = 1; }
-   if (cPrefix == 'W') { bRC = ((ntracex &  8) != 0) ? 1 : 0; bRCSet = 1; }
-   if (cPrefix == 'E') { bRC = ((ntracex & 16) != 0) ? 1 : 0; bRCSet = 1; }
-   if (cPrefix == 'B') { bRC = ((ntracex &  2) != 0) ? 1 : 0; bRCSet = 1; }
+   if (cPrefix == 'X') { bRC = ((nringx &  4) != 0) ? 1 : 0; bRCSet = 1; }
+   if (cPrefix == 'W') { bRC = ((nringx &  8) != 0) ? 1 : 0; bRCSet = 1; }
+   if (cPrefix == 'E') { bRC = ((nringx & 16) != 0) ? 1 : 0; bRCSet = 1; }
+   if (cPrefix == 'B') { bRC = ((nringx &  2) != 0) ? 1 : 0; bRCSet = 1; }
    if (bRCSet) {
       // if (cPrefix == 'E')
       //    printf("tracePre.1 %c %u\n", cPrefix, bRC);
@@ -450,7 +497,7 @@ uchar MTKMain::tracePre(const char *pszFile, int nLine, char cPrefix)
    }
 
    // all other message types: depends on general flag
-   if (ntracex & 1) {
+   if (nringx & 1) {
       // if (cPrefix == 'E')
       //    printf("tracePre.2 %c 1\n", cPrefix);
       return 1;
@@ -483,14 +530,11 @@ void MTKMain::dumpStackTrace(bool bJustCurrentThread)
       return;
    }
 
-   FILE *fout = 0;
-   if (!(fout = fopen(pszFilename, "a"))) {
-      printf("error: cannot open %s\n", pszFilename);
-      fout = stdout;
-   } else {
-      printf("> DUMPING STACKTRACE OF %s TO %s\n", bJustCurrentThread?"CURRENT THREAD":"ALL THREADS", pszFilename);
-      fflush(stdout);
-   }
+   FILE *fout = flog;
+   if (!fout) fout = stdout;
+
+   printf("> DUMPING STACKTRACE OF %s TO %s\n", bJustCurrentThread?"CURRENT THREAD":"ALL THREADS", pszFilename);
+   fflush(stdout);
 
    if (!bJustCurrentThread) {
       fprintf(fout, "==================================================\n");
@@ -542,14 +586,11 @@ void MTKMain::dumpLastSteps(bool bJustCurrentThread)
       if (asysid[iown] == nthreadid)
          break;
 
-   FILE *fout = 0;
-   if (!(fout = fopen(pszFilename, "a"))) {
-      printf("error: cannot open %s\n", pszFilename);
-      fout = stdout;
-   } else {
-      printf("> DUMPING LAST STEPS OF %s TO %s\n", bJustCurrentThread?"CURRENT THREAD":"PROCESS", pszFilename);
-      fflush(stdout);
-   }
+   FILE *fout = flog;
+   if (!fout) fout = stdout;
+
+   printf("> DUMPING LAST STEPS OF %s TO %s\n", bJustCurrentThread?"CURRENT THREAD":"PROCESS", pszFilename);
+   fflush(stdout);
 
    if (bJustCurrentThread)
    fprintf(fout, "> ------ last steps of current thread, index %02lX sysid %04lX: -----\n", iown, nthreadid);
@@ -661,8 +702,8 @@ void mtkTraceForm(const char *pszFile, int nLine, char cPrefix, const char *pszF
 {
    if (glblMTKAlive)
    {
-   	va_list argList;
-   	va_start(argList, pszFormat);
+      va_list argList;
+      va_start(argList, pszFormat);
       char szBuffer[1024];
       ::vsnprintf(szBuffer, sizeof(szBuffer)-10, pszFormat, argList);
       glblMTKInst.traceMessageRaw(pszFile, nLine, cPrefix, szBuffer);
@@ -685,8 +726,8 @@ void mtkTracePost(const char *pszFormat, ...)
 {
    if (glblMTKAlive)
    {
-   	va_list argList;
-   	va_start(argList, pszFormat);
+      va_list argList;
+      va_start(argList, pszFormat);
       char szBuffer[1024];
       // szBuffer[0] = 'P';
       // szBuffer[1] = ':';

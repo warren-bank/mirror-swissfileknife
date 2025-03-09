@@ -3,6 +3,9 @@
    to easily demonstrate sfk functionality.
 */
 
+#include "FooBank/DB/include/DBController.hpp"
+#include "FooBank/BarDriver/include/BarDriver.hpp"
+
 DBController::DBController()
 {
    pClManager = 0;

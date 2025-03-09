@@ -19,7 +19,7 @@
 ../sfk list testfiles/FooBank >res-04.txt
 ../sfk test $TCMD T02.2.list res-04.txt
 
-../sfk grep include testfiles >res-05.txt
+../sfk grep -pat include -dir testfiles >res-05.txt
 ../sfk test $TCMD T02.3.grep res-05.txt
 
 ../sfk grep -pat include -dir testfiles -file .cpp .hpp >res-06.txt
@@ -53,7 +53,7 @@
 ../sfk snapto=all-src-3.cpp -wrap=80 -prefix=#file# -stat -dir testfiles :testfiles/Formats :testfiles/BaseLib -file .hpp .cpp .txt >/dev/null
 ../sfk test $TCMD T03.3.snapto all-src-3.cpp
 
-../sfk syncto=work.cpp -stest -dir testfiles :testfiles/Formats :testfiles/BaseLib -file .hpp .cpp >/dev/null
+../sfk syncto=work.cpp -stop -dir testfiles :testfiles/Formats :testfiles/BaseLib -file .hpp .cpp >/dev/null
 ../sfk test $TCMD T03.4.syncto work.cpp
 
 ../sfk filter testfiles/Formats/10-dir-list.txt >res-14.txt -rep _/_/_ -rep xC:xx
@@ -64,3 +64,10 @@
 ../sfk filter testfiles/Formats/12-foo-jam.txt ++class ++bar    >>res-15.txt
 ../sfk filter -case -lnum testfiles/Formats/12-foo-jam.txt -+bottle -+Trace >>res-15.txt
 ../sfk test $TCMD T05.2.filter res-15.txt
+
+../sfk reflist -quiet -case -dir testfiles -file .hpp -dir testfiles -file .cpp >res-20.txt
+../sfk test $TCMD T06.1.reflist res-20.txt
+
+../sfk remcrlf ../scripts/50-patch-all-src.cpp >/dev/null
+../sfk patch -qs ../scripts/50-patch-all-src.cpp >/dev/null
+../sfk test $TCMD T07.1.patch all-src.cpp

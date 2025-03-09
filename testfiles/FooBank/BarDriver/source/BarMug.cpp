@@ -3,6 +3,8 @@
    to easily demonstrate sfk functionality.
 */
 
+#include "FooBank/BarDriver/include/ExtremelyLongHeaderFileNameForRatherSeldomUsedClass.hpp"
+
 BarMug::BarMug( )
 {
    pClSomething = 0;

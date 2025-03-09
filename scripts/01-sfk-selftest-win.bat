@@ -4,7 +4,7 @@ IF "%1"=="" GOTO xerr01
 IF ERRORLEVEL 1 GOTO xerr02
 
 cd ..
-rmdir /S /Q tmp-selftest
+IF EXIST tmp-selftest rmdir /S /Q tmp-selftest
 md tmp-selftest
 cd tmp-selftest
 xcopy ..\testfiles testfiles /S /H /I /R /K /Y >nul

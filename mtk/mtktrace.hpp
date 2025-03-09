@@ -2,15 +2,32 @@
 #define _MTKTRACE_DEFINED_
 
 /*
-   Micro Tracing Kernel 0.5.5 by stahlworks technologies.
+   Micro Tracing Kernel 0.6.0 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    NOTE: changing this header probably forces recompile of MANY files!
 
-   export MTK_TRACE=ring:twe,term:te,filename:log.txt
+   Simple instant tracing to a logfile:
 
-   20060420 Win32 adaptions
-   20060411 added example remark
+      export MTK_TRACE=file:twex,filename:log.txt
+
+         t  = mtkTrace statements
+         w  = warnings
+         e  = errors
+         x  = extended trace statements
+         b  = block entrys/exits
+
+      it is NOT recommended to trace 'b'blocks into tracefile.
+      instead, block entries/exits may be logged into the ring buffer
+      
+         export MTK_TRACE=ring:twexb,file:twex,filename:log.txt
+
+      and then dumped on demand by explicite calls in the code to
+      mtkDumpStackTrace and mtkDumpLastSteps.
+
+   Simple tracing to terminal:
+
+         export MTK_TRACE=term:twex
 */
 
 extern void mtkTraceMethodEntry  (void *p, const char *psz, int n, const char *pszfn);

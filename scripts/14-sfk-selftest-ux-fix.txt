@@ -1,0 +1,11 @@
+:patch "insert crlf fix for automated uxtest"
+
+:root scripts
+
+:file 12-sub-test-ux.bat
+:from 
+../sfk patch -qs ../scripts/50-patch-all-src.cpp >/dev/null
+:to
+../sfk remcrlf ../scripts/50-patch-all-src.cpp >/dev/null
+../sfk patch -qs ../scripts/50-patch-all-src.cpp >/dev/null
+:done
