@@ -92,7 +92,7 @@ $TEXE -nocol find -text testfiles/Formats the wrap >res-22.txt
 $TEXE -nocol test $TCMD T09.2.findwrap res-22.txt
 
 
-$TEXE -nocol -spat filter -bin testfiles/Formats/14-all-codes.txt -rep "_\x01_Char01 replaced_" -rep "_\xFF_CharFF replaced_" >res-25.txt
+$TEXE -nocol -spat filter -bin testfiles/Formats/14-all-codes.txt -nocasemin -rep "_\x01_Char01 replaced_" -rep "_\xFF_CharFF replaced_" >res-25.txt
 $TEXE -nocol -spat filter -bin testfiles/Formats/14-all-codes.txt -sep "\x20" -form "#col6" >>res-25.txt
 $TEXE -nocol test $TCMD T12.1.replacex res-25.txt
 

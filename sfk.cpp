@@ -7,6 +7,82 @@
    The whole source code was created with Depeche View Professional,
    the world's fastest source code browser and editor.
 
+   1.9.0
+   -  rel: 28.02.2018, Major Update
+   -  sum: SFK for Windows now supports case insensitive search
+           and file selection within the codepage of your
+           Windows system. Depending on your codepage this allows
+           to search umlauts, accents, cyrillic or greek characters
+           case insensitive. Added functions to convert text 
+           from and to UCS-2 wide character data.
+   -  add: windows: case insensitive search and file selection
+           within the codepage of your windows system.
+           depending on your codepage this allows to search
+           german umlauts, french accents, cyrillic and greek
+           characters case insensitive.
+   -  add: sfk help nocase, about case insensitive search.
+   -  add: sfk listcodes, list all characters that can be searched
+           case insensitive with your Windows codepage.
+   -  add: sfk help chars, about locale specific characters.
+   -  add: general option -nocasemin to match only latin
+           chars a-z case insensitive without any accents.
+   -  add: windows: sfk wtoa and atow, convert UCS-2 wide character 
+           text to 8-bit Ansi codepage text and vice versa.
+   -  add: sfk wtou and utow, convert UCS-2 wide character
+           text to 8-bit UTF-8 text and vice versa.
+   -  chg: windows: sfk chars output format changed,
+           now showing both Ansi and OEM code, and character
+           name where available, with a table header.
+           use option -min for the old minimal format.
+   -  fix: xex: option -case was ignored.
+   -  fix: xtext, xfind: error -1 on output with files
+           of 2 or 3 gbytes size. 
+   -  add: xfind, xtext: now shows an improved progress indicator
+           by default. use -quiet for old behaviour.
+   -  add: sfk make-zero-file, create a file full of zero bytes
+           to clean unused space on a filesystem.
+   -  add: sfk status: new field layout=n to change SFKTray layout
+           to 2, 4 or 9 slots display. requires SFKTray 1.0.2.
+   -  add: windows: sfk prompt now converts input from dos
+           to ansi codepage by default.
+   -  add: windows: sfk script option -dos to load DOS/OEM
+           codepage encoded script files.
+   -  fix: windows: delayed terminal after filtering of text content
+           with special characters.
+   -  add: sfk strings: option -allchars to extract all printable
+           chars from binary files.
+   -  add: snapto: option -binallchars to extract all printable
+           chars from binary files.
+   -  add: sysinfo: display of SFK_CONFIG variable.
+   -  add: xtext: display of written file with -to outdir\$file.
+   -  fix: xtext: error message with -to outdir\$file
+           as long as in simulation, without text output.
+   -  chg: option -nocconv can now be used locally per command.
+   -  dep: option -iso is deprecated/ignored.
+   -  dep: option -umlauts is deprecated/ignored.
+   -  doc: main help title changed
+           from: The Swiss File Knife File Tree Processor
+           to:   The Swiss File Knife Multi Function Tool.
+   -  doc: sfk index, name now reference sfk home.
+   -  doc: sfk setvar, load, storetext, stop in main help.
+   -  doc: wtoa, wtou in main help.
+   -  doc: xrep: notice to use [eol] to replace line endings.
+   -  doc: filter: reference to help nocase, help unicode.
+   -  doc: find, replace: reference to help nocase.
+   -  doc: general option -binallchars
+   -  doc: sfk ose: xfind help did not show expression syntax.
+   -  doc: sfk ren: top reference to sfk renfile.
+   -  doc: sfk copy: single file copy example.
+   internal:
+   -  add: chars -full
+   -  chg: wtoa, atow now also support -isochars.
+   -  chg: sfk ascii now also supports -codepage option.
+   -  add: -codepage=a-o to set fixed ansi/oem codepage.
+   -  add: -deacc for accent insensitive match.
+   -  add: option -isoc as alias for -isochars.
+   -  fix: xtext, xfind: iContextUsed 2 gb overflow caused error -1.
+   -  chg: option -noacc undocumented, conflicts with -deacc.
+
    1.8.9
    Revision 2:
    -  rel: 10.01.2018, Minor Update
@@ -67,6 +143,10 @@
            by -debug like +tell -debug "#(strlen(a))"
    -  doc: xex: how to check if a variable contains a word.
    -  doc: help var: how to search a variable in a variable.
+   Revision 3:
+   -  add: status: info that SFKTray 1.0.2 now supports
+           layout=n to change number of slots shown.
+   -  add: fromucs: option -ansi under Windows
    Revision 2:
    -  add: fromucs, toucs
    -  fix: fixfile: possible crash with some runtimes
@@ -813,8 +893,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.8.9" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "2"
+#define SFK_VERSION  "1.9.0" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -936,7 +1016,6 @@ const char *getSFKVersion() { return pszGlblVersion; }
 #ifdef _WIN32
  #define SFK_BOTH_RUNCHARS_HELP
  #define SFK_MAP_ANSI_NEW // sfk189
- // #define SFK_MAP_ANSI_OLD
 #endif
 
 // #define SFK_STRICT_MATCH
@@ -2405,7 +2484,7 @@ ushort *sfkname::wname( )
    if (cs.uname)
    {
       mclear(awname);
-      int irc = MultiByteToWideChar(
+      int irc = MultiByteToWideChar(   // win.wname
          CP_UTF8,
          0,
          szname, strlen(szname),
@@ -2457,7 +2536,7 @@ char *sfkname::vname( )
    {
       // result is NOT zero terminated!
       mclear(szname);
-      int irc = WideCharToMultiByte(
+      int irc = WideCharToMultiByte(   // vname.utf8
          CP_UTF8,
          0,
          (wchar_t*)awname, wcslen((wchar_t*)awname),
@@ -2756,6 +2835,9 @@ void CommandStats::reset()
    usecolor       =  0;
    usehelpcolor   =  0;
    #endif
+
+   outcconv       = 1;  // sfkwin only
+   forcecconv     = 0;  // sfkwin only
 }
 
 bool CommandStats::stopTree(int nrc, bool *psilent)
@@ -3209,8 +3291,8 @@ int nGlblTraceSel = 0; // b0:dirs b1:files
 bool bGlblMD5RelNames = 0;
 bool bGlblHaveInteractiveConsole = 0;
 bool bGlblStartedInEmptyConsole = 0;
-bool bGlblEnableOPrintf = 1; // allow codepage conversion w/in oprintf
-bool bGlblForceCConv = 0;    // enfore codepage conversion w/in oprintf
+// bool bGlblEnableOPrintf = 1; // allow codepage conversion w/in oprintf
+// bool bGlblForceCConv = 0;    // enfore codepage conversion w/in oprintf
 bool bGlblAllowGeneralPure = 0; // command dependent
 bool bGlblPauseOnError = 0;  // pause after every error
 bool bGlblPauseOnEnd   = 0;  // pause before program end
@@ -3300,7 +3382,6 @@ bool bGlblFTPListAsHTML  = 0;
 bool bGlblFTPListTextBin = 0;
 bool bGlblBinGrep           = 0;
 bool bGlblBinGrepAutoDetect = 1;
-uchar nGlblBinTextBinRange  = 0xFF;
 int nGlblDarkColBase    = 0;
 int nGlblBrightColBase  = 1;
 bool bGlblSysErrDetail   = 0;
@@ -4278,122 +4359,6 @@ void setTextColor(int nIn, bool bStdErr, bool bVerbose)
    #endif
 }
 
-#ifdef SFK_MAP_ANSI_NEW
-
-char aMapAnsiToOem[256];
-char aMapOemToAnsi[256];
-
-void initMapAnsi()
-{
-   mclear(aMapAnsiToOem);
-   mclear(aMapOemToAnsi);
-
-   char szTmp1[10];
-   char szTmp2[10];
-   mclear(szTmp1);
-   mclear(szTmp2);
-
-   for (ushort i=1; i<256; i++)
-   {
-      szTmp1[0] = (char)i;
-      CharToOemA(szTmp1, szTmp2);
-      aMapAnsiToOem[i] = szTmp2[0];
-      OemToCharA(szTmp1, szTmp2);
-      aMapOemToAnsi[i] = szTmp2[0];
-   }
-}
-
-void ansiToOEM(char *psz, int *pChg=0)
-{
-   for (; *psz; psz++) {
-      char c = aMapAnsiToOem[(uchar)*psz];
-      if (pChg!=0 && *psz!=c)
-         *pChg++;
-      *psz = c;
-   }
-}
-
-void oemToAnsi(char *psz, int *pChg=0)
-{
-   for (; *psz; psz++) {
-      char c = aMapOemToAnsi[(uchar)*psz];
-      if (pChg!=0 && *psz!=c)
-         *pChg++;
-      *psz = c;
-   }
-}
-
-char ansiCharToOEM(char c, int *pChg=0)
-{
-   char c2 = aMapAnsiToOem[(uchar)c];
-   if (pChg!=0 && c2!=c)
-      *pChg++;
-   return c2;
-}
-
-char oemCharToAnsi(char c, int *pChg=0)
-{
-   char c2 = aMapOemToAnsi[(uchar)c];
-   if (pChg!=0 && c2!=c)
-      *pChg++;
-   return c2;
-}
-
-#endif
-
-#ifdef SFK_MAP_ANSI_OLD
-
-// windows-1250 to dos-850 ANSI Central European mapping table.
-// some mappings are approximations.
-uchar aMapAnsi1250ToOEM850[] = {
-0x80,0x5F, 0x81,0x5F, 0x82,0x27, 0x83,0x9F, 0x84,0x22, 0x85,0x2E, 0x86,0xC5, 0x87,0xCE,
-0x88,0x5E, 0x89,0x25, 0x8A,0x53, 0x8B,0x3C, 0x8C,0x4F, 0x8D,0x5F, 0x8E,0x5A, 0x8F,0x5F,
-0x90,0x5F, 0x91,0x27, 0x92,0x27, 0x93,0x22, 0x94,0x22,            0x96,0x2D, 0x97,0x2D, // 0x95,0x07,
-0x98,0x7E, 0x99,0x54, 0x9A,0x73, 0x9B,0x3E, 0x9C,0x6F, 0x9D,0x5F, 0x9E,0x7A, 0x9F,0x59,
-0xA0,0xFF, 0xA1,0xAD, 0xA2,0xBD, 0xA3,0x9C, 0xA4,0xCF, 0xA5,0xBE, 0xA6,0xDD, 0xA7,0xF5,
-0xA8,0xF9, 0xA9,0xB8, 0xAA,0xA6, 0xAB,0xAE, 0xAC,0xAA, 0xAD,0xF0, 0xAE,0xA9, 0xAF,0xEE,
-0xB0,0xF8, 0xB1,0xF1, 0xB2,0xFD, 0xB3,0xFC, 0xB4,0xEF, 0xB5,0xE6, 0xB6,0xF4, 0xB7,0xFA,
-0xB8,0xF7, 0xB9,0xFB, 0xBA,0xA7, 0xBB,0xAF, 0xBC,0xAC, 0xBD,0xAB, 0xBE,0xF3, 0xBF,0xA8,
-0xC0,0xB7, 0xC1,0xB5, 0xC2,0xB6, 0xC3,0xC7, 0xC4,0x8E, 0xC5,0x8F, 0xC6,0x92, 0xC7,0x80,
-0xC8,0xD4, 0xC9,0x90, 0xCA,0xD2, 0xCB,0xD3, 0xCC,0xDE, 0xCD,0xD6, 0xCE,0xD7, 0xCF,0xD8,
-0xD0,0xD1, 0xD1,0xA5, 0xD2,0xE3, 0xD3,0xE0, 0xD4,0xE2, 0xD5,0xE5, 0xD6,0x99, 0xD7,0x9E,
-0xD8,0x9D, 0xD9,0xEB, 0xDA,0xE9, 0xDB,0xEA, 0xDC,0x9A, 0xDD,0xED, 0xDE,0xE8, 0xDF,0xE1,
-0xE0,0x85, 0xE1,0xA0, 0xE2,0x83, 0xE3,0xC6, 0xE4,0x84, 0xE5,0x86, 0xE6,0x91, 0xE7,0x87,
-0xE8,0x8A, 0xE9,0x82, 0xEA,0x88, 0xEB,0x89, 0xEC,0x8D, 0xED,0xA1, 0xEE,0x8C, 0xEF,0x8B,
-0xF0,0xD0, 0xF1,0xA4, 0xF2,0x95, 0xF3,0xA2, 0xF4,0x93, 0xF5,0xE4, 0xF6,0x94, 0xF7,0xF6,
-0xF8,0x9B, 0xF9,0x97, 0xFA,0xA3, 0xFB,0x96, 0xFC,0x81, 0xFD,0xEC, 0xFE,0xE7, 0xFF,0x98,
-};
-
-char ansiCharToOEM(char c, int *pChg=0)
-{
-   int nentries = sizeof(aMapAnsi1250ToOEM850) / 2;
-   for (int i=0; i<nentries; i++) {
-      if (aMapAnsi1250ToOEM850[i*2+0] == (uchar)c) {
-         if (pChg) (*pChg)++;
-         return aMapAnsi1250ToOEM850[i*2+1];
-      }
-   }
-   return c;
-}
-
-char oemCharToAnsi(char c, int *pChg=0)
-{
-   if (((uchar)c) < 0x80) return c;
-   int nentries = sizeof(aMapAnsi1250ToOEM850) / 2;
-   for (int i=0; i<nentries; i++) {
-      if (aMapAnsi1250ToOEM850[i*2+1] == (uchar)c) {
-         if (pChg) (*pChg)++;
-         return aMapAnsi1250ToOEM850[i*2+0];
-      }
-   }
-   return c;
-}
-
-void ansiToOEM(char *psz, int *pChg=0) { for (;*psz;psz++) *psz = ansiCharToOEM(*psz, pChg); }
-void oemToAnsi(char *psz, int *pChg=0) { for (;*psz;psz++) *psz = oemCharToAnsi(*psz, pChg); }
-
-#endif
-
 void oprintf(cchar *pszFormat, ...);
 void oprintf(StringPipe *pOutData, cchar *pszFormat, ...);
 
@@ -4436,7 +4401,7 @@ void changeLineCase(char *psz, int iMode, int *pChg=0)
    switch (iMode) {
       case 1:
          for (;*psz;psz++) {
-            u = toupper(*psz);
+            u = sfktoupper(*psz);
             if (*psz != u) {
                *psz = u;
                if (*pChg) (*pChg)++;
@@ -4445,7 +4410,7 @@ void changeLineCase(char *psz, int iMode, int *pChg=0)
          break;
       case 2:
          for (;*psz;psz++) {
-            u = tolower(*psz);
+            u = sfktolower(*psz);
             if (*psz != u) {
                *psz = u;
                if (*pChg) (*pChg)++;
@@ -8663,6 +8628,11 @@ void ProgressInfo::setProgress(num nMax, num nCur, cchar *pszUnit, bool btriple)
    cycle();
 }
 
+void ProgressInfo::clearProgress( )
+{
+   szPerc[0] = '\0';
+}
+
 void ProgressInfo::cycle() {
    #ifdef _WIN32
    // windows: if output is redirected, info display makes no sense.
@@ -8678,7 +8648,8 @@ void ProgressInfo::cycle() {
 
 void ProgressInfo::setAction(cchar *pverb, cchar *psubj, cchar *pszAddInfo, int nKeepFlags) {
    setStatus(pverb, psubj, pszAddInfo, nKeepFlags);
-   print();
+   if (!(nKeepFlags & eNoPrint))
+      print();
 }
 
 void ProgressInfo::print() {
@@ -9257,10 +9228,11 @@ int esys(const char *pszContext, const char *pszFormat, ...)
    return 0;
 }
 
-bool cmpchr(char c1, char cmsk, bool bcase, bool besc) {
+bool cmpchr(char c1, char cmsk, bool bcase, bool besc)
+{
    if (!besc && cmsk == '?') return 1;
-   if (!bcase) c1   = tolower(c1);
-   if (!bcase) cmsk = tolower(cmsk);
+   if (!bcase) c1   = sfktolower(c1);
+   if (!bcase) cmsk = sfktolower(cmsk);
    if (c1 == cmsk) return 1;
    return 0;
 }
@@ -9737,51 +9709,726 @@ InfoCounter glblFileCount;
 void resetFileCounter()   { glblFileCount.reset(); cs.lines = 0; }
 bool fileCountCheckTime() { return glblFileCount.checkTime(); }
 
-NoCaseText glblNoCase;
+// --- sfk190 nocase with variable table ---
 
-uchar sfkToLowerCase(uchar uc) { return glblNoCase.lowerUChar(uc); }
-uchar sfkToUpperCase(uchar uc) { return glblNoCase.upperUChar(uc); }
+/*
+   west.  europe: 850 1252
+   middle europe: 852 1250
+   cyrillic     : 866 1251
+   greek        : 737 1253
+*/
 
-NoCaseText::NoCaseText()
+// :cyrillic
+unsigned short glblCodePage1251[] = {
+   0x80,0x0402, 0x81,0x0403, 0x82,0x201a, 0x83,0x0453, 0x84,0x201e, 0x85,0x2026, 0x86,0x2020, 0x87,0x2021,
+   0x88,0x20ac, 0x89,0x2030, 0x8a,0x0409, 0x8b,0x2039, 0x8c,0x040a, 0x8d,0x040c, 0x8e,0x040b, 0x8f,0x040f,
+   0x90,0x0452, 0x91,0x2018, 0x92,0x2019, 0x93,0x201c, 0x94,0x201d, 0x95,0x2022, 0x96,0x2013, 0x97,0x2014,
+   0x99,0x2122, 0x9a,0x0459, 0x9b,0x203a, 0x9c,0x045a, 0x9d,0x045c, 0x9e,0x045b, 0x9f,0x045f, 0xa1,0x040e,
+   0xa2,0x045e, 0xa3,0x0408, 0xa5,0x0490, 0xa8,0x0401, 0xaa,0x0404, 0xaf,0x0407, 0xb2,0x0406, 0xb3,0x0456,
+   0xb4,0x0491, 0xb8,0x0451, 0xb9,0x2116, 0xba,0x0454, 0xbc,0x0458, 0xbd,0x0405, 0xbe,0x0455, 0xbf,0x0457,
+   0xc0,0x0410, 0xc1,0x0411, 0xc2,0x0412, 0xc3,0x0413, 0xc4,0x0414, 0xc5,0x0415, 0xc6,0x0416, 0xc7,0x0417,
+   0xc8,0x0418, 0xc9,0x0419, 0xca,0x041a, 0xcb,0x041b, 0xcc,0x041c, 0xcd,0x041d, 0xce,0x041e, 0xcf,0x041f,
+   0xd0,0x0420, 0xd1,0x0421, 0xd2,0x0422, 0xd3,0x0423, 0xd4,0x0424, 0xd5,0x0425, 0xd6,0x0426, 0xd7,0x0427,
+   0xd8,0x0428, 0xd9,0x0429, 0xda,0x042a, 0xdb,0x042b, 0xdc,0x042c, 0xdd,0x042d, 0xde,0x042e, 0xdf,0x042f,
+   0xe0,0x0430, 0xe1,0x0431, 0xe2,0x0432, 0xe3,0x0433, 0xe4,0x0434, 0xe5,0x0435, 0xe6,0x0436, 0xe7,0x0437,
+   0xe8,0x0438, 0xe9,0x0439, 0xea,0x043a, 0xeb,0x043b, 0xec,0x043c, 0xed,0x043d, 0xee,0x043e, 0xef,0x043f,
+   0xf0,0x0440, 0xf1,0x0441, 0xf2,0x0442, 0xf3,0x0443, 0xf4,0x0444, 0xf5,0x0445, 0xf6,0x0446, 0xf7,0x0447,
+   0xf8,0x0448, 0xf9,0x0449, 0xfa,0x044a, 0xfb,0x044b, 0xfc,0x044c, 0xfd,0x044d, 0xfe,0x044e, 0xff,0x044f,
+   0,0
+};
+
+unsigned short glblCodePage866[] = {
+   0x80,0x0410, 0x81,0x0411, 0x82,0x0412, 0x83,0x0413, 0x84,0x0414, 0x85,0x0415, 0x86,0x0416, 0x87,0x0417,
+   0x88,0x0418, 0x89,0x0419, 0x8a,0x041a, 0x8b,0x041b, 0x8c,0x041c, 0x8d,0x041d, 0x8e,0x041e, 0x8f,0x041f,
+   0x90,0x0420, 0x91,0x0421, 0x92,0x0422, 0x93,0x0423, 0x94,0x0424, 0x95,0x0425, 0x96,0x0426, 0x97,0x0427,
+   0x98,0x0428, 0x99,0x0429, 0x9a,0x042a, 0x9b,0x042b, 0x9c,0x042c, 0x9d,0x042d, 0x9e,0x042e, 0x9f,0x042f,
+   0xa0,0x0430, 0xa1,0x0431, 0xa2,0x0432, 0xa3,0x0433, 0xa4,0x0434, 0xa5,0x0435, 0xa6,0x0436, 0xa7,0x0437,
+   0xa8,0x0438, 0xa9,0x0439, 0xaa,0x043a, 0xab,0x043b, 0xac,0x043c, 0xad,0x043d, 0xae,0x043e, 0xaf,0x043f,
+   0xb0,0x2591, 0xb1,0x2592, 0xb2,0x2593, 0xb3,0x2502, 0xb4,0x2524, 0xb5,0x2561, 0xb6,0x2562, 0xb7,0x2556,
+   0xb8,0x2555, 0xb9,0x2563, 0xba,0x2551, 0xbb,0x2557, 0xbc,0x255d, 0xbd,0x255c, 0xbe,0x255b, 0xbf,0x2510,
+   0xc0,0x2514, 0xc1,0x2534, 0xc2,0x252c, 0xc3,0x251c, 0xc4,0x2500, 0xc5,0x253c, 0xc6,0x255e, 0xc7,0x255f,
+   0xc8,0x255a, 0xc9,0x2554, 0xca,0x2569, 0xcb,0x2566, 0xcc,0x2560, 0xcd,0x2550, 0xce,0x256c, 0xcf,0x2567,
+   0xd0,0x2568, 0xd1,0x2564, 0xd2,0x2565, 0xd3,0x2559, 0xd4,0x2558, 0xd5,0x2552, 0xd6,0x2553, 0xd7,0x256b,
+   0xd8,0x256a, 0xd9,0x2518, 0xda,0x250c, 0xdb,0x2588, 0xdc,0x2584, 0xdd,0x258c, 0xde,0x2590, 0xdf,0x2580,
+   0xe0,0x0440, 0xe1,0x0441, 0xe2,0x0442, 0xe3,0x0443, 0xe4,0x0444, 0xe5,0x0445, 0xe6,0x0446, 0xe7,0x0447,
+   0xe8,0x0448, 0xe9,0x0449, 0xea,0x044a, 0xeb,0x044b, 0xec,0x044c, 0xed,0x044d, 0xee,0x044e, 0xef,0x044f,
+   0xf0,0x0401, 0xf1,0x0451, 0xf2,0x0404, 0xf3,0x0454, 0xf4,0x0407, 0xf5,0x0457, 0xf6,0x040e, 0xf7,0x045e,
+   0xf8,0x00b0, 0xf9,0x2219, 0xfa,0x00b7, 0xfb,0x221a, 0xfc,0x2116, 0xfd,0x00a4, 0xfe,0x25a0, 0xff,0x00a0,
+   0,0
+};
+
+// :western
+unsigned short glblCodePage1252[] = {
+   0x80,0x20ac, 0x82,0x201a, 0x83,0x0192, 0x84,0x201e, 0x85,0x2026, 0x86,0x2020, 0x87,0x2021, 0x88,0x02c6,
+   0x89,0x2030, 0x8a,0x0160, 0x8b,0x2039, 0x8c,0x0152, 0x8e,0x017d, 0x91,0x2018, 0x92,0x2019, 0x93,0x201c,
+   0x94,0x201d, 0x95,0x2022, 0x96,0x2013, 0x97,0x2014, 0x98,0x02dc, 0x99,0x2122, 0x9a,0x0161, 0x9b,0x203a,
+   0x9c,0x0153, 0x9e,0x017e, 0x9f,0x0178,
+   0,0
+};
+
+unsigned short glblCodePage850[] = {
+   0x80,0x00c7, 0x81,0x00fc, 0x82,0x00e9, 0x83,0x00e2, 0x84,0x00e4, 0x85,0x00e0, 0x86,0x00e5, 0x87,0x00e7,
+   0x88,0x00ea, 0x89,0x00eb, 0x8a,0x00e8, 0x8b,0x00ef, 0x8c,0x00ee, 0x8d,0x00ec, 0x8e,0x00c4, 0x8f,0x00c5,
+   0x90,0x00c9, 0x91,0x00e6, 0x92,0x00c6, 0x93,0x00f4, 0x94,0x00f6, 0x95,0x00f2, 0x96,0x00fb, 0x97,0x00f9,
+   0x98,0x00ff, 0x99,0x00d6, 0x9a,0x00dc, 0x9b,0x00f8, 0x9c,0x00a3, 0x9d,0x00d8, 0x9e,0x00d7, 0x9f,0x0192,
+   0xa0,0x00e1, 0xa1,0x00ed, 0xa2,0x00f3, 0xa3,0x00fa, 0xa4,0x00f1, 0xa5,0x00d1, 0xa6,0x00aa, 0xa7,0x00ba,
+   0xa8,0x00bf, 0xa9,0x00ae, 0xaa,0x00ac, 0xab,0x00bd, 0xac,0x00bc, 0xad,0x00a1, 0xae,0x00ab, 0xaf,0x00bb,
+   0xb0,0x2591, 0xb1,0x2592, 0xb2,0x2593, 0xb3,0x2502, 0xb4,0x2524, 0xb5,0x00c1, 0xb6,0x00c2, 0xb7,0x00c0,
+   0xb8,0x00a9, 0xb9,0x2563, 0xba,0x2551, 0xbb,0x2557, 0xbc,0x255d, 0xbd,0x00a2, 0xbe,0x00a5, 0xbf,0x2510,
+   0xc0,0x2514, 0xc1,0x2534, 0xc2,0x252c, 0xc3,0x251c, 0xc4,0x2500, 0xc5,0x253c, 0xc6,0x00e3, 0xc7,0x00c3,
+   0xc8,0x255a, 0xc9,0x2554, 0xca,0x2569, 0xcb,0x2566, 0xcc,0x2560, 0xcd,0x2550, 0xce,0x256c, 0xcf,0x00a4,
+   0xd0,0x00f0, 0xd1,0x00d0, 0xd2,0x00ca, 0xd3,0x00cb, 0xd4,0x00c8, 0xd5,0x0131, 0xd6,0x00cd, 0xd7,0x00ce,
+   0xd8,0x00cf, 0xd9,0x2518, 0xda,0x250c, 0xdb,0x2588, 0xdc,0x2584, 0xdd,0x00a6, 0xde,0x00cc, 0xdf,0x2580,
+   0xe0,0x00d3, 0xe1,0x00df, 0xe2,0x00d4, 0xe3,0x00d2, 0xe4,0x00f5, 0xe5,0x00d5, 0xe6,0x00b5, 0xe7,0x00fe,
+   0xe8,0x00de, 0xe9,0x00da, 0xea,0x00db, 0xeb,0x00d9, 0xec,0x00fd, 0xed,0x00dd, 0xee,0x00af, 0xef,0x00b4,
+   0xf0,0x00ad, 0xf1,0x00b1, 0xf2,0x2017, 0xf3,0x00be, 0xf4,0x00b6, 0xf5,0x00a7, 0xf6,0x00f7, 0xf7,0x00b8,
+   0xf8,0x00b0, 0xf9,0x00a8, 0xfa,0x00b7, 0xfb,0x00b9, 0xfc,0x00b3, 0xfd,0x00b2, 0xfe,0x25a0, 0xff,0x00a0,
+   0,0
+};
+
+// :greek
+unsigned short glblCodePage1253[] = {
+   0x80,0x20ac, 0x82,0x201a, 0x83,0x0192, 0x84,0x201e, 0x85,0x2026, 0x86,0x2020, 0x87,0x2021, 0x89,0x2030,
+   0x8b,0x2039, 0x91,0x2018, 0x92,0x2019, 0x93,0x201c, 0x94,0x201d, 0x95,0x2022, 0x96,0x2013, 0x97,0x2014,
+   0x99,0x2122, 0x9b,0x203a, 0xa1,0x0385, 0xa2,0x0386, 0xaa,0xf8f9, 0xaf,0x2015, 0xb4,0x0384, 0xb8,0x0388,
+   0xb9,0x0389, 0xba,0x038a, 0xbc,0x038c, 0xbe,0x038e, 0xbf,0x038f, 0xc0,0x0390, 0xc1,0x0391, 0xc2,0x0392,
+   0xc3,0x0393, 0xc4,0x0394, 0xc5,0x0395, 0xc6,0x0396, 0xc7,0x0397, 0xc8,0x0398, 0xc9,0x0399, 0xca,0x039a,
+   0xcb,0x039b, 0xcc,0x039c, 0xcd,0x039d, 0xce,0x039e, 0xcf,0x039f, 0xd0,0x03a0, 0xd1,0x03a1, 0xd2,0xf8fa,
+   0xd3,0x03a3, 0xd4,0x03a4, 0xd5,0x03a5, 0xd6,0x03a6, 0xd7,0x03a7, 0xd8,0x03a8, 0xd9,0x03a9, 0xda,0x03aa,
+   0xdb,0x03ab, 0xdc,0x03ac, 0xdd,0x03ad, 0xde,0x03ae, 0xdf,0x03af, 0xe0,0x03b0, 0xe1,0x03b1, 0xe2,0x03b2,
+   0xe3,0x03b3, 0xe4,0x03b4, 0xe5,0x03b5, 0xe6,0x03b6, 0xe7,0x03b7, 0xe8,0x03b8, 0xe9,0x03b9, 0xea,0x03ba,
+   0xeb,0x03bb, 0xec,0x03bc, 0xed,0x03bd, 0xee,0x03be, 0xef,0x03bf, 0xf0,0x03c0, 0xf1,0x03c1, 0xf2,0x03c2,
+   0xf3,0x03c3, 0xf4,0x03c4, 0xf5,0x03c5, 0xf6,0x03c6, 0xf7,0x03c7, 0xf8,0x03c8, 0xf9,0x03c9, 0xfa,0x03ca,
+   0xfb,0x03cb, 0xfc,0x03cc, 0xfd,0x03cd, 0xfe,0x03ce, 0xff,0xf8fb,
+   0,0
+};
+
+unsigned short glblCodePage737[] = {
+   0x80,0x0391, 0x81,0x0392, 0x82,0x0393, 0x83,0x0394, 0x84,0x0395, 0x85,0x0396, 0x86,0x0397, 0x87,0x0398,
+   0x88,0x0399, 0x89,0x039a, 0x8a,0x039b, 0x8b,0x039c, 0x8c,0x039d, 0x8d,0x039e, 0x8e,0x039f, 0x8f,0x03a0,
+   0x90,0x03a1, 0x91,0x03a3, 0x92,0x03a4, 0x93,0x03a5, 0x94,0x03a6, 0x95,0x03a7, 0x96,0x03a8, 0x97,0x03a9,
+   0x98,0x03b1, 0x99,0x03b2, 0x9a,0x03b3, 0x9b,0x03b4, 0x9c,0x03b5, 0x9d,0x03b6, 0x9e,0x03b7, 0x9f,0x03b8,
+   0xa0,0x03b9, 0xa1,0x03ba, 0xa2,0x03bb, 0xa3,0x03bc, 0xa4,0x03bd, 0xa5,0x03be, 0xa6,0x03bf, 0xa7,0x03c0,
+   0xa8,0x03c1, 0xa9,0x03c3, 0xaa,0x03c2, 0xab,0x03c4, 0xac,0x03c5, 0xad,0x03c6, 0xae,0x03c7, 0xaf,0x03c8,
+   0xb0,0x2591, 0xb1,0x2592, 0xb2,0x2593, 0xb3,0x2502, 0xb4,0x2524, 0xb5,0x2561, 0xb6,0x2562, 0xb7,0x2556,
+   0xb8,0x2555, 0xb9,0x2563, 0xba,0x2551, 0xbb,0x2557, 0xbc,0x255d, 0xbd,0x255c, 0xbe,0x255b, 0xbf,0x2510,
+   0xc0,0x2514, 0xc1,0x2534, 0xc2,0x252c, 0xc3,0x251c, 0xc4,0x2500, 0xc5,0x253c, 0xc6,0x255e, 0xc7,0x255f,
+   0xc8,0x255a, 0xc9,0x2554, 0xca,0x2569, 0xcb,0x2566, 0xcc,0x2560, 0xcd,0x2550, 0xce,0x256c, 0xcf,0x2567,
+   0xd0,0x2568, 0xd1,0x2564, 0xd2,0x2565, 0xd3,0x2559, 0xd4,0x2558, 0xd5,0x2552, 0xd6,0x2553, 0xd7,0x256b,
+   0xd8,0x256a, 0xd9,0x2518, 0xda,0x250c, 0xdb,0x2588, 0xdc,0x2584, 0xdd,0x258c, 0xde,0x2590, 0xdf,0x2580,
+   0xe0,0x03c9, 0xe1,0x03ac, 0xe2,0x03ad, 0xe3,0x03ae, 0xe4,0x03ca, 0xe5,0x03af, 0xe6,0x03cc, 0xe7,0x03cd,
+   0xe8,0x03cb, 0xe9,0x03ce, 0xea,0x0386, 0xeb,0x0388, 0xec,0x0389, 0xed,0x038a, 0xee,0x038c, 0xef,0x038e,
+   0xf0,0x038f, 0xf1,0x00b1, 0xf2,0x2265, 0xf3,0x2264, 0xf4,0x03aa, 0xf5,0x03ab, 0xf6,0x00f7, 0xf7,0x2248,
+   0xf8,0x00b0, 0xf9,0x2219, 0xfa,0x00b7, 0xfb,0x221a, 0xfc,0x207f, 0xfd,0x00b2, 0xfe,0x25a0, 0xff,0x00a0,
+   0,0
+};
+
+SFKChars sfkchars;
+
+SFKChars::SFKChars( )
 {
-   reinit(1); // default
+   memset(this, 0, sizeof(*this));
+
+   #ifndef _WIN32
+   iclocp = 850;  // linux/mac default
+   iclacp = 1252; // linux/mac default
+   #endif
 }
 
-void NoCaseText::reinit(bool bISO)
+/*
+   even if the system has codepage 1252 the fixed glblCodePage1252
+   is used internally, assuring the same behaviour on all computers
+   in case that -isochars is used.
+*/
+ushort SFKChars::ibytetouni(uchar c, ushort icp)
 {
-   memset(aClLowerTab, 0, sizeof(aClLowerTab));
+   ushort *pfixedcp=0;
+   bool bdos=0;
 
-   for (uint u1=0; u1<256; u1++)
-      aClUpperTab[u1] = u1;
-
-   for (uint u1=0; u1<256; u1++)
+   switch (icp)
    {
-      uchar u2 = (uchar)u1;
+      case 1251: pfixedcp = glblCodePage1251; break;
+      case  866: pfixedcp = glblCodePage866;  bdos=1; break;
+      case 1252: pfixedcp = glblCodePage1252; break;
+      case  850: pfixedcp = glblCodePage850;  bdos=1; break;
+      case 1253: pfixedcp = glblCodePage1253; break;
+      case  737: pfixedcp = glblCodePage737;  bdos=1; break;
+   }
+   if (pfixedcp) {
+      for (int i=0; pfixedcp[i]; i+=2)
+         if (pfixedcp[i+0]==c)
+            return pfixedcp[i+1];
+      // Ansi: everything else maps 1:1
+      // Dos : everything else >= 0x80 does not exist
+      return c;
+   }
 
-      if (u1 >= 0x41 && u1 <= 0x5A)    // A-Z
-         u2 += 0x20U;    // -> a-z
+   #ifdef _WIN32
 
-      if (bISO)
-      {
-         // ISO 8859-1 special character lowercase mapping
-         if (u1 >= 0xC0 && u1 <= 0xDE)    // special characters
-            if (u1 != 0xD7 && u1 != 0xDF) // NOT these two
-               u2 += 0x20U; // e.g. Ä -> ä
-      }
+   sztmp[0] = c;
+   sztmp[1] = 0;
 
-      aClLowerTab[u1] = (char)u2;
-      if (u1 != u2)
-         aClUpperTab[u2] = (char)u1;
+   awtmp[0] = 0;
+
+   MultiByteToWideChar( // win.varcp
+      icp, 0, sztmp, 1,
+      (wchar_t*)awtmp, 10
+      );
+
+   ushort ntmp = awtmp[0];
+
+   if (ntmp)
+      return ntmp;
+
+   #endif
+
+   return 0;
+}
+
+int SFKChars::setocp(ushort i)
+{
+   switch (i) {
+      case 737: case 850: case 866:
+         iclocp=i;
+         bsysocp=0;
+         bclinited=0;
+         return 0;
+   }
+   return 9;
+}
+
+int SFKChars::setacp(ushort i)
+{
+   switch (i) {
+      case 1251: case 1252: case 1253:
+         iclacp=i;
+         bsysacp=0;
+         bclinited=0;
+         return 0;
+   }
+   return 9;
+}
+
+ushort SFKChars::getocp( )
+   { init(); return iclocp; }
+
+ushort SFKChars::getacp( )
+   { init(); return iclacp; }
+
+void SFKChars::init( )
+{
+   if (bclinited)
+      return;
+
+   ushort n1=iclocp;
+   ushort n2=iclacp;
+    memset(this, 0, sizeof(*this));
+   iclocp=n1;
+   iclacp=n2;
+   bclinited = 1;
+
+   #ifdef _WIN32
+
+   if (iclocp==0) {
+      iclocp = GetOEMCP();
+      bsysocp = 1;
+   }
+
+   if (iclacp==0) {
+      iclacp = GetACP();
+      bsysacp = 1;
+   }
+
+   #endif
+
+   ushort coem=0,cans=0,cuni=0;
+
+   // build byte to uni mapping
+   for (ushort i=0; i<256; i++)
+   {
+      coem = i;
+      cuni = ibytetouni(coem, iclocp);
+      amap1[coem] = cuni;
+      amap2[cuni] = coem;
+
+      cans = i;
+      cuni = ibytetouni(cans, iclacp);
+      amap3[cans] = cuni;
+      amap4[cuni] = cans;
+   }
+
+   // build byte crossmapping
+   for (ushort i=0; i<256; i++)
+   {
+      coem = i;
+      cuni = oemtouni(coem);
+      cans = unitoansi(cuni);
+      amap5[coem] = cans ? cans : '?';
+
+      cans = i;
+      cuni = ansitouni(cans);
+      coem = unitooem(cuni);
+      amap6[cans] = coem ? coem : '?';
    }
 }
 
-void NoCaseText::setStringToLower(char *psz)
+ushort SFKChars::ansitouni(uchar  c)
+   { init(); return amap3[c]; }
+
+ushort SFKChars::oemtouni(uchar  c)
+   { init(); return amap1[c]; }
+
+uchar SFKChars::unitoansi(ushort n)
+   { init(); return amap4[n]; }
+
+uchar SFKChars::unitooem(ushort n)
+   { init(); return amap2[n]; }
+
+uchar SFKChars::oemtoansi(uchar  c)
+   { init(); return amap5[c]; }
+
+uchar SFKChars::ansitooem(uchar  c)
+   { init(); return amap6[c]; }
+
+void SFKChars::stroemtoansi(char *psz, int *pChg)
+{
+   init();
+   for (; *psz; psz++) {
+      char c = amap5[(uchar)*psz];
+      if (pChg!=0 && *psz!=c)
+         *pChg++;
+      *psz = c;
+   }
+}
+
+void SFKChars::stransitooem(char *psz, int *pChg)
+{
+   init();
+   for (; *psz; psz++) {
+      char c = (char)amap6[(uchar)*psz];
+      if (pChg!=0 && *psz!=c)
+         *pChg++;
+      *psz = c;
+   }
+}
+
+/*
+   -  so far windows dependent,
+      linux maps only basic latin chars
+
+   -  unicode mapping of many special chars
+*/
+
+extern unsigned short atol1to1[];
+extern unsigned short atolfuzz[];
+
+SFKNoCase sfknocasesharp(0);
+SFKNoCase sfknocasefuzz(1);
+
+SFKNoCase::SFKNoCase(bool bfuzz)
+{
+   memset(this,0,sizeof(*this));
+
+   bclfuzz = bfuzz;
+}
+
+void SFKNoCase::tellPage( )
+{
+   if (bcltoldcp)
+      return;
+   bcltoldcp = 1;
+   sfkchars.init();
+   printf("[nocase : using %s Ansi page %u for mapping, %s OEM page %u for display]\n",
+      sfkchars.bsysacp ? "system":"fixed", sfkchars.iclacp,
+      sfkchars.bsysocp ? "system":"fixed", sfkchars.iclocp
+      );
+}
+
+#ifndef SWINST
+
+uchar SFKNoCase::map1to1(uchar c, uchar btolower, ushort auni[])
+{
+   auni[0] = 0;
+   auni[1] = 0;
+
+   ushort ntmp = sfkchars.ansitouni(c);
+
+   if (!ntmp)
+      return c;
+
+   int i1 = btolower ? 0 : 1;
+   int i2 = btolower ? 1 : 0;
+
+   ushort *pmap = bclfuzz ? atolfuzz : atol1to1;
+ 
+   ushort nout = 0;
+   for (int i=0; pmap[i]; i+=2)
+   {
+      if (pmap[i+i1] == ntmp)
+      {
+         nout = pmap[i+i2];
+         auni[0] = ntmp;
+         auni[1] = nout;
+         break;
+      }
+      if (pmap[i+i2] == ntmp)
+      {
+         // found ourselves as output.
+         // for information fill in the code.
+         auni[0] = pmap[i+i2];
+         auni[1] = pmap[i+i1];
+      }
+   }
+
+   if (!nout)
+      return c;
+
+   uchar cres = sfkchars.unitoansi(nout);
+
+   if (!cres)
+      return c;
+
+   return cres;
+}
+
+#endif
+
+char *getuniname(ushort ncode);
+
+#ifndef SWINST
+void listcodes(bool bfull,bool btrace)
+{
+   ushort auni[2];
+
+   // abbuf has at least 64 k for our marker table
+   memset(abBuf, 0, MAX_ABBUF_SIZE);
+   uchar *adone = abBuf;
+
+   sfkchars.init();
+   printf("List of character mappings in %s codepage %u:\n",
+      sfkchars.bsysacp ? "system":"fixed",
+      sfkchars.iclacp);
+   printf("---------------------------------------------------\n");
+
+   char szTrace[100];
+   szTrace[0]='\0';
+
+   // Ansi and Unicodes
+   for (uint n=32; n<256; n++)
+   {
+      if (btrace)
+         sprintf(szTrace, "isa=%d/%d isp=%d/%d ", 
+            sfkisalpha(n), isalpha(n),
+            sfkisprint(n), isprint(n)
+            );
+
+      uchar nlo = sfknocasesharp.map1to1((uchar)n, 1, auni);
+      uchar nhi = sfknocasesharp.map1to1((uchar)n, 0, auni);
+
+      char *pname1 = getuniname(auni[0]);
+      char *pname2 = getuniname(auni[1]);
+
+      if (nlo != n) {
+         oprintf("%c 0x%02x U+%04X -> %c 0x%02x U+%04X %s%s\n", 
+            (char)n, n, auni[0],
+            (char)nlo, nlo, auni[1], szTrace, pname1
+            );
+         adone[auni[0]] = 1;
+         adone[auni[1]] = 1;
+       } else if (nhi != n) {
+         oprintf("%c 0x%02x U+%04X -> %c 0x%02x U+%04X %s%s\n",
+            (char)n, n, auni[0],
+            (char)nhi, nhi, auni[1], szTrace, pname1
+            );
+         adone[auni[0]] = 1;
+         adone[auni[1]] = 1;
+      }
+   }
+
+   if (!bfull)
+      return;
+
+   printf("\n");
+   printf("List of character mappings not supported on your system:\n");
+   printf("--------------------------------------------------------\n");
+
+   // just Unicodes
+   bool btolower = 1;
+   int i1 = btolower ? 0 : 1;
+   int i2 = btolower ? 1 : 0;
+   ushort *pmap = atol1to1;
+   for (uint n=32; n<65536; n++)
+   {
+      if (adone[n])
+         continue;
+      ushort nout = 0;
+      for (int i=0; pmap[i]; i+=2)
+      {
+         // tolower mapping?
+         if (pmap[i+0] == n)
+         {
+            nout = pmap[i+1];
+            char *pname1 = getuniname(n);
+            oprintf("U+%04X -> U+%04X %s\n", n, nout, pname1);
+            break;
+         }
+         // toupper mapping?
+         if (pmap[i+1] == n)
+         {
+            nout = pmap[i+0];
+            char *pname1 = getuniname(n);
+            oprintf("U+%04X -> U+%04X %s\n", n, nout, pname1);
+            break;
+         }
+      }
+   }
+}
+#endif
+
+uchar SFKNoCase::itolower(uchar c)
+{
+   #ifdef SWINST
+   return tolower(c);
+   #endif
+
+   #ifdef _WIN32
+
+   if (cs.nocasemin)
+      return tolower(c);
+
+   ushort auni[2];
+
+   if (atolower[c])
+      return atolower[c];
+
+   atolower[c] = map1to1(c, 1, auni);
+
+   if (atolower[c] != c)
+      aisalpha[c] = 1;
+   else if (auni[0] != 0 && auni[0] == auni[1])
+      aisalpha[c] = 1; // e.g. 01A6;LATIN LETTER YR
+
+   if (cs.tracecase) 
+   {
+      tellPage();
+      char *pname1 = getuniname(auni[0]);
+      char *pname2 = getuniname(auni[1]);
+      if (atolower[c] != c)
+         oprintf("[tolower: Ansi %c 0x%02x U+%04x -> %c 0x%02x U+%04x - %s]\n",
+            c, c, auni[0], 
+            atolower[c], atolower[c], auni[1], pname1);
+      else if (cs.tracecase > 1)
+         oprintf("[tolower: Ansi %c 0x%02x U+%04x -- no lo mapping - %s]\n",
+            c, c, auni[0], pname1);
+   }
+
+   return atolower[c];
+
+   #else
+
+   return tolower(c);
+
+   #endif
+}
+
+uchar SFKNoCase::itoupper(uchar c)
+{
+   #ifdef SWINST
+   return toupper(c);
+   #endif
+
+   #ifdef _WIN32
+
+   if (cs.nocasemin)
+      return toupper(c);
+
+   ushort auni[2];
+
+   if (atoupper[c])
+      return atoupper[c];
+
+   atoupper[c] = map1to1(c, 0, auni);
+
+   if (atoupper[c] != c)
+      aisalpha[c] = 1;
+   else if (auni[0] != 0 && auni[0] == auni[1])
+      aisalpha[c] = 1; // e.g. 01A6;LATIN LETTER YR
+
+   if (cs.tracecase)
+   {
+      tellPage();
+      char *pname1 = getuniname(auni[0]);
+      char *pname2 = getuniname(auni[1]);
+      if (atoupper[c] != c)
+         oprintf("[toupper: Ansi %c 0x%02x U+%04x -> %c 0x%02x U+%04x - %s]\n",
+            c, c, auni[0],
+            atoupper[c], atoupper[c], auni[1], pname1);
+      else if (cs.tracecase > 1)
+         oprintf("[toupper: Ansi %c 0x%02x U+%04x -- no up mapping - %s]\n",
+            c, c, auni[0], pname1);
+   }
+
+   return atoupper[c];
+
+   #else
+
+   return tolower(c);
+
+   #endif
+}
+
+void SFKNoCase::isetStringToLower(char *psz)
 {
    for (int i=0; psz[i]; i++)
    {
-      psz[i] = aClLowerTab[(uchar)psz[i]];
+      psz[i] = itolower((uchar)psz[i]);
    }
 }
+
+bool SFKNoCase::iisalpha(uchar c)
+{
+   if (aisalpha[c] == 0) // not yet checked
+   {
+      if (isalpha(c))
+         aisalpha[c] = 1;
+      else {
+         if (itolower(c) != c)
+            aisalpha[c] = 1;
+         else
+         if (itoupper(c) != c)
+            aisalpha[c] = 1;
+         else
+            aisalpha[c] = 2;
+      }
+   }
+   if (aisalpha[c] == 1)
+      return 1;
+   return 0;
+}
+
+bool SFKNoCase::iisalnum(uchar c)
+{
+   if (iisalpha(c))
+      return 1;
+   if (isdigit(c))
+      return 1;
+   return 0;
+}
+
+bool SFKNoCase::iisprint(uchar uc)
+{
+   if (iisalpha(uc))
+      return 1;
+   if (isdigit(uc))
+      return 1;
+   // linux: isprint(':') returns 16384
+   // so never return the value directly.
+   if (isprint((char)uc))
+      return 1;
+   return 0;
+}
+
+int sfktolower(int c) 
+{
+   // nocase search uses tolower for matching,
+   // so -deacc is applied.
+   if (cs.fuzz)
+      return sfknocasefuzz.itolower(c);
+   else
+      return sfknocasesharp.itolower(c);
+}
+
+void sfkSetStringToLower(char *psz)
+{
+   if (cs.fuzz)
+      return sfknocasefuzz.isetStringToLower(psz);
+   else
+      return sfknocasesharp.isetStringToLower(psz);
+}
+
+uchar sfkMapChar(char ch, uchar bCase)
+{
+   if (cs.fuzz)
+      return sfknocasefuzz.mapChar(ch, bCase);
+   else
+      return sfknocasesharp.mapChar(ch, bCase);
+}
+
+uchar sfkLowerUChar(uchar c)
+{
+   if (cs.fuzz)
+      return sfknocasefuzz.lowerUChar(c);
+   else
+      return sfknocasesharp.lowerUChar(c);
+}
+
+uchar sfkUpperUChar(uchar c)
+{
+   return sfknocasesharp.lowerUChar(c);
+}
+
+// set all possible matches for this character
+void sfkSetHeadMatch(uchar ucFirst, uchar aHeadMatch[])
+{
+   if (cs.fuzz == 0)
+   {
+      // normally there is a 1:1 mapping of lower- and upper char.
+      aHeadMatch[sfktoupper(ucFirst)&0xFF] = 1;
+      aHeadMatch[sfktolower(ucFirst)&0xFF] = 1;
+      return;
+   }
+
+   // with -deacc many codes may map to a single char.
+   // user types a, it can match a A a_accent A_accent etc.
+   ucFirst = sfktolower(ucFirst);
+   aHeadMatch[ucFirst] = 1;
+   for (ushort n=1; n<256; n++)
+   {
+      if (sfktolower(n) == ucFirst) aHeadMatch[n] = 1;
+      // if (sfktoupper(n) == ucFirst) aHeadMatch[n] = 1;
+   }
+}
+
+int sfktoupper(int c) 
+{
+   // toupper is never used in nocase comparisons,
+   // so -deacc does not apply.
+   return sfknocasesharp.itoupper(c);
+}
+
+bool sfkisalpha(uchar uc)
+{
+   if (cs.nocasemin)
+      return isalpha((char)uc) ? 1 : 0;
+      // converts int value eg. 16384 to bool!
+
+   return sfknocasesharp.iisalpha(uc); 
+}
+
+bool sfkisalnum(uchar uc)
+{ 
+   if (cs.nocasemin)
+      return isalnum((char)uc) ? 1 : 0;
+      // converts int value eg. 16384 to bool!
+
+   return sfknocasesharp.iisalnum(uc); 
+}
+
+bool sfkisprint(uchar uc)
+{
+   if (cs.nocasemin)
+      return isprint((char)uc) ? 1 : 0;
+      // converts int value eg. 16384 to bool!
+
+   return sfknocasesharp.iisprint(uc); 
+}
+
+// void sfkSetAccentSupport(bool b) // sfk190 deprecated
+// {
+//    gs.noaccent = cs.noaccent = b ? 0 : 1;
+// }
+
+// --- nocase derived functions ---
 
 #ifdef WITH_CASE_XNN
 // RC : 0 == match, <> 0 == no match.
@@ -9798,8 +10445,8 @@ int sfkmemcmp2(uchar *psrc1, uchar *psrc2, num nlen, bool bGlobalCase, uchar *pF
    if (nlen > 1)
    {
       uchar bCase = pFlags ? sfkGetBit(pFlags,nlen-1) : 0;
-      idiff =     glblNoCase.mapChar(psrc1[nlen-1],bCase)
-               -  glblNoCase.mapChar(psrc2[nlen-1],bCase);
+      idiff =     sfkMapChar(psrc1[nlen-1],bCase)
+               -  sfkMapChar(psrc2[nlen-1],bCase);
       if (idiff)
          return idiff;
    }
@@ -9809,8 +10456,8 @@ int sfkmemcmp2(uchar *psrc1, uchar *psrc2, num nlen, bool bGlobalCase, uchar *pF
    for (int i=0; i<nlen; i++)
    {
       bCase = pFlags ? sfkGetBit(pFlags,i) : 0;
-      idiff =     glblNoCase.mapChar(psrc1[i],bCase)
-               -  glblNoCase.mapChar(psrc2[i],bCase);
+      idiff =     sfkMapChar(psrc1[i],bCase)
+               -  sfkMapChar(psrc2[i],bCase);
       if (idiff)
          break;
    }
@@ -9835,8 +10482,8 @@ int sfkmemcmp3(uchar *psrc, uchar *ppat, num nlen, bool bGlobalCase, uchar *pPat
    if (nlen > 1)
    {
       uchar bCase = pPatFlags ? sfkGetBit(pPatFlags,nlen+iPatOff-1) : 0;
-      idiff =     glblNoCase.mapChar(psrc[nlen-1],bCase)
-               -  glblNoCase.mapChar(ppat[nlen-1],bCase);
+      idiff =     sfkMapChar(psrc[nlen-1],bCase)
+               -  sfkMapChar(ppat[nlen-1],bCase);
       if (idiff)
          return idiff;
    }
@@ -9846,8 +10493,8 @@ int sfkmemcmp3(uchar *psrc, uchar *ppat, num nlen, bool bGlobalCase, uchar *pPat
    for (int i=0; i<nlen; i++)
    {
       bCase = pPatFlags ? sfkGetBit(pPatFlags,iPatOff+i) : 0;
-      idiff =     glblNoCase.mapChar(psrc[i],bCase)
-               -  glblNoCase.mapChar(ppat[i],bCase);
+      idiff =     sfkMapChar(psrc[i],bCase)
+               -  sfkMapChar(ppat[i],bCase);
       if (idiff)
          break;
    }
@@ -9868,16 +10515,16 @@ int sfkmemcmp(uchar *psrc1, uchar *psrc2, num nlen, bool bcase)
    // requires at least a 2-char phrase.
    if (nlen > 1)
    {
-      idiff =     glblNoCase.lowerUChar(psrc1[nlen-1])
-               -  glblNoCase.lowerUChar(psrc2[nlen-1]);
+      idiff =     sfkLowerUChar(psrc1[nlen-1])
+               -  sfkLowerUChar(psrc2[nlen-1]);
       if (idiff)
          return idiff;
    }
 
    for (; i<nlen; i++)
    {
-      idiff =     glblNoCase.lowerUChar(psrc1[i])
-               -  glblNoCase.lowerUChar(psrc2[i]);
+      idiff =     sfkLowerUChar(psrc1[i])
+               -  sfkLowerUChar(psrc2[i]);
 
       if (idiff)
          break;
@@ -9892,12 +10539,12 @@ uchar *memIFind(uchar *pNeedle, num nNeedleSize, uchar *pHayStack, num nHaySize,
    uchar *pCur = pHayStack;
    uchar *pMax = pHayStack + nHaySize - nNeedleSize; // inclusive
    uchar bCase = pFlags ? sfkGetBit(pFlags,0) : 0;
-   uchar c1    = glblNoCase.mapChar(*pNeedle,bCase);
+   uchar c1    = sfkMapChar(*pNeedle,bCase);
    while (pCur <= pMax)
    {
       uchar *p1 = pCur;
       // seek to next potential start
-      while ((p1 <= pMax) && (glblNoCase.mapChar(*p1,bCase) != c1))
+      while ((p1 <= pMax) && (sfkMapChar(*p1,bCase) != c1))
          p1++;
       if (!p1 || (p1 > pMax))
          return 0;
@@ -9908,7 +10555,7 @@ uchar *memIFind(uchar *pNeedle, num nNeedleSize, uchar *pHayStack, num nHaySize,
       num i=0;
       for (; i<nNeedleSize; i++) {
          bCase = pFlags ? sfkGetBit(pFlags,i) : 0;
-         if (glblNoCase.mapChar(pNeedle[i],bCase) != glblNoCase.mapChar(p1[i],bCase))
+         if (sfkMapChar(pNeedle[i],bCase) != sfkMapChar(p1[i],bCase))
             break;
       }
       if (i >= nNeedleSize)
@@ -9923,12 +10570,12 @@ uchar *memIFind(uchar *pNeedle, num nNeedleSize, uchar *pHayStack, num nHaySize)
 {
    uchar *pCur = pHayStack;
    uchar *pMax = pHayStack + nHaySize - nNeedleSize; // inclusive
-   uchar c1    = glblNoCase.lowerUChar(*pNeedle);
+   uchar c1    = sfkLowerUChar(*pNeedle);
    while (pCur <= pMax)
    {
       uchar *p1 = pCur;
       // seek to next potential start
-      while ((p1 <= pMax) && (glblNoCase.lowerUChar(*p1) != c1))
+      while ((p1 <= pMax) && (sfkLowerUChar(*p1) != c1))
          p1++;
       if (!p1 || (p1 > pMax))
          return 0;
@@ -9938,7 +10585,7 @@ uchar *memIFind(uchar *pNeedle, num nNeedleSize, uchar *pHayStack, num nHaySize)
       // p1 against pMax again here.
       num i=0;
       for (; i<nNeedleSize; i++)
-         if (glblNoCase.lowerUChar(pNeedle[i]) != glblNoCase.lowerUChar(p1[i]))
+         if (sfkLowerUChar(pNeedle[i]) != sfkLowerUChar(p1[i]))
             break;
       if (i >= nNeedleSize)
          return p1;  // hit
@@ -10194,9 +10841,9 @@ void oprintf(cchar *pszFormat, ...)
    char *psz = szPrintBufMap;
    // windows only: if output is NOT directed to file, map it to DOS charset,
    // to have filenames listed with correct umlauts etc.
-   if (bGlblEnableOPrintf && (bGlblForceCConv || bGlblHaveInteractiveConsole))
+   if (cs.outcconv && (cs.forcecconv || bGlblHaveInteractiveConsole))
    {
-      ansiToOEM(psz);
+      sfkchars.stransitooem(psz);
    }
    #endif
 
@@ -10224,9 +10871,9 @@ void oprintf(StringPipe *pOutData, cchar *pszFormat, ...)
       #ifdef _WIN32
       // windows only: if output is NOT directed to file, map it to DOS charset,
       // to have filenames listed with correct umlauts etc.
-      if (bGlblEnableOPrintf && (bGlblForceCConv || bGlblHaveInteractiveConsole))
+      if (cs.outcconv && (cs.forcecconv || bGlblHaveInteractiveConsole))
       {
-         ansiToOEM(psz);
+         sfkchars.stransitooem(psz);
       }
       #endif
       printf("%s", szPrintBufMap);
@@ -13189,30 +13836,6 @@ BinTexter::~BinTexter()
    memset(this, 0, sizeof(*this));
 }
 
-bool sfkisalpha(uchar uc) {
-   if (isalpha((char)uc))
-      return 1;
-   if (uc > nGlblBinTextBinRange && uc < 0xFF)
-      return 1;
-   return 0;
-}
-
-bool sfkisalnum(uchar uc) {
-   if (isalnum((char)uc))
-      return 1;
-   if (uc > nGlblBinTextBinRange && uc < 0xFF)
-      return 1;
-   return 0;
-}
-
-bool sfkisprint(uchar uc) {
-   if (isprint((char)uc))
-      return 1;
-   if (uc > nGlblBinTextBinRange && uc < 0xFF)
-      return 1;
-   return 0;
-}
-
 // uses szLineBuf. Result in szLineBuf2.
 int BinTexter::process(int nDoWhat)
 {
@@ -13237,7 +13860,7 @@ int BinTexter::process(int nDoWhat)
 
    szClOutBuf[0] = '\0';
 
-   num  nTellTime  = getCurrentTime();
+   num  nTellTime = getCurrentTime();
    int nTellLines = 0;
 
    bool bbail = 0;
@@ -13262,6 +13885,7 @@ int BinTexter::process(int nDoWhat)
          }
       }
 
+      // .
       for (int i=0; i<nRead; i++)
       {
          if (bbail) {
@@ -13285,9 +13909,11 @@ int BinTexter::process(int nDoWhat)
             bisbin = (uc == 0) ? 1 : 0; // just in case
          } else {
             // reformatting binary
-            bisbin = ((uc >= 0x80) && (uc < nGlblBinTextBinRange)) || (uc < 0x20);
-            if (nGlblBinTextBinRange == 0xFF)
-               bishi = (uc >= 0xC0);
+            bisbin = (uc < 0x20) ? 1 : 0;
+            if (uc >= 0x80 && cs.binallchars == 0) // sfk190
+               bisbin = 1;
+            // if (cs.binallchars == 0)
+            //    bishi = (uc >= 0xC0);
          }
 
          if (!bisbin && !bishi)
@@ -14037,10 +14663,17 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (!strcmp(psz1, "-yes"))       { pcs->yes = 1; return true; }
    if (!strcmp(psz1, "-clog"))      { if (bsim) return 1; gs.logcmd = cs.logcmd = 1; return true; }
    if (!strcmp(psz1, "-yes+"))      { if (bsim) return 1; pcs->yes = 1; gs.logcmd = cs.logcmd = 1; return true; }
-   if (!strcmp(psz1, "-umlauts"))   { nGlblBinTextBinRange = 0xC0; return true; }
-   if (!strcmp(psz1, "-noumlauts") || strBegins(psz1, "-noacc")) {
-      nGlblBinTextBinRange = 0xFF;
-      glblNoCase.reinit(0); // -noacc
+   if (!strcmp(psz1, "-binallchars"))  { pcs->binallchars = 1; return true; }
+   if (!strcmp(psz1, "-umlauts"))   { // deprecated with sfk190
+      // cs.noaccent = 0; 
+      return true; 
+   }
+   if (!strcmp(psz1, "-nocasemin")) { // sfk190
+      pcs->nocasemin = 1;
+      return true;
+   }
+   if (!strcmp(psz1, "-noumlauts") || strBegins(psz1, "-noacc")) { // undocumented since sfk190
+      pcs->nocasemin = 1;    // sfk190: pcs not just cs
       return true;
    }
    if (strBegins(psz1, "-utf"))     { pcs->wchardec = 1; return true; } // deprecated
@@ -14058,8 +14691,8 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (!strncmp(psz1, "-rel", 4))   { pcs->rootrelname = 1; return true; }
    if (!strncmp(psz1, "-absname", 8)) { pcs->rootabsname = 1; return true; }
    if (!strncmp(psz1, "-quot", 5))  { bGlblQuoted = 1; return true; }
-   if (!strcmp(psz1, "-nocconv"))   { bGlblEnableOPrintf = 0; return true; }
-   if (!strcmp(psz1, "-cconv"))     { bGlblForceCConv = 1; return true; }
+   if (!strcmp(psz1, "-nocconv"))   { pcs->outcconv = 0; return true; }
+   if (!strcmp(psz1, "-cconv"))     { pcs->forcecconv = 1; return true; }
    if (!strcmp(psz1, "-incref"))    { bGlblSinceDirIncRef = 1; return true; }
    if (!strcmp(psz1, "-force"))     { pcs->force = 1; return true; }
    if (!strncmp(psz1, "-lit", 4))   { pcs->spat = 0; pcs->wpat = 0; return true; }
@@ -14496,12 +15129,12 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (!strcmp(psz1,"-toutfsafe"))  {  pcs->toutf = 2; return true; }
    #ifdef SFK_UNAME
    if (!strcmp(psz1,"-uname"))      {
-      pcs->uname = 1; bGlblEnableOPrintf = 0;
+      pcs->uname = 1; pcs->outcconv = 0;
       // _setmode(_fileno(stdout), 0x40000); // _O_U8TEXT
       return true; 
    }
    if (!strcmp(psz1,"-tname"))      {  
-      pcs->tname = 1; bGlblEnableOPrintf = 0; 
+      pcs->tname = 1; pcs->outcconv = 0; 
       return true; 
    }
    #endif // SFK_UNAME
@@ -14562,6 +15195,39 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
       { if (bsim) return 1; gs.cweb = 1; return true; }
    if (!strcmp(psz1, "-nochainweb") || !strcmp(psz1, "-nocweb"))  
       { if (bsim) return 1; gs.cweb = 0; return true; }
+
+   if (!strcmp(psz1, "-deacc"))      { pcs->fuzz = 1; return true; }
+   if (!strcmp(psz1, "-tracecase"))  { pcs->tracecase = 1; return true; }
+   if (!strcmp(psz1, "-tracecase2")) { pcs->tracecase = 2; return true; }
+   if (!strcmp(psz1, "-isochars") || !strcmp(psz1, "-isoc"))   {
+      sfkchars.setacp(1252);
+      sfkchars.setocp(850);
+      return true;
+   }
+   if (!strncmp(psz1,"-codepage=",10)) {
+      char *psz=psz1+10;
+      int iacp = atoi(psz);
+      if (sfkchars.setacp(iacp)) {
+         perr("unsupported ansi codepage: %d\n", iacp);
+         return false;
+      }
+      int iocp = 0;
+      while (*psz!=0 && isdigit(*psz)!=0) psz++;
+      if (*psz=='-') psz++;
+      if (isdigit(*psz)) {
+         iocp = atoi(psz);
+         if (sfkchars.setocp(iocp)) {
+            perr("unsupported OEM codepage: %d\n", iocp);
+            return false;
+         }
+      }
+      if (gs.tracecase || cs.tracecase) {
+         sfkchars.init();
+         printf("[using Ansi codepage %u, OEM codepage %u]\n",
+            sfkchars.iclacp, sfkchars.iclocp);
+      }
+      return true;
+   }
 
    return false;
 }
@@ -14827,8 +15493,12 @@ cchar *aGlblChainCmds[] =
    "0rand",         // sfk189
    "2addhead",      // sfk187
    "2addtail",      // sfk187
-   "6fromucs",      // internal
-   "6toucs",        // internal
+   #ifdef _WIN32
+   "6atow",  "6ansitoucs",  // sfk190
+   "6iwtoa", "6iucstoansi", // sfk190
+   #endif
+   "6utow",  "6utftoucs",   // sfk190
+   "6iwtou", "6iucstoutf",  // sfk190
    // sfk1833:
    "8fromnet", "8color", "8make-random-file",
    "8time", "8data", "8home", "8ruler",
@@ -18232,8 +18902,6 @@ uint currentMBPerSec() {
 char szCmpBuf1[4096];
 char szCmpBuf2[4096];
 
-#if 1
-
 // 1694: new strstri without size limit
 char *mystrstri(char *phay, cchar *ppat)
 {
@@ -18252,7 +18920,7 @@ char *mystrstri(char *phay, cchar *ppat)
       ndiff = 0;
 
       for (i=0; (i<slen) && !ndiff; ++i)
-         ndiff = tolower(phay[j+i]) - tolower(ppat[i]);
+         ndiff = sfktolower(phay[j+i]) - sfktolower(ppat[i]);
 
       if (!ndiff)
          return (char *)phay+j;
@@ -18271,48 +18939,6 @@ int mystrstrip(char *psz1, cchar *psz2, int *lpAtPosition)
    return pHit ? 1 : 0;
 }
 
-#else
-
-// only for strings up to 4k length.
-int mystrstrip(char *psz1, cchar *psz2, int *lpAtPosition)
-{
-   int slen1 = strlen(psz1);
-   if (slen1 > (int)sizeof(szCmpBuf1)-10)
-       slen1 = (int)sizeof(szCmpBuf1)-10;
-   memcpy(szCmpBuf1, psz1, slen1);
-   szCmpBuf1[slen1] = '\0';
-
-   int slen2 = strlen(psz2);
-   if (slen2 > (int)sizeof(szCmpBuf2)-10)
-       slen2 = (int)sizeof(szCmpBuf2)-10;
-   memcpy(szCmpBuf2, psz2, slen2);
-   szCmpBuf2[slen2] = '\0';
-
-   for (int i1=0; i1<slen1; i1++)
-      szCmpBuf1[i1] = tolower(szCmpBuf1[i1]);
-
-   for (int i2=0; i2<slen2; i2++)
-      szCmpBuf2[i2] = tolower(szCmpBuf2[i2]);
-
-   char *pszHit = strstr(szCmpBuf1, szCmpBuf2);
-
-   if (lpAtPosition) {
-      if (pszHit)
-         *lpAtPosition = (int)(pszHit - szCmpBuf1);
-      else
-         *lpAtPosition = -1;
-   }
-
-   return (pszHit != 0) ? 1 : 0;
-}
-
-int mystrstri(char *psz1, cchar *psz2)
-{
-   return mystrstrip(psz1, psz2, 0);
-}
-
-#endif
-
 // same as above, but support "?" wildcards.
 // only for strings up to 4k length.
 int mystrstriq4k(char *psz1, cchar *psz2, int *lpAtPosition=0)
@@ -18330,9 +18956,9 @@ int mystrstriq4k(char *psz1, cchar *psz2, int *lpAtPosition=0)
    szCmpBuf2[slen2] = '\0';
 
    for (int i1=0; i1<slen1; i1++)
-      szCmpBuf1[i1] = tolower(szCmpBuf1[i1]);
+      szCmpBuf1[i1] = sfktolower(szCmpBuf1[i1]);
    for (int i2=0; i2<slen2; i2++) {
-      szCmpBuf2[i2] = tolower(szCmpBuf2[i2]);
+      szCmpBuf2[i2] = sfktolower(szCmpBuf2[i2]);
       if (glblUPatMode!=0 && szCmpBuf2[i2]==glblWrongPChar) // sfk183
          szCmpBuf2[i2] = glblPathChar;
    }
@@ -18381,7 +19007,7 @@ int mystrncmp(char *psz1, cchar *psz2, int nLen, bool bCase)
 
    int i=0;
    for (i=0; i<nLen && psz1[i] && psz2[i]; i++)
-      if (tolower(psz1[i]) != tolower(psz2[i]))
+      if (sfktolower(psz1[i]) != sfktolower(psz2[i]))
          return 1;
 
    return (i==nLen) ? 0 : 1;
@@ -18389,23 +19015,23 @@ int mystrncmp(char *psz1, cchar *psz2, int nLen, bool bCase)
 
 int mystricmp(char *psz1, cchar *psz2)
 {
-   while (*psz1 && *psz2 && tolower(*psz1) == tolower(*psz2)) {
+   while (*psz1 && *psz2 && sfktolower(*psz1) == sfktolower(*psz2)) {
       psz1++;
       psz2++;
    }
-   return tolower(*psz1) - tolower(*psz2);
+   return sfktolower(*psz1) - sfktolower(*psz2);
 }
 
 int mystrnicmp(char *psz1, cchar *psz2, int nLen)
 {
    int i=0;
    for (i=0; i<nLen && psz1[i] && psz2[i]; i++)
-      if (tolower(psz1[i]) != tolower(psz2[i]))
-         return tolower(psz1[i]) - tolower(psz2[i]);
+      if (sfktolower(psz1[i]) != sfktolower(psz2[i]))
+         return sfktolower(psz1[i]) - sfktolower(psz2[i]);
 
    if (i >= nLen) return 0;
 
-   return tolower(psz1[i]) - tolower(psz2[i]);
+   return sfktolower(psz1[i]) - sfktolower(psz2[i]);
 }
 
 bool stricase(char *psz, cchar *ppat)
@@ -22535,8 +23161,8 @@ int execRefColDst(Coi *pcoi)
    if (!cs.usecase) {
       char *psz1 = szLineBuf;
       while (*psz1) {
-         if (isalpha(*psz1))
-            *psz1 = tolower(*psz1);
+         if (sfkisalpha(*psz1))
+            *psz1 = sfktolower(*psz1);
          psz1++;
       }
    }
@@ -22649,8 +23275,8 @@ int execRefProcSrc(char *pszFile, char *pszOptRoot, int icur, int ntotal)
          uchar c = (uchar)pInFile[i1];
  
          #ifdef _WIN32
-         if (isalpha((char)c) && !bCase)
-            c = (uchar)tolower((char)c);
+         if (sfkisalpha((char)c) && !bCase)
+            c = (uchar)sfktolower((char)c);
          #endif
  
          if (!abGlblRefChars[c])
@@ -22686,8 +23312,8 @@ int execRefProcSrc(char *pszFile, char *pszOptRoot, int icur, int ntotal)
             pInFile[i] = glblPathChar;
          #ifdef _WIN32
          else
-         if (isalpha(c) && !bCase)
-            pInFile[i] = tolower(c);
+         if (sfkisalpha(c) && !bCase)
+            pInFile[i] = sfktolower(c);
          #endif
       }
    }
@@ -22906,7 +23532,7 @@ int execDeblank(char *pszPath)
       if (cs.packalnum)
       {
          // alnum reduction mode
-         c = tolower(c);
+         c = sfktolower(c);
          *psz1 = c;
          if (c != craw)
             bAny = 1;
@@ -24259,8 +24885,11 @@ int provideExtractOutFile(char *pszFilename)
       return 0; // OK
    if (createOutDirTree(pszFilename))
       return 9;
-   if ((cs.extractOutFile = fopen(pszFilename, "wb")))
+   if ((cs.extractOutFile = fopen(pszFilename, "wb"))) {
+      if (cs.quiet < 2)
+         printf("write: %s\n", pszFilename); // sfk190
       return 0;
+   }
    return 9+perr("cannot write output file: %s", pszFilename);
 }
 
@@ -26481,7 +27110,7 @@ int listPathAny(char *pszCmd, bool bSilent)
          // recombine base string with any extension like .exe, .cmd
          char *psz2 = psz1;
          while (*psz2 && *psz2 != ';')
-            { *psz2 = tolower(*psz2); psz2++; }
+            { *psz2 = sfktolower(*psz2); psz2++; }
          if (*psz2) *psz2++ = '\0';
          else beod = 1;
          // check is such a file is in path. if so, list it.
@@ -35131,11 +35760,11 @@ int processTextLine(char *argv[], int iPat, int nPat,
       if (   !strcmp(pszPat, "-ansitodos")
           || !strcmp(pszPat, "-todos"))
       {
-         ansiToOEM(szLineBuf, &iSubChg);
+         sfkchars.stransitooem(szLineBuf, &iSubChg);
       }
       else
       if (!strcmp(pszPat, "-dostoansi")) {
-         oemToAnsi(szLineBuf, &iSubChg);
+         sfkchars.stroemtoansi(szLineBuf, &iSubChg);
       }
       #endif
       else
@@ -37079,7 +37708,7 @@ void dospell(char *pszWord, bool bNato, bool bPrefix)
       }
       while (*pszWord)
       {
-         char c = tolower(*pszWord++);
+         char c = sfktolower(*pszWord++);
  
          if (c >= 'a' && c <= 'z') {
             if (chain.coldata)
@@ -37469,6 +38098,25 @@ bool isrs(char c, bool &rTabFlag)
    return 0;
 }
 
+void printCharInfoRow(uchar uc, int boem, int bmin)
+{
+   if (bmin) {
+      chain.print("%03u\t0x%02X\t%c\n", uc, uc, (char)uc);
+      return;
+   }
+
+   ushort nuni  = sfkchars.ansitouni(uc);
+   uchar  noem  = sfkchars.unitooem(nuni);
+   char *pszuni = getuniname(nuni);
+
+   if (boem)
+      chain.print("%03u\t0x%02X\t%c\t%03u\t0x%02X\tU+%04X\t%s\n",
+         (uint)uc, (uint)uc, (char)uc, (uint)noem, (uint)noem, (uint)nuni, pszuni);
+   else
+      chain.print("%03u\t0x%02X\t%c\tU+%04X\t%s\n",
+         (uint)uc, (uint)uc, (char)uc, (uint)nuni, pszuni);
+}
+
 char *loadRepList(char *pszRepFile)
 {
    char *pszRepList = 0;
@@ -37835,6 +38483,19 @@ static const char *szGlblBookSamp =
    "[part9]\\t[part11]\\t[parts 1-3]/\" +sort\n"
 };
 
+FILE *openOutFile(int &rrc)
+{
+   rrc = 0;
+   if (!cs.tomask) return 0;
+   if (!cs.tomaskfile) return 0;
+   FILE *fout = fopen(cs.tomask, "wb");
+   if (!fout) {
+      perr("cannot write: %s\n", cs.tomask);
+      rrc = 9;
+   }
+   return fout;
+}
+
 int loadInput(uchar **ppInText, char **ppInAttr, num *pInSize,
    bool bstdin, char *pszInFile, bool bColor)
 {
@@ -38145,10 +38806,6 @@ int main(int argc, char *argv[], char *penv[])
    gs.argc = argc;
    gs.argv = argv;
 
-   #ifdef SFK_MAP_ANSI_NEW
-   initMapAnsi();
-   #endif
-
    #ifdef VFILEBASE
    // consistent compile test
    int n1=0,n2=0,n3=0,n4=0,n5=0,n6=0;
@@ -38274,6 +38931,18 @@ int main(int argc, char *argv[], char *penv[])
          }
          if (strstr(pszCfg, "noesckey")) {
             bGlblDisableEscape = 1;
+         }
+         if (strBegins(pszCfg, "isochars") || strstr(pszCfg, ",isochars")) { // sfk190
+            aSubOpt[0] = str("-isochars"); setGeneralOption(aSubOpt, 0, iSubOpt, 1);
+         }
+         if (pszParm = strstr(pszCfg, "codepage:")) { // sfk190
+            int ivalue = atoi(pszParm+strlen("codepage:"));
+            char szOpt[100];
+            sprintf(szOpt, "-codepage=%d", ivalue);
+            aSubOpt[0] = szOpt; setGeneralOption(aSubOpt, 0, iSubOpt, 1);
+         }
+         if (strBegins(pszCfg, "deacc") || strstr(pszCfg, ",deacc")) {
+            aSubOpt[0] = str("-deacc"); setGeneralOption(aSubOpt, 0, iSubOpt, 1);
          }
          if (strBegins(pszCfg, "xchars") || strstr(pszCfg, ",xchars")) {
             aSubOpt[0] = str("-xchars"); setGeneralOption(aSubOpt, 0, iSubOpt, 1);
@@ -38587,7 +39256,7 @@ char *filterAskPattern(char *prawpat, char *ppre1, char *ppre2)
 
    // force all lowercase
    for (i=0; i<nlen; i++)
-      p[i] = tolower(p[i]);
+      p[i] = sfktolower(p[i]);
 
    // director ies -> director
    if (nlen > 7 && strEnds(p, "ies")) p[nlen-3] = '\0';
@@ -38903,7 +39572,7 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
 
 void printMainHelp(bool bhelp, char *penv[])
 {
-   printx("<help>$SFK" SFK_BRANCH " - The Swiss File Knife File Tree Processor.\n");
+   printx("<help>$SFK" SFK_BRANCH " - The Swiss File Knife Multi Function Tool.\n");
    cchar *pfix = SFK_FIXPACK;
    sprintf(szLineBuf, "Release " SFK_VERSION " %s%s%s%s of " __DATE__ ".",
       pszGlblVerType, SFK_VERTEXT, pfix[0] ? " Revision ":"", pfix);
@@ -38976,6 +39645,10 @@ void printMainHelp(bool bhelp, char *penv[])
       "   sfk tabtocsv   - convert tab separated to .csv format\n"
       "   sfk encode     - convert data to base64 or hex format\n"
       "   sfk decode     - decode base64, hex or url format\n"
+      #ifdef _WIN32
+      "   sfk wtoa       - convert wide chars to Ansi\n"
+      #endif
+      "   sfk wtou       - convert wide chars to UTF-8\n"
       "   sfk hexdump    - create hexdump from a binary file\n"
       "   sfk hextobin   - convert hex data to binary\n"
       "   sfk hex        - convert decimal number(s) to hex\n"
@@ -38999,6 +39672,7 @@ void printMainHelp(bool bhelp, char *penv[])
       "   sfk run        - run external command on all files of a folder\n"
       "   sfk runloop    - run a command n times in a loop\n"
       "   sfk printloop  - print some text many times\n"
+      "   sfk load       - load file content for further processing\n"
       "   sfk perline    - run sfk command(s) per input text line\n"
       "   sfk head       - print first lines of a file\n"
       "   sfk tail       - print last lines of a file\n"
@@ -39065,10 +39739,13 @@ void printMainHelp(bool bhelp, char *penv[])
       "   sfk call       - call a sub function at a label\n"
       "   sfk echo       - print (coloured) text to terminal\n"
       "   sfk color      - change text color of terminal\n"
+      "   sfk setvar     - put text into an sfk variable\n"
+      "   sfk storetext  - store text in memory for later use\n"
       "   sfk alias      - create command from other commands\n"
       "   sfk mkcd       - create command to reenter directory\n"
       "   sfk sleep      - delay execution for milliseconds\n"
       "   sfk pause      - wait for user input\n"
+      "   sfk stop       - stop sfk script execution\n"
       "   sfk tee        - split command output in two streams\n"
       "   sfk tofile     - save command output to a file\n"
       "   sfk toterm     - flush command output to terminal\n"
@@ -39109,8 +39786,12 @@ void printMainHelp(bool bhelp, char *penv[])
       #endif
       "   sfk env        - search environment variables\n"
       "   sfk version    - show version of a binary file\n"
-      "   sfk ascii      - list ISO 8859-1 ASCII characters\n"
-      "   sfk ascii -dos - list OEM codepage 850 characters\n"
+      #ifdef _WIN32
+      "   sfk ascii      - list Ansi codepage characters\n"
+      "   sfk ascii -dos - list OEM  codepage characters\n"
+      #else
+      "   sfk ascii      - list ASCII characters\n"
+      #endif
       "   sfk spell      - phonetic spelling for telephone\n"
       "   sfk cmd        - print an example command\n"
       "   sfk data       - create random test data\n"
@@ -39130,6 +39811,10 @@ void printMainHelp(bool bhelp, char *penv[])
       "   sfk help chain    - how to combine (chain) multiple commands\n"
       "   sfk help var      - how to use sfk variables and parameters\n"
       "   sfk help shell    - how to optimize the windows command prompt\n"
+      #ifdef _WIN32
+      "   sfk help chars    - about locale specific characters\n"
+      "   sfk help nocase   - about case insensitive search\n"
+      #endif
       "   sfk help unicode  - about unicode file reading support\n"
       "   sfk help colors   - how to change result colors\n"
       "   sfk help compile  - how to compile sfk on any linux system\n"
@@ -39190,12 +39875,18 @@ void printMainHelp(bool bhelp, char *penv[])
           "      parameters containing #spaces<def> or characters #<>|!&?*<def> must be #sur-\n"
           "      #rounded by quotes \"\"<def>. type \"#sfk filter<def>\" for details and examples.\n"
           "\n");
-   #ifndef _WIN32
-   printx("   More output columns?\n"
+   #ifdef _WIN32
+   printx("   $beware of Automated Data Processing on different machines.\n"
+          "      if you write scripts for distribution on many Windows machines\n"
+          "      they may behave different, depending on the system codepage.\n"
+          "      to avoid this use -isochars. for details see: #sfk help nocase\n"
+          "\n");
+   #else
+   printx("   $More output columns?\n"
           "      <exp> SFK_CONFIG=columns:160\n"
           "\n");
    #endif
-   printx("   WRONG COLORS? Use one of:\n"
+   printx("   $WRONG COLORS? Use one of:\n"
           "      <exp> SFK_COLORS=theme:black    for DARK   backgrounds\n"
           "      <exp> SFK_COLORS=theme:white    for BRIGHT backgrounds\n"
           "      see also \"sfk help colors\"\n");
@@ -40341,6 +41032,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk help select<def>  the sfk file selection syntax.\n"
              "      #sfk help opt<def>     for further general options.\n"
              "      #sfk dir<def>          list contents of a directory.\n"
+             "      #sfk home<def>         tell sfk home folder location\n"
              "\n");
       webref("index");
       printx("   $examples\n"
@@ -41050,10 +41742,143 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    }
    #endif
 
+   #ifdef _WIN32
+   bool blistcodessys=0;
+
+   ifcmd (!strcmp(pszCmd, "listcodes") || (!strcmp(pszCmd, "listcodes.")))
+   {
+      blistcodessys = strcmp(pszCmd, "listcodes.") ? 0 : 1;
+
+      ifhelp (nparm < 1 && blistcodessys == 0)
+      sfkchars.init();
+      printx("<help>$sfk listcodes[.] mode\n"
+             "\n"
+             "   list lower/uppercase mapping codes supported\n"
+             "   by sfk, depending on the active codepage.\n"
+             "\n"
+             "   $sfk currently uses:\n"
+             "     Ansi codepage %u for data processing\n"
+             "     OEM  codepage  %u for input / output\n"
+             "\n"
+             , sfkchars.iclacp
+             , sfkchars.iclocp
+             );
+      printx("   $examples\n"
+             "\n"
+             "     #sfk listcodes sys<def>\n"
+             "        list the character mappings supported with\n"
+             "        the current Ansi codepage of your system.\n"
+             "        you may also use: #sfk listcodes.<def>\n"
+             "\n"
+             "     #sfk listcodes all<def>\n"
+             "        also show the codes which cannot be used\n"
+             "        with your system's Ansi codepage.\n"
+             "\n"
+             "     #sfk -isochars listcodes.<def>\n"
+             "        show codes with fixed 1252/850 codepage.\n"
+             "        displayed characters may be wrong,\n"
+             "        just look at the character names.\n"
+             "\n"
+             /*
+             "     #sfk -codepage=1251-866 listcodes.<def>\n"
+             "        list cyrillic codepage, no matter what the\n"
+             "        actual system codepage is. printed chars\n"
+             "        may look wrong, just read the char names.\n"
+             "\n"
+             "     #sfk -codepage=1251 listcodes. >out.txt<def>\n"
+             "        same as above, but write output to a file.\n"
+             "        (the OEM codepage is not used when writing\n"
+             "         to file, therefore no -866 is given.)\n"
+             "        if you load out.txt with Notepad++, then select:\n"
+             "        $Encoding / Chracter Sets / Cyrillic / Windows-1251<def>\n"
+             "        it will display the cyrillic characters.\n"
+             "\n"
+             "     #sfk -codepage=1253-737 listcodes. >out.txt<def>\n"
+             "        list greek supported characters. in Notepad++ use:\n"
+             "        $Encoding / Chracter Sets / Greek / Windows-1253<def>\n"
+             "\n"
+             */
+             );
+      ehelp;
+
+      sfkarg;
+
+      void listcodes(bool bfull,bool btrace);
+
+      bool bfull = 0;
+      bool btrace = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strcmp(pszArg, "-all")) {
+            bfull = 1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-trace")) {
+            btrace = 1;
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!strcmp(pszArg, "sys")) {
+            bfull=0;
+            continue;
+         }
+         if (!strcmp(pszArg, "full")) {
+            bfull=1;
+            continue;
+         }
+         return 9+perr("unexpected: %s\n",pszArg);
+      }
+ 
+      listcodes(bfull,btrace);
+
+      if (iChainNext) {
+         if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+   #endif
+
    if (!strcmp(pszCmd, "testerr"))
    {
       num ntime=time(0);
       printf("%s\n",timeAsString(ntime,0));
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "testcase"))
+   {
+      for (; iDir<argc; iDir++)
+      {
+         char *p = argv[iDir];
+         mclear(szLineBuf);
+         for (int i=0; p[i]; i++) {
+            bool b1 = sfkisprint(p[i]);
+            int  b2 = isprint((char)p[i]);
+            bool b3 = isprint((char)p[i]); // linux/win differs
+            printf("isprint(%c) = %d %d %d\n",
+               (uint)p[i], (uint)b1, (uint)b2, (uint)b3);
+            szLineBuf[i] = sfktolower(p[i]);
+         }
+         printf("from %s\n",p);
+         printf("to   %s\n",szLineBuf);
+      }
       bDone = 1;
    }
 
@@ -41472,6 +42297,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("      -hidden     include hidden and system files (not default).\n");
              #endif
       printx("      -allbin     include binary files as text extract (not default).\n"
+             #ifdef _WIN32
+             "      -binallchars  when extracting text from binaries include all\n"
+             "                  printable characters, like accents or non latin.\n"
+             #endif
              "      -pure       don't insert filenames.\n"
              "      -prefix=x   insert x before every file.\n"
              "      -nometa     by default, sfk adds the file system's time and size\n"
@@ -42629,7 +43458,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              );
       printx("   $options\n");
       arcinf(7); // find
-      printx("      -bin       do not autodetect file content, process all as binary.\n"
+      printx("      -case      search case sensitive. default is case insensitive.\n"
+             "                 for details type: sfk help nocase\n"
+             "      -bin       do not autodetect file content, process all as binary.\n"
              "                 can also be used for floating text files (one linefeed per\n"
              "                 paragraph, not per line). may produce unwanted line breaks\n"
              "                 with short-lined text.\n"
@@ -42721,7 +43552,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bGlblAllowGeneralPure  = 1;
       bGlblBinGrep           = 1;
       bGlblBinGrepAutoDetect = 1;
-      cs.shortsyntax       = 0;
+
+      cs.shortsyntax    = 0;
+      cs.binallchars    = 1;  // sfk190
 
       bool bGotFileDir  = 0;
       bool bcolpat      = 0;  // collecting patterns
@@ -42929,6 +43762,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   tells the location of the SFK Home folder\n"
              "   for configuration and data storage.\n"
+             "\n"
+             "   the SFK Home is primarily used with sfk gindex\n"
+             "   and sfk name2.\n"
              );
       ehelp;
 
@@ -45948,11 +46784,34 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (!strcmp(pszCmd, "make-random-file"))
+   bool bZeroFile = 0;
+
+   ifcmd (   !strcmp(pszCmd, "make-random-file")
+          || !strcmp(pszCmd, "make-zero-file")
+         )
    {
       if (!bhelp && blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
 
+      bZeroFile = (strcmp(pszCmd, "make-zero-file") ? 0 : 1);
+
       ifhelp (nparm < 2)
+      if (bhelp || bZeroFile)
+      printx("<help>$sfk make-zero-file outfilename size\n"
+             "\n"
+             "   create a file full of null bytes. primarily used\n"
+             "   to clean unused space on an embedded system's\n"
+             "   sd card, before creating an .iso image of that card,\n"
+             "   which is then compressed for distribution.\n"
+             "\n"
+             "   $example\n"
+             "      #sfk make-zero-file tmp1.dat 1m\n"
+             "         produce a file tmp1.dat with 1 mbyte of size.\n"
+             "      #sfk make-zero-file tmp1.dat 100g\n"
+             "         write a file with 100 gigabytes. if the available\n"
+             "         space is less, e.g. 8 gbytes, it will stop as soon\n"
+             "         as all space is used, with an error.\n"
+             );
+      if (bhelp || !bZeroFile)
       printx("<help>$sfk make-random-file outfilename size [-text] [-seed=n]\n"
              "\n"
              "   creates a file full of random binary data for testing.\n"
@@ -45963,9 +46822,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -text     create text data instead of binary.\n"
              "      -seed=n   specify randomizer seed. default is\n"
              "                to use a time based seed.\n"
-             "\n");
-      printx("   $chaining support\n"
-             "      cannot use chain input data.\n"   // sfk1833
+             "\n"
+             "   $see also\n"
+             "      #sfk make-zero-file<def>    create file with null bytes\n"
              "\n"
              "   $example\n"
              "      #sfk make-random-file tmp1.dat 1m -seed=1234\n"
@@ -46041,8 +46900,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       num nRemain  = nSize;
       num nWritten = 0;
       int nBlockSize = sizeof(abBuf)-10;
+      memset(abBuf, 0, nBlockSize);
       int i=0;
-      while (nRemain > 0) {
+      while (nRemain > 0) 
+      {
+         if (bZeroFile)
+            { }
+         else
          if (bText) {
             int ibreak = 40 + rand() % 80;
             for (i=0; i<nBlockSize; i++)
@@ -46695,42 +47559,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
    #endif // WITH_TCP
 
-   // internal, experimental
-   if (!strcmp(pszCmd, "checkdisk"))
-   {
-      if (argc < 4) {
-         printx("<help>$sfk checkdisk volumepath rangesizemb|all\n"
-                "\n"
-                "   test the disk or stick specified by volumepath if it is reliable. sfk will write\n"
-                "   100 test files, filling up rangesize mbytes, re-read them, and check for errors.\n"
-                "   after that, test files without errors are removed, but those with errors are kept,\n"
-                "   to block damaged parts of the media from being reused.\n"
-                "\n"
-                "   NOTE: detection of errors does NOT always mean that the MEDIA itself is corrupted.\n"
-                "         the reason may as well lie within the USB electronic of your PC, or within\n"
-                "         the disk drive controller. for USB sticks, always test them at least with\n"
-                "         two different PCs.\n"
-                "\n"
-                "      #sfk checkdisk E:\\ all\n"
-                "         checks all space available on drive E:\\, e.g. USB-stick.\n"
-                "      #sfk checkdisk G:\\ 1950\n"
-                "         checks 1950 mb on drive G:\\\n"
-               );
-         return 0;
-      }
-      char *pszVolPath = argv[2];
-      char *pszRngSize = argv[3];
-
-      int nRangeMB = -1;
-      if (strcmp(pszRngSize, "all"))
-         if (!(nRangeMB = atol(pszRngSize)))
-            return 9+perr("supply no. of mbytes to check, or \"all\".\n");
-
-      lRC = checkDisk(pszVolPath, nRangeMB);
-
-      bDone = 1;
-   }
-
    regtest("hexdump -showle -wide -nohead xdir .dat1 .dat2");
    regtest("hexdump -lean -pure -dir xdir -file .dat");
    regtest("hexdump -hexsrc xfile1");
@@ -47064,7 +47892,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    ifcmd (!strcmp(pszCmd, "book"))
    {
       ifhelp (nparm < 1)
-      printx("The $Five Dollar SFK Book<def> is a $260 page PDF file<def>, optimized\n"
+      printx("The $Five Dollar SFK Book<def> is a $300 page PDF file<def>, optimized\n"
              "for reading on smartphones and tablets, featuring:\n"
              "\n"
              "-  a $large font<def> and no side borders, for $zoomless reading<def>\n"
@@ -48108,6 +48936,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       //        );
          webref("copy");
          printx("   $examples\n"
+                "      #sfk copy g:\\myimage.zip .\n"
+                "         copy file myimage.zip from drive G: into the current folder.\n"
+                "         doing so with sfk will show the progress while copying.\n"
+                "\n"
                 "      #sfk copy c:\\work d:\\arc\\work -dir . <not>\\tmp\\ <not>\\save\\ -file <not>.bak\n"
                 "         copy directory tree c:\\work to d:\\arc\\work, excluding all dirs\n"
                 "         called tmp or save, including all files except .bak files.\n"
@@ -49987,11 +50819,14 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -nosub        do not include files in subdirectories.\n"
              "      -nobin[ary]   skip binary files.\n");
       if (bIsXPat)
-      printx("      -case         case-sensitive text comparison. default is insensitive.\n");
+      printx("      -case         case-sensitive text comparison. default is insensitive.\n"
+             "                    for details type: sfk help nocase\n"
+             );
       else
       printx("      -case         case-sensitive text comparison. default is case-insensitive\n"
              "                    comparison for all -text strings, but NOT for -bin blocks.\n"
              "                    case-sensitive comparison is faster then case-insensitive.\n"
+             "                    for further details type: sfk help nocase\n"
              "      -nocase       force case-insensitive comparison ALSO on -bin patterns.\n"
              );
       if (bIsReplace)
@@ -50049,7 +50884,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("      -maxscan=nm   stop searching after (approximately) first n megabytes\n"
              "                    per file. can be used only with same length replace.\n");
       if (bIsXFind || bIsXText)
-      printx("      -prog[ress]   show progress infos.\n"
+      printx("      -tracesel     tell in detail which files are searched or ignored.\n"
+             "      -quiet        do not show progress infos.\n"
              "      -names        list only names of files containing at least one hit.\n"
              "      -justrc       print no search results, just set return code on hits.\n"
              "      -showrc       show return code at end of command.\n");
@@ -50200,11 +51036,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "    - since SFK 1.69, hex codes like \\x41 are not treated as characters\n"
              "      even if they represent a character code, and are therefore not\n"
              "      searched case insensitive. this can be changed by option -xchars.\n"
+             "      this can also be set by environment like:\n"
+             "         <exp> SFK_CONFIG=xchars\n"
+             "    - for case insensitive search details see: sfk help nocase\n"
+             /*
              "    - accents and umlauts in -text patterns are searched case insensitive\n"
              "      according to code page ISO 8859-1, e.g. code 0xC0 (small a accent)\n"
              "      is equal to 0xE0. this can be disabled by option -noacc[ents].\n"
              "      options can also be set by environment like:\n"
              "         <exp> SFK_CONFIG=xchars,noaccents\n"
+             */
              "\n");
       if (bIsReplace)
       printx("   $about nested replacement patterns\n"
@@ -50259,6 +51100,33 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
       printx("   $quoted multi line parameters are supported in scripts\n" // (x)rep
              "      using full trim. type \"sfk script\" for details.\n"
+             "\n");
+      if (bIsXPat)
+      {
+      printSFKMatchHelp(bIsReplace || bExtract, bFullHelp);
+      if (bExtract)
+      printx("   $chaining support\n"
+             "      sfk extract output can be sent only to +xed or +xex.\n"
+             "      other commands require an xed conversion step like\n"
+             "      #sfk extract ... +xed +view\n"
+             "\n"
+             );
+      }
+      else
+      {
+      if (!bIsHexFind)
+      printx("   $performance notice\n"
+             "      the system may cache output file(s), writing to disk in\n"
+             "      background after sfk has finished. subsequent batch file\n"
+             "      commands may execute slower.\n"
+             "\n"
+             );
+      }
+      if (!bIsReplace)
+      printx("   $aliases\n"
+             "      #sfk xhexfind<def> is the same as xfind -hex\n"
+             "      to extract unmodified binary data you may use either\n"
+             "      #sfk xfind -pure ... -tofile<def> or #sfk extract ... -tofile<def>\n"
              "\n");
       printSearchReplaceCommands();
       printBewareLean();
@@ -50497,7 +51365,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          cs.astext  = 1;
          cs.noind   = 1;
          cs.xtext   = 1;
-         cs.quiet   = 1;
+         // cs.quiet = 1;  // sfk190 xfind, xtext with progress
          cs.litattr = 'e'; // literal highlight attribute
          cs.xfind   = !strcmp(pszCmd, "xfind");
          cs.execweb = 1; // xfind, xtext
@@ -51452,6 +52320,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       #endif
 
+      info.clear();
+
       // best match info
       if (cs.showpost && cs.xpat) {
          printx("$Best pattern matches across all input data:\n");
@@ -51881,6 +52751,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       int iStart=iDir;
       for (int ipass=0; ipass<2; ipass++)
       {
+         if (ipass==1)
+            copySFKMatchOptions(); // xed sfk190 moved here
+
        for (iDir=iStart; iDir<argc; iDir++)
        {
          char *pszArg  = argx[iDir];
@@ -52233,7 +53106,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (cs.tomask && cs.tomaskfile && !chain.colany())
          bColor = 0;
 
-      copySFKMatchOptions(); // xed
+      // copySFKMatchOptions(); // xed
 
       if (bIncomplete) {
          printx("$[complete all /from/to/ patterns to continue.]\n");
@@ -52249,6 +53122,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       if (SFKMatch::provideBuffer())
          return 9;
+
+      // if (cs.debug)
+      //    SFKMatch::setGlobalOption(SFKMatchTrace, 3);
 
       uchar *pInText = 0;
       char  *pInAttr = 0;
@@ -52361,8 +53237,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                   if ((iMatchRC = apExp[ipat].matches(pSrcCur, nSrcLen, bStart, &bLineStart, bLastRec,
                        pInAttr ? pInAttr+(pSrcCur-pInText) : 0))) {
                      if (cs.verbose > 2)
-                        printf("%d = check offset=%d ipat=%d maxlen=%d\n",
-                           iMatchRC, (int)(pSrcCur-pInText), ipat, nRemain);
+                        printf("%d = check offset=%03d ipat=%d maxlen=%03d %c\n",
+                           iMatchRC, (int)(pSrcCur-pInText), ipat, nRemain, *pSrcCur);
                      continue;
                   }
  
@@ -52373,8 +53249,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                      iLocalMatches++;
  
                   if (cs.verbose > 2)
-                     printf("%d = check offset=%d ipat=%d maxlen=%d\n",
-                        iMatchRC, (int)(pSrcCur-pInText), ipat, nRemain);
+                     printf("%d = check offset=%03d ipat=%d maxlen=%03d %c\n",
+                        iMatchRC, (int)(pSrcCur-pInText), ipat, nRemain, *pSrcCur);
  
                   uchar *pObjOut=0;
                   int nDstLen=0,iSubRC=0;
@@ -52545,6 +53421,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk filter<def>  load and filter text lines\n"
              "\n");
       printx("   $examples\n"
+             "      #sfk -var load in.txt +setvar a +tell \"the ##(a) test\"\n"
+             "         load in.txt content into variable a,\n"
+             "         then use variable a in a combined string\n"
              "      #sfk load in.txt +sort\n"
              "         sort the text lines of in.txt\n"
              );
@@ -53198,21 +54077,48 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   // internal
-   if (!strcmp(pszCmd, "sysinfo"))
+   ifcmd (!strcmp(pszCmd, "sysinfo"))
    {
+      ifhelp (nparm >= 1 && isHelpOpt(argv[iDir]))
+      printx("<help>$sfk sysinfo\n"
+             "\n"
+             #ifdef _WIN32
+             "   show system informations like the codepage.\n"
+             #else
+             "   show system informations.\n"
+             #endif
+             "\n"
+             );
+      ehelp;
+
+      sfkarg;
+
       chain.print("clib time_t  size: %u\n", sizeof(time_t));
       chain.print("sfk  time_t  size: %u\n", sizeof(mytime_t));
       chain.print("void pointer size: %u\n", sizeof(void*));
       chain.print("file fpos_t  size: %u\n", sizeof(fpos_t));
+
       bool bdummy=0;
       int icallstackload = submain(0,0,0,str("sfkstackloadint"),0,bdummy); // sysinfo
       chain.print("stack load / call: %d\n", icallstackload);
+
       #ifdef _WIN32
-      chain.print("ANSI codepage    : %u\n", GetACP());
-      chain.print("OEM  codepage    : %u\n", GetOEMCP());
+      sfkchars.init();
+      chain.print("ANSI codepage    : %u%s\n",
+         sfkchars.iclacp,
+         sfkchars.bsysacp ? "":"   (fixed)"
+         );
+      chain.print("OEM  codepage    : %u%s\n",
+         sfkchars.iclocp,
+         sfkchars.bsysocp ? "":"    (fixed)"
+         );
       #endif
-      return 0;
+
+      char *psz = getenv("SFK_CONFIG"); // sysinfo
+      if (psz)
+      chain.print("SFK_CONFIG       : %s\n", psz);
+
+      bDone = 1;
    }
 
    #ifdef WINFULL
@@ -53843,7 +54749,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   get user input and pass it to the next command\n"
              "   in the command chain. text formatting is possible\n"
              "   using [[Red]] or [[def]], for details see sfk echo.\n"
-             "\n");
+             "\n"
+             #ifdef _WIN32
+             "   default since sfk 1.9 is to convert typed chars\n"
+             "   from the current OEM to Ansi codepage.\n"
+             "\n"
+             "   $options\n"
+             "      -nocconv   do not convert input from dos\n"
+             "                 to ansi codepage.\n"
+             "\n"
+             #endif
+             );
       webref(pszCmd);
       printx("   $examples\n"
              "      #sfk -var prompt \"enter your name\" +setvar name\n"
@@ -53885,6 +54801,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       while (nkey!='\n' && ichars<MAX_LINE_LEN)
       {
          nkey = (int)getchar(); // requires enter
+         #ifdef _WIN32
+         if (cs.outcconv)
+            nkey = sfkchars.oemtoansi(nkey); // sfk190
+         #endif
          szLineBuf[ichars++] = nkey;
       }
       szLineBuf[ichars]='\0';
@@ -55624,10 +56544,22 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("<help>$sfk chars word\n"
              "$sfk ... +chars\n"
              "\n"
-             "   print ascii codes of all chars of a word,\n"
+             "   print character codes of all chars of a word,\n"
              "   or print chars for the given code(s).\n"
+             #ifdef _WIN32
+             "\n"
+             "   under Windows this lists both Ansi and OEM codes\n"
+             "   as decimal and hexadecimal (0x) value.\n"
+             "   if you see a decimal OEM code like 097 you can\n"
+             "   keep Alt pressed, then type 097, release Alt\n"
+             "   to produce this character in the console.\n"
+             #endif
              "\n"
              "   $options\n"
+             #ifdef _WIN32
+             "      -nohead   do not show table header\n"
+             "      -min      minimal format as under linux\n"
+             #endif
              "      -codes    force listing of character codes,\n"
              "                do not check if word is a number.\n"
              "      -literal  or -lit stops interpretation of any further\n"
@@ -55672,43 +56604,47 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       int  iFormat = 0;
       uint uixor   = 0;
       int  iutf    = 0;
+      #ifdef _WIN32
+      bool boem    = 1;
+      bool bmin    = 0;
+      #else
+      bool boem    = 0;
+      bool bmin    = 1;
+      #endif
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
          char *pszParm = 0;
          if (!blit) {
+            if (!strcmp(argx[iDir], "-min"))  { bmin=1; continue; }
+            if (!strcmp(argx[iDir], "-full")) { bmin=0; continue; }
+            if (!strcmp(argx[iDir], "-oem"))  { boem=1; continue; }
             if (strBegins(argx[iDir], "-code")) {
                bdecode = 1;
                continue;
             }
-            else
             if (strBegins(argx[iDir], "-lit")) {
                blit = 1;
                continue;
             }
-            else
             if (strBegins(argx[iDir], "-fromutf")) {
                butf = 1;
                continue;
             }
-            else
             if (!strcmp(argx[iDir], "-hexlist")) {
                iFormat = 1;
                continue;
             }
-            else
             if (!strcmp(argx[iDir], "-hexsrc")) {
                iFormat = 2;
                continue;
             }
-            else
             if (haveParmOption(argx, argc, iDir, "-xor", &pszParm)) {
                if (!pszParm) return 9;
                uixor = (uint)myatonum(pszParm);
                continue;
             }
-            else
             if (!strncmp(argx[iDir], "-", 1)) {
                if (isDirParm(argx[iDir]))
                   break; // fall through
@@ -55717,7 +56653,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                else
                   return 9+perr("unknown option: %s\n", argx[iDir]);
             }
-            else
             if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
                break;
          }
@@ -55747,14 +56682,29 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (!isdigit(*psz))
             bjustdigits = 0;
 
+      #ifdef _WIN32
+      char   szlean[50]; mclear(szlean);
+      ushort awide[50];  mclear(awide);
+      #endif
+
+      if (!iFormat && !butf && !bmin && !cs.nohead) {
+         if (boem) {
+            chain.print("Ansi\t\tChar\tOEM\t\tUnicode\n");
+            chain.print("----\t\t----\t---\t\t-------\n");
+         } else {
+            chain.print("Ansi\t\tChar\tUnicode\n");
+            chain.print("----\t\t----\t-------\n");
+         }
+      }
+
       if (!bdecode && (bjustdigits || strBegins(pword, "0x")))
       {
          if (bjustdigits) {
             int npre = atol(pword);
             if (npre > 255)
                return 9+perr("value too large");
-            uchar n = (uchar)npre;
-            chain.print("%d\t0x%02X\t%c\n", n, n, (char)n);
+            uchar uc = (uchar)npre;
+            printCharInfoRow(uc, boem, bmin);
          } else {
             pword += 2;
             for (; *pword; pword+=2) {
@@ -55762,13 +56712,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                   break;
                if (strlen(pword) == 1)
                   return 9+perr("unexpected character: %s\n", pword);
-               uchar n = (uchar)getTwoDigitHex(pword);
+               uchar uc = (uchar)getTwoDigitHex(pword);
                if (butf) {
                   if (iutf > MAX_LINE_LEN)
                      return 9+perr("overflow");
-                  szLineBuf[iutf++] = n;
+                  szLineBuf[iutf++] = uc;
                } else {
-                  chain.print("%d\t0x%02X\t%c\n", n, n, (char)n);
+                  printCharInfoRow(uc, boem, bmin);
                }
             }
             if (butf) {
@@ -55794,7 +56744,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                   chain.print(' ', 0, "0x%02X%s", uc, pword[1]?",":"");
                   break;
                default:
-                  chain.print("%d\t0x%02X\t%c\n", uc, uc, *pword);
+                  printCharInfoRow(uc, boem, bmin);
                   break;
             }
          }
@@ -56732,6 +57682,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "     by option -prefix. see \"sfk label\" for more on that.\n"
              "\n"
              "   $options\n"
+             #ifdef _WIN32
+             "      -dos      script file is OEM codepage encoded.\n"
+             "                default is to assume Ansi encoding.\n"
+             #endif
              "      -verbose  tell in detail which words are used from script.\n"
              "      -literal  also pass words to the script that start with \"+\".\n"
              "\n"
@@ -56786,7 +57740,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       int  iLocalParm = -1;
       int  nLocalParm =  0;
       int  nState     =  0;
-      bool bliteral   =  0;
+      bool bliteral=0, bdos=0;
 
       for (; iDir<argc; iDir++)
       {
@@ -56798,7 +57752,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             nState = 2;
             continue;
          }
-         else
+         if (!strcmp(pszArg, "-dos")) { // internal
+            bdos = 1;
+            continue;
+         }
          if (nState < 1 && !strncmp(argx[iDir], "-", 1)) {
             // general options are interpreted only before script name,
             // i.e. as int as nState == 0.
@@ -56806,13 +57763,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                bliteral = 1;
                continue;
             }
-            else
             if (setGeneralOption(argx, argc, iDir))
                continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
+            return 9+perr("unknown option: %s\n", argx[iDir]);
          }
-         else
          if (!bliteral && isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
          // process non-option keywords:
@@ -56841,6 +57795,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       char *pScriptRaw = loadFile(pszAbsScript);
       if (!pScriptRaw)
          return 9+perr("failed to load script file: %s\n", pszAbsScript);
+      #ifdef _WIN32
+      if (bdos)
+         sfkchars.stroemtoansi(pScriptRaw);
+      #endif
 
       // pScriptRaw is the original script data.
       // pScript will be stuffed with terminators
@@ -57415,7 +58373,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "     -debug    tell what is done\n"
              "\n"
              "   $see also\n"
-             "      #sfk getvar<def>   print variable(s)\n"
+             "      #sfk help var<def>   how to use sfk variables\n"
+             "      #sfk getvar<def>     print variable(s)\n"
              "\n");
       webref("helpvar");
       printx("   $examples\n"
@@ -58191,6 +59150,15 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   $options\n"
              "     -append    do not reset previously stored text\n"
              "                but append current chain text to it.\n"
+             "\n"
+             "   $see also\n"
+             "     #sfk gettext<def>   retrieve stored text\n"
+             "\n"
+             "   $examples\n"
+             "     #sfk load in.txt +storetext +filter -+foo\n"
+             "      #+gettext +filter -+bar\n"
+             "       content of in.txt is stored in memory, then two\n"
+             "       different filterings are done on the same text.\n"
              );
       ehelp;
 
@@ -59959,6 +60927,85 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       return 9;
    }
 
+   #ifdef _WIN32
+   if (!strcmp(pszCmd, "dumpcp"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk dumpcp codepage|own\n");
+      ehelp;
+
+      sfkarg;
+
+      uint nCodePage = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!nCodePage) {
+            if (!strcmp(pszArg, "own"))
+               nCodePage = GetACP();
+            else
+               nCodePage = atoi(pszArg);
+            continue;
+         }
+         return 9+perr("unexpected: %s\n",pszArg);
+      }
+      if (!nCodePage)
+         nCodePage = GetACP();
+
+      char   sztmp[50];
+      ushort awtmp[50];
+
+      printf("// codepage %u. unlisted codes map 1:1.\n", nCodePage);
+      printf("unsigned short glblCodePage%u[] = {\n   ", nCodePage);
+      int ndone=0;
+      for (uint c=1; c<256; c++)
+      {
+         sztmp[0] = c;
+         sztmp[1] = 0;
+         awtmp[0] = 0;
+      
+         MultiByteToWideChar( // win.dumpcp
+            nCodePage, 0, sztmp, 1,
+            (wchar_t*)awtmp, 10
+            );
+      
+         ushort ntmp = awtmp[0];
+         if (ntmp == 0) continue;
+         if (ntmp == c) continue;
+         printf("0x%02x,0x%04x, ",c,ntmp);
+         if ((++ndone % 8)==0)
+            printf("\n   ");
+      }
+      if ((ndone % 8) == 0)
+         printf("0,0\n};\n");
+      else
+         printf("\n   0,0\n};\n");
+      printf("// total %u mappings.\n", ndone);
+
+      if (iChainNext) {
+         if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+   #endif
+
    ifcmd (!strcmp(argv[1], "help") || !strcmp(argv[1], "ascii"))
    {
       bool bShortAscii = strcmp(argv[1], "ascii") ? 0 : 1;
@@ -60014,7 +61061,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          #ifdef _WIN32
          bool bAnsiToOem = 0;
          bool bOemToAnsi = 0;
-         if (!bGlblEnableOPrintf) {
+         if (!cs.outcconv) {
             if (pszSubSub[0]) pwarn("-nocconv overrides -ansi or -dos. no conversions are done.\n");
             printf("Character set: ASCII from 0 to 127, codes above depending on your terminal.\n");
          }
@@ -60022,18 +61069,18 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (bGlblHaveInteractiveConsole) {
             // dumping to interactive Windows console
             if (!strcmp(pszSubSub, "-dos")) {
-               printf("Character set: ASCII from 0 to 126, codes above DOS (OEM codepage 850).\n");
+               printf("Character set: ASCII from 0 to 126, codes above OEM codepage %u.\n", sfkchars.getocp());
             } else {
                bAnsiToOem = 1;
-               printf("Character set: ASCII from 0 to 126, codes above ANSI (displayed in DOS console).\n");
+               printf("Character set: ASCII from 0 to 126, codes above ANSI %u (displayed in DOS console).\n", sfkchars.getacp());
             }
          } else {
             // dumping into a file
             if (!strcmp(pszSubSub, "-dos")) {
                bOemToAnsi = 1;
-               printf("Character set: ASCII from 0 to 126, codes above DOS (OEM codepage 850).\n");
+               printf("Character set: ASCII from 0 to 126, codes above OEM codepage %u.\n", sfkchars.getocp());
             } else {
-               printf("Character set: ASCII from 0 to 126, codes above ANSI (1250 unconverted).\n");
+               printf("Character set: ASCII from 0 to 126, codes above ANSI %u (unconverted).\n", sfkchars.getacp());
             }
          }
          // printf("Character set: ASCII from 0 to 126, codes above are DOS specific. To see the Windows\n"
@@ -60067,8 +61114,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                   #endif
                   {
                      #ifdef _WIN32
-                     if (bAnsiToOem) c = ansiCharToOEM(c);
-                     if (bOemToAnsi) c = oemCharToAnsi(c);
+                     if (bAnsiToOem) c = sfkchars.ansitooem(c);
+                     if (bOemToAnsi) c = sfkchars.oemtoansi(c);
                      if (c == 7) c = ' '; // sfk189 0x95 exception
                      #endif
                      putchar(c);
@@ -60156,11 +61203,39 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          bDone = 1;
       }
 
+      if (bhelp || !strcmp(pszSub, "chars"))
+      {
+         printHelpText("chars", bhelp);
+         if (bhelp) printx("\n");
+         bDone = 1;
+      }
+
+      if (bhelp || !strcmp(pszSub, "nocase"))
+      {
+         printHelpText("nocase", bhelp);
+         if (bhelp) printx("\n");
+         bDone = 1;
+      }
+
       if (bhelp || strBegins(pszSub, "uni") || strBegins(pszSub, "utf"))
       {
-      printx("$sfk unicode file read support%s:\n",
+      printx("$sfk unicode support%s:\n",
              bhelp ? " (type \"sfk help unicode\")":"");
       printx("\n"
+         "   $1. commands with real unicode conversion\n"
+         "\n"
+         #ifdef _WIN32
+         "   #sfk wtoa<def>   convert UCS-2 wide character data to 8-bit data\n"
+         "              in the Ansi codepage of your Windows system.\n"
+         "              cannot convert characters outside your codepage.\n"
+         "   #sfk atow<def>   convert 8-bit Ansi codepage data to UCS-2 wide chars.\n"
+         #endif
+         "   #sfk wtou<def>   convert UCS-2 wide character data to 8-bit UTF-8.\n"
+         "   #sfk utow<def>   convert 8-bit UTF-8 data to UCS-2 wide characters.\n"
+         );
+      printx("\n"
+         "   $2. primitive generic reading of wide character files\n"
+         "\n"
          "   by default, sfk commands that need to read TEXT files will\n"
          "   skip utf-16 (ucs-2, wide char) files, as they look like binary,\n"
          "   containing zero bytes.\n"
@@ -60172,13 +61247,19 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "   (sfk hexfind will ignore the option, as it reads everything as binary)\n"
          "\n"
          "   the decoding is primitive and simply strips every 2nd byte,\n"
-         "   meaning that only the lowest code points are supported.\n"
+         "   meaning that only Latin characters can be searched.\n"
          "\n"
          "   $NOTE:<def> option \"-wchar\" is #experimental<def> and shall #not<def> be used if you want\n"
          "         to #write<def> any text file contents! (e.g. with sfk filter ... -write)\n"
          "         during write, the utf-16 format will be replaced by a primitive\n"
          "         plain ascii format (NOT a proper conversion - sfk will just\n"
          "         drop every 2nd byte from the file) which is often not desirable.\n"
+         "\n"
+         "   $see also\n"
+         #ifdef _WIN32
+         "      #sfk help chars<def>   about codepages\n"
+         #endif
+         "      #sfk help nocase<def>  about case insensitive search\n"
          "\n"
          "   $examples\n"
          "      #sfk -wchar filter mydir -+foo\n"

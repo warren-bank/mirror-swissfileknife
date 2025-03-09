@@ -93,7 +93,7 @@
 %TEXE% filter testfiles\Formats\20-tab-data-line.txt -spat -rep "_\q__" -sep "\t" -form "\"$col1\";\"$col2\";\"$col3\";\"$col4\";\"$col5\"" >res-24.txt
 %TEXE% test %TCMD% T11.1.tabform res-24.txt
 
-%TEXE% -spat filter -bin testfiles\Formats\14-all-codes.txt -rep "_\x01_Char01 replaced_" -rep "_\xFF_CharFF replaced_" >res-25.txt
+%TEXE% -spat filter -bin testfiles\Formats\14-all-codes.txt -nocasemin -rep "_\x01_Char01 replaced_" -rep "_\xFF_CharFF replaced_" >res-25.txt
 %TEXE% -spat filter -bin testfiles\Formats\14-all-codes.txt -sep "\x20" -form "$col6" >>res-25.txt
 %TEXE% test %TCMD% T12.1.replacex res-25.txt
 

@@ -1233,6 +1233,7 @@ enum eProgressInfoKeepFlags {
    eKeepAdd    = (1<<1),
    eNoCycle    = (1<<2),
    eSlowCycle  = (1<<4),
+   eNoPrint    = (1<<5)
 };
 
 class ProgressInfo
@@ -1252,6 +1253,7 @@ public:
    int   print           (const char *pszFormat, ...);
    void  setProgress     (num nMax, num nCur, cchar *pszUnit, bool btriple=0);
    void  setStatProg     (cchar *pverb, cchar *psubj, num nMax, num nCur, cchar *pszUnit);
+   void  clearProgress   ( );
 
 // private:
    void  fixAddInfoWidth ( );
@@ -1544,6 +1546,7 @@ public:
    bool wpat;        // support * and ?
    bool xpat;        // dummy within base
    bool usecase;     // case-sensitive search or not
+   bool fuzz;        // fuzzy case search
    bool nocase;      // optional: forced nocase on binary search
    int blankRunFiles;  // no. of filenames w/blanks passing run
    int wrongpcRunFiles;// no. of filenames w/wrong path chars
@@ -1801,6 +1804,11 @@ public:
    int  numFilesOK;
    bool usecolor;          // sfk189
    bool usehelpcolor;      // sfk189
+   int  tracecase;
+   bool nocasemin;         // sfk190 just latin a-z
+   bool binallchars;       // sfk190 for binary extracts
+   bool outcconv;
+   bool forcecconv;
 };
 
 // extern struct CommandStats gs;
@@ -2461,23 +2469,81 @@ private:
    bool  bClDumpedFileName;
 };
 
-class NoCaseText
+// --- sfk190 nocase with variable table ---
+
+class SFKChars
 {
 public:
-   NoCaseText    ( );
-   void reinit (bool bISO);
+      SFKChars ( );
 
-   inline  char lowerChar ( char c) { return aClLowerTab[(uchar)c]; }
-   inline uchar lowerUChar(uchar c) { return (uchar)aClLowerTab[(uchar)c]; }
-   inline  char upperChar ( char c) { return aClUpperTab[(uchar)c]; }
-   inline uchar upperUChar(uchar c) { return (uchar)aClUpperTab[(uchar)c]; }
+   void   init       ( );
+   int    setocp     (ushort i);
+   int    setacp     (ushort i);
+   ushort getocp     ( );  // calls init().
+   ushort getacp     ( );  // calls init().
 
-   inline uchar mapChar   (uchar c, uchar bCase) { return bCase ? c : (uchar)aClLowerTab[(uchar)c]; }
-   void  setStringToLower(char *psz);
+   // fast calls using maps
+   ushort ansitouni  (uchar  c);
+   ushort oemtouni   (uchar  c);
+   uchar  unitoansi  (ushort n); // returns 0 if n/a
+   uchar  unitooem   (ushort n); // returns 0 if n/a
 
-   char aClLowerTab[256+10];
-   char aClUpperTab[256+10];
+   uchar  oemtoansi  (uchar  c);
+   uchar  ansitooem  (uchar  c);
+
+   void   stroemtoansi  (char *psz, int *pChg=0);
+   void   stransitooem  (char *psz, int *pChg=0);
+
+   // internal
+   ushort ibytetouni (uchar c, ushort icp);
+
+bool     bclinited;
+ushort   iclocp, iclacp;
+bool     bsysocp, bsysacp;
+
+ushort   amap1[256];    // oem to uni
+uchar    amap2[65536];  // uni to oem
+
+ushort   amap3[256];    // ans to uni
+uchar    amap4[65536];  // uni to ans
+
+uchar    amap5[256];    // oem to ans
+uchar    amap6[256];    // ans to oem
+
+char     sztmp[50];
+ushort   awtmp[50];
 };
+
+class SFKNoCase
+{
+public:
+   SFKNoCase   (bool bfuzz);
+
+   void  tellPage    ( );
+
+   uchar itolower    (uchar c);
+   uchar itoupper    (uchar c);
+   uchar map1to1     (uchar c, uchar btolower, ushort *puni);
+   bool  iisalpha    (uchar c);
+   bool  iisalnum    (uchar c);
+   bool  iisprint    (uchar c);
+
+   // compat with xfind etc. calls
+   uchar mapChar (uchar c, uchar bCase) { return bCase ? c : itolower(c); }
+   uchar lowerUChar(uchar c) { return itolower(c); }
+   uchar upperUChar(uchar c) { return itoupper(c); }
+   void  isetStringToLower(char *psz);
+
+bool   bclfuzz;
+bool   bcltoldcp;
+
+uchar  atolower [256];
+uchar  atoupper [256];
+uchar  aisalpha [256];
+};
+
+extern SFKNoCase sfknocasesharp;
+extern SFKNoCase sfknocasefuzz;
 
 #define sfkmaxname 1000
 
@@ -2538,8 +2604,16 @@ struct SFKPicData
 #endif // SFKPIC
 
 extern void sfkmem_checklist(const char *pszCheckPoint);
-extern int prepareTCP();
+extern int  prepareTCP();
 extern void shutdownTCP();
+extern int  sfktolower(int c);
+extern int  sfktoupper(int c);
+extern void sfkSetStringToLower(char *psz);
+extern uchar sfkMapChar(char ch, uchar bCase);
+extern uchar sfkLowerUChar(uchar c);
+extern uchar sfkUpperUChar(uchar c);
+extern void  sfkSetHeadMatch(uchar ucFirst, uchar aHeadMatch[]);
+extern SFKChars sfkchars;
 
 #endif // _SFKBASE_HPP_
 

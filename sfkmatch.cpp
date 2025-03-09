@@ -115,7 +115,7 @@ public:
    char aClLowerTab[256+10];
 };
 
-NoCaseText glblNoCase;
+NoCaseText glblNoCase; // module test only
 
 NoCaseText::NoCaseText()
 {
@@ -246,16 +246,16 @@ int sfkmemcmp(uint8_t *psrc1, uint8_t *psrc2, int64_t nlen, bool bcase)
    // requires at least a 2-char phrase.
    if (nlen > 1)
    {
-      idiff =     glblNoCase.lowerUChar(psrc1[nlen-1])
-               -  glblNoCase.lowerUChar(psrc2[nlen-1]);
+      idiff =     sfkLowerUChar(psrc1[nlen-1])
+               -  sfkLowerUChar(psrc2[nlen-1]);
       if (idiff)
          return idiff;
    }
 
    for (; i<nlen; i++)
    {
-      idiff =     glblNoCase.lowerUChar(psrc1[i])
-               -  glblNoCase.lowerUChar(psrc2[i]);
+      idiff =     sfkLowerUChar(psrc1[i])
+               -  sfkLowerUChar(psrc2[i]);
 
       if (idiff)
          break;
@@ -2151,8 +2151,8 @@ int SFKMatch::parseFromMask(char *pSrcIn)
                else {
                   // expand a-z to a-zA-Z (case insensitive)
                   for (; ucLo <= ucHi; ucLo++) {
-                     aClClass[iClFrom][tolower(ucLo)&0xFF] = bClassModeOf;
-                     aClClass[iClFrom][toupper(ucLo)&0xFF] = bClassModeOf;
+                     aClClass[iClFrom][sfktolower(ucLo)&0xFF] = bClassModeOf;
+                     aClClass[iClFrom][sfktoupper(ucLo)&0xFF] = bClassModeOf;
                   }
                }
             }
@@ -2298,8 +2298,9 @@ int SFKMatch::parseFromMask(char *pSrcIn)
                   if (bClUseCase) {
                      aClHeadMatch[ucFirst] = 1;
                   } else {
-                     aClHeadMatch[toupper(ucFirst)&0xFF] = 1;
-                     aClHeadMatch[tolower(ucFirst)&0xFF] = 1;
+                     // aClHeadMatch[sfktoupper(ucFirst)&0xFF] = 1;
+                     // aClHeadMatch[sfktolower(ucFirst)&0xFF] = 1;
+                     sfkSetHeadMatch(ucFirst, aClHeadMatch); // sfk190
                   }
                   // goto next, if any
                   iCurOff += iCurLen;
@@ -2313,8 +2314,9 @@ int SFKMatch::parseFromMask(char *pSrcIn)
                if (bClUseCase) {
                   aClHeadMatch[ucFirst] = 1;
                } else {
-                  aClHeadMatch[toupper(ucFirst)&0xFF] = 1;
-                  aClHeadMatch[tolower(ucFirst)&0xFF] = 1;
+                  // aClHeadMatch[sfktoupper(ucFirst)&0xFF] = 1;
+                  // aClHeadMatch[sfktolower(ucFirst)&0xFF] = 1;
+                  sfkSetHeadMatch(ucFirst, aClHeadMatch); // sfk190
                }
             }
             break;
