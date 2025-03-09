@@ -112,6 +112,7 @@ int mySetFileTime(char *pszFile, num nTime);
 int createOutDirTreeW(char *pszOutFile, KeyMap *pOptMap);
 int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd);
 bool matchstr(char *pszHay, char *pszPat, int nFlags, int &rfirsthit, int &rhitlen);
+int dumpOutput(uchar *pOutText, char *pOutAttr, num nOutSize, bool bHexDump);
 
 extern bool bGlblHaveInteractiveConsole;
 extern bool bGlblEscape;
@@ -9476,6 +9477,7 @@ private:
    uint ibackscope;
    bool  bbackscope;
    FILE *clOut;
+   cchar *peol;
    uint nClHits;
 
    char szLineBuf[MAX_LINE_LEN+10];
@@ -9503,16 +9505,35 @@ cchar *SrcParse::pszGlblMacro   = "";
 SrcParse::SrcParse()
 {
    memset(this, 0, sizeof(*this));
+   peol="\r\n";
 }
 
 uint SrcParse::processFile(char *pText, bool bSimulate, FILE *fout)
 {
-   if (!bSimulate) {
-      clOut = fout;
-      fprintf(fout, "#include \"%s\" // [instrumented]\n", pszGlblInclude);
+   // fix: sfk1901: consider lf only files
+   if (strstr(pText, "\r\n"))
+      peol="\r\n";
+   else
+      peol="\n";
+
+   // fix: sfk1901: consider bom
+   char *pbom=0;
+   int nbom=0;
+   if (!strncmp(pText, "\xef\xbb\xbf", 3)) {
+      pbom=pText;
+      nbom=3;
+      pText += 3;
    }
 
-   // char *pCopy = strdup(pText);
+   if (!bSimulate) 
+   {
+      clOut = fout;
+      if (pbom)
+         fwrite(pbom, 1, nbom, fout);
+      fprintf(fout, "#include \"%s\" // [instrumented]%s",
+         pszGlblInclude, peol); // sfk1901
+   }
+
    uint nTextLen = strlen(pText);
    char *pCopy = new char[nTextLen+10];
    if (!pCopy) { fprintf(stderr, "error  : out of memory at %d\n", __LINE__); return 0; }
@@ -9769,9 +9790,10 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
    }
    // else keep szLineBuf2 unchanged
 
-   if (!bSimulate) {
-      fputs(szLineBuf2, clOut);
-      fputc('\n', clOut);
+   if (!bSimulate)
+   {
+      fwrite(szLineBuf2, 1, strlen(szLineBuf2), clOut);
+      fwrite(peol, 1, strlen(peol), clOut); // sfk1901
    }
 
    if (++ibline >= SFKINST_BLINEMAX)
@@ -9975,6 +9997,11 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
       {
          if (!fileExists(szBupFile)) { fprintf(stderr, "warning: cannot revoke, no backup: %s\n", pszFile); return 5; }
  
+         if (!cs.yes) {
+            printf("would %s: %s\n",bRedo?"redo":"revoke",pszFile);
+            return 0;
+         }
+
          if (fileExists(pszFile)) {
             // 1. ensure target is writeable
             #ifdef _WIN32
@@ -10070,13 +10097,19 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
    }
 
    SrcParse *pparse1 = new SrcParse();
-   if (pparse1->processFile(pFile, 1, 0) == 0) {
+   uint nHits = pparse1->processFile(pFile, 1, 0);
+   if (nHits == 0) {
       fprintf(stderr, "skipped: %s - nothing to change\n", pszFile);
       delete [] pFile;
       delete pparse1;
       return 5;
    }
    delete pparse1;
+
+   if (!cs.yes) {
+      printf("would change: %s, %d hits\n", pszFile, nHits);
+      return 0;
+   }
 
    // create backup file
    #ifdef _WIN32
@@ -10099,7 +10132,7 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
    }
 
    // reopen target file for write
-   FILE *fout = fopen(pszFile, "w");
+   FILE *fout = fopen(pszFile, "wb"); // sfk1901: wb
    if (!fout) {
       // probably write protected
       #ifdef _WIN32
@@ -10109,7 +10142,7 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
       #endif
       if (system(szLineBuf)) { }
       // retry
-      if (!(fout = fopen(pszFile, "w"))) {
+      if (!(fout = fopen(pszFile, "wb"))) {
          fprintf(stderr, "error  : unable to write: %s\n", pszFile);
          delete [] pFile;
          return 9;
@@ -10117,7 +10150,7 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
    }
 
    SrcParse *pparse2 = new SrcParse();
-   uint nHits = pparse2->processFile(pFile, 0, fout);
+   nHits = pparse2->processFile(pFile, 0, fout);
 
    // cleanup
    delete pparse2;
@@ -19310,14 +19343,8 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "      using full trim. type \"sfk script\" for details.\n"
              "\n");
       printx("   $further options\n");
-      printx("      -case           compare case sensitive. default is case insensitive\n"
-             #ifdef _WIN32
-             "                      based on system codepage. for more see: sfk help nocase\n"
-             "      -nocasemin      compare only a-z case insensitive, but no high codes\n"
-             "                      in the \\x80 to \\xff range.\n"
-             #else
-             "                      comparison. for details type: sfk help nocase\n"
-             #endif
+      printx("      -case           compare case sensitive. default is case insensitive.\n"
+             "                      for further options see: sfk help nocase\n"
              "      -lit[eral]      treat wildcards * and ? as normal chars (read more above).\n"
             );
       arcinf(12); // filt
@@ -19688,6 +19715,10 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "              most text processing commands are case-insensitive by default.\n"
          "              filename comparison is always case insensitive.\n"
          "              for details see: sfk help nocase\n"
+         #ifdef _WIN32
+         "   $-deacc<def>     use accent insensitive text search and filename selection,\n"
+         "              i.e. a == a_accent or o == o_umlaut.\n"
+         #endif
          "   $-hidden<def>    include hidden and system files.\n"
          "   $-nohidden<def>  exclude hidden and system files.\n"
          "   $-yes<def>       fully execute the command. some commands like \"run\" are\n"
@@ -20581,26 +20612,6 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      #sfk help unicode<def>  unicode to Ansi conversion\n"
          "\n"
          );
-      /*
-      printx(
-         "   $codepage control options within SFK:\n"
-         "\n"
-         "   normally SFK uses the current active codepage of the\n"
-         "   Windows system. this may cause problems with scripts\n"
-         "   intended for distribution on many computers. if these\n"
-         "   scripts do HiCodes processing like +filter -+myword\n"
-         "   the result may change if the system codepage changes.\n"
-         "   for these unusual cases the following options exist:\n"
-         "\n"
-         "   set fixed codepages independent from system:\n"
-         "   #-isochars<def>      set Ansi CP 1252, OEM CP 850\n"
-         "   #-codepage=a<def>    set Ansi codepage a\n"
-         "   #-codepage=a-o<def>  set Ansi CP a and OEM CP o\n"
-         "   sfk only supports these fixed codepages:\n"
-         "      #850, 737, 866, 1251, 1252, 1253\n"
-         "\n"
-         );
-      */
    }
 
    if (!strcmp(pszSub, "nocase"))
@@ -20665,6 +20676,12 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      #-nocasemin<def>  search case insensitive but only\n"
          "                  latin characters a-z (ASCII low codes)\n"
          #ifdef _WIN32
+         "      #-deacc<def>      use accent insensitive text search\n"
+         "                  and filename selection, i.e.\n"
+         "                  a == A == a_accent == A_accent.\n"
+         "                  cannot be combined with -case.\n"
+         "                  can also be set by environment like:\n"
+         "                  #SET SFK_CONFIG=deacc\n"
          "\n"
          "   $see also\n"
          "      #sfk help chars<def>   about codepages\n"
@@ -21318,6 +21335,7 @@ num getFileSizeSeek(char *pszName);int getFileStat( // RC == 0 if exists anythin
 int listPathAny(char *pszCmd, bool bSilent);
 int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoComplete, int *iDirNext=0, bool *pAnyDone=0);
 int walkAllTrees(int nFunc, int &rlFiles, int &rlDirs, num &rlBytes);
+int walkAllTreesW(int nFunc);
 num getFreeSpace(char *pszPath);
 extern FileSet glblFileSet;
 extern bool bGlblSyntaxTest;
@@ -25795,7 +25813,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      #sfk xed in.dat +hexdump\n"
              "        dumps chain data produced by xed\n"
              "      #sfk select mydir +hexdump\n"
-             "        dumps filename chracters, but not file contents\n"
+             "        dumps filename characters, but not file contents\n"
              "\n"
              "    to read file contents use $+hexfile<def> instead:\n"
              "      #sfk select mydir .dat +hexfile\n"
@@ -29825,7 +29843,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
    bool bcmdinchain = 0;
 
    ifcmd (
-       !strcmp(pszCmd, "wtoa")  || !strcmp(pszCmd, "ucstoansi")  ||
+       !strcmp(pszCmd, "wtoa")  || !strcmp(pszCmd, "ucstoansi")  || // :acoding
        !strcmp(pszCmd, "iwtoa") || !strcmp(pszCmd, "iucstoansi") ||
        !strcmp(pszCmd, "wtou")  || !strcmp(pszCmd, "ucstoutf")   ||
        !strcmp(pszCmd, "iwtou") || !strcmp(pszCmd, "iucstoutf")
@@ -29850,10 +29868,15 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   of your Windows system.\n"
              "\n"
              "   $options\n"
-             "     -tofile x  write output to file x\n"
-             "     -codes     print character codes\n"
-             "     -be        big endian input\n"
-             "     -le        little endian input\n"
+             "     -nostop      if some chars cannot be converted\n"
+             "                  then do not stop, show no warning,\n"
+             "                  set return code 1 instead of 9.\n"
+             "     -tofile x    write output to file x\n"
+             "     -codes       print character codes\n"
+             "     -be          big endian input\n"
+             "     -le          little endian input\n"
+             "     -codepage=n  change codepage. for details\n"
+             "                  type: sfk listcodes\n"
              "\n"
              "   $command chaining support\n"
              "     iwtoa accepts binary input from\n"
@@ -29862,6 +29885,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   $aliases\n"
              "     #sfk ucstoansi<def>    same as wtoa\n"
              "     #sfk iucstoansi<def>   same as iwtoa\n"
+             "\n"
+             "   $return code\n"
+             "      0 = ok, all characters converted.\n"
+             "      if conversion is incomplete:\n"
+             "      default: rc 9, chaining stops.\n"
+             "      -nostop: rc 1.\n"
              "\n"
              "   $see also\n"
              "     #sfk sysinfo<def>   tell active codepages\n"
@@ -29893,6 +29922,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              "   $options\n"
              "     -tofile x  write output to file x\n"
+             "     -nobom     write no BOM header\n"
              "     -codes     print character codes\n"
              "     -be        big endian input\n"
              "     -le        little endian input\n"
@@ -29907,6 +29937,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              "   $see also\n"
              "     #sfk utow<def>   UTF-8 to wide chars\n"
+             #ifdef _WIN32
+             "     #sfk wtoa<def>   wide chars to Ansi\n"
+             #endif
              "\n"
              "   $examples\n"
              "     #sfk wtou in.txt\n"
@@ -29928,6 +29961,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bool bnoguess = 0;
       bool  btoansi = bcmdwtoa;
       uint  nbadconv = 0;
+      int   ibadrc  = 9;
+      bool  bbom = 1;
 
       ushort awide[50]; mclear(awide);
 
@@ -29935,10 +29970,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       for (; iDir<argc; iDir++)
       {
          char *pszArg  = argx[iDir];
-         if (!strcmp(argx[iDir], "-i")) {
-            bstdin = 1;
-            continue;
-         }
+         if (!strcmp(argx[iDir], "-i"))
+            { bstdin = 1; continue; }
+         if (!strcmp(argx[iDir], "-nobom"))
+            { bbom = 0; continue; }
          if (!strcmp(argx[iDir], "-be")) {
             nshift1=8; nshift2=0; bnoguess=1;
             continue;
@@ -29949,6 +29984,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          }
          if (!strcmp(argx[iDir], "-codes")) {
             bcodes = 1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-nostop")) {
+            ibadrc = 1;
             continue;
          }
          if (   !strcmp(argx[iDir], "-utf")
@@ -30015,7 +30054,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       else if (chain.colany())
          ioutmode = 1;  // text lines
 
-      if (!btoansi) {
+      if (btoansi==0 && bbom==1) {
          // write utf8 bom
          *pdst++ = 0xEF;
          *pdst++ = 0xBB;
@@ -30046,6 +30085,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                if (nans == 0) {
                   nans = '?';
                   nbadconv++;
+                  lRC = ibadrc;
                }
                *pdst = nans;
                iwrite = 1;
@@ -30130,8 +30170,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       delete [] pData;
 
-      if (nbadconv)
+      if (nbadconv!=0 && ibadrc==9)
          pwarn("%u chars failed to convert.\n",nbadconv);
+
+      // lRC was set above.
 
       if (iChainNext) {
          if (chain.coldata) {
@@ -30145,7 +30187,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
    }
 
    ifcmd (
-       !strcmp(pszCmd, "atow") || !strcmp(pszCmd, "ansitoucs") ||
+       !strcmp(pszCmd, "atow") || !strcmp(pszCmd, "ansitoucs") || // :acoding
        !strcmp(pszCmd, "utow") || !strcmp(pszCmd, "utftoucs")
       )
    {
@@ -30165,8 +30207,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   16-bit character binary data.\n"
              "\n"
              "   $options\n"
-             "     -codes   print character codes\n"
-             "     -be      big endian output\n"
+             "     -codes       print character codes\n"
+             "     -be          big endian output\n"
+             "     -i           read from stdin\n"
+             "     -codepage=n  change codepage.\n"
+             "                  more under: sfk listcodes\n"
              "\n"
              "   $command chaining support\n"
              "     uses text from a previous command.\n"
@@ -30194,6 +30239,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   $options\n"
              "     -codes   print character codes\n"
              "     -be      big endian output\n"
+             "     -i       read from stdin\n"
              "\n"
              "   $command chaining support\n"
              "     uses text from a previous command.\n"
@@ -30203,6 +30249,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              "   $see also\n"
              "     #sfk utow<def>   UTF-8 to wide chars\n"
+             "     #sfk wtou<def>   wide chars to UTF-8\n"
+             #ifdef _WIN32
+             "     #sfk atow<def>   Ansi to wide chars\n"
+             #endif
              "\n"
              "   $examples\n"
              "     #sfk load in.txt +utow -tofile out.txt\n"
@@ -30397,8 +30447,301 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (nbadconv)
          pwarn("%u chars failed to convert.\n",nbadconv);
 
+      lRC = (nbadconv == 0) ? 0 : 1;
+
       if (iChainNext) {
          if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+
+   ifcmd (!strcmp(pszCmd, "utoa") || !strcmp(pszCmd, "utftoansi")) // :acoding
+   {
+      ifhelp (argc <= 2 || (nparm >= 1 && isHelpOpt(argv[iDir])))
+      printx("<help>$sfk utoa [infile]\n"
+             "\n"
+             "   convert UTF-8 to Ansi text. only characters\n"
+             "   contained in the current codepage can be converted.\n"
+             "\n"
+             "   $options\n"
+             "     -nostop      if some chars cannot be converted\n"
+             "                  then do not stop, show no warning,\n"
+             "                  set return code 1 instead of 9.\n"
+             "     -tofile x    write output to file x\n"
+             "     -i           read from stdin\n"
+             "     -codepage=n  change codepage. for details\n"
+             "                  type: sfk listcodes\n"
+             "\n"
+             "   $command chaining support\n"
+             "      accepts text or binary from a previous command.\n"
+             "\n"
+             "   $return code\n"
+             "      0 = ok, all characters converted.\n"
+             "      if conversion is incomplete:\n"
+             "      default: rc 9, chaining stops.\n"
+             "      -nostop: rc 1.\n"
+             "\n"
+             "   $aliases\n"
+             "     #sfk utftoansi<def>    same as utoa\n"
+             "     #sfk listcodes<def>    list available characters\n"
+             "                      of your Ansi codepage\n"
+             "\n"
+             "   $see also\n"
+             "     #sfk atou<def>    convert Ansi to UTF-8\n"
+             "\n"
+             "   $examples\n"
+             "     #sfk utoa inutf.txt\n"
+             "       convert utf to ansi and print to terminal.\n"
+             "     #sfk load inutf.txt +utoa\n"
+             "       convert chain text.\n"
+             "     #type inutf.txt | sfk utoa -i\n"
+             "       use sfk as a filter in a batch\n"
+             "     #sfk utoa inutf.txt -tofile out.txt\n"
+             "      #+if \"rc<>0\" stop 9 \"failed to convert\"\n"
+             "      #+tell \"conversion done\"\n"
+             "       within an sfk script: stop if the input text\n"
+             "       contains chars that cannot be converted.\n"
+             "     #sfk utoa inutf.txt\n"
+             "     #IF %%ERRORLEVEL%% NEQ 0 GOTO Error01\n"
+             "       in a windows batch file: jump to label Error01\n"
+             "       if input fails to convert to Ansi.\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool   bstdin = 0;
+      char *pszFile = 0;
+      uint  nbadconv = 0;
+      int   ibadrc  = 9;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strcmp(argx[iDir], "-i")) {
+            bstdin = 1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-nostop")) {
+            ibadrc = 1;
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pszFile) {
+            pszFile = pszArg;
+            continue;
+         }
+         return 9+perr("unexpected: %s\n",pszArg);
+      }
+
+      uchar *pData = 0;
+      num    nSize = 0;
+
+      if (loadInput(&pData, 0, &nSize, bstdin, pszFile, 0))
+         return 9;
+
+      lRC = 0;
+
+      uchar *psrc = pData;
+      num    nsrc = nSize;
+
+      if (   nsrc >= 3
+          && psrc[0]==0xEF
+          && psrc[1]==0xBB
+          && psrc[2]==0xBF
+         )
+      {
+         // skip utf8 bom
+         psrc += 3; // skip BOM
+         nsrc -= 3;
+      }
+
+      UTF8Codec utf((char*)psrc, nsrc);
+
+      uchar *pdst = pData;
+      uint  nchar = 0;
+
+      while (utf.hasChar())
+      {
+         nchar = utf.nextChar();
+
+         uchar nans = sfkchars.unitoansi(nchar);
+         if (nans == 0) {
+            nans = '?';
+            nbadconv++;
+            lRC = ibadrc;
+         }
+
+         *pdst++ = nans;
+      }
+
+      num nOutSize = pdst - pData;
+
+      if (nOutSize > 0)
+         dumpOutput(pData, 0, nOutSize, 0);
+
+      delete [] pData;
+
+      if (nbadconv!=0 && ibadrc==9)
+         pwarn("%u chars failed to convert.\n",nbadconv);
+
+      // lRC was set above.
+
+      if (iChainNext) {
+         if (chain.colany()) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+
+   ifcmd (!strcmp(pszCmd, "atou") || !strcmp(pszCmd, "ansitoutf")) // :acoding
+   {
+      ifhelp (argc <= 2 || (nparm >= 1 && isHelpOpt(argv[iDir])))
+      printx("<help>$sfk atou [infile]\n"
+             "\n"
+             "   convert Ansi to UTF-8 text.\n"
+             "\n"
+             "   $options\n"
+             "     -tofile x    write output to file x\n"
+             "     -nobom       write no BOM header\n"
+             "     -i           read from stdin\n"
+             "     -codepage=n  change codepage.\n"
+             "                  more under: sfk listcodes\n"
+             "\n"
+             "   $command chaining support\n"
+             "      accepts text or binary from a previous command.\n"
+             "\n"
+             "   $aliases\n"
+             "     #sfk ansitoutf<def>    same as atou\n"
+             "\n"
+             "   $see also\n"
+             "     #sfk utoa<def>       convert UTF-8 to Ansi\n"
+             "     #sfk listcodes<def>  list available characters\n"
+             "                    of your Ansi codepage\n"
+             "\n"
+             "   $examples\n"
+             "     #sfk atou in.txt -tofile oututf.txt\n"
+             "       convert ansi to utf8 and write to file.\n"
+             "     #sfk load in.txt +atou -tofile oututf.txt\n"
+             "       convert chain text.\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool   bstdin = 0;
+      char *pszFile = 0;
+      uint   nbadconv = 0;
+      bool   bbom = 1;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strcmp(argx[iDir], "-i"))
+            { bstdin = 1; continue; }
+         if (!strcmp(argx[iDir], "-nobom"))
+            { bbom = 0; continue; }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pszFile) {
+            pszFile = pszArg;
+            continue;
+         }
+         return 9+perr("unexpected: %s\n",pszArg);
+      }
+
+      uchar *pData = 0;
+      num    nSize = 0;
+
+      uchar *pdst = 0, *pdstcur=0, *pdstmax=0;
+      num    ndst = 0;
+
+      if (loadInput(&pData, 0, &nSize, bstdin, pszFile, 0))
+         return 9;
+
+      char szOut[50];
+
+      for (int ipass=0; ipass<2; ipass++)
+      {
+         uchar *psrccur = pData;
+         uchar *psrcmax = psrccur + nSize;
+
+         if (ipass)
+         {
+            pdst = new uchar[ndst+100];
+            if (!pdst)
+               return 9+perr("out of memory");
+            pdstcur = pdst;
+            pdstmax = pdst+ndst;
+         }
+
+         if (bbom) {
+            if (ipass) {
+               // write utf8 bom
+               *pdstcur++ = 0xEF;
+               *pdstcur++ = 0xBB;
+               *pdstcur++ = 0xBF;
+            } else {
+               pdstcur += 3;
+            }
+         }
+
+         while (psrccur < psrcmax)
+         {
+            uchar nansi = *psrccur++;
+            uint  nuni  = sfkchars.ansitouni(nansi);
+            if (nuni == 0)
+               { nuni = '?'; nbadconv++; }
+
+            int nout = UTF8Codec::toutf8((char*)szOut, 10, nuni);
+
+            if (ipass)
+               memcpy(pdstcur, szOut, nout);
+
+            pdstcur += nout;
+         }
+
+         if (ipass == 0)
+            ndst = pdstcur - (uchar *)0;
+      }
+
+      dumpOutput(pdst, 0, ndst, 0);
+
+      delete [] pData;
+      delete [] pdst;
+
+      lRC = (nbadconv == 0) ? 0 : 1;
+
+      if (iChainNext) {
+         if (chain.colany()) {
             STEP_CHAIN(iChainNext, 1);
          } else {
             STEP_CHAIN(iChainNext, 0);
@@ -30415,6 +30758,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
 
 
 

@@ -8,6 +8,35 @@
    the world's fastest source code browser and editor.
 
    1.9.0
+   -  rel: 12.03.2018, Minor Update
+   -  sum: SFK for Windows now supports accent insensitive search
+           and file selection according to the active codepage.
+           added direct conversion between UTF-8 and Ansi.
+   Revision 2:
+   -  chg: behaviour change with wtoa, utoa:
+           if chars fail to convert these now stop
+           command chaining with return code 9.
+           use option -nostop to continue processing
+           with return code 1, without warning.
+   -  add: windows: general option -deacc to search text
+           and select files accent insensitive, meaning
+           a == A == a_accent == A_accent.
+   -  add: windows: listcodes support for -deacc.
+   -  add: windows: sfk utftoansi, ansitoutf to convert
+           8-bit text directly between your Ansi codepage
+           and UTF-8 format.
+   -  add: windows: wtoa, utoa return code support.
+   -  add: listcodes: advanced option -codepage to select
+           other codepages.
+   -  fix: sfk inst: files with UTF-8 BOM header were changed
+           incorrectly, producing a compile error near line 2.
+           now the BOM is detected and text inserted after that.
+   -  fix: sfk inst: line ending format lf vs. crlf is now kept.
+   -  chg: sfk inst: now runs in simulation mode by default.
+   -  doc: sfk filt, xex: -case with ref to help nocase.
+   -  doc: sfk help unicode ref to utoa, atou.
+   -  doc: main help ref to utoa.
+   Initial Release:
    -  rel: 28.02.2018, Major Update
    -  sum: SFK for Windows now supports case insensitive search
            and file selection within the codepage of your
@@ -74,6 +103,9 @@
    -  doc: sfk ren: top reference to sfk renfile.
    -  doc: sfk copy: single file copy example.
    internal:
+   Revision 2:
+   -  add: utoa, atou
+   Initial:
    -  add: chars -full
    -  chg: wtoa, atow now also support -isochars.
    -  chg: sfk ascii now also supports -codepage option.
@@ -894,7 +926,7 @@
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
 #define SFK_VERSION  "1.9.0" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  ""
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -4666,11 +4698,21 @@ int printx(const char *pszFormat, ...)
    }
 
    char *pszSrc = szPrintBuf1;
-   int iDst = 0;
+   int  iDst = 0;
    char nAttr = ' ';
    bool bResetOnLF = 0;
+   bool bNoCol = 0;
    while (*pszSrc && (iDst < (int)sizeof(szPrintBuf2)-10))
    {
+      if (bNoCol) {
+         szPrintBuf2[iDst] = *pszSrc;
+         szPrintAttr[iDst] = nAttr;
+         pszSrc++;
+         iDst++;
+         continue;
+      }
+      if (!strncmp(pszSrc, "<nocol>", 7))
+         { pszSrc += 7; bNoCol=1; continue; }
       if (pszSrc[0] == '\\' && pszSrc[1] == '<') {
          pszSrc += 2;
          szPrintBuf2[iDst] = '<';
@@ -9712,11 +9754,45 @@ bool fileCountCheckTime() { return glblFileCount.checkTime(); }
 // --- sfk190 nocase with variable table ---
 
 /*
-   west.  europe: 850 1252
    middle europe: 852 1250
    cyrillic     : 866 1251
-   greek        : 737 1253
+   west.  europe: 850 1252
 */
+
+// :middle europe
+unsigned short glblCodePage1250[] = {
+   0x80,0x20ac, 0x82,0x201a, 0x84,0x201e, 0x85,0x2026, 0x86,0x2020, 0x87,0x2021, 0x89,0x2030, 0x8a,0x0160,
+   0x8b,0x2039, 0x8c,0x015a, 0x8d,0x0164, 0x8e,0x017d, 0x8f,0x0179, 0x91,0x2018, 0x92,0x2019, 0x93,0x201c,
+   0x94,0x201d, 0x95,0x2022, 0x96,0x2013, 0x97,0x2014, 0x99,0x2122, 0x9a,0x0161, 0x9b,0x203a, 0x9c,0x015b,
+   0x9d,0x0165, 0x9e,0x017e, 0x9f,0x017a, 0xa1,0x02c7, 0xa2,0x02d8, 0xa3,0x0141, 0xa5,0x0104, 0xaa,0x015e,
+   0xaf,0x017b, 0xb2,0x02db, 0xb3,0x0142, 0xb9,0x0105, 0xba,0x015f, 0xbc,0x013d, 0xbd,0x02dd, 0xbe,0x013e,
+   0xbf,0x017c, 0xc0,0x0154, 0xc3,0x0102, 0xc5,0x0139, 0xc6,0x0106, 0xc8,0x010c, 0xca,0x0118, 0xcc,0x011a,
+   0xcf,0x010e, 0xd0,0x0110, 0xd1,0x0143, 0xd2,0x0147, 0xd5,0x0150, 0xd8,0x0158, 0xd9,0x016e, 0xdb,0x0170,
+   0xde,0x0162, 0xe0,0x0155, 0xe3,0x0103, 0xe5,0x013a, 0xe6,0x0107, 0xe8,0x010d, 0xea,0x0119, 0xec,0x011b,
+   0xef,0x010f, 0xf0,0x0111, 0xf1,0x0144, 0xf2,0x0148, 0xf5,0x0151, 0xf8,0x0159, 0xf9,0x016f, 0xfb,0x0171,
+   0xfe,0x0163, 0xff,0x02d9,
+   0,0
+};
+
+unsigned short glblCodePage852[] = {
+   0x80,0x00c7, 0x81,0x00fc, 0x82,0x00e9, 0x83,0x00e2, 0x84,0x00e4, 0x85,0x016f, 0x86,0x0107, 0x87,0x00e7,
+   0x88,0x0142, 0x89,0x00eb, 0x8a,0x0150, 0x8b,0x0151, 0x8c,0x00ee, 0x8d,0x0179, 0x8e,0x00c4, 0x8f,0x0106,
+   0x90,0x00c9, 0x91,0x0139, 0x92,0x013a, 0x93,0x00f4, 0x94,0x00f6, 0x95,0x013d, 0x96,0x013e, 0x97,0x015a,
+   0x98,0x015b, 0x99,0x00d6, 0x9a,0x00dc, 0x9b,0x0164, 0x9c,0x0165, 0x9d,0x0141, 0x9e,0x00d7, 0x9f,0x010d,
+   0xa0,0x00e1, 0xa1,0x00ed, 0xa2,0x00f3, 0xa3,0x00fa, 0xa4,0x0104, 0xa5,0x0105, 0xa6,0x017d, 0xa7,0x017e,
+   0xa8,0x0118, 0xa9,0x0119, 0xaa,0x00ac, 0xab,0x017a, 0xac,0x010c, 0xad,0x015f, 0xae,0x00ab, 0xaf,0x00bb,
+   0xb0,0x2591, 0xb1,0x2592, 0xb2,0x2593, 0xb3,0x2502, 0xb4,0x2524, 0xb5,0x00c1, 0xb6,0x00c2, 0xb7,0x011a,
+   0xb8,0x015e, 0xb9,0x2563, 0xba,0x2551, 0xbb,0x2557, 0xbc,0x255d, 0xbd,0x017b, 0xbe,0x017c, 0xbf,0x2510,
+   0xc0,0x2514, 0xc1,0x2534, 0xc2,0x252c, 0xc3,0x251c, 0xc4,0x2500, 0xc5,0x253c, 0xc6,0x0102, 0xc7,0x0103,
+   0xc8,0x255a, 0xc9,0x2554, 0xca,0x2569, 0xcb,0x2566, 0xcc,0x2560, 0xcd,0x2550, 0xce,0x256c, 0xcf,0x00a4,
+   0xd0,0x0111, 0xd1,0x0110, 0xd2,0x010e, 0xd3,0x00cb, 0xd4,0x010f, 0xd5,0x0147, 0xd6,0x00cd, 0xd7,0x00ce,
+   0xd8,0x011b, 0xd9,0x2518, 0xda,0x250c, 0xdb,0x2588, 0xdc,0x2584, 0xdd,0x0162, 0xde,0x016e, 0xdf,0x2580,
+   0xe0,0x00d3, 0xe1,0x00df, 0xe2,0x00d4, 0xe3,0x0143, 0xe4,0x0144, 0xe5,0x0148, 0xe6,0x0160, 0xe7,0x0161,
+   0xe8,0x0154, 0xe9,0x00da, 0xea,0x0155, 0xeb,0x0170, 0xec,0x00fd, 0xed,0x00dd, 0xee,0x0163, 0xef,0x00b4,
+   0xf0,0x00ad, 0xf1,0x02dd, 0xf2,0x02db, 0xf3,0x02c7, 0xf4,0x02d8, 0xf5,0x00a7, 0xf6,0x00f7, 0xf7,0x00b8,
+   0xf8,0x00b0, 0xf9,0x00a8, 0xfa,0x02d9, 0xfb,0x0171, 0xfc,0x0158, 0xfd,0x0159, 0xfe,0x25a0, 0xff,0x00a0,
+   0,0
+};
 
 // :cyrillic
 unsigned short glblCodePage1251[] = {
@@ -9786,43 +9862,6 @@ unsigned short glblCodePage850[] = {
    0,0
 };
 
-// :greek
-unsigned short glblCodePage1253[] = {
-   0x80,0x20ac, 0x82,0x201a, 0x83,0x0192, 0x84,0x201e, 0x85,0x2026, 0x86,0x2020, 0x87,0x2021, 0x89,0x2030,
-   0x8b,0x2039, 0x91,0x2018, 0x92,0x2019, 0x93,0x201c, 0x94,0x201d, 0x95,0x2022, 0x96,0x2013, 0x97,0x2014,
-   0x99,0x2122, 0x9b,0x203a, 0xa1,0x0385, 0xa2,0x0386, 0xaa,0xf8f9, 0xaf,0x2015, 0xb4,0x0384, 0xb8,0x0388,
-   0xb9,0x0389, 0xba,0x038a, 0xbc,0x038c, 0xbe,0x038e, 0xbf,0x038f, 0xc0,0x0390, 0xc1,0x0391, 0xc2,0x0392,
-   0xc3,0x0393, 0xc4,0x0394, 0xc5,0x0395, 0xc6,0x0396, 0xc7,0x0397, 0xc8,0x0398, 0xc9,0x0399, 0xca,0x039a,
-   0xcb,0x039b, 0xcc,0x039c, 0xcd,0x039d, 0xce,0x039e, 0xcf,0x039f, 0xd0,0x03a0, 0xd1,0x03a1, 0xd2,0xf8fa,
-   0xd3,0x03a3, 0xd4,0x03a4, 0xd5,0x03a5, 0xd6,0x03a6, 0xd7,0x03a7, 0xd8,0x03a8, 0xd9,0x03a9, 0xda,0x03aa,
-   0xdb,0x03ab, 0xdc,0x03ac, 0xdd,0x03ad, 0xde,0x03ae, 0xdf,0x03af, 0xe0,0x03b0, 0xe1,0x03b1, 0xe2,0x03b2,
-   0xe3,0x03b3, 0xe4,0x03b4, 0xe5,0x03b5, 0xe6,0x03b6, 0xe7,0x03b7, 0xe8,0x03b8, 0xe9,0x03b9, 0xea,0x03ba,
-   0xeb,0x03bb, 0xec,0x03bc, 0xed,0x03bd, 0xee,0x03be, 0xef,0x03bf, 0xf0,0x03c0, 0xf1,0x03c1, 0xf2,0x03c2,
-   0xf3,0x03c3, 0xf4,0x03c4, 0xf5,0x03c5, 0xf6,0x03c6, 0xf7,0x03c7, 0xf8,0x03c8, 0xf9,0x03c9, 0xfa,0x03ca,
-   0xfb,0x03cb, 0xfc,0x03cc, 0xfd,0x03cd, 0xfe,0x03ce, 0xff,0xf8fb,
-   0,0
-};
-
-unsigned short glblCodePage737[] = {
-   0x80,0x0391, 0x81,0x0392, 0x82,0x0393, 0x83,0x0394, 0x84,0x0395, 0x85,0x0396, 0x86,0x0397, 0x87,0x0398,
-   0x88,0x0399, 0x89,0x039a, 0x8a,0x039b, 0x8b,0x039c, 0x8c,0x039d, 0x8d,0x039e, 0x8e,0x039f, 0x8f,0x03a0,
-   0x90,0x03a1, 0x91,0x03a3, 0x92,0x03a4, 0x93,0x03a5, 0x94,0x03a6, 0x95,0x03a7, 0x96,0x03a8, 0x97,0x03a9,
-   0x98,0x03b1, 0x99,0x03b2, 0x9a,0x03b3, 0x9b,0x03b4, 0x9c,0x03b5, 0x9d,0x03b6, 0x9e,0x03b7, 0x9f,0x03b8,
-   0xa0,0x03b9, 0xa1,0x03ba, 0xa2,0x03bb, 0xa3,0x03bc, 0xa4,0x03bd, 0xa5,0x03be, 0xa6,0x03bf, 0xa7,0x03c0,
-   0xa8,0x03c1, 0xa9,0x03c3, 0xaa,0x03c2, 0xab,0x03c4, 0xac,0x03c5, 0xad,0x03c6, 0xae,0x03c7, 0xaf,0x03c8,
-   0xb0,0x2591, 0xb1,0x2592, 0xb2,0x2593, 0xb3,0x2502, 0xb4,0x2524, 0xb5,0x2561, 0xb6,0x2562, 0xb7,0x2556,
-   0xb8,0x2555, 0xb9,0x2563, 0xba,0x2551, 0xbb,0x2557, 0xbc,0x255d, 0xbd,0x255c, 0xbe,0x255b, 0xbf,0x2510,
-   0xc0,0x2514, 0xc1,0x2534, 0xc2,0x252c, 0xc3,0x251c, 0xc4,0x2500, 0xc5,0x253c, 0xc6,0x255e, 0xc7,0x255f,
-   0xc8,0x255a, 0xc9,0x2554, 0xca,0x2569, 0xcb,0x2566, 0xcc,0x2560, 0xcd,0x2550, 0xce,0x256c, 0xcf,0x2567,
-   0xd0,0x2568, 0xd1,0x2564, 0xd2,0x2565, 0xd3,0x2559, 0xd4,0x2558, 0xd5,0x2552, 0xd6,0x2553, 0xd7,0x256b,
-   0xd8,0x256a, 0xd9,0x2518, 0xda,0x250c, 0xdb,0x2588, 0xdc,0x2584, 0xdd,0x258c, 0xde,0x2590, 0xdf,0x2580,
-   0xe0,0x03c9, 0xe1,0x03ac, 0xe2,0x03ad, 0xe3,0x03ae, 0xe4,0x03ca, 0xe5,0x03af, 0xe6,0x03cc, 0xe7,0x03cd,
-   0xe8,0x03cb, 0xe9,0x03ce, 0xea,0x0386, 0xeb,0x0388, 0xec,0x0389, 0xed,0x038a, 0xee,0x038c, 0xef,0x038e,
-   0xf0,0x038f, 0xf1,0x00b1, 0xf2,0x2265, 0xf3,0x2264, 0xf4,0x03aa, 0xf5,0x03ab, 0xf6,0x00f7, 0xf7,0x2248,
-   0xf8,0x00b0, 0xf9,0x2219, 0xfa,0x00b7, 0xfb,0x221a, 0xfc,0x207f, 0xfd,0x00b2, 0xfe,0x25a0, 0xff,0x00a0,
-   0,0
-};
-
 SFKChars sfkchars;
 
 SFKChars::SFKChars( )
@@ -9847,12 +9886,12 @@ ushort SFKChars::ibytetouni(uchar c, ushort icp)
 
    switch (icp)
    {
+      case 1250: pfixedcp = glblCodePage1250; break;
+      case  852: pfixedcp = glblCodePage852;  bdos=1; break;
       case 1251: pfixedcp = glblCodePage1251; break;
       case  866: pfixedcp = glblCodePage866;  bdos=1; break;
       case 1252: pfixedcp = glblCodePage1252; break;
       case  850: pfixedcp = glblCodePage850;  bdos=1; break;
-      case 1253: pfixedcp = glblCodePage1253; break;
-      case  737: pfixedcp = glblCodePage737;  bdos=1; break;
    }
    if (pfixedcp) {
       for (int i=0; pfixedcp[i]; i+=2)
@@ -9887,8 +9926,12 @@ ushort SFKChars::ibytetouni(uchar c, ushort icp)
 
 int SFKChars::setocp(ushort i)
 {
-   switch (i) {
-      case 737: case 850: case 866:
+   switch (i) 
+   {
+      #ifdef _WIN32
+      default:
+      #endif
+      case 852: case 866: case 850:
          iclocp=i;
          bsysocp=0;
          bclinited=0;
@@ -9899,8 +9942,12 @@ int SFKChars::setocp(ushort i)
 
 int SFKChars::setacp(ushort i)
 {
-   switch (i) {
-      case 1251: case 1252: case 1253:
+   switch (i) 
+   {
+      #ifdef _WIN32
+      default:
+      #endif
+      case 1250: case 1251: case 1252:
          iclacp=i;
          bsysacp=0;
          bclinited=0;
@@ -10096,7 +10143,7 @@ uchar SFKNoCase::map1to1(uchar c, uchar btolower, ushort auni[])
 char *getuniname(ushort ncode);
 
 #ifndef SWINST
-void listcodes(bool bfull,bool btrace)
+void listcodes(bool ball, bool bfull, bool btrace)
 {
    ushort auni[2];
 
@@ -10105,13 +10152,16 @@ void listcodes(bool bfull,bool btrace)
    uchar *adone = abBuf;
 
    sfkchars.init();
-   printf("List of character mappings in %s codepage %u:\n",
+   printf("List of character mappings in %s codepage %u.\n",
       sfkchars.bsysacp ? "system":"fixed",
       sfkchars.iclacp);
+   if (cs.fuzz)
+   printf("Using accent insensitive mappings by option -deacc.\n");
    printf("---------------------------------------------------\n");
 
    char szTrace[100];
    szTrace[0]='\0';
+   uchar nlo=0, nhi=0;
 
    // Ansi and Unicodes
    for (uint n=32; n<256; n++)
@@ -10122,8 +10172,13 @@ void listcodes(bool bfull,bool btrace)
             sfkisprint(n), isprint(n)
             );
 
-      uchar nlo = sfknocasesharp.map1to1((uchar)n, 1, auni);
-      uchar nhi = sfknocasesharp.map1to1((uchar)n, 0, auni);
+      if (cs.fuzz) {
+         nlo = sfknocasefuzz.map1to1((uchar)n, 1, auni);
+         nhi = sfknocasefuzz.map1to1((uchar)n, 0, auni);
+      } else {
+         nlo = sfknocasesharp.map1to1((uchar)n, 1, auni);
+         nhi = sfknocasesharp.map1to1((uchar)n, 0, auni);
+      }
 
       char *pname1 = getuniname(auni[0]);
       char *pname2 = getuniname(auni[1]);
@@ -10142,10 +10197,18 @@ void listcodes(bool bfull,bool btrace)
             );
          adone[auni[0]] = 1;
          adone[auni[1]] = 1;
+      } else if (bfull) {
+         auni[0] = sfkchars.ansitouni((uchar)n);
+         pname1 = getuniname(auni[0]);
+         oprintf("%c 0x%02x U+%04X -> - ---- ------ %s%s\n",
+            (char)n, n, auni[0],
+            szTrace, pname1
+            );
+         adone[auni[0]] = 1;
       }
    }
 
-   if (!bfull)
+   if (!ball)
       return;
 
    printf("\n");
@@ -15499,6 +15562,8 @@ cchar *aGlblChainCmds[] =
    #endif
    "6utow",  "6utftoucs",   // sfk190
    "6iwtou", "6iucstoutf",  // sfk190
+   "6atou",  "6ansitoutf",  // sfk1902
+   "6utoa",  "6utftoansi",  // sfk1902
    // sfk1833:
    "8fromnet", "8color", "8make-random-file",
    "8time", "8data", "8home", "8ruler",
@@ -39649,6 +39714,9 @@ void printMainHelp(bool bhelp, char *penv[])
       "   sfk wtoa       - convert wide chars to Ansi\n"
       #endif
       "   sfk wtou       - convert wide chars to UTF-8\n"
+      #ifdef _WIN32
+      "   sfk utoa       - convert UTF-8 text to Ansi\n"
+      #endif
       "   sfk hexdump    - create hexdump from a binary file\n"
       "   sfk hextobin   - convert hex data to binary\n"
       "   sfk hex        - convert decimal number(s) to hex\n"
@@ -41763,23 +41831,22 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              , sfkchars.iclacp
              , sfkchars.iclocp
              );
-      printx("   $examples\n"
+      printx("   $advanced options\n"
+             "     -isochars      use codepage 1252, no matter what\n"
+             "                    the actual system codepage is.\n"
+             "     -codepage=a    use Ansi codepage a.\n"
+             "     -codepage=a-o  use Ansi codepage a, OEM page o.\n"
              "\n"
-             "     #sfk listcodes sys<def>\n"
-             "        list the character mappings supported with\n"
-             "        the current Ansi codepage of your system.\n"
-             "        you may also use: #sfk listcodes.<def>\n"
+             "     these options are useful only with some commands,\n"
+             "     like wtoa or utoa. printed characters in the\n"
+             "     terminal may look wrong, so you have to redirect\n"
+             "     output to a file. code pages 1250 1251 1252 and\n"
+             "     852 866 850 are hardcoded in sfk, all others are\n"
+             "     taken from the windows subsystem.\n"
              "\n"
-             "     #sfk listcodes all<def>\n"
-             "        also show the codes which cannot be used\n"
-             "        with your system's Ansi codepage.\n"
+             );
+      printx("   $examples<def> (advanced use)\n"
              "\n"
-             "     #sfk -isochars listcodes.<def>\n"
-             "        show codes with fixed 1252/850 codepage.\n"
-             "        displayed characters may be wrong,\n"
-             "        just look at the character names.\n"
-             "\n"
-             /*
              "     #sfk -codepage=1251-866 listcodes.<def>\n"
              "        list cyrillic codepage, no matter what the\n"
              "        actual system codepage is. printed chars\n"
@@ -41790,29 +41857,49 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "        (the OEM codepage is not used when writing\n"
              "         to file, therefore no -866 is given.)\n"
              "        if you load out.txt with Notepad++, then select:\n"
-             "        $Encoding / Chracter Sets / Cyrillic / Windows-1251<def>\n"
+             "        $Encoding / Character Sets / Cyrillic / Windows-1251<def>\n"
              "        it will display the cyrillic characters.\n"
              "\n"
-             "     #sfk -codepage=1253-737 listcodes. >out.txt<def>\n"
-             "        list greek supported characters. in Notepad++ use:\n"
-             "        $Encoding / Chracter Sets / Greek / Windows-1253<def>\n"
+             "     #sfk -codepage=1250-852 listcodes. >out.txt<def>\n"
+             "        list central european characters. in Notepad++ use:\n"
+             "        $Encoding / Character Sets / Central Europe\n"
+             "        $/ Windows-1250<def>\n"
              "\n"
-             */
              );
+      printx("   $examples<def> (normal use)\n"
+             "\n"
+             "     #sfk listcodes sys<def>\n"
+             "        list the character mappings supported with\n"
+             "        the current Ansi codepage of your system.\n"
+             "\n"
+             "     #sfk listcodes.<def>\n"
+             "        same as above, but shorter to type.\n"
+             "\n"
+             "     #sfk listcodes all<def>\n"
+             "        also show the codes which cannot be used\n"
+             "        with your system's Ansi codepage.\n"
+             "\n"
+             "     #sfk -isochars listcodes.<def>\n"
+             "        show codes with fixed 1252/850 codepage.\n"
+             "        displayed characters may be wrong,\n"
+             "        just look at the character names.\n"
+             "\n"
+             "     #sfk -deacc listcodes.<def>\n"
+             "        show mappings with accent insensitive search\n"
+             "        which are quite different, e.g. many a_accent\n"
+             "        characters map to the same base letter a.\n"
+             "\n");
       ehelp;
 
       sfkarg;
 
-      void listcodes(bool bfull,bool btrace);
-
-      bool bfull = 0;
-      bool btrace = 0;
+      bool bfull=0,ball=0,btrace=0;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
          char *pszArg  = argx[iDir];
-         if (!strcmp(pszArg, "-all")) {
+         if (!strcmp(pszArg, "-any")) { // internal
             bfull = 1;
             continue;
          }
@@ -41831,17 +41918,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
          if (!strcmp(pszArg, "sys")) {
-            bfull=0;
+            ball = 0;
             continue;
          }
          if (!strcmp(pszArg, "full")) {
-            bfull=1;
+            ball = 1;
             continue;
          }
          return 9+perr("unexpected: %s\n",pszArg);
       }
  
-      listcodes(bfull,btrace);
+      listcodes(ball, bfull, btrace);
 
       if (iChainNext) {
          if (chain.coldata) {
@@ -45663,6 +45750,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "$sfk inst -revoke[|-redo] [-keep-dates] -dir ... -file ...\n"
              "\n"
              "  instrument c++ sourcecode with calls to sfk micro tracing kernel.\n"
+             "  simulates by default. add -yes to apply changes.\n"
              "\n"
              "  $parameters\n"
              "    mtkinc         path and name of mtktrace.hpp file\n"
@@ -45676,10 +45764,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "    -witheol       also instrument { at end of line, like in:\n"
              "                   void Foo::bar(int nmode) {\n"
              "\n"
-             "       #sfk inst mtk/mtktrace.hpp _mtkb_ -dir testfiles !save_ -file .cpp\n"
+             "       #sfk inst mtk/mtktrace.hpp _mtkb_ -dir testfiles !<sla>save_ -file .cpp\n"
              "          instrument the code (saving all in save_inst dirs)\n"
              "\n"
-             "       #sfk inst -revoke -keep-dates -dir testfiles !save_ -file .cpp\n"
+             "       #sfk inst -revoke -keep-dates -dir testfiles !<sla>save_ -file .cpp\n"
              "          restore original code (copying back from save-inst dirs),\n"
              "          also restoring the original time stamps.\n"
              "\n"
@@ -45735,7 +45823,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       int iDirNext=0;
       if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iDirNext))) return lRC;
 
+      if (!cs.yes) printx("$[simulating:]\n");
+
       lRC = walkAllTrees(eFunc_Inst, lFiles, lDirs, nBytes);
+
+      if (!cs.yes) printx("$[add -yes to write changes.]\n");
 
       STEP_CHAIN(iDirNext, 0); // inst
 
@@ -47591,6 +47683,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "\n"
          "Once downloaded it can be used standalone,\n"
          "or combined with SFK as shown under: #\"sfk view\"<def>\n"
+         "\n"
+         "For all infos see: #http://stahlworks.com/dview/<def>\n"
          );
 
       bDone = 1;
@@ -52454,6 +52548,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              );
       printSFKMatchHelp(1, bFullHelp);
       printx("   $options\n"
+             "      -case        compare case sensitive, default is nocase.\n"
+             "                   for further options see: sfk help nocase\n"
              "      -bylist x    read /from/to/ patterns from a file x,\n"
              "                   supporting multiple lines per pattern.\n"
              "                   type sfk xrep for details.\n"
@@ -61232,6 +61328,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          #endif
          "   #sfk wtou<def>   convert UCS-2 wide character data to 8-bit UTF-8.\n"
          "   #sfk utow<def>   convert 8-bit UTF-8 data to UCS-2 wide characters.\n"
+         #ifdef _WIN32
+         "   #sfk utoa<def>   convert UTF-8 to Ansi. cannot convert characters\n"
+         "              outside your codepage.\n"
+         "   #sfk atou<def>   convert Ansi to UTF-8.\n"
+         #endif
          );
       printx("\n"
          "   $2. primitive generic reading of wide character files\n"
