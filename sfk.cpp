@@ -4,6 +4,27 @@
    StahlWorks Technologies, http://stahlworks.com/
    Provided under the BSD license.
 
+   1.6.8
+   Revision 2:
+   -  add: sfk spell, spell a phrase phonetic for
+           the telephone. sfk spell -h for help.
+   -  fix: sfk iname didn't work with global indexes.
+   Initial Release:
+   -  add: sfk index, create index files with all filenames 
+           of a folder, the whole disk, or all disks
+           for later realtime name lookup with sfk iname.
+   -  add: sfk iname, find filenames as fast as possible
+           by using index files created with sfk index.
+   -  fix: sfk open source compile: list -qarc
+           to list archive contents didn't work.
+           help text info about -arc option was
+           incorrect with many commands.
+   -  fix: sfk list -tab -size dirname: size field
+           is no longer padded with blanks.
+   -  fix: sfk list -size=n and possibly other commands
+           producing blank padded numbers: numbers were
+           always prefixed by a useless blank.
+
    1.6.7
    Revision 3:
    -  add: partcopy: support for offsets relative to
@@ -1728,8 +1749,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.6.7" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "3"
+#define SFK_VERSION  "1.6.8" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1927,10 +1948,10 @@ char *numtoa_blank(num n, int nDigits)
 {
    static char szBuf2[100];
    #ifdef _WIN32
-   sprintf(szBuf2, "% *I64d", nDigits, n);
+   sprintf(szBuf2, "%*I64d", nDigits, n); // FIX: 1674
    return szBuf2;
    #else
-   sprintf(szBuf2, "% *lld", nDigits, n);
+   sprintf(szBuf2, "%*lld", nDigits, n);  // FIX: 1674
    return szBuf2;
    #endif
 }
@@ -12242,6 +12263,86 @@ uint currentProcessID()
    #endif
 }
 
+// SFK home dir creation and filename building
+class SFKHome
+{
+public:
+      SFKHome  ( );
+
+bool
+      noHomeDir   ( );
+char
+      *makePath   (char *pszRelPath, bool bReadOnly=0),
+       // also creates required folders.
+       // returns NULL on any error.
+      *getPath    (char *pszRelPath);
+       // for readonly access.
+       // returns NULL on any error.
+
+char  szClDir     [SFK_MAX_PATH+10];
+char  szClPathBuf [SFK_MAX_PATH+10];
+};
+
+SFKHome sfkhome;
+
+SFKHome::SFKHome( )
+{
+   mclear(szClDir);
+
+   #ifdef _WIN32
+
+   char *psz = getenv("SFK_HOME");
+   if (psz) {
+      strcopy(szClDir, psz);
+      return;
+   }
+   psz = getenv("LOCALAPPDATA");
+   if (psz) {
+      snprintf(szClDir, sizeof(szClDir)-10, "%s\\.sfkhome", psz);
+      return;
+   }
+
+   #else
+
+   sprintf(szClDir, "~/.sfkhome");
+
+   #endif
+}
+
+bool SFKHome::noHomeDir()
+{
+   if (szClDir[0])
+      return 0;
+
+   perr("no SFK Home Dir exists to store or read data.");
+
+   #ifdef _WIN32
+   pinf("you may SET \"SFK_HOME=anyfolder\" to define it directly.\n");
+   pinf("you may SET \"LOCALAPPDATA=anyfolder\" to define it's parent folder.\n");
+   #endif
+
+   return 1;
+}
+
+char *SFKHome::makePath(char *pszRelPath, bool bReadOnly)
+{
+   if (noHomeDir())
+      return 0;
+
+   snprintf(szClPathBuf, sizeof(szClPathBuf)-10,
+      "%s%c%s", szClDir, glblPathChar, pszRelPath);
+
+   if (!bReadOnly && createOutDirTree(szClPathBuf))
+      return 0;
+
+   return szClPathBuf;
+}
+
+char *SFKHome::getPath(char *pszRelPath)
+{
+   return makePath(pszRelPath, 1);
+}
+
 // temporary file class, REMOVING THE FILE IN DESTRUCTOR.
 class SFTmpFile
 {
@@ -18869,9 +18970,7 @@ int execFileStat(Coi *pcoi, int lLevel, int &lFiles, int &lDirs, num &lBytes, nu
    if (pcoi->isHidden())
       cs.numHiddenFiles++;
 
-   #ifdef VFILEBASE
-   if (0) // cs.shallowzips) // else skip below
-   #endif // VFILEBASE
+   #ifndef VFILEZIP
    if (cs.travelzips) 
    {
       // char *psz1 = strrchr(pszFileName, '.');
@@ -18926,6 +19025,7 @@ int execFileStat(Coi *pcoi, int lLevel, int &lFiles, int &lDirs, num &lBytes, nu
          }
       }
    }
+   #endif
 
    // update maxtimes
    if (nFileTime > nLocalMaxTime)
@@ -24858,7 +24958,7 @@ int execDetab(char *pszFile, char *pszOutFile)
 
    delete [] pInFile;
 
-   info.setAddInfo("% 5d tabs", nTabsDone);
+   info.setAddInfo("%5d tabs", nTabsDone);
    info.printLine(1<<2);
 
    return 0;
@@ -34791,7 +34891,7 @@ int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *p
          if (cs.sim) {
             // simulating write
             info.setStatus("write", pszOutFile);
-            info.setAddInfo("% 5d changes", nReplaced);
+            info.setAddInfo("%5d changes", nReplaced);
             info.printLine(1<<2);
          } else {
             // if different output is specified, create directory structure.
@@ -34799,7 +34899,7 @@ int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *p
                if (createOutDirTree(pszOutFile))
                   return 9;
             info.setStatus("write", pszOutFile);
-            info.setAddInfo("% 5d changes", nReplaced);
+            info.setAddInfo("%5d changes", nReplaced);
             info.printLine(1<<2);
    
             FILE *fout = fopen(pszOutFile, "w");
@@ -36403,15 +36503,25 @@ int diffChainText(char *pszRefFile)
    return 0;
 }
 
-void dospell(char *pszWord)
+void dospell(char *pszWord, bool bNato)
 {
-   static const char *apsz[26] = 
+   static const char *apszMixed[26] = 
+   {
+      "Alpha", "Bravo",  "Charlie", "Delta",  "Echo",  "Foxtrot",  "Golf", "Hotel", 
+      "India", "Johnny", "King",    "London", "Mike",  "November", "Oscar", "Peter", 
+      "Queen", "Roger",  "Sierra",  "Tango",  "Union", "Victor",   "William", 
+      "X-ray", "Yankee", "Zebra"
+   };
+
+   static const char *apszNato[26] = 
    {
       "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", 
       "India", "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa", 
       "Quebec", "Romeo", "Sierra", "Tango", "Uniform", "Victor", "Whisky", 
       "X-ray", "Yankee", "Zulu"
    };
+
+   const char **apsz = bNato ? apszNato : apszMixed;
 
    char szBuf[20];
 
@@ -36600,6 +36710,116 @@ int execWGet(Coi *psrc, char *pDstDir, uint nmode)
    return 0;
 }
 #endif // VFILENET
+
+void reduceToPath(char *psz)
+{
+   int iLen = strlen(psz);
+
+   if (iLen > 1 && psz[iLen-1] == glblPathChar)
+      return; // is a path already
+
+   // FROM F:\\mydir\\zz-index.txt
+   // TO   F:\\mydir\\
+   // FROM 
+   while (iLen > 1 && psz[iLen-1] != glblPathChar) {
+      psz[iLen-1] = '\0';
+      iLen--;
+   }
+}
+
+// rc  0: invalid
+// rc >0: length of headline
+int validIndexFormat(char *pszText, char *pszFilename)
+{
+   // headline must contain: {TAB}name{TAB}sfk-index-
+   char *pszHeadStart = pszText;
+   char *pszHeadEnd   = strchr(pszHeadStart, '\n');
+   char *pszHeadForm  = strstr(pszHeadStart, "\tname\tsfk-index-");
+   if (pszHeadForm==0 || pszHeadEnd==0 || pszHeadForm>pszHeadEnd) {
+      pwarn("invalid index format, skipping: %s\n", pszFilename);
+      pinf("index files must contain a headline with {tab}name{tab}sfk-index-\n");
+      return 0;
+   }
+   return pszHeadEnd - pszHeadStart;
+}
+
+int makeINameResultLine(char *pszText, char *pszAttr, int iMask, bool bTabs, int iDigits)
+{
+   // from: date{tab}time{tab}size{tab}name
+   // to  : date time name
+   szLineBuf[0] = '\0';
+   szAttrBuf[0] = '\0';
+
+   char *pdstt = szLineBuf;
+   char *pdsta = szAttrBuf;
+   char *pmaxt = szLineBuf + MAX_LINE_LEN;
+   char *pmaxa = szAttrBuf + MAX_LINE_LEN;
+
+   char *pcol  = pszText;
+   char *pnex  = 0;
+   char  csep  = bTabs ? '\t':' ';
+   bool  bname = 0;
+
+   for (int icol=0; *pcol; icol++)
+   {
+      if (!(pnex = strchr(pcol, '\t'))) {
+         pnex = pcol + strlen(pcol);
+         bname = 1;
+      }
+
+      int ilen = pnex - pcol;
+
+      if (*pnex)
+         pnex++;
+
+      if (!bname && !(iMask & (1U << icol))) {
+         pcol = pnex;
+         continue;
+      }
+
+      if (icol==2 && bTabs==0) 
+      {
+         // reformat size field
+         num nSize = atonum(pcol);
+         char *psz = numtoa_blank(nSize, iDigits);
+         ilen = strlen(psz);
+         if (pdstt+ilen > pmaxt) return 12;
+         memcpy(pdstt, psz, ilen);
+         pdstt += ilen;
+         *pdstt++ = csep;
+         if (pszAttr) {
+            if (pdsta+ilen > pmaxa) return 12;
+            memset(pdsta, ' ', ilen+1);
+            pdsta += ilen+1;
+         }
+      }
+      else
+      {
+         // copy all other fields as is
+         if (pdstt+ilen > pmaxt)
+            return 11; // overflow
+   
+         memcpy(pdstt, pcol, ilen);
+         pdstt += ilen;
+         *pdstt++ = csep;
+   
+         if (pszAttr) {
+            if (pdsta+ilen > pmaxa)
+               return 11; // overflow
+            memcpy(pdsta, pszAttr+(pcol-pszText), ilen);
+            pdsta += ilen;
+            *pdsta++ = ' ';
+         }
+      }
+
+      pcol = pnex;
+   }
+
+   *pdstt = '\0';
+   *pdsta = '\0';
+   
+   return 0;
+}
 
 class CharAutoRestore {
 public:
@@ -37218,13 +37438,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -allowdups disable detection of duplicate dir contents.\n"
              #endif
              "      -arc       list contents of .zip .jar .ear etc. archives\n"
-             #ifdef VFILEBASE
-             "                 and also .gz, .bz2, .tar, .tar.gz and .tar.bz2\n"
-             "                 as deep as possible, including nested archives.\n"
-             "                 type \"sfk help opt\" for supported file extensions.\n"
-             "      -qarc      quick list archives, lists only archive entries\n"
-             "                 at the top level, skipping nested archives.\n"
-             #endif // VFILEBASE
              "      -sort[=n]  sort by name, list all or last n files\n"
              "      -sortrev   sort by name, in reverse order\n"
              "      -late[=n]  sort by time, list latest   [n] files last\n"
@@ -37367,7 +37580,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk larc src.zip +view\n"
              "         show content listing of zip file src.zip in Depeche View,\n"
              "         to search filenames interactively (\"sfk view\" for details).\n"
-             #endif
+             #endif // VFILEBASE
              "      #sfk list <nofo>. >lslr\n"
              "         list files of the current directory and all subdirectories into\n"
              "         an index text file \"lslr\" (named after the unix command \"ls -lR\").\n"
@@ -37380,16 +37593,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         instead of \">lslrx\" redirection allows you to see a progress info.\n"
              "         doing this in a root dir like C:\\ may produce a filename listing\n"
              "         of several hundred MB in size.\n"
-             #ifdef VFILEBASE
-             "      #sfk list <nofo>-hidden -arc -tofile lslrxl .\n"
-             "         produce an ultimate file listing, including hidden and system files,\n"
-             "         .zip and .jar contents, .tar, tar.gz and tar.bz2 contents, as well\n"
-             "         as archive contents embedded within archives, like .class files\n"
-             "         embedded within .jar files within a .tar.bz2 archive. running this\n"
-             "         command in a root dir like C:\\ may take some hours, and it may\n"
-             "         produce a 1 GB or more file listing, so make sure there is enough\n"
-             "         disk space.\n"
-             #endif
              );
       ehelp;
 
@@ -37650,6 +37853,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          else
          if (strBegins(argv[iDir], "-tab")) {
             cs.listTabs = 1;
+            nGlblListDigits = 1; // FIX: 1674
          }
          else
          if (strBegins(argv[iDir], "-nofile")) {
@@ -37959,6 +38163,290 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       // step to next chain command (if any),
       // and copy filenames from chainfiles2 to chainfiles.
       STEP_CHAIN(iDirNext, 1);
+
+      bDone = 1;
+   }
+
+   ifcmd (   !strcmp(pszCmd, "gindex")  || !strcmp(pszCmd, "gindex2")
+          || !strcmp(pszCmd, "lindex")  || !strcmp(pszCmd, "index")
+         )
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk gindex[2] [opts] -dir rootDir [rootDir2] ...\n"
+             "<help>$sfk lindex [opts] -dir localDir ...\n"
+             "\n"
+             "   create index file(s) containing file names with time\n"
+             "   and size info, for later realtime filename lookup,\n"
+             "   or just to archive folder meta data.\n"
+             "\n"
+             "   $creating index files for use with sfk iname<def>\n"
+             "\n"
+             "    to create a $local index of the current directory tree<def>, use\n"
+             "      #sfk lindex .\n"
+             "         which writes a local file $zz-index.txt<def>\n"
+             "\n"
+             "    to create a $global index of the current machine<def>, use\n"
+             "      #sfk gindex -dir C:\\ D:\\\n"
+             "         which stores a base index file in your user folder:\n"
+             "         %s<sla>data<sla>zz-index.txt\n"
+             "\n"
+             "    to create an $extended global index<def> of network drives, use\n"
+             "      #sfk gindex2 -dir T:\\ P:\\ V:\\\n"
+             "         if drives T, P, V are network drives. this will write\n"
+             "         an extended index file in a user local folder:\n"
+             "         %s<sla>data<sla>zz-index-ext.txt\n"
+             , sfkhome.szClDir
+             , sfkhome.szClDir
+             );
+      printx("\n"
+             "    in other words:\n"
+             "\n"
+             "      $sfk lindex<def> writes an index locally onto the disk\n"
+             "         where you are standing, $visible for all users<def>.\n"
+             "         this is useful 1. under linux in the root dir \"/\"\n"
+             "         to make an index of all files available for all users\n"
+             "         2. on external media like USB hard drives, where an\n"
+             "         index in the drive root can be used on any machine.\n"
+             "\n"
+             "      $sfk gindex<def> is your $personal global index<def> of whatever\n"
+             "         disk contents are important for you, $not for use<def>\n"
+             "         $by other users<def>, and maintained only by yourself.\n"
+             );
+      printx("\n"
+             "   $creating special purpose meta data archives<def>\n"
+             "\n"
+             "    to create a $local index of a sub folder \"mydir\"<def>, use\n"
+             "      #sfk lindex mydir\n"
+             "         which writes a file $zz-index-mydir.txt<def>. this file\n"
+             "         can $NOT<def> be used with $sfk iname<def>. it's just an archive\n"
+             "         of file meta informations for that sub folder.\n"
+             );
+      printx("\n"
+             "   $using indexes for fast name lookup\n"
+             "\n"
+             "       #sfk iname word [word2] [word3] [...]\n"
+             "         will use local index files:\n"
+             "            - in the current folder\n"
+             "            - in the parent folder\n"
+             "            - and so on, until the root folder \"<sla>\"\n"
+             "            - and also the global Base Index file\n"
+             "         and then lists all file names from those indexes\n"
+             "         having the given words in their name or path.\n"
+             "\n"
+             "       #sfk iname2 word [word2] [word3] [...]\n"
+             "         does the same as iname, but also includes\n"
+             "         the global Extended Index file.\n"
+             "\n"
+             "   $sfk index options\n"
+             "      -tofile f  write output into a file f instead of the\n"
+             "                 default index file. can be used then with\n"
+             "                 \"sfk iname -from f ...\"\n"
+             #if (!defined(_WIN32) && !defined(SFK_LIB5))
+             "      -follow    follows symbolic directory links. this is\n"
+             "                 no default as it may cause endless recursion.\n"
+             #endif
+             #ifdef _WIN32     
+             "      -hidden    list also hidden or system files\n"
+             #endif
+             #ifndef _WIN32
+             "      -verbose   show names of skipped non-regular files\n"
+             "      -showskip  tell whenever dir contents are skipped to avoid\n"
+             "                 double processing caused by symbolic links.\n"
+             "      -allowdups disable detection of duplicate dir contents.\n"
+             #endif
+             "      -arc       include contents of .zip .jar .ear etc. archives\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk iname<def>       lookup files in local and Base Indexes\n"
+             "      #sfk iname2<def>      lookup in local, Base and Extended Index\n"
+             "      #sfk help select<def> the sfk file selection syntax.\n"
+             "      #sfk help opt<def>    for further general options.\n"
+             "      #sfk dir<def>         list contents of a directory.\n"   
+             "\n"
+             "   $examples\n"
+             #ifdef _WIN32
+             "      #sfk gindex C:\\\n"
+             "          create a global Base Index containing all file names\n"
+             "          from drive C: using a short syntax.\n"
+             "      #sfk gindex C:\\ <not>.tmp <not>.bak\n"
+             "          the same, but excluding all .tmp and .bak files.\n"
+             "          to include another drive letter in the index,\n"
+             "          the long syntax must be used:\n"
+             "      #sfk gindex -dir C:\\ D:\\ -subdir !tmp -file !.bak\n"
+             "          create Base Index of C: and D: without any sub\n"
+             "          dirs having tmp in their name, and w/o .bak files.\n"
+             "      #sfk gindex2 -dir P:\\ W:\\\n"
+             "          if P: and W: are network drives, this creates\n"
+             "          an Extended Index file with their contents.\n"
+             #else
+             "      #sfk gindex /\n"
+             "          create a base index containing all file names\n"
+             "          from the machine.\n"
+             "      #sfk gindex -dir / -subdir :tmp -file :.bak\n"
+             "          create an index of / without any sub dirs\n"
+             "          having tmp in their name, and without .bak files.\n"
+             #endif
+             "      #sfk lindex .\n"
+             "          if standing in the root dir of an exernal hard drive,\n"
+             "          this will write a local index file for that drive,\n"
+             "          which can later be used on another machine by typing\n"
+             "          $sfk iname<def> while working on that drive.\n"
+             , sfkhome.szClDir
+             );
+      ehelp;
+
+      if (!strcmp(pszCmd, "index"))
+         return 0;
+
+      cs.travelzips = 0;
+      nGlblListMode = 2;
+      cs.listByTime = 0;
+      cs.listBySize = 0;
+      cs.listByName = 0;
+      cs.listForm   = 0;
+      cs.listTabs   = 1;
+      nGlblListDigits = 1;
+      bool bGlobal  = (pszCmd[0] == 'g') ? 1 : 0;
+
+      glblFileSet.reset();
+
+      bool bExt = !strcmp(pszCmd, "gindex2") ? 1 : 0;
+      bool bTime=1, bSize=0, bPure=0;
+      char *toFileName = 0;
+
+      // at least list time and size
+      cs.listForm = ((cs.listForm << 8) | 0x02);
+      cs.listForm = ((cs.listForm << 8) | 0x01);
+
+      // linux: don't follow symlinks
+      cs.skipLinks = 1;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++) 
+      {
+         char *pszArg = argv[iDir];
+         if (!strcmp(pszArg, "-ext")) {
+            bExt = 1;
+            continue;
+         }
+         else if (!strcmp(pszArg, "-follow")) {
+            cs.skipLinks = 0;
+            continue;
+         }
+         else
+         if (!strncmp(argv[iDir], "-size=", strlen("-size="))) {
+            char *psz1 = argv[iDir] + strlen("-size=");
+            nGlblListDigits = atol(psz1);
+         }
+         else
+         #ifdef VFILEBASE
+         if (!strcmp(argv[iDir], "-qarc")) {
+            cs.travelzips  = 1;
+            cs.xelike      = 1;
+            cs.shallowzips = 1;  // toplevel only
+         }
+         else
+         #endif // VFILEBASE
+         if (!strcmp(argv[iDir], "-qarc")) {
+            cs.travelzips  = 1;
+         }
+         else
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         else
+         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         break; // assume dir name
+      }
+
+      int iDirNext = 0;
+      if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext))) return lRC;
+      if (btest) return 0;
+
+      char szRelName[SFK_MAX_PATH+10];
+
+      if (bGlobal) {
+         sprintf(szRelName, "data%czz-index%s.txt", glblPathChar, bExt ? "-ext" : "");
+         toFileName = sfkhome.makePath(szRelName);
+      }
+      else if (cs.tomaskfile) {
+         toFileName = cs.tomask;
+      }
+      else {
+         if (!glblFileSet.hasRoot(0))
+            return 9+perr("missing -dir parameter");
+         char *pszFirstRoot = glblFileSet.setCurrentRoot(0);
+         if (   !strcmp(pszFirstRoot, glblPathStr)
+             || !strcmp(pszFirstRoot, ".")
+            )
+         {
+            toFileName = str("zz-index.txt");
+         }
+         else {
+            if (strchr(pszFirstRoot, glblPathChar)) {
+               perr("cannot lindex nested directory names.", glblPathChar);
+               pinf("use only plain dir names of the current folder.\n");
+               return 9;
+            }
+            snprintf(szRelName, sizeof(szRelName)-10,
+               "zz-index-%s.txt", pszFirstRoot);
+               toFileName = szRelName;
+         }
+      }
+
+      if (!cs.quiet && !cs.tomaskfile)
+         printx("$making<def> %s\n", toFileName);
+
+      if (!(cs.outfile = fopen(toFileName, "w")))
+         return 9+perr("cannot open index file for writing: %s", toFileName);
+
+      fprintf(cs.outfile, "date\ttime\tsize\tname\tsfk-index-v100\n");
+
+      lRC = walkAllTrees(eFunc_FileStat, lFiles, lDirs, nBytes);
+
+      if (cs.outfile) { fclose(cs.outfile); cs.outfile = 0; }
+
+      info.clear();
+
+      if (!cs.quiet) 
+      {
+         printf("%d files indexed",cs.files);
+
+         if (cs.numHiddenFiles) {
+            printf(", ");
+            setTextColor(nGlblWarnColor, 1);
+            printf("including %d hidden files.\n", cs.numHiddenFiles);
+            setTextColor(-1);
+         }
+         else
+         if (cs.numHiddenFilesSkipped || cs.numHiddenDirsSkipped) {
+            printf(".\n");
+            setTextColor(nGlblWarnColor, 1);
+            printf("skipped %d hidden files, %d hidden dirs.\n", cs.numHiddenFilesSkipped, cs.numHiddenDirsSkipped);
+            setTextColor(-1);
+         }
+         else {
+            printf(".\n");
+         }
+
+         if (cs.noFiles)
+            printf("%u non-regular files skipped. (add -verbose to show)\n", cs.noFiles);
+      }
+
+      if (iChainNext) {
+         if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
 
       bDone = 1;
    }
@@ -38660,10 +39148,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                   all into a text file, then use that. for more infos,\n"
              "                   type \"sfk help fileset\".\n"
              );
-             #ifdef VFILEBASE
-      if (cs.xelike)
-      printx("       -arc        include content of .zip .jar .tar etc. archives.\n");
-             #endif // VFILEBASE
              #ifdef _WIN32
       printx("       -hidden     include hidden and system files (not default).\n");
              #endif
@@ -39569,10 +40053,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "    chars to be listed as a hit.\n"
              "\n"
              "    $options\n");
-             #ifdef VFILEBASE
-      if (cs.xelike)
-      printx("    -arc      include content of .zip .jar .tar etc. archives.\n");
-             #endif // VFILEBASE
       printx("    -text     process only text files, skip all binary files.\n"
              "              finds patterns also over long lines, avoiding line breaks.\n" 
              "    -bin      do not autodetect file content, process all as binary.\n"
@@ -39784,38 +40264,165 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (!strcmp(pszCmd, "x"))
+   ifcmd (!strcmp(pszCmd, "home"))
+   {
+      ifhelp (    (iDir < argc) 
+               && (!strncmp(argv[iDir], "-h", 2) || !strcmp(argv[iDir], "/?"))
+             )
+      printx("<help>$sfk home\n"
+             "\n"
+             "   tells the location of the SFK Home folder\n"
+             "   for configuration and data storage.\n"
+             );
+      ehelp;
+
+      printf("%s\n", sfkhome.szClDir);
+
+      bDone = 1;
+   }
+
+   ifcmd (   strBegins(pszCmd, "iname")
+          || strBegins(pszCmd, "gname")
+          || strBegins(pszCmd, "lname")
+          || !strcmp(pszCmd, "x")
+          || !strcmp(pszCmd, "x2")
+         )
    {
       ifhelp (nparm < 1)
-      /*
-      printx("<help>$sfk cmd ...\n"
+      printx("<help>$sfk iname[2] word [word2] [<not>exclude] [.ext]\n"
              "\n"
-             "   summary\n"
+             "   find filenames as fast as possible by using\n"
+             "   index files created by $sfk lindex<def> or $gindex<def>.\n"
+             "\n"
+             "   $sfk iname word [word2] [word3] [...]\n"
+             "     will use local index files $zz-index.txt\n"
+             "        - in the current folder\n"
+             "        - in the parent folder\n"
+             "        - and so on, until the root folder \"<sla>\"\n"
+             "     and also the global Base Index file from\n"
+             "     %s\n"
+             "     and then lists all file names from those indexes\n"
+             "     having the given words in their name or path.\n"
+             "\n"
+             , sfkhome.szClDir
+             );
+      printx("   $sfk iname2 word [word2] [word3] [...]\n"
+             "     does the same as iname, but also includes\n"
+             "     the global Extended Index file.\n"
+             "\n"
+             "   $sfk gname<def> uses only the global index.\n"
+             "   $sfk lname<def> uses only local index files.\n"
+             "\n"
+             "   $pattern syntax\n"
+             "    - just type up to 10 words that must be contained\n"
+             "      somehere in the file name or it's path. the words\n"
+             "      are AND combined. the sequence is ignored.\n"
+             #ifdef _WIN32
+             "    - words starting with ! or : will exclude any file\n"
+             #else
+             "    - words starting with <not> will exclude any file\n"
+             #endif
+             "      having the word in it's name.\n"
+             "    - words starting with \".\" are a file extension and\n"
+             "      must appear only at the END of a file name, or be\n"
+             "      followed in the filename by another \".\"\n"
+             "      like \".so\" in foobar.so.1.2.3\n"
              "\n"
              "   $options\n"
-             "      -opt1     text1\n"
+             "      -size     include size info in result\n"
+             "      -size=n   pad size info to n characters\n"
+             "      -tab      create tab separated output\n"
              "\n"
-             "   $pattern support\n"
-             "   $command chaining\n"
-             "   $see also\n"
+             "   $output sorting\n"
+             "      output is always sorted by $file modification time<def>,\n"
+             "      listing the $most recent files<def> at the list bottom.\n"
              "\n"
-             "   $examples\n"
-             "      #examp1\n"
-             "         explanation1\n"
+             "   $chaining support\n"
+             "      output chaining is supported.\n"
+             "\n"
+             );
+      /*
+      printx("   $aliases\n"
+             "      #sfk x<def>  is the same as $sfk iname<def>\n"
+             "      #sfk x2<def> is the same as $sfk iname2<def>\n"
+             "\n"
              );
       */
+      printx("   $see also\n"
+             "      #sfk gindex<def>   - create global index file(s)\n"
+             "      #sfk lindex<def>   - create local  index file(s)\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk iname .pdf\n"
+             "         lists all PDF files in the Base Index.\n"
+             "      #sfk iname part 2391 datasheet .pdf\n"
+             "         lists all PDF files in the Base Index having\n"
+             "         the words \"part\", \"2391\" and \"datasheet\"\n"
+             "         somewhere in their name, for example:\n"
+             "            C:\\documentation\\datasheets\\parts\\2391.pdf\n"
+             "            C:\\server2391beta\\subparts\\datasheet.pdf\n"
+          // "      #sfk x part 2391 datasheet .pdf\n"
+          // "         the same as above, but faster to type.\n"
+             "      #sfk iname2 part 2391 datasheet .pdf\n"
+             "         the same, but may list further results also\n"
+             "         from the extended index, for example:\n"
+             "            Z:\\public\\docs\\part-2391\\datasheet-03.pdf.old\n"
+             );
+      printx("      #sfk iname .hpp +find class tree\n"
+             "         search all .hpp header files from the index\n"
+             "         for the words \"class\" and \"tree\".\n"
+             "      #sfk iname tree .hpp +fview\n"
+             "         load and view all .hpp files having \"tree\"\n"
+             "         in their name or path. (\"sfk view\" for more)\n"
+             );
       ehelp;
+
+      bool bExt = 0;
+      if (strstr(pszCmd, "name2"))  bExt = 1;
+      if (!strcmp(pszCmd, "x2"))    bExt = 1;
+
+      int iStartState=1;
+      int iMaxState=3;
+      if (strstr(pszCmd, "gname"))  iStartState = 2;
+      if (strstr(pszCmd, "lname"))  iMaxState = 2;
 
       int  iMaxPat=10;
       char aIncPat[10+2][100]; mclear(aIncPat);
       char aExPat[10+2][100];  mclear(aExPat);
       char aExt[10+2][100];    mclear(aExt);
       int iIncPat=0,iExPat=0,iExt=0;
+      bool bKeepTabs=0;
+      int iOutMask=1+2; // name is always included
+      int idig=12;
+      char *pszIdxFile1=0, *pszIdxFile2=0;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++) 
       {
          char *pszArg  = argv[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argv, argc, iDir, "-from", &pszParm)) {
+            if (!pszParm) return 9;
+            pszIdxFile1 = pszParm;
+            continue;
+         }
+         else
+         if (strBegins(pszArg, "-tab")) {
+            bKeepTabs = 1;
+            continue;
+         }
+         else
+         if (strBegins(pszArg, "-size=")) {
+            iOutMask += 4;
+            idig = atoi(pszArg+6);
+            continue;
+         }
+         else
+         if (strBegins(pszArg, "-size")) {
+            iOutMask += 4;
+            continue;
+         }
+         else
          if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(pszArg))
                break; // fall through
@@ -39827,14 +40434,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          else
          if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
             break;
+
          // process non-option keywords:
-         switch (pszArg[0]) 
-         {
-            case '!': strcopy(aExPat[iExPat]  , pszArg+1); glblNoCase.setStringToLower(aExPat[iExPat])  ; iExPat++;  break;
-            case '.': strcopy(aExt[iExt]      , pszArg  ); glblNoCase.setStringToLower(aExt[iExt])      ; iExt++;    break;
-            default : strcopy(aIncPat[iIncPat], pszArg  ); glblNoCase.setStringToLower(aIncPat[iIncPat]); iIncPat++; break;
-         }
-         if (iExPat  >= iMaxPat) return 9+perr("too many ! patterns\n");
+         if (pszArg[0] == '!' || pszArg[0] == glblNotChar)
+            { strcopy(aExPat[iExPat], pszArg+1); glblNoCase.setStringToLower(aExPat[iExPat]); iExPat++; }
+         else
+         if (pszArg[0] == '.')
+            { strcopy(aExt[iExt]    , pszArg  ); glblNoCase.setStringToLower(aExt[iExt])    ; iExt++; }
+         else
+            { strcopy(aIncPat[iIncPat], pszArg); glblNoCase.setStringToLower(aIncPat[iIncPat]); iIncPat++; }
+
+         if (iExPat  >= iMaxPat) return 9+perr("too many %c exclusion patterns\n", pszArg[0]);
          if (iExt    >= iMaxPat) return 9+perr("too many file types\n");
          if (iIncPat >= iMaxPat) return 9+perr("too many patterns\n");
       }
@@ -39847,29 +40457,160 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       num nStartTime = getCurrentTime();
       int iHits = 0;
 
-      char szFile[SFK_MAX_PATH+10];
-      num nFileSize = 0;
+      char szPathBuf1[SFK_MAX_PATH+10];
+      char szPathBuf2[SFK_MAX_PATH+10];
+      char szHeadBuf[1024+100];
 
-      sprintf(szFile, "%clslr", glblPathChar);
-      char *pIndexOrg = (char*)loadBinaryFile(szFile, nFileSize);
-      if (!pIndexOrg)
-         return 9+perr("index file not found: %s\n", szFile);
-      // loadBinaryFile guarantees zero termination
+      char aInFile[10][SFK_MAX_PATH+10];
+      num  aMaxOff[10];
+      int  nInFiles=0;
+      num  nCurOff=0;
+      mclear(aInFile);
+      mclear(aMaxOff);
 
-      // if (!isAbsolutePath(pIndexOrg)) {
-      //    delete [] pIndexOrg;
-      //    perr("%s does not contain absolute paths. create like:\n", szFile);
-      //    pinf("[nopre] sfk list -time -tofile lslr -dir C:\\\n");
-      //    return 9;
-      // }
+      int bIsDir=0,b2=0,b3=0;
+      num nFileSize=0,nFileTime=0;
+
+      // pass 1
+      num nTotalSize = 0;
+      
+      // pass 2
+      char *pIndexOrg = 0;
+      num nReadCursor = 0;
+
+      // pass 0 finds all base     indexes with their size.
+      // pass 1 finds all extended indexes with their size.
+      // pass 2 loads all base     indexes.
+      // pass 3 loads all extended indexes.
+      for (int ipass=0; ipass<4; ipass++)
+      {
+         if (ipass == 2)
+            if (!(pIndexOrg = new char[nTotalSize+100]))
+               return 9+perr("out of memory");
+
+         bool bExtPass = (ipass & 1) ? 1 : 0;
+
+         if (bExt == 0 && bExtPass == 1)
+            continue;
+
+         if (!getcwd(szPathBuf1,sizeof(szPathBuf1)-10))
+            return 9+perr("cannot get work dir.");
+
+         int iState = iStartState;
+
+         while (iState<iMaxState)
+         {
+            int iLen = strlen(szPathBuf1);
+            if (iState==1) {
+               const char *psla = (iLen > 0 && szPathBuf1[iLen-1] != glblPathChar) ? glblPathStr : "";
+               snprintf(szPathBuf2, sizeof(szPathBuf2)-10,
+                  "%s%szz-index%s.txt", szPathBuf1, psla, bExtPass ? "-ext" : "");
+            } else if (iState==2) {
+               sprintf(szPathBuf1, "data%szz-index%s.txt", glblPathStr, bExtPass ? "-ext" : "");
+               char *psz = sfkhome.getPath(szPathBuf1);
+               if (!psz) break;
+               strcopy(szPathBuf2, psz);
+            }
+
+            // check if current filename exists
+            if (getFileStat(szPathBuf2, bIsDir,b2,b3, nFileTime,nFileSize))
+            {
+               if (cs.verbose!=0 && ipass<2)
+                  pinf("[nopre] noidx: %s\n", szPathBuf2);
+            }
+            else
+            do
+            {
+               if (bIsDir)
+                  break;
+                  
+               // check for valid index format
+               int iHeadLen = 0;
+
+               // read header
+               {
+                  FILE *fin = fopen(szPathBuf2, "rb");
+                  if (!fin) break;
+                  mclear(szHeadBuf);
+                  myfread((uchar*)szHeadBuf, sizeof(szHeadBuf)-100, fin);
+                  fclose(fin);
+                  iHeadLen = validIndexFormat(szHeadBuf, szPathBuf2);
+                  if (iHeadLen <= 0)
+                     break;
+               }
+
+               // found a valid input file
+               if (ipass < 2)
+               {
+                  // remember path and memory offset
+                  strcopy(aInFile[nInFiles], szPathBuf2);
+                  reduceToPath(aInFile[nInFiles]);
+                  aMaxOff[nInFiles] = nCurOff+nFileSize;
+                  nCurOff += nFileSize;
+                  nInFiles++;
+
+                  // count only sizes
+                  nTotalSize += nFileSize;
+                  break;
+               }
+
+               pinf("[nopre] using: %s\n", szPathBuf2);
+
+               // load/append index
+               {
+                  FILE *fin = fopen(szPathBuf2, "rb");
+                  if (!fin) return 9+perr("cannot open: %s\n", szPathBuf2);
+                  myfread((uchar*)pIndexOrg+nReadCursor, nFileSize, fin);
+                  fclose(fin);
+                  memset(pIndexOrg+nReadCursor, ' ', iHeadLen);
+                  nReadCursor += nFileSize;
+               }
+            }
+            while (0);
+
+            if (iState==1) {
+               // step to next higher directory
+               // /home/
+               int iLen = strlen(szPathBuf1);
+               int iOldLen = iLen;
+               if (iLen > 1 && szPathBuf1[iLen-1] == glblPathChar) {
+                  szPathBuf1[iLen-1] = '\0'; // safety
+                  iLen--;
+               }
+               while (iLen > 0 && szPathBuf1[iLen-1] != glblPathChar) {
+                  szPathBuf1[iLen-1] = '\0';
+                  iLen--;
+               }
+               // F: or /
+               if (iLen == iOldLen || !strchr(szPathBuf1, glblPathChar))
+                  iState++;
+            } else {
+               iState++;
+            }
+         }  // endwhile state
+      }  // endfor pass
+
+      // plausi check: search end marker (in tolerance area)
+      strcpy(pIndexOrg+nTotalSize, ":sfk-internal-memory-end-marker:");
+      char *psz = strstr(pIndexOrg, ":sfk-internal-memory-end-marker:");
+      if (!psz) {
+         delete [] pIndexOrg;
+         return 9+perr("index data check failed, files may contain zero bytes.");
+      }
+      pIndexOrg[nTotalSize] = '\0';
+
+      CharAutoDel odel1(pIndexOrg);
 
       char *pIndexFlat = strdup(pIndexOrg);
       if (!pIndexFlat)
          return 9+perr("out of memory\n");
+
+      CharAutoDel odel2(pIndexFlat);
+
       glblNoCase.setStringToLower(pIndexFlat);
 
       char *pszCur = pIndexFlat;
-      char *pszMax = pIndexFlat + nFileSize;
+      char *pszMax = pIndexFlat + nTotalSize; // nFileSize1 + nFileSize2;
       while (pszCur < pszMax && *pszCur != 0)
       {
          char *pszRaw = strstr(pszCur, aIncPat[0]);
@@ -39939,45 +40680,126 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
             // THEN found a match
             iHits++;
-            char *pszOrg = (pszRow - pIndexFlat) + pIndexOrg;
+            num nMemOff  = pszRow - pIndexFlat;
+            char *pszOrg = nMemOff + pIndexOrg;
+
             // isolate line in original data
             int ilen = (int)strlen(pszRow);
             pszOrg[ilen] = '\0';
-            // add sorted by line prefix, usually file time
-            oResults.put(pszOrg, buseattr ? szAttrBuf : 0);
-            // chain.print("%.*s\n", (int)strlen(pszRow), pszOrg);
+
+            // isolate result path
+            char *pszResPath = strrchr(pszOrg, '\t');
+            if (!pszResPath)
+               return 9+perr("missing tab format in index file(s)");
+            pszResPath++;
+
+            // if it starts absolute
+            if (isAbsolutePath(pszResPath))
+            {
+               // then take as is
+               oResults.put(pszOrg, buseattr ? szAttrBuf : 0);
+            }
+            else
+            {
+               // °°build absolute result path
+
+               // find InFile index
+               int iInFile=0;
+               for (; iInFile<nInFiles; iInFile++)
+                  if (nMemOff < aMaxOff[iInFile])
+                     break;
+               if (iInFile >= nInFiles)
+                  return 9+perr("internal #213731");
+                  
+               // infile : C:\\projects\\zz-index.txt
+               // relname: fooproj\\file1.txt
+               strcopy(szLineBuf, aInFile[iInFile]);
+               reduceToPath(szLineBuf);
+
+               char *pAbsPart = szLineBuf;
+               int   iAbsPart = strlen(pAbsPart);
+               char *pRelPart = pszResPath;
+               int   iRelPart = strlen(pRelPart);
+               int   iRelOff  = pszResPath - pszOrg;
+               char *pMetaTxt = pszOrg;
+               int   iMetaTxt = pszResPath - pszOrg;
+
+               char *pLineMax = szLineBuf2 + MAX_LINE_LEN;
+
+               do
+               {
+                  // 1. copy meta data part
+                  int   iDst = 0;
+                  if (szLineBuf2+iDst+iMetaTxt > pLineMax)
+                     { pwarn("overflow.1\n"); break; }
+                  memcpy(szLineBuf2+iDst, pMetaTxt , iMetaTxt);
+                  memcpy(szAttrBuf2+iDst, szAttrBuf, iMetaTxt);
+                  iDst += iMetaTxt;
+   
+                  // 2. °°copy absolute path part with slash
+                  if (szLineBuf2+iDst+iAbsPart > pLineMax)
+                     { pwarn("overflow.2\n"); break; }
+                  memcpy(szLineBuf2+iDst, pAbsPart , iAbsPart);
+                  memset(szAttrBuf2+iDst, ' '      , iAbsPart);
+                  iDst += iAbsPart;
+   
+                  // 3. add relative part without slash
+                  if (pRelPart[0]=='.' && pRelPart[1]==glblPathChar) {
+                     pRelPart+=2;
+                     iRelPart-=2;
+                     iRelOff +=2;
+                  }
+                  else
+                  if (*pRelPart == glblPathChar) {
+                     pRelPart++;
+                     iRelPart--;
+                     iRelOff++;
+                  }
+                  if (szLineBuf2+iDst+iRelPart > pLineMax)
+                     { pwarn("overflow.3\n"); break; }
+                  if (iRelOff+iRelPart > MAX_LINE_LEN)
+                     { pwarn("overflow.4\n"); break; }
+                  memcpy(szLineBuf2+iDst, pRelPart, iRelPart);
+                  memcpy(szAttrBuf2+iDst, szAttrBuf+iRelOff, iRelPart);
+                  iDst += iRelPart;
+   
+                  szLineBuf2[iDst] = '\0';
+                  szAttrBuf2[iDst] = '\0';
+   
+                  oResults.put(szLineBuf2, szAttrBuf2);
+               }
+               while (0);
+            }
          }
          while (0);
 
          pszCur = pszEnd;
       }
 
-      delete [] pIndexFlat;
-      delete [] pIndexOrg;
+      odel1.deleteNow();
+      odel2.deleteNow();
 
       for (int i=0; i<oResults.size(); i++)
       {
          char *pszRow  = 0;
          char *pszAttr = 0;
          pszAttr = oResults.iget(i, &pszRow);
-         if (pszRow && pszAttr) {
+         if (!pszRow)
+            continue;
+         if (pszAttr) {
             if (iChainNext) {
-               // chain.addLine(pszRow, pszAttr);
-               // 2004-12-21 01:42:30 C:\filename.txt
-               // 012345678901234567890
-               char *pszFile = pszRow;
-               char *p = pszRow;
-               if (   isdigit(p[0]) && isdigit(p[1]) && isdigit(p[2]) && isdigit(p[3])
-                   && isdigit(p[5]) && isdigit(p[6]) && isdigit(p[8]) && isdigit(p[9])
-                   && isdigit(p[11]) && isdigit(p[12]) && isdigit(p[14]) && isdigit(p[15])
-                   && isdigit(p[17]) && isdigit(p[18])
-                   && p[4]=='-' && p[7]=='-' && p[10]==' '
-                   && p[13]==':' && p[16]==':' && p[19]==' '
-                  )
-                  pszFile = pszRow + 20;
+               // 2004-12-21 01:42:30{TAB}12345{TAB}C:\filename.txt
+               // 2004-12-21 01:42:30{TAB}12345{TAB}localdir\file1.txt
+               // just take rightmost TAB column
+               char *pszFile = strrchr(pszRow, '\t');
+               if (!pszFile)
+                  return 9+perr("index file has wrong format (not tab separated).");
+               pszFile++;
                // identify absolute root part
                char szRoot[20];
+               // default root: "/"
                strcpy(szRoot, glblPathStr);
+               // windows root: "C:\\" etc.
                if (pszFile[1]==':' && pszFile[2]==glblPathChar) {
                   memcpy(szRoot, pszFile, 3);
                   szRoot[3] = '\0';
@@ -39986,12 +40808,18 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                chain.addFile(ocoi);
             }
             else {
-               printColorText(pszRow, pszAttr, 1);
+               if (makeINameResultLine(pszRow, pszAttr, iOutMask, bKeepTabs, idig))
+                  pwarn("output overflow while processing: %s\n", pszRow);
+               else
+                  printColorText(szLineBuf, szAttrBuf, 1);
             }
          }
-         else
-         if (pszRow)
-            chain.print("%s\n", pszRow);
+         else {
+            if (makeINameResultLine(pszRow, 0, iOutMask, bKeepTabs, idig))
+               pwarn("output overflow 2 while processing: %s\n", pszRow);
+            else
+               chain.print("%s\n", szLineBuf);
+         }
       }
 
       int iElapsed = (int)(getCurrentTime() - nStartTime);
@@ -40228,10 +41056,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      filter ... -uform or filter -upat ... -form uses ## instead of $$.\n"
              "\n"
              "   $further options\n");
-             #ifdef VFILEBASE
-      if (cs.xelike)
-      printx("      -arc            include content of .zip .jar .tar etc. archives.\n");
-             #endif // VFILEBASE
       printx("      -verbose        show names of all files which are currently scanned.\n"
              "      -write          do not print output to console but overwrite input file(s).\n"
              "                      only files with actual text changes will be rewritten.\n"
@@ -45815,7 +46639,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   cuts mpeg2 video or other binary file(s), by keeping or\n"
              "   dropping parts given as absolute byte positions in the file.\n"
              "\n"
-             "   $EXPERIMENTAL COMMAND - SYNTAX MAY CHANGE IN FUTURE VERSIONS.<def>\n"
              "   sfk media $does not interpret, decode or encode any video data<def>,\n"
              "   and knows nothing about the file format. it simply $copies\n"
              "   $blocks of bytes<def>, which $may or may not work<def>, depending on the\n"
@@ -49406,10 +50229,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #as well as all subdirs within them<def>. specify -nosub to disable this.\n"
              "\n"
              "   $options:\n");
-             #ifdef VFILEBASE
-      if (cs.xelike)
-      printx("      -arc          : hexfind only: include content of .zip .jar etc. archives.\n");
-             #endif // VFILEBASE
       printx("      -nosub        : do not include files in subdirectories. this is default\n"
              "                      when specifying a single file name after replace.\n"
              "      -quiet        : do not print progress status and total hits statistics.\n"
@@ -51507,10 +52326,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -time  list also file times.\n"
              "      -size  list also file sizes.\n"
              );
-             #ifdef VFILEBASE
-      if (cs.xelike)
-      printx("      -arc   include .zip .jar .tar etc. archive contents.\n");
-             #endif // VFILEBASE
       printx("\n"
              "   $chaining support\n"
              "      output chaining is supported.\n"
@@ -54517,21 +55332,39 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (!strcmp(pszCmd, "spell"))
+   ifcmd (!strcmp(pszCmd, "spell") || !strcmp(pszCmd, "nato"))
    {
       ifhelp (nparm >= 1 && isHelpOpt(argv[iDir]))
-      // printx("<help>$sfk spell [word]\n"
-      //        "\n"
-      //        "   show spelling table, or spell a word\n"
-      //        "\n"
-      //        );
+      printx("<help>$sfk spell [phrase]\n"
+             "\n"
+             "   show spelling table, or spell a phrase, i.e.\n"
+             "   print one word per character of a word/phrase\n"
+             "   for clear transmission over telephone.\n"
+             "   primarily used for email addresses which must\n"
+             "   be accurate by every character.\n"
+             "\n"
+             "   $options\n"
+             "      -nato  use original Nato spelling table.\n"
+             "             default is to use an optimized mix\n"
+             "             of Nato/RAF.\n"
+             "\n"
+             "   $aliases\n"
+             "      #sfk nato<def>  - same as sfk spell -nato\n"
+             "\n"
+             );
       ehelp;
 
+      bool bNato = strcmp(pszCmd, "nato") ? 0 : 1;
       bool bDoneAny = 0;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
+         if (!strcmp(argv[iDir], "-nato")) {
+            bNato = 1;
+            continue;
+         }
+         else
          if (!strncmp(argv[iDir], "-", 1)) {
             if (isDirParm(argv[iDir]))
                break; // fall through
@@ -54544,12 +55377,18 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
             break;
          // process non-option keywords:
-         dospell(argv[iDir]);
+         dospell(argv[iDir], bNato);
          bDoneAny = 1;
       }
 
       if (!bDoneAny)
-         dospell(0);
+      {
+         if (bNato)
+            pinf("[nopre] === Standard Nato phonetic alphabet ===\n");
+         else
+            pinf("[nopre] === Optimized Nato/RAF alphabet. Use \"sfk nato\" for standard alphabet. ===\n");
+         dospell(0, bNato);
+      }
 
       STEP_CHAIN(iChainNext, 1);
 
@@ -54726,7 +55565,7 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          "                    list zip jar tar gz bz2 contents.\n"
          #else
          "                    list zip and jar contents.\n"
-         #endif
+         #endif // VFILEBASE
          "   sfk filefind   - find files by filename\n"
          "   sfk treesize   - show directory size statistics\n"
          "   sfk copy       - copy directory trees additively\n"
@@ -54739,6 +55578,8 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          "   sfk space [-h] - tell total and free size of volume\n"
          "   sfk filetime   - tell times of a file\n"
          "   sfk touch      - change times of a file\n"
+         "   sfk index      - create index file(s) for fast lookup\n"
+         "   sfk iname      - lookup file names using index files\n"
          "\n"
          );
 
@@ -54838,6 +55679,7 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          "   sfk cd         - change directory within a script\n"
          "   sfk getcwd     - print the current working directory\n"
          "   sfk require    - compare version text\n"
+         "   sfk time [-h]  - print current date and time\n"
          "\n"
          );
 
@@ -54864,6 +55706,7 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          "   sfk version    - show version of a binary file\n"
          "   sfk ascii      - list ISO 8859-1 ASCII characters\n"
          "   sfk ascii -dos - list OEM codepage 850 characters\n"
+         "   sfk spell [-h] - phonetic spelling for telephone\n"
          "   sfk license    - print the SFK license text\n"
          "\n"
          );
@@ -55265,19 +56108,6 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          #endif
   printx("   $-noipex<def>    disable automatic IP expansion with some commands.\n");
   printx("   $-arc<def>       with sfk list, lists also archive file contents.\n");
-  #ifdef VFILEBASE
-  printx("              with some other commands, also process archive file contents.\n"
-         "              archives recognized by sfk must have one of these extensions:\n"
-         "              .zip .jar .ear .war .aar .xpi .tar .tar.gz .tar.bz2 .tgz .gz .bz2\n"
-         "              to include further extensions, read below about SFK_ZIP_EXT.\n"
-   #ifndef VFILEMAX
-         "              this binary (SFK Base/XD) can read only the first 1000 bytes\n"
-         "              of every archive entry. listing of contents is not limited.\n"
-   #endif
-         "              type \"sfk help xe\" for all details and restrictions.\n"
-         );
-  if (0) // skip next printx
-  #endif // VFILEBASE
   printx("              zip files recognized by sfk must have one of these extensions:\n"
          "              .zip .jar .ear .war .aar .xpi\n");
   printx("   $-utf<def>       activate EXPERIMENTAL utf-16 (ucs-2, wide char) decoding,\n"

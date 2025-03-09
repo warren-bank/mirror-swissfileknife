@@ -302,6 +302,7 @@ class CharAutoDel {
 public:
       CharAutoDel (char *p) { pClPtr = p; }
      ~CharAutoDel ( )       { if (pClPtr) delete [] pClPtr; }
+     void deleteNow ( )     { if (pClPtr) delete [] pClPtr; pClPtr = 0; }
 private:
       char *pClPtr;
 };
@@ -777,7 +778,7 @@ public:
    bool   isTravelZip   (bool braw=0) { return 0; }
    void   setArc        (bool bIsArchive) { }
    bool   isKnownArc    ( )   { return 0; }
-   #endif // NVFILEZIP
+   #endif
 
    #ifdef VFILEBASE
 
