@@ -21,6 +21,35 @@
       -  fwrite is mapped to safefwrite
       to work around the Windows 60 MB I/O bug.
 
+   1.6.0
+   -  add: sfk mget -update myfilemask to receive
+           only changed or added files matching filemask.
+   -  add: sfk sftserv: option -anysize to disable size limit,
+           option -rwany as an alias for -rw -anysize.
+   -  chg: sfk ftp: new progress percentage output
+           with better visual updates.
+   -  chg: sfk ftp client: -quiet no longer tells the info
+           "server speaks sft ..." 
+   -  FIX: sfk sft transfer of many files between two machines
+           esp. VM linux: break of transfer with error
+           "500 not supported". reason was an unsecured
+           recv() in getFileBySFT that got only partial reply.
+   -  fix: sfk sftserv -maxsize=n : unexpected error message
+           "illegal length received" with n > 2000, 
+           making file transfers beyond 2 GB impossible.
+   -  fix: sfk transfer stop due to maxsize produced
+           a zero length trash file.
+   -  fix: sfk patch: empty remark lines ":#" without
+           blank after "#" produced syntax error.
+   -  fix: sfk patch: empty :info lines without blank
+           after ":info" produced syntax error.
+   -  fix: Coi::rawOpenFtpSubFile: automatic relogin
+           on connection loss of ftp session.
+   -  fix: sfk ftp, copy: progress indicator flickering.
+   internal:
+   -  chg: sfk sft mput: added send loop in sendFileRaw.
+   -  fix: sft sft get: verify message not cleared.
+
    1.5.9
    Revision 2:
    -  fix: sfk tail did not work.
@@ -1268,8 +1297,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.5.9"  // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "2"
+#define SFK_VERSION  "1.6.0"  // ver_ and check the _PRE definition
+#define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -2004,28 +2033,29 @@ public:
    bool subdirs;           // process subdirs
    bool utf8dec;           // utf-8  detect and decode (not yet impl.)
    bool utf16dec;          // utf-16 detect and decode
-   int utf16found;        // statistic for post-command info
-   int utf16read;         // statistic for post-command info
+   int utf16found;         // statistic for post-command info
+   int utf16read;          // statistic for post-command info
    bool showdupdirs;       // linux: tell if dir link contents are skipped
    bool usecirclemap;      // linux: allow circle map, on by default
    num  sincetime;         // process only files modified since that time
    num  untiltime;         // process only files modified until that time
    bool usectime;          // use creation time instead of modification time
    char paramprefix[30];   // for user defined script input parameter names
-   int wrapcol;           // if >0, auto-wrap lines in snapfile
-   int wrapbincol;        // only on binary to text conversion
+   int wrapcol;            // if >0, auto-wrap lines in snapfile
+   int wrapbincol;         // only on binary to text conversion
    bool rewrap;            // ignore linefeeds, rewrap all
    char listunit;          // stat output in 'b'ytes, 'k'bytes or default.
    bool flatdirstat;       // list no. of files per dir, not dir tree
-   int flatfilecnt;       // global stats if flatdirstat is set
-   int flatdircnt;        // "
+   int flatfilecnt;        // global stats if flatdirstat is set
+   int flatdircnt;         // "
    num  flatbytecnt;       // "
    bool statonlysum;       // sfk stat: quiet except summary
-   int quiet;             // quiet mode
+   int quiet;              // quiet mode
    bool ftpupdate;         // mput, mget: explicite -update
    bool ftpall;            // mput, mget: disable -update mode
    bool noclone;           // disable time stamp replication
-   int fast;              // command dependent optimization
+   int fast;               // command dependent optimization
+   bool noverify;          // command dependent optimization
    bool noprog;            // no progress indicator
    bool test;              // filter: run in test mode
    bool copyLinks;         // copy symlinks     , windows only, untested
@@ -2496,7 +2526,7 @@ int nGlblZipVersionHi  = 0;
 int nGlblZipVersionLo  = 0;
 int nGlblUnzipVersionHi = 0;
 int nGlblUnzipVersionLo = 0;
-int nGlblTCPMaxSizeMB   = 500;
+int nGlblTCPMaxSizeMB   = 500; // MB
 // #ifdef WITH_TCP
 SOCKET hGlblTCPOutSocket = 0;
 bool bGlblFTPReadWrite   = 0;
@@ -6647,7 +6677,8 @@ void ProgressInfo::clear()
 
 void ProgressInfo::clearTermStatus() 
 {__
-   if (nDumped) {
+   if (nDumped > 0 && nDumped < sizeof(szTermBuf)-4)
+   {
       mtklog(("info::clearterm"));
       memset(szTermBuf, ' ', nDumped);
       szTermBuf[nDumped] = '\0';
@@ -6663,11 +6694,14 @@ void ProgressInfo::dumpTermStatus()
    if (cs.quiet || cs.noprog)
       return;
 
-   if (nDumped)
-      clearTermStatus();
-
    if (!szSubject[0])
+   {
+      if (nDumped)
+         clearTermStatus();
       return;  // nothing to dump
+   }      
+
+   int nToClear = nDumped;
 
    int nMaxMiddle = nMaxSubChars;
    if (!szPerc[0])
@@ -6723,6 +6757,15 @@ void ProgressInfo::dumpTermStatus()
       printf("%s", szAddInfo);
       setTextColor(-1);
       nDumped += strlen(szAddInfo);
+   }
+   
+   // need to add a blank area to clear old output?
+   int nDelta = nToClear - nDumped;
+   if (nDelta > 0 && nDelta < sizeof(szTermBuf)-4)
+   {
+      memset(szTermBuf, ' ', nDelta);
+      szTermBuf[nDelta] = '\0';
+      printf("%s",szTermBuf);
    }
 
    printf("\r");
@@ -10243,6 +10286,14 @@ BinTexter::~BinTexter()
    memset(this, 0, sizeof(*this));
 }
 
+bool sfkisalpha(uchar uc) {
+   if (isalpha((char)uc))
+      return 1;
+   if (uc > nGlblBinTextBinRange && uc < 0xFF)
+      return 1;
+   return 0;
+}
+
 bool sfkisalnum(uchar uc) {
    if (isalnum((char)uc))
       return 1;
@@ -10894,6 +10945,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-showskip"))  { pcs->showdupdirs = 1; return true; }
    if (strBegins(psz1, "-allowdup")) { pcs->usecirclemap = 0; return true; }
    if (!strcmp(psz1, "-fast"))      { pcs->fast = 1; return true; }
+   if (strBegins(psz1, "-nover"))   { pcs->noverify = 1; return true; }
    if (!strcmp(psz1, "-noprog"))    { pcs->noprog = 1; return true; }
    if (!strcmp(psz1, "-test"))      { pcs->test = 1; return true; }
    if (!strcmp(psz1, "-oldmd5"))    { bGlblOldMD5 = 1; return true; }
@@ -20326,6 +20378,10 @@ int execCallFileDir(Coi *pcoi)
    return pGlblCallFileDir(pcoi);
 }
 
+int execSnapThrough(Coi *pcoi);
+
+int bGlblPassThroughSnap = 0;
+
 // snapto collect single file
 int execJamFile(Coi *pcoi)
 {__
@@ -20344,6 +20400,18 @@ int execJamFile(Coi *pcoi)
 
    bool bIsBinary = pcoi->isBinaryFile();
    // also sets: isUTF16, isSnapFile
+   bool bIsSnap   = pcoi->isSnapFile();
+   
+   if (bIsSnap)
+   {
+      if (!bGlblPassThroughSnap) 
+      {
+         pinf("skipping snap file: %s\n", pcoi->name());
+         return 0; // skip
+      }         
+         
+      return execSnapThrough(pcoi);
+   }
 
    mtklog(("load: execjam: bin=%d %s", bIsBinary, pcoi->name()));
 
@@ -20592,22 +20660,17 @@ int execJamFile(Coi *pcoi)
       if (nLineLen == nMaxLineLen)
          pwarn("max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, pcoi->name(), nLocalLines);
 
-      // reading a snapfile or clusterfile content?
-      if (startsLikeSnapFile((char*)abBuf))
+      // safety: escape unexpected (mal-format) headers within content
+      if (   startsLikeSnapFile((char*)abBuf)
+          || strBegins((char*)abBuf, pPrefix)
+         )
       {
-         mtklog(("load: issnap, inspec=%d", bGlblInSpecificProcessing));
+         if (nLineLen > nMaxLineLen-10)
+            continue; // drop
 
-         // if not reading specific file list, skip this cluster
-         if (!bGlblInSpecificProcessing) {
-            bNoTrailer = 1;
-            break;
-         }
-
-         // but in single file mode, adapt it's content
-         nLocalLines++; // skip == 1 check below, we use the file's internal header
-
-         // accept file prefixes:
-         bPassSnap = 1;
+         memmove(abBuf+1,abBuf+0,nLineLen+1); // with zero terminator
+         abBuf[0] = '\'';
+         nLineLen++;
       }
 
       if (nLocalLines == 1)
@@ -20618,13 +20681,6 @@ int execJamFile(Coi *pcoi)
             lRC |= dumpJamLine(pHeadLine   , 0, 1);   // :file: mtime size
             lRC |= dumpJamLine(pcoi->name(), 0, 1);   // actual filename
          }
-      }
-
-      // does the input contain unwanted file prefixes?
-      if (!bPassSnap && strBegins((char*)abBuf, pPrefix) && nLineLen > 0) {
-         // then insert a char to inactivate the prefix
-         memmove(abBuf+1,abBuf+0,nLineLen-1); // keeping zero terminator
-         abBuf[0] = '\'';
       }
 
       if (bWrapMode && ((int)strlen((char*)abBuf) > cs.wrapcol))
@@ -20691,8 +20747,7 @@ int execJamFile(Coi *pcoi)
 
     pcoi->close();
 
-    if (!bNoTrailer)
-       lRC |= dumpJamLine(str(""), 0, 1);
+    lRC |= dumpJamLine(str(""), 0, 1);
     
    } // endelse binary
 
@@ -20707,6 +20762,98 @@ int execJamFile(Coi *pcoi)
          info.setStatus("snap", pcoi->name(), 0, eKeepAdd);
       }
    }
+
+   return lRC;
+}
+
+int execSnapThrough(Coi *pcoi)
+{__
+   // expecting: auto cache drop is done by caller
+
+   cchar *pPrefix = pszGlblJamPrefix ? pszGlblJamPrefix : ":file:";
+   char *pHeadLine = (char*)pPrefix;
+
+   char szHeadBuf[250];
+   mclear(szHeadBuf);
+
+   int lRC  = 0;
+
+   // add file content, check for illegal entries
+   if (pcoi->open("rb"))
+     { pwarn("cannot read: %s%s\n", pcoi->name(),pcoi->lasterr()); return 0; }
+
+   int nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
+   memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
+   int nLocalLines = 0;
+   bool bWrapMode = (cs.wrapcol > 0) ? 1 : 0;
+   int nLineLen  = 0;
+   bool bPassSnap = 0;
+   bool bNoTrailer = 0;
+   
+   bool bHeadArea = 1;
+
+   while (pcoi->readLine((char*)abBuf, nMaxLineLen) > 0) // yes, exact len
+   {
+      cs.lines++;
+      nLocalLines++;
+
+      nLineLen = strlen((char*)abBuf);
+      if (nLineLen == nMaxLineLen)
+         pwarn("max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, pcoi->name(), nLocalLines);
+
+      // as long as head area, don't pass anything.
+      // we do not accept any differing prefix.
+      if (bHeadArea)
+      {
+         if (!strBegins((char*)abBuf, pPrefix))
+            continue;
+         
+         // first :file: reached, end of head area.
+         bHeadArea = 0;
+      }
+
+      // safety: escape unexpected (mal-format) headers within content
+      if (startsLikeSnapFile((char*)abBuf))
+      {
+         if (nLineLen > nMaxLineLen-10)
+            continue; // drop
+            
+         memmove(abBuf+1,abBuf+0,nLineLen+1); // with zero terminator
+         abBuf[0] = '\'';
+         nLineLen++;
+      }
+
+      // also count subfiles as files, however processing of those
+      // headers is done by receiver.
+      if (strBegins((char*)abBuf, pPrefix)) 
+      {
+         if (glblFileCount.count())
+         {
+            if (pGlblJamStatCallBack) {
+               int nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (uint)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+               mtklog(("%d = jam.stat.callback.3", nrc));
+               lRC |= nrc;
+            } else {
+               info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(nGlblBytes/1000000UL));
+               info.setStatus("snap", pcoi->name(), 0, eKeepAdd);
+            }
+         }
+      }
+
+      if (nLineLen > 0 && abBuf[nLineLen-1] == '\n')
+         lRC |= dumpJamLine((char*)abBuf, 0, 0); // has own LF
+      else
+         lRC |= dumpJamLine((char*)abBuf, 0, 1);
+
+      nGlblBytes += strlen((char*)abBuf);
+      abBuf[nMaxLineLen] = '\0';
+
+      // STOP in-file processing on non-zero rc
+      if (lRC) break;
+
+   } // endwhile lines
+
+   pcoi->close();
 
    return lRC;
 }
@@ -24855,10 +25002,12 @@ int checkArgCnt(int argc, int lMinCnt) {
    return 0;
 }
 
-bool isWriteable(char *pszTmpFile) {
+bool isWriteable(char *pszTmpFile) 
+{
    FILE *fout = fopen(pszTmpFile, "w");
    if (!fout) return 0;
    fclose(fout);
+   remove(pszTmpFile); // cleanup zero-length trash file
    return 1;
 }
 
@@ -25238,9 +25387,9 @@ int readLineSub(SOCKET hSock, char *pszLineBuf, int nMode)
    else 
    {
       // any other record: print printable parts
-      bool bskiprec = !strncmp(szLineBuf, "SKIP ", 5);
+      bool bskiprec = !strncmp(pszLineBuf, "SKIP ", 5);  // FIX: v160: used szLineBuf
       // dump only if verbose, or on some error codes.
-      int ncode = atol(szLineBuf);
+      int ncode = atol(pszLineBuf);                      // FIX: v160: used szLineBuf
       // dump all error codes from 500, except:
       bool blistcode = (ncode >= 500);
       switch (ncode) {
@@ -25249,7 +25398,7 @@ int readLineSub(SOCKET hSock, char *pszLineBuf, int nMode)
       }
       if (!bskiprec && (cs.verbose || blistcode))
       {
-         int nLen = strlen(szLineBuf);
+         int nLen = strlen(pszLineBuf);                  // FIX: v160: used szLineBuf
          for (int i=0; i<nLen; i++)
             if (isprint(pszLineBuf[i]))
                printf("%c", pszLineBuf[i]);
@@ -25357,6 +25506,7 @@ int sendNum(SOCKET hSock, num nOut, cchar *pszInfo)
    return 0;
 }
 
+// Note: caller must set info.status
 int sendFileRaw(SOCKET hSock, char *pszFile, bool bQuiet=0, uchar *pmd5=0)
 {
    num nLen = getFileSize(pszFile);
@@ -25367,8 +25517,6 @@ int sendFileRaw(SOCKET hSock, char *pszFile, bool bQuiet=0, uchar *pmd5=0)
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) return 9+perr("cannot read %s\n", pszFile);
 
-   bool bdoneprog = 0;
-
    num nLen2 = 0;
    num nTellStep = 10;
    num nTellNext = 0;
@@ -25377,32 +25525,41 @@ int sendFileRaw(SOCKET hSock, char *pszFile, bool bQuiet=0, uchar *pmd5=0)
       int nRead = fread(abBuf, 1, sizeof(abBuf)-10, fin);
       if (nRead <= 0) return 9+perr("cannot fully read %s (1)\n", pszFile);
 
-      if (send(hSock, (char*)abBuf, nRead, 0) != nRead) {
-         perr("connection closed while sending %s %s\n", pszFile, netErrStr());
-         perr("the file cannot be written at receiver.\n");
-         return 9;
+      int nSentTotal = 0;
+      
+      // actually send() should block until the whole block is sent.
+      // this loop is just in case it unexpectedly sends only part of the message.
+      while (nSentTotal < nRead)
+      {
+         int nSentCur = send(hSock, (char*)abBuf+nSentTotal, nRead-nSentTotal, 0);
+         
+         if (nSentCur <= 0)
+         {
+            perr("connection closed while sending %s %s\n", pszFile, netErrStr());
+            perr("the file cannot be written at receiver.\n");
+            fclose(fin);
+            return 9;
+         }
+         
+         nSentTotal += nSentCur;
+         
+         // in case of VM transfer on same PC
+         if (nSentTotal < nRead)
+            doSleep(10);
       }
-
+      
       if (pmd5) md5.update(abBuf, nRead);
 
       nLen2 += nRead;
 
-      if (nLen2 >= nTellNext) {
-         nTellNext += nTellStep;
-         nTellStep += nTellStep;
-         if (nLen >= 0 && !cs.noprog && !cs.quiet) {
-            printf("< %02d%% sending %s, %s bytes \r", (int)(nLen2 * 100 / (nLen+1)), pszFile, numtoa(nLen));
-            fflush(stdout);
-            bdoneprog = 1;
-         }
-      }
+      info.setProgress(nLen/1000000,nLen2/1000000,"mb");
    }
    fclose(fin);
 
    if (pmd5) memcpy(pmd5, md5.digest(), 16);
 
-   if (bdoneprog)
-      printf("< %s sent, %s bytes.       \n", pszFile, numtoa(nLen2));
+   if (cs.quiet < 2)
+      info.print("< %s sent, %s bytes.       \n", pszFile, numtoa(nLen2));
 
    return 0;
 }
@@ -25469,10 +25626,26 @@ int sendRaw(char *pszFile, FILE *fin, SOCKET hSock, num nLen, SFKMD5 &md5)
       int nRead = fread(abBuf, 1, nreqlen, fin);
       if (nRead <= 0) return 9+perr("cannot fully read %s (2)\n", pszFile);
 
-      if (send(hSock, (char*)abBuf, nRead, 0) != nRead) {
-         perr("connection closed while sending %s %s.\n", pszFile, netErrStr());
-         perr("the file cannot be written at receiver.\n");
-         return 9;
+      int nSentTotal = 0;
+
+      // actually send() should block until the whole block is sent.
+      // this loop is just in case it unexpectedly sends only part of the message.
+      while (nSentTotal < nRead)
+      {
+         int nSentCur = send(hSock, (char*)abBuf+nSentTotal, nRead-nSentTotal, 0);
+
+         if (nSentCur <= 0)
+         {
+            perr("connection closed while sending %s %s\n", pszFile, netErrStr());
+            perr("the file cannot be written at receiver.\n");
+            return 9;
+         }
+
+         nSentTotal += nSentCur;
+
+         // in case of VM transfer on same PC
+         if (nSentTotal < nRead)
+            doSleep(10);
       }
 
       md5.update(abBuf, nRead);
@@ -25491,8 +25664,6 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
    if (nLen < 0) return 9+perr("cannot read %s\n", pszFile);
    num nTime  = pcoi->getTime();
    num nFlags = 0;
-
-   bool bdoneprog = 0;
 
    // sft <= 101: 8_size 16_md5_pre
    uint nMetaSize = 8+16;
@@ -25537,9 +25708,11 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
       if (sendNum(hSock, nTime , "time" )) return 9;
       if (sendNum(hSock, nFlags, "flags")) return 9;
    } else {
-      if (!cs.quiet)
-         printf("[using sft101 for compatibility.]\n");
+      if (cs.verbose > 2)
+         info.print("[using sft101 for compatibility.]\n");
    }
+
+   info.setStatus("send", pszFile);
 
    if (nSFTVer < 102) {
       // meta 2: 16 bytes md5 BEFORE content
@@ -25604,15 +25777,7 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
 
             nLen2 += nsendreq;
 
-            if (nLen2 >= nTellNext) {
-               nTellNext += nTellStep;
-               nTellStep += nTellStep;
-               if (nLen >= 0 && !cs.noprog && !cs.quiet) {
-                  printf("< %02d%% sending %s, %s bytes \r", (int)(nLen2 * 100 / (nLen+1)), pszFile, numtoa(nLen));
-                  fflush(stdout);
-                  bdoneprog = 1;
-               }
-            }
+            info.setProgress(nLen/1000000,nLen2/1000000,"mb");
 
             continue;
          }
@@ -25636,8 +25801,8 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
 
       fclose(fin);
 
-      if (bdoneprog)
-         printf("< %s sent, %s bytes.       \n", pszFile, numtoa(nLen2));
+      if (cs.quiet < 2)
+         info.print("< %s sent, %s bytes.       \n", pszFile, numtoa(nLen2));
    }
 
    bool bSentSkip = 0;
@@ -25652,9 +25817,9 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
    #ifndef _WIN32
    // known issue: bytes sent from linux may sometimes not receive other side
    //              until connection is closed, e.g. through CTRL+C.
-   if (cs.quiet < 2) {
-      printf("> waiting for ack. if this blocks, try CTRL+C. \r");
-      fflush(stdout);
+   if (!cs.quiet) {
+      info.setStatus("send", "waiting for ack. if this blocks, try CTRL+C.", 0, eKeepProg);
+      info.print();
    }
    #endif
 
@@ -25666,10 +25831,8 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
    if (bIgnoreAck) {
       // do not verify, receiver may have closed connection already.
       #ifndef _WIN32
-      if (cs.quiet < 2) {
-         printf("                                               \r");
-         fflush(stdout);
-      }
+      if (cs.quiet < 2)
+         info.clear();
       #endif
    } else {
       // possible replies:
@@ -25678,12 +25841,11 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
       if (   tolower((char)abBuf[0]) == 'o'
           && tolower((char)abBuf[1]) == 'k') {
       #ifndef _WIN32
-      if (cs.quiet < 2) {
-         printf("                                               \r");
-         fflush(stdout);
-      }
+      if (cs.quiet < 2)
+         info.clear();
       #endif
       } else {
+         info.clear();
          perr("transfer or write of file failed: %s    (%s)\n", pszFile, abBuf);
       }
    }
@@ -25693,6 +25855,7 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
 
 // MODE 1: receive until END OF DATA (nMaxBytes < 0)
 // MODE 2: receive until nMaxBytes   (nMaxBytes > 0)
+// Note: caller must set info.status
 int receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0, uchar *pmd5=0)
 {
    FILE *fout = fopen(pszFile, "wb");
@@ -25729,24 +25892,14 @@ int receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0, uc
 
       if (pmd5) md5.update(abBuf, nRead);
 
-      if (nLen2 >= nTellNext) {
-         nTellNext += nTellStep;
-         nTellStep += nTellStep;
-         if (!cs.noprog && !cs.quiet) {
-            if (nMaxBytes >= 0)
-               printf("> %02d%% receiving %s, %s bytes \r", (int)(nLen2 * 100 / (nMaxBytes+1)), pszFile, numtoa(nMaxBytes));
-            else
-               printf("> receiving %s, %s bytes \r", pszFile, numtoa(nLen2));
-            fflush(stdout);
-         }
-      }
+      info.setProgress(nMaxBytes/1000000,nLen2/1000000,"mb");
    }
    fclose(fout);
 
    if (pmd5) memcpy(pmd5, md5.digest(), 16);
  
    if (cs.quiet < 2)
-      printf("> %s received, %s bytes.       \n", pszFile, numtoa(nLen2));
+      info.print("> %s received, %s bytes.       \n", pszFile, numtoa(nLen2));
  
    return 0;
 }
@@ -25771,8 +25924,8 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer, bool bQuiet=0, bool b
    if (readNum(abHead, ioff, nLen, "size")) return 9;
 
    if (nGlblTCPMaxSizeMB)
-      if (nLen > nGlblTCPMaxSizeMB * 1000000)
-         return 9+perr("illegal length received, %s\n", numtoa(nLen));
+      if (nLen > (num)nGlblTCPMaxSizeMB * (num)1000000)
+         return 9+perr("illegal length received (%s). use -maxsize to change limit.\n", numtoa(nLen));
 
    if (nSFTVer >= 102) {
       if (readNum(abHead, ioff, nTime , "time" )) return 9;
@@ -25788,6 +25941,8 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer, bool bQuiet=0, bool b
       memcpy(abMD5Remote, abHead+ioff, 16);
       ioff += 16;
    }
+
+   info.setStatus("recv", pszFile);
 
    if (nSFTVer < 102) {
       // if this fails, return w/o ack, connection will be dropped.
@@ -25818,7 +25973,7 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer, bool bQuiet=0, bool b
       num nMaxBytes  = nLen;
       num nTellStep  =   10;
       num nTellNext  =    0;
-      int nRead     =    0;
+      int nRead      =    0;
 
       char szCmd[200];
 
@@ -25854,18 +26009,8 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer, bool bQuiet=0, bool b
          }
 
          md5.update(abBuf, nRead);
-
-         if (nLen2 >= nTellNext) {
-            nTellNext += nTellStep;
-            nTellStep += nTellStep;
-            if (!cs.noprog && !cs.quiet) {
-               if (nMaxBytes >= 0)
-                  printf("> %02d%% receiving %s, %s bytes \r", (int)(nLen2 * 100 / (nMaxBytes+1)), pszFile, numtoa(nMaxBytes));
-               else
-                  printf("> receiving %s, %s bytes \r", pszFile, numtoa(nLen2));
-               fflush(stdout);
-            }
-         }
+         
+         info.setProgress(nMaxBytes/1000000,nLen2/1000000,"mb");
       }
 
       fclose(fout);
@@ -25894,7 +26039,9 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer, bool bQuiet=0, bool b
    if (bdebug) printf("wait for skip\n");
 
    // expect and receive SKIP record of any length
-   recv(hSock, (char*)abBuf, sizeof(abBuf)-100, 0);
+   // FIX: v160: occasional transfer interrupt recv() may get only partial record
+   //      recv(hSock, (char*)abBuf, sizeof(abBuf)-100, 0);
+   readLineSub(hSock, (char*)abBuf, 0); // should be "SKIP 0\r\n"
 
    if (nSFTVer >= 102 && !cs.noclone) {
       // update file's timestamp and attributes
@@ -25916,11 +26063,13 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer, bool bQuiet=0, bool b
 
    // sender will wait now until we confirm successful transfer.
 
-   if (!cs.fast) {
+   if (!cs.noverify) 
+   {
       // default: re-read the local file after write,
       // to be sure it was written completely.
+      info.setStatus("verfy", pszFile);
       SFKMD5 md5;
-      if (getFileMD5(pszFile, md5)) {
+      if (getFileMD5(pszFile, md5, 0, 1)) {
          send(hSock, (char*)"EE\n\n", 4, 0);
          return 9;
       }
@@ -25929,6 +26078,7 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer, bool bQuiet=0, bool b
 
    if (memcmp(abMD5Local, abMD5Remote, 16)) {
       send(hSock, (char*)"EE\n\n", 4, 0);
+      info.clear();
       perr("md5 mismatch - transfered file corrupted.\n");
       if (cs.verbose) {
          printf("local: %02X %02X %02X %02X\n",abMD5Local[0],abMD5Local[1],abMD5Local[2],abMD5Local[3]);
@@ -25937,6 +26087,8 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer, bool bQuiet=0, bool b
       pinf("check if the file is in use by another process.\n");
       return 9;
    }
+
+   info.clear();
 
    // send short confirmation, so client can safely close socket.
    int nSent = send(hSock, (char*)"OK\n\n", 4, 0);
@@ -25977,7 +26129,8 @@ int ftpLogin(char *pszHost, uint nPort, SOCKET &hSock, bool &bSFT, int &nOutSFTV
       int nSFTVer = atol(psz1+6);
       if (nSFTVer >= 100) {
          bSFT = 1;
-         printf("> server speaks sft %d. mget, mput enabled.\n", nSFTVer);
+         if (!cs.quiet)
+            printf("> server speaks sft %d. mget, mput enabled.\n", nSFTVer);
          nOutSFTVer = nSFTVer;
       } else {
          printf("> unexpected sft info \"%s\"\n", psz1);
@@ -26164,12 +26317,14 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszAuthPW, bool bCh
          }
       }
       else
-      if (!bChained && strBegins(szLineBuf, "mput"))
+      if (   !bChained 
+          && (strBegins(szLineBuf, "mput") || strBegins(szLineBuf, "cput"))
+         )
       {
          // direct multi file put (not chained)
          char szParmBuf[300]; mclear(szParmBuf);
 
-         bool bupdate = 0; // bSFT;
+         bool bupdate = strBegins(szLineBuf, "cput") ? 1 : 0;
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
@@ -26259,7 +26414,9 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszAuthPW, bool bCh
             printx("$[add -yes to execute.]\n");
       }
       else
-      if (bChained && strBegins(szLineBuf, "mput"))
+      if (    bChained
+          && (strBegins(szLineBuf, "mput") || strBegins(szLineBuf, "cput"))
+         )
       {
          // chained multi file put (after select)
 
@@ -26267,7 +26424,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszAuthPW, bool bCh
          // with FTP, update isn't supported.
          // simulate is always default.
 
-         bool bupdate = 0; // bSFT;
+         bool bupdate = strBegins(szLineBuf, "cput") ? 1 : 0;
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
@@ -26380,12 +26537,17 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszAuthPW, bool bCh
          }
       }
       else
-      if (!bChained && strBegins(szLineBuf, "mget"))
+      if (   !bChained 
+          && (strBegins(szLineBuf, "mget") || strBegins(szLineBuf, "cget"))
+         )
       {
          // direct multi file get (not chained)
          char szParmBuf[300]; mclear(szParmBuf);
 
-         bool bupdate = 0; // bSFT;
+         bool bupdate = strBegins(szLineBuf, "cget") ? 1 : 0;
+
+         if (cs.ftpupdate) bupdate = 1;
+         if (cs.ftpall   ) bupdate = 0;
 
          char *pparms = szLineBuf+strlen("mget");
          skipWhite(&pparms);
@@ -26571,7 +26733,9 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszAuthPW, bool bCh
             printx("$[add -yes to execute.]\n");
       }
       else
-      if (bChained && strBegins(szLineBuf, "mget"))
+      if (   bChained
+          && (strBegins(szLineBuf, "mget") || strBegins(szLineBuf, "cget"))
+         )
       {
          // chained multi file get (after select)
 
@@ -26581,7 +26745,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszAuthPW, bool bCh
          char szParmBuf[300]; mclear(szParmBuf);
          char szDstBuf[400];  mclear(szDstBuf);
 
-         bool bupdate = 0; // bSFT;
+         bool bupdate = strBegins(szLineBuf, "cget") ? 1 : 0;
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
@@ -28073,8 +28237,8 @@ int ftpServ(uint nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, cha
                sendLine(hClient, "500 no such file, or unreadable");
             } else {
                sendLine(hClient, "200 OK, data follows");
-               if (cs.quiet < 2)
-                  printf("< send sft file: \"%s\" %s\n", pszFile, bBlockMode ? "[block mode]":"");
+               // if (cs.quiet < 2)
+               //    printf("< send sft file: \"%s\" %s\n", pszFile, bBlockMode ? "[block mode]":"");
                // sending a file from server to client by SFT: here, the ack "OK\n\n"
                // is often overhauled by connection close from client, therefore server
                // doesn't verify it. should there be errors, then they're shown at client only.
@@ -28082,7 +28246,7 @@ int ftpServ(uint nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, cha
                CoiAutoDelete odel(pcoi, 0); // no decref
                int lRC = putFileBySFT(hClient, pcoi, nSFTVer, 0, 1, bBlockMode); // not quiet, ignore ack
                if (cs.quiet < 2 && lRC > 0)
-                  printf("send sft file done, RC %d\n", lRC);
+                  info.print("send sft file done, RC %d\n", lRC);
             }
          }
          else
@@ -28105,11 +28269,11 @@ int ftpServ(uint nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, cha
                   // break;
                } else {
                   sendLine(hClient, "200 OK, send data");
-                  if (cs.quiet < 2)
-                     printf("> recv sft file: \"%s\"\n", pszFile);
+                  // if (cs.quiet < 2)
+                  //    printf("> recv sft file: \"%s\"\n", pszFile);
                   int lRC = getFileBySFT(hClient, pszLocFile, nSFTVer);
                   if (cs.quiet < 2 && lRC > 0)
-                     printf("recv sft file done, RC %d\n", lRC);
+                     info.print("recv sft file done, RC %d\n", lRC);
                   if (lRC) break; // block potential content remainder
                }
             }
@@ -38600,7 +38764,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "                    export SFK_FTP_PW=mypassword\n"
          #endif
          "     -rw         allow read+write access. default is readonly.\n"
-         "     -maxsize=n  increment size limit per file write to n mbytes.\n"
+         "     -maxsize=n  change size limit per file write to n mbytes.\n"
+         "                 default size limit is 500 MB.\n"
+         "     -anysize    disable size limit per file write.\n"
+         "     -rwany      same as -rw -anysize.\n"
          "     -timeout=n  set timeout to n seconds.\n"
          "     -noclone    do not try to replicate time stamps on a file\n"
          "                 transmission from an sfk ftp client.\n"
@@ -38645,6 +38812,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "     transfer on the default port 21, with error ECONNRESET, probably\n"
          "     because sfk uses a different protocol. You then have to use a\n"
          "     different port, e.g. -port=5000 or use Windows' \"ftp\" command.\n"
+         "   - Windows 7 Starter: you may have to open the firewall settings\n"
+         "     and enable incoming connections for application \"sfk\" manually.\n"
          "\n"
          "   $see also:\n"
          "     -  type \"#sfk ftp<def>\" for the SFK FTP client. when it connects to an\n"
@@ -38656,8 +38825,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       cs.timeOutMSec = 30000;
 
       int   iDir    =     2;
-      uint nPort   =  strBegins(pszCmd, "sftserv") ? 2121 : 21;
-      uint nPort2  =  2121;
+      uint nPort    =  strBegins(pszCmd, "sftserv") ? 2121 : 21;
+      uint nPort2   =  2121;
       bool  bRW     =     0;
       bool  bRun    =     0;
       char *pszPath =  str(".");
@@ -38709,6 +38878,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             continue;
          }
          else
+         if (!strcmp(argv[iDir], "-anysize")) {
+            nGlblTCPMaxSizeMB = 0; // disable size limit
+            continue;
+         }
+         else
          if (haveParmOption(argv, argc, iDir, "-timeout", &pszParm)) {
             if (!pszParm) return 9;
             cs.timeOutMSec = atol(pszParm) * 1000;
@@ -38717,6 +38891,15 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          else
          if (!strcmp(argv[iDir], "-rw")) {
             bRW = 1;
+            continue;
+         }
+         else
+         if (   strBegins(argv[iDir], "-wany")
+             || strBegins(argv[iDir], "-rwany")
+            )
+         {
+            bRW = 1;
+            nGlblTCPMaxSizeMB = 0; // disable size limit
             continue;
          }
          else
@@ -38802,12 +38985,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "   $options\n"
          "      -verbose  list the transmitted ftp commands.\n"
          "                helpful to get more infos in case of errors.\n"
-         "      -quiet    produce less verbose output.\n"
+         "      -quiet    disable progress indicator and other output.\n"
          "      -noprog   no progress indicator during transfers.\n"
-         "      -update   transmit only changed files. this option is experimental\n"
-         "                and may or may not work, depending on the server software,\n"
-         "                server settings (UTC vs. local time) and time zone.\n"
-         "      -new      the same as -update, only shorter to type.\n"
+         "      -update   or -up transmits only changed files. this option\n"
+         "                is experimental and may or may not work, depending\n"
+         "                on the server software, server settings (UTC vs.\n"
+         "                local time) and time zone.\n"
+         "      -new      the same as -update.\n"
          "      -pw=x     or -pw x sends an authentication password x.\n"
          "                you may also set an environment variable like:\n"
          #ifdef _WIN32
@@ -38817,11 +39001,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          #endif
          "     -noclone   do not try to replicate time stamps on a file\n"
          "                transmission from an sfk ftp server.\n"
-      // "      -all      mput, mget: force send/receive of all files,\n"
-      // "                not only those that changed.\n"
          "\n"
          "   $aliases\n"
          "      sfk sft ...   = the same as sfk ftp, but using port 2121.\n"
+      // "      cget          = same as \"mget -update\" (multi get changed).\n"
+      // "      cput          = same as \"mput -update\" (multi put changed).\n"
+      // "                      cget, cput have same experimental status\n"
+      // "                      as described under the -update option.\n"
          "\n"
          "   $automatic IP expansion\n"
          "      if you are in the same subnet as the target host,\n"
@@ -38838,7 +39024,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "      #sfk ftp farpc mput .cpp\n"
          "         send all .cpp files of the local dir to farpc.\n"
          "         subfolder contents are NOT included.\n"
+         #ifdef _WIN32
          "      #sfk ftp farpc mget %c\n"
+         #else
+         "      #sfk ftp farpc mget \"%c\"\n"
+         #endif
          "         receive all files from farpc's directory,\n"
          "         overwriting everything in the local directory.\n"
          "      #sfk ftp hostname\n"
@@ -38865,7 +39055,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "         the last transmission to farpc. requires option -deep\n"
          "         at server side to allow paths.\n"
          "\n"
-         "      #sfk sel mydir .txt +sft farpc mput -update\n"
+         "      #sfk sel mydir .txt +sft farpc mput -up\n"
          "         same as above, but using port 2121 against an sfk\n"
          "         server started like \"sfk sftserv -rw -deep\".\n"
          "         recommended to avoid connection problems\n"
@@ -38876,6 +39066,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "         therein from server farpc into a folder \"mydir\".\n"
          "         may require option -deep at server side to allow paths.\n"
          "\n"
+     //  "      #sfk sft .2 cput .txt\n"
+     //  "      #sfk sft .2 cget .txt\n"
+     //  "         connect to sfk sft server 192.168.1.2 (assuming that the\n"
+     //  "         client runs in 192.168.1 subnet) and send or download all\n"
+     //  "         changed or added .txt files of the current folder.\n"
+     //  "\n"
          "      #sfk ftp farpc -pw mypw run \"sh myscript.sh >tmp1.txt 2>&1\"\n"
          "         execute a command on the remote server, redirecting all\n"
          "         output into a file tmp1.txt. requires an sfk ftp server\n"

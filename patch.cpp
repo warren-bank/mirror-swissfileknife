@@ -1,15 +1,5 @@
 /*
    sfk dynamic source file patching.
-
-   originally written as a separate tool,
-   then integrated into sfk with the least possible effort.
-
-   changes:
-   1.3.2
-   - add: it is now allowed to insert any number of blanks
-          after most commands, e.g.
-          :mkdir   thedir
-   - fix: added error checks
 */
 
 #include "sfkbase.hpp"
@@ -477,10 +467,10 @@ int processPatchFile(char *pszPatchFileName)
             nCmdFileLineEndings = 1;   // LF only
       }
 
-      if (!strncmp(szBuf,":# ",3))
+      if (strBegins(szBuf,":#"))
          continue;
 
-      if (!strncmp(szBuf,":skip-end",strlen(":skip-end"))) {
+      if (strBegins(szBuf,":skip-end")) {
          if (!bWithinSkip) {
             log(0, "error  : skip-end without skip-begin in line %d\n",nGlblLine); 
             return 2;
@@ -489,7 +479,7 @@ int processPatchFile(char *pszPatchFileName)
          continue;
       }
 
-      if (!strncmp(szBuf,":skip-begin",strlen(":skip-begin"))) {
+      if (strBegins(szBuf,":skip-begin")) {
          if (bWithinSkip) {
             log(0, "error  : skip-begin twice in line %d\n",nGlblLine);
             return 2;
@@ -501,20 +491,24 @@ int processPatchFile(char *pszPatchFileName)
       if (bWithinSkip)
          continue;
 
-      if (!strncmp(szBuf,":patch ",7)) {
+      if (strBegins(szBuf,":patch ")) {
          iRC |= processCmdPatch(skipspace(szBuf+7));
          continue;
       }
-      if (!strncmp(szBuf,":info ",6)) {
+      if (   strBegins(szBuf,":info ")
+          || strBegins(szBuf,":info\r")
+          || strBegins(szBuf,":info\n")
+         )
+      {
          iRC |= processCmdInfo(skipspace(szBuf+6));
          continue;
       }
-      if (!strncmp(szBuf,":root ",6)) {
+      if (strBegins(szBuf,":root ")) {
          if (processCmdRoot(skipspace(szBuf+6)))
             return 1+4;
          continue;
       }
-      if (!strncmp(szBuf,":select-replace ",strlen(":select-replace "))) 
+      if (strBegins(szBuf,":select-replace ")) 
       {
          bGlblAnySelRep = 1;
          if (iGlobalChange < MAX_GLOBAL_CHANGES-2) {               
@@ -549,28 +543,28 @@ int processPatchFile(char *pszPatchFileName)
          }
          continue;
       }
-      if (!strncmp(szBuf,":create ",8)) {
+      if (strBegins(szBuf,":create ")) {
          iRC |= processCreateFile(skipspace(szBuf+8));
          continue;
       }
-      if (!strncmp(szBuf,":mkdir ",7)) {
+      if (strBegins(szBuf,":mkdir ")) {
          iRC |= processCreateDir(skipspace(szBuf+7));
          continue;
       }
-      if (!strncmp(szBuf,":file ",6)) {
+      if (strBegins(szBuf,":file ")) {
          iRC |= processCmdFile(skipspace(szBuf+6));
          continue;
       }
-      if (!strncmp(szBuf,":set only-lf-output",strlen(":set only-lf-output"))) {
+      if (strBegins(szBuf,":set only-lf-output")) {
          bGlblUnixOutput = 1;
          continue;
       }
-      if (!strncmp(szBuf,":set detab=",strlen(":set detab="))) {
+      if (strBegins(szBuf,":set detab=")) {
          nGlblDetabOutput = atol(szBuf+strlen(":set detab="));
          log(5, "setting detab to %d\n",nGlblDetabOutput);
          continue;
       }
-      if (!strncmp(szBuf,":",1)) {
+      if (strBegins(szBuf,":")) {
          log(0, "error  : unknown command in line %d: %s\n",nGlblLine,szBuf);
          return 1;
       }

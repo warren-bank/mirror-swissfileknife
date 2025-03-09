@@ -247,8 +247,7 @@ See also:
       text viewer that allows instant repeated searches 
       across thousands of text files, especially source code.
 
-      The Base edition (provided also within the sfknnn.zip file)
-      is free for private, non-commercial use.
+      The Base edition is free for private, non-commercial use.
 
          http://stahlworks.com/dview/
 

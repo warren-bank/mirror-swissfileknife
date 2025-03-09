@@ -3942,11 +3942,27 @@ int Coi::rawOpenFtpSubFile(cchar *pmode)
 
    mtklog((" ftp open host \"%s\" file \"%s\"", phost, prelfile));
 
-   if (pftp->loginOnDemand(phost, nport)) return 9;
-   int nrc = pftp->openFile(prelfile, pmode);
-   // RC  9 == general error, e.g. file not available
-   // RC 10 == communication filed, connection invalid
+   int nrc = 0;
 
+   for (int itry=0; itry<2; itry++)
+   {
+      if (pftp->loginOnDemand(phost, nport))
+         return 9;
+
+      nrc = pftp->openFile(prelfile, pmode);
+      // RC  9 == general error, e.g. file not available
+      // RC 10 == communication failed, connection invalid
+
+      if (nrc < 10)
+         break;
+
+      // loginOnDemand thought the line is still valid, but it isn't.
+      pinf("ftp session expired, retrying\n");
+   
+      // devalidate session, relogin and retry
+      pftp->logout();
+   }
+   
    if (nrc) {
       if (nrc > 9) {
          pinf("ftp communication failed (connection closed)\n");

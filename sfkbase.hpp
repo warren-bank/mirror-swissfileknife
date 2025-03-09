@@ -247,6 +247,7 @@ extern int (*pGlblJamCheckCallBack)(char *pszFilename);
 extern int (*pGlblJamFileCallBack)(char *pszFilename, num &rLines, num &rBytes);
 extern int (*pGlblJamLineCallBack)(char *pszLine, int nLineLen, bool bAddLF);
 extern int (*pGlblJamStatCallBack)(char *pszInfo, uint nFiles, uint nLines, uint nMBytes, uint nSkipped, char *pszSkipInfo);
+extern int bGlblPassThroughSnap;
 
 char *findPathLocation(cchar *pszCmd, bool bExcludeWorkDir=0);
 extern int fileExists(char *pszFileName, bool bOrDir=0);
@@ -263,6 +264,7 @@ bool  strBegins      (char *pszStr, cchar *pszPat);
 bool  striBegins     (char *pszStr, cchar *pszPat);
 bool  strEnds        (char *pszStr, cchar *pszPat);
 void  removeCRLF     (char *pszBuf);
+bool  sfkisalpha     (uchar uc);
 bool  sfkisalnum     (uchar uc);
 bool  sfkisprint     (uchar uc);
 void  myrtrim        (char *pszBuf);
