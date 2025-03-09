@@ -1327,7 +1327,43 @@ inline uchar sfkGetBit(uchar *pField, uint iBit)
 
 extern int (*pGlblSFKStatusCallBack)(int nMsgType, char *pmsg);
 
+char *dataAsHex(void *pAnyData, int iDataSize, char *pszBuf=0, int iMaxBuf=0);
 char *dataAsTrace(void *pAnyData, int iDataSize, char *pszBuf=0, int iMaxBuf=0);
+
+/*
+    Simplest possible utf8 decoder, primarily for 16 bit code points.
+    No support for surrogates or any complex sequences.
+
+    UTFDecoder odec(szInText);
+    while (odec.haveChar())
+    {
+        uint u = odec.nextChar();
+        ...
+    }
+*/
+class UTF8Codec
+{
+public:
+   UTF8Codec   (char *pOptInData=0, int iOptionalInputLength=-1);
+
+   void  init  (char *pInputData, int iOptionalInputLength=-1);
+
+   static int toutf8 (char *pszOut, int iMaxOut, uint ch);
+   static int toutf8 (char *pszOut, int iMaxOut, char *pszIsoText, bool bSafe=0);
+
+   bool  hasChar();
+   uint  nextChar();
+   bool  eod();
+
+   static int  validSeqLen    (char *pszSrc, int iMaxSrc);
+          int  validSeqLenInt (char *pszSrc, int iMaxSrc);
+
+private:
+   int   readRaw();
+   int   readSeq();
+   int   icur, imax;
+   uchar *psrc;
+};
 
 #ifndef USE_SFK_BASE
  #if defined(WINFULL) && defined(_MSC_VER)

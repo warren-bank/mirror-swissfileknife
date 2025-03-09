@@ -147,7 +147,7 @@ friend class TCPCore;
 class TCPCore
 {
 public:
-      TCPCore  (char *pszID="");
+      TCPCore  (char *pszID);
      ~TCPCore  ( );
 
    char  *getID   ( );

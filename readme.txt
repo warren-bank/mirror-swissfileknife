@@ -246,15 +246,8 @@ See also:
 
          http://stahlworks.com/sfkxe.html
 
-   -  Depeche View for Windows is a realtime source code viewer 
-      that allows instant repeated searches across thousands of files.
-
-      Depeche View Pro allows to search and edit thousands of files,
-      edit text on the fly, and to load and view .zip, .tar.gz and 
-      .tar.bz2 contents without the need for extraction, allowing to 
-      research downloaded open source packages instantly.
-      
-      A trial version is available under:
+   -  The whole SFK source code and documentation was created with
+      Depeche View, the world's fastest text file browser and editor. 
+      A free demo is available under:
 
          http://stahlworks.com/depeche-view.html
-
