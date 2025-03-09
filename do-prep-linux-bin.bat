@@ -1,3 +1,3 @@
-cp uxbin/sfk-linux ./sfk
-chmod 744 ./sfk
-echo "./sfk ready for use."
+cp uxbin/sfk-linux.exe ./sfk
+chmod +x ./sfk
+echo "./sfk ready for use. if you get errors, try sfk-linux-lib5.exe."

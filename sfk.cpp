@@ -12,6 +12,18 @@
    -  unix bash interprets $, ! and probably other chars.
    -  german umlauts not supported in grep.
 
+   1.2.5
+   -  add: sfk md5check/md5gento syntax extended,
+           the "=" is no longer needed but still supported.
+   -  add: filter -rep xsrcxdst: both src and dst now
+           support format strings with \t and \xnn.
+   -  add: filter -sep: support for hex values \xnn.
+   -  fix: windows text color: background was changed.
+           now masking SetConsoleTextAttribute correctly.
+   -  fix: unexpected error messages by ftp transfer from server
+           to client. removed ack verify at server, as error msges
+           at client are sufficient.
+
    1.2.4
    -  fix: ftp: file receive by normal ftp: division by zero
            during output of intermediate size.
@@ -210,7 +222,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.2.4"
+#define SFK_VERSION  "1.2.5"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -650,6 +662,11 @@ void setTextColor(long n, bool bStdErr=0);
 HANDLE hGlblConsole     = 0;
 WORD   nGlblConsAttrib  = 0;
 
+#define CCMASK_FOREGROUND (FOREGROUND_RED|FOREGROUND_GREEN|FOREGROUND_BLUE|FOREGROUND_INTENSITY)
+#define CCMASK_BACKGROUND (BACKGROUND_RED|BACKGROUND_GREEN|BACKGROUND_BLUE|BACKGROUND_INTENSITY)
+#define CCMASK_FORE_BACK  (CCMASK_FOREGROUND|CCMASK_BACKGROUND)
+#define CCMASK_NOT_FGCOL  (0xFFFF ^ CCMASK_FOREGROUND)
+
 // need this to ensure that commands dumping colored output
 // do never leave the shell in a non-std color.
 BOOL WINAPI ctrlcHandler(DWORD type)
@@ -711,7 +728,11 @@ void initConsole()
    #ifdef _WIN32
    hGlblConsole = GetStdHandle(STD_OUTPUT_HANDLE);
    CONSOLE_SCREEN_BUFFER_INFO oConInf;
-   GetConsoleScreenBufferInfo(hGlblConsole, &oConInf);
+   if (!GetConsoleScreenBufferInfo(hGlblConsole, &oConInf)) {
+      // not in interactive mode, e.g. output redirected to file:
+      bGlblUseColor = bGlblUseHelpColor = 0;
+      return;
+   }
    nGlblConsAttrib = oConInf.wAttributes;
    #endif
 
@@ -756,10 +777,15 @@ void setTextColor(long n, bool bStdErr)
    if (n & 2) nAttrib |= FOREGROUND_RED;
    if (n & 4) nAttrib |= FOREGROUND_GREEN;
    if (n & 8) nAttrib |= FOREGROUND_BLUE;
-   if (n == -1)
-      SetConsoleTextAttribute(hGlblConsole, nGlblConsAttrib & (FOREGROUND_RED|FOREGROUND_GREEN|FOREGROUND_BLUE|FOREGROUND_INTENSITY));
-   else
-      SetConsoleTextAttribute(hGlblConsole, nAttrib);
+
+   if (n == -1) {
+      // default color: set all attribs as they were.
+      SetConsoleTextAttribute(hGlblConsole, nGlblConsAttrib);
+   } else {
+      // set new FOREGROUND text color, but make sure that
+      // background color and anything else stays unchanged.
+      SetConsoleTextAttribute(hGlblConsole, (nGlblConsAttrib & CCMASK_NOT_FGCOL) | nAttrib);
+   }
 
    #else
 
@@ -3145,7 +3171,7 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
                continue;
             }
 
-            if (!strcmp(psz1, "-file")) 
+            if (!strcmp(psz1, "-file"))
             {
                if (!strncmp(pszCmd, "freezeto=", strlen("freezeto=")))
                   return 9+perr("no -file masks supported with freezeto command.\n");
@@ -8726,7 +8752,7 @@ long sendSkipBlock(SOCKET hSock)
 }
 
 // INCLUDES ackReceive past file send.
-long putFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0)
+long putFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool bIgnoreAck=0)
 {
    num nLen = getFileSize(pszFile);
    if (nLen <= 0)
@@ -8768,17 +8794,25 @@ long putFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0)
    memset(abBuf, 0, 4);
    receiveBlock(hSock, abBuf, 4, 0); // 0 == silent mode
 
-   // possible replies:
-   //    OK\n\n   ok\n\n (older sft)
-   //    EE\n\n
-   if (   tolower((char)abBuf[0]) == 'o'
-       && tolower((char)abBuf[1]) == 'k') {
-   #ifndef _WIN32
-   printf("                                               \r");
-   fflush(stdout);
-   #endif
+   if (bIgnoreAck) {
+      // do not verify, receiver may have closed connection already.
+      #ifndef _WIN32
+      printf("                                               \r");
+      fflush(stdout);
+      #endif
    } else {
-      perr("transfer or write of file failed: %s     \n", pszFile);
+      // possible replies:
+      //    OK\n\n   ok\n\n (older sft)
+      //    EE\n\n
+      if (   tolower((char)abBuf[0]) == 'o'
+          && tolower((char)abBuf[1]) == 'k') {
+      #ifndef _WIN32
+      printf("                                               \r");
+      fflush(stdout);
+      #endif
+      } else {
+         perr("transfer or write of file failed: %s     \n", pszFile);
+      }
    }
 
    return 0;
@@ -9567,10 +9601,12 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             } else {
                sendLine(hClient, "200 OK, data follows");
                printf("send sft file: \"%s\"\n", pszFile);
-               long lRC = putFileBySFT(hClient, pszFile, nClientSFT);
+               // sending a file from server to client by SFT: here, the ack "OK\n\n"
+               // is often overhauled by connection close from client, therefore server
+               // doesn't verify it. should there be errors, then they're shown at client only.
+               long lRC = putFileBySFT(hClient, pszFile, nClientSFT, 0, 1); // not quiet, ignore ack
                printf("send sft file done, RC %ld\n", lRC);
             }
-            // putFileBySFT includes ack receive
          }
          else
          if (!strncmp(szLineBuf, "SPUT ", 5)) { nbail=0;
@@ -9749,6 +9785,62 @@ char *TestDB::getValue(char *pszInKey) {
 extern int patchMain(int argc, char *argv[], int noffs);
 #endif
 
+bool myisxdigit(char c) {
+   if (c >= '0' && c <= '9') return 1;
+   if (c >= 'a' && c <= 'f') return 1;
+   if (c >= 'A' && c <= 'F') return 1;
+   return 0;
+}
+
+long getTwoDigitHex(char *psz)
+{
+   char szHex[10];
+
+   if (!*psz) return -1;
+   szHex[0] = tolower(*psz++);
+   if (!myisxdigit(szHex[0])) return -1;
+
+   if (!*psz) return -1;
+   szHex[1] = tolower(*psz++);
+   if (!myisxdigit(szHex[1])) return -1;
+
+   szHex[2] = '\0';
+
+   return (long)strtoul(szHex,0,0x10);
+}
+
+long parseFormStr(char *pszSrc, long nSrcLen, char *pszDst, long nMaxDst)
+{
+   // printf("parseFormStr \"%.*s\"\n",(int)nSrcLen,pszSrc);
+   char *pszin = pszSrc;
+   long iout = 0;
+   while (*pszin && (nSrcLen > 0))
+   {
+      if (iout >= nMaxDst-10)
+         return 9+perr("format string too long: \"%s\"\n", pszSrc);
+
+      if (nSrcLen>=2 && !strncmp(pszin, "\\\\", 2))
+         { pszDst[iout++] = '\\'; pszin+=2; nSrcLen-=2; continue; }
+      else
+      if (nSrcLen>=2 && !strncmp(pszin, "\\t", 2))
+         { pszDst[iout++] = '\t'; pszin+=2; nSrcLen-=2; continue; }
+      else
+      if (nSrcLen>=4 && !strncmp(pszin, "\\x", 2)) {
+         // \xnn - any character with hex code nn
+         pszin+=2; nSrcLen-=2; // skip \x
+         long nhex = getTwoDigitHex(pszin);
+         if (nhex <= 0) return 9+perr("illegal value for \\xnn in format string. use 01 to FF, e.g. \\x09\n");
+         pszin+=2; nSrcLen-=2; // skip nn
+         pszDst[iout++] = (char)nhex;
+         continue;
+      }
+      pszDst[iout++] = *pszin++; nSrcLen--;
+   }
+   pszDst[iout] = '\0';
+   // printf("-> \"%s\"\n",pszDst);
+   return 0;
+}
+
 // in: szLineBuf. also uses szLineBuf2.
 long applyReplace(char *pszPat)
 {
@@ -9776,10 +9868,18 @@ long applyReplace(char *pszPat)
    if (nSrcLen < 1) return 9+perr("source pattern is empty\n");
    if (nSrcLen > sizeof(szSrc)-10) return 9+perr("source pattern too large \"%.*s\"\n", nSrcLen, pszSrc1);
    if (nDstLen > sizeof(szDst)-10) return 9+perr("destination pattern too large \"%.*s\"\n", nDstLen, pszDst1);
-   strncpy(szSrc, pszSrc1, nSrcLen);
-   szSrc[nSrcLen] = '\0';
-   strncpy(szDst, pszDst1, nDstLen);
-   szDst[nDstLen] = '\0';
+
+   // strncpy(szSrc, pszSrc1, nSrcLen);
+   // szSrc[nSrcLen] = '\0';
+   if (parseFormStr(pszSrc1, nSrcLen, szSrc, sizeof(szSrc)-10))
+      return 9;
+   nSrcLen = strlen(szSrc); // adapt to \t, \x conversions
+
+   // strncpy(szDst, pszDst1, nDstLen);
+   // szDst[nDstLen] = '\0';
+   if (parseFormStr(pszDst1, nDstLen, szDst, sizeof(szDst)-10))
+      return 9;
+   nDstLen = strlen(szDst); // adapt to \t, \x conversions
 
    // apply replacements.
    psz1 = szLineBuf;
@@ -10277,7 +10377,7 @@ int main(int argc, char *argv[])
              "       -+   this pattern MAY  be  part of a result line (OR  pattern)\n"
              "       ++   this pattern MUST be  part of a result line (AND pattern)\n"
              "       -<not>   this pattern must NOT be  part of a result line\n"
-             "       -rep[lace] xSrcxDestx   = replace string Src by Dest\n"
+             "       -rep[lace] _Src_Dest_   = replace string Src by Dest\n"
              "       type \"sfk filter\" for all filter options.\n"
              "          #anyprog | sfk filter -+mypat -<not>otherpat\n"
              "          #sfk filter result.txt -rep _\\_/_ -rep xC:\\xD:\\x\n"
@@ -10316,13 +10416,13 @@ int main(int argc, char *argv[])
              "       type \"sfk syncto\" for details.\n"
             );
       printx("   $sfk md5gento=outfile dir [mask] [mask2] [<not>mask3] [...]\n"
-             "   $sfk md5gento=outfile -dir dir1 dir2 -file mask1 mask2 <not>mask3 [...]\n"
+             "   $sfk md5gento outfile -dir dir1 dir2 -file mask1 mask2 <not>mask3 [...]\n"
              "       create list of md5 checksums over all files.\n"
              "          #sfk md5gento=md5.dat .\n"
-             "   $sfk md5check=infile [-skip=n] [-skip n]\n"
+             "   $sfk md5check infile [-skip=n] [-skip n]\n"
              "       verify list of md5 checksums. to speed up verifys by spot checking,\n"
              "       specify -skip=n: after every checked file, n files will be skipped.\n"
-             "          #sfk md5check=md5.dat\n"
+             "          #sfk md5check md5.dat\n"
              "   $sfk md5 filename\n"
              "       create md5 of a single file.\n"
              );
@@ -10596,13 +10696,22 @@ int main(int argc, char *argv[])
       }
    }
 
-   if (!strncmp(pszCmd, "md5gento=", strlen("md5gento="))) 
+   if (!strncmp(pszCmd, "md5gento", strlen("md5gento")))
    {
-      pszGlblOutFile = pszCmd+strlen("md5gento=");
+      pszGlblOutFile = 0;
+
+      int iDir = 2;
+      if (!strncmp(pszCmd, "md5gento=", strlen("md5gento=")))
+         pszGlblOutFile = pszCmd+strlen("md5gento=");
+      else {
+         if (argc < 3) return 9+perr("missing output filename\n");
+         pszGlblOutFile = argv[iDir++];
+      }
+
       fGlblOut = fopen(pszGlblOutFile, "w");
       if (!fGlblOut) return 9+perr("cannot write %s\n", pszGlblOutFile);
 
-      if (lRC = processDirParms(pszCmd, argc, argv, 2, 3)) return lRC;
+      if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3)) return lRC;
       lRC = walkAllTrees(eFunc_MD5Write, lFiles, lDirs, nBytes);
 
       fclose(fGlblOut);
@@ -10610,13 +10719,21 @@ int main(int argc, char *argv[])
       bDone = 1;
    }
 
-   if (!strncmp(pszCmd, "md5check=", strlen("md5check="))) 
+   if (!strncmp(pszCmd, "md5check", strlen("md5check")))
    {
-      char *pszInFile = pszCmd+strlen("md5check=");
+      char *pszInFile = 0;
+
+      int iDir = 2;
+      if (!strncmp(pszCmd, "md5check=", strlen("md5check=")))
+         pszInFile = pszCmd+strlen("md5check=");
+      else {
+         if (argc < 3) return 9+perr("missing input filename\n");
+         pszInFile = argv[iDir++];
+      }
+
       char *pInFile = loadFile(pszInFile, __LINE__);
       if (!pInFile) return 9+perr("cannot read %s\n", pszInFile);
 
-      int iDir = 2;
       for (; iDir < argc; iDir++)
       {
          if (!strncmp(argv[iDir],"-skip=",strlen("-skip="))) {
@@ -11533,17 +11650,17 @@ int main(int argc, char *argv[])
              "\n"
              "   $text processing options\n"
              "      applied <err>after<def> line selection options only.\n"
-             "      -rep[lace] xSrcxDestx\n"
-             "          replace string Src by Dest. first character is separator character (e.g. x)\n"
-             "          the search for Src is currently case-sensitive.\n"
+             "      -rep[lace] _Src_Dest_\n"
+             "          replace string Src by Dest. first character is separator character (e.g. _).\n"
+             "          the search for Src is case-sensitive. \\t is TAB, \\xnn is any hex code 01-FF.\n"
              "      -form[at] \"<run>col1 mytext <run>col2 ...\"\n"
              "          break every line into columns separated by whitespace, then reformat the text\n"
              "          according to user-defined mask.\n"
              "      -form \"<run>40col1 <run>-50col2\"\n"
              "          reformat column 1 as right-ordered with at least 40 chars (C printf similar)\n"
-             "      -sep[arate] \"; \\t\" -form \"<run>col1 <run>col2\"\n"
+             "      -sep[arate] \"; \\t\\x09\" -form \"<run>col1 <run>col2\"\n"
              "          select separator characters used to split input columns, e.g. semicolon, blank, tab\n"
-             "          this must be specified before a -form option.\n"
+             "          this must be specified before a -form option. \\x09 is the same as \\t.\n"
              "      -blocksep \" \" = treat blocks of whitespace as single whitespace separator.\n"
              "\n"
              "   $using filter in batch files\n"
@@ -11825,6 +11942,16 @@ int main(int argc, char *argv[])
                      if (!strncmp(pszin, "\\t", 2))
                         { aMaskSep[iout++] = '\t'; pszin += 2; continue; }
                      else
+                     if (!strncmp(pszin, "\\x", 2)) {
+                        // \xnn - any character with hex code nn
+                        pszin += 2; // skip \x
+                        long nhex = getTwoDigitHex(pszin);
+                        if (nhex <= 0) return 9+perr("illegal value for \\xnn in -sep. use 01 to FF, e.g. \\x09\n");
+                        pszin += 2; // skip nn
+                        aMaskSep[iout++] = (char)nhex;
+                        continue;
+                     }
+                     else
                         aMaskSep[iout++] = *pszin;
                      pszin++;
                   }
@@ -11992,6 +12119,10 @@ int main(int argc, char *argv[])
       bDone = 1;
    }
 
+   // the freezeto command is kept internal, as it massively uses .zip files,
+   // which may create problems if freezing FAT32 and then unpacking on NTFS.
+   // esp. "+x" attributes of extracted files may be missing.
+   // as a general workaround, always unzip on FAT32 only.
    if (!strcmp(pszCmd, "freezeto")) {
       printx(
          "<help>$sfk freezeto=targetdir [-quiet][-hidden][-verbose[=2]] -dir src1 -copy|zip\n"
