@@ -107,3 +107,5 @@ bool sfkisprint(uchar uc);
 
 extern long (*pGlblJamLineCallBack)(char *pszLine, long nLineLen, bool bAddLF);
 extern long (*pGlblJamStatCallBack)(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes, ulong nSkipped, char *pszSkipInfo);
+
+char *findPathLocation(char *pszCmd, bool bExcludeWorkDir=0);

@@ -12,6 +12,12 @@
    -  unix bash interprets $, ! and probably other chars.
    -  german umlauts not supported in grep.
 
+   1.2.8
+   -  add: sfk alias - reduce typing effort by aliases.
+   -  add: sfk mkcmd - remember working dir in alias batch.
+   -  fix: sfk ftpclient mget didn't work.
+   -  chg: internal: -sincedir: check also content.
+
    1.2.7
    -  add: list: -late, -old, -big, -small, -since, -sort.
    -  fix: internal: sfk -html: color sometimes not reset.
@@ -247,7 +253,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.2.7"
+#define SFK_VERSION  "1.2.8"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -527,6 +533,7 @@ enum eWalkTreeFuncs {
    #endif
    eFunc_Hexdump     ,
    eFunc_Copy        ,
+   eFunc_AliasList   ,
 };
 
 enum eConvTargetFormats {
@@ -639,6 +646,8 @@ bool bGlblYes            = 0;
 #ifdef WITH_TCP
 SOCKET hGlblTCPOutSocket = 0;
 bool bGlblFTPReadWrite   = 0;
+bool bGlblFTPSetAttribs  = 0;
+bool bGlblFTPListFlatTS  = 0; // server: send flat timestamp on list
 #endif
 bool bGlblBinGrep          = 0;
 uchar nGlblBinTextBinRange = 0xFF;
@@ -693,6 +702,12 @@ long   nGlblCopyOpt      = 0;
 bool  bGlblUseCopyCache  = 1;
 bool bGlblHavePosDirMasks = 0;
 
+#ifdef _WIN32
+char *pszGlblAliasBatchHead = "@rem sfk alias batch";
+#else
+char *pszGlblAliasBatchHead = "# sfk alias batch";
+#endif
+
 long nGlblFzMisArcFiles = 0;
 long nGlblFzConArcFiles = 0;
 long nGlblFzConArchives = 0;
@@ -731,6 +746,20 @@ char *readDirEntry(DIR *d) {
   return e == NULL ? (char *) NULL : e->d_name;
 }
 #endif
+
+void skipUntilWhite(char **pp) {
+   char *p = *pp;
+   while (*p && (*p != ' ') && (*p != '\t'))
+      p++;
+   *pp = p;
+}
+
+void skipOverWhite(char **pp) {
+   char *p = *pp;
+   while (*p && ((*p == ' ') || (*p == '\t')))
+      p++;
+   *pp = p;
+}
 
 void setTextColor(long n, bool bStdErr=0);
 
@@ -4098,14 +4127,26 @@ char *timeAsString(num nTime, bool bFlat=0)
    return szTimeStrBuf;
 }
 
+static const char *pszGlblMonths[] = {
+   "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
+};
+
 long timeFromString(char *psz, num &nRetTime)
 {
+   // get local time (zone)
+   time_t now = time(NULL);
+   struct tm *tm = 0;
+   tm = localtime(&now);
+   tm->tm_isdst = -1;
+
    // accept formats:
    // 12345678901234567890123456789012345678901234567890
    // 2006-11-21 12:49:36  - 19 chars
    // 2006-11-21           - 10 chars
    // 20061121124936       - 14 chars
    // 20061121             - 08 chars
+   // Sep 28 2006          - 11 chars
+   // Sep 28 14:37         - 12 chars
    ulong nyear=0,nmon=0,nday=0,nhour=0,nmin=0,nsec=0;
    long nslen = strlen(psz);
    long lrc = 0;
@@ -4117,6 +4158,30 @@ long timeFromString(char *psz, num &nRetTime)
    if (nslen == 14) {
       lrc = sscanf(psz, "%4lu%2lu%2lu%2lu%2lu%2lu", &nyear, &nmon, &nday, &nhour, &nmin, &nsec);
       if (lrc != 6) return 9+perr("wrong date/time format: %s\n", psz);
+   }
+   else
+   if (nslen == 12) {
+      char *pszMon = psz;
+      for (nmon=0; nmon<12; nmon++)
+         if (!strncmp(pszMon, pszGlblMonths[nmon], 3))
+            break;
+      if (nmon >= 12) return 9+perr("wrong date/time format: %s\n", psz);
+      psz += 4;
+      lrc = sscanf(psz, "%2lu %2lu:%2lu", &nday, &nhour, &nmin);
+      if (lrc != 2) return 9+perr("wrong date/time format: %s\n", psz);
+      // copy year from current time:
+      nyear = tm->tm_year;
+   }
+   else
+   if (nslen == 11) {
+      char *pszMon = psz;
+      for (nmon=0; nmon<12; nmon++)
+         if (!strncmp(pszMon, pszGlblMonths[nmon], 3))
+            break;
+      if (nmon >= 12) return 9+perr("wrong date/time format: %s\n", psz);
+      psz += 4;
+      lrc = sscanf(psz, "%2lu %4lu", &nday, &nyear);
+      if (lrc != 2) return 9+perr("wrong date/time format: %s\n", psz);
    }
    else
    if (nslen == 10) {
@@ -4141,12 +4206,6 @@ long timeFromString(char *psz, num &nRetTime)
    // adjust values
    nyear -= 1900;
    nmon--;
-
-   // get local time (zone)
-   time_t now = time(NULL);
-   struct tm *tm = 0;
-   tm = localtime(&now);
-   tm->tm_isdst = -1;
 
    // printf("] %lu-%lu-%lu %lu:%lu:%lu\n",nyear,nmon,nday,nhour,nmin,nsec);
 
@@ -6354,7 +6413,7 @@ long execGrep(char *pszFileName)
 
 FileList glblFileListCache;
 
-long prtFile(num nTime, num nSize, char *pszFilename, long nFlags, const char *pszFormat, ...)
+long prtFile(char *pszPreInfo, num nTime, num nSize, char *pszFilename, long nFlags, const char *pszFormat, ...)
 {
    va_list argList;
    va_start(argList, pszFormat);
@@ -6379,11 +6438,11 @@ long prtFile(num nTime, num nSize, char *pszFilename, long nFlags, const char *p
       // no sorted listing: try to highlight hidden files
       if (nFlags & 2) { // hidden
          setTextColor(nGlblFileColor);
-         printf("%s%s", szPrintBuf1, pszFilename);
+         printf("%s%s%s", pszPreInfo, szPrintBuf1, pszFilename);
          setTextColor(-1);
          printf("\n");
       } else
-         printf("%s%s\n", szPrintBuf1, pszFilename);
+         printf("%s%s%s\n", pszPreInfo, szPrintBuf1, pszFilename);
    }
    return 0;
 }
@@ -6402,7 +6461,7 @@ char *sizeOrDir(num nSize, long nFlags)
    return szInfo;
 }
 
-long listSingleFile(long lLevel, char *pszFileName, num nFileTime, num nFileSize, char *pszParentZip, SFKFindData *pfdat, bool bIsDir)
+long listSingleFile(long lLevel, char *pszFileName, num nFileTime, num nFileSize, char *pszParentZip, SFKFindData *pfdat, bool bIsDir, long nSinceReason)
 {
    const char *p1 = pszParentZip ? pszParentZip : "";
    const char *p2 = pszParentZip ? glblPathStr  : "";
@@ -6414,6 +6473,13 @@ long listSingleFile(long lLevel, char *pszFileName, num nFileTime, num nFileSize
         nf |= 1;
    if (pfdat && (pfdat->attrib & 0x06))
         nf |= 2;
+
+   char szSinceInfo[50];
+   szSinceInfo[0] = '\0';
+   if (nSinceReason & 1) strcpy(szSinceInfo, "[tim] ");
+   if (nSinceReason & 2) strcpy(szSinceInfo, "[dif] ");
+   if (nSinceReason & 4) strcpy(szSinceInfo, "[add] ");
+   char *ps = szSinceInfo;
 
    switch (nGlblListMode)
    {
@@ -6427,7 +6493,7 @@ long listSingleFile(long lLevel, char *pszFileName, num nFileTime, num nFileSize
                if (nIndent > strlen(pszGlblBlank)) nIndent = strlen(pszGlblBlank);
                if (nIndent > 10) nIndent = 10;
                  
-               prtFile(nt,ns,pf,nf, "%5ld mb,              %.*s%s%s", lMBytes, nIndent, pszGlblBlank, p1,p2);
+               prtFile(ps,nt,ns,pf,nf, "%5ld mb,              %.*s%s%s", lMBytes, nIndent, pszGlblBlank, p1,p2);
             }
          }
          break;
@@ -6436,16 +6502,16 @@ long listSingleFile(long lLevel, char *pszFileName, num nFileTime, num nFileSize
          switch (nGlblListForm)
          {
             // plain filename, nothing else:
-            case 0: prtFile(nt,ns,pf,nf, "%s%s", p1,p2); break;
+            case 0: prtFile(ps,nt,ns,pf,nf, "%s%s", p1,p2); break;
             // size and filename:
-            case 1: prtFile(nt,ns,pf,nf, "%s %s%s", sizeOrDir(nFileSize, nf), p1,p2); break;
+            case 1: prtFile(ps,nt,ns,pf,nf, "%s %s%s", sizeOrDir(nFileSize, nf), p1,p2); break;
             // time and filename:
-            case 2: prtFile(nt,ns,pf,nf, "%s %s%s", timeAsString(nFileTime), p1,p2); break;
+            case 2: prtFile(ps,nt,ns,pf,nf, "%s %s%s", timeAsString(nFileTime), p1,p2); break;
 
             // size time filename:
-            case 0x0102: prtFile(nt,ns,pf,nf, "%s %s %s%s", sizeOrDir(nFileSize, nf), timeAsString(nFileTime), p1,p2); break;
+            case 0x0102: prtFile(ps,nt,ns,pf,nf, "%s %s %s%s", sizeOrDir(nFileSize, nf), timeAsString(nFileTime), p1,p2); break;
             // time size filename:
-            case 0x0201: prtFile(nt,ns,pf,nf, "%s %s %s%s", timeAsString(nFileTime), sizeOrDir(nFileSize, nf), p1,p2); break;
+            case 0x0201: prtFile(ps,nt,ns,pf,nf, "%s %s %s%s", timeAsString(nFileTime), sizeOrDir(nFileSize, nf), p1,p2); break;
          }
          break;
 
@@ -6460,7 +6526,62 @@ long listSingleFile(long lLevel, char *pszFileName, num nFileTime, num nFileSize
    return 0;
 }
 
-long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &nTreeMaxTime, SFKFindData *pfdat)
+long execAliasList(char *pszFileName)
+{
+   FILE *fin = fopen(pszFileName, "r");
+   if (!fin) return 1; // ignore
+
+   // read header of potential alias batch
+   szLineBuf[0] = '\0';
+   if (!fgets(szLineBuf, sizeof(szLineBuf)-10, fin))
+      { fclose(fin); return 1; } // ignore
+
+   if (!strncmp(szLineBuf, pszGlblAliasBatchHead, strlen(pszGlblAliasBatchHead)))
+   {
+      /* get additional info
+      char *psz2 = szLineBuf+strlen(pszGlblAliasBatchHead);
+      if (*psz2 == ' ') psz2++;
+      long nCmdLines = atol(psz2);
+      */
+
+      // reduce filename back to alias name
+      char *psz1 = strrchr(pszFileName, glblPathChar);
+      if (psz1) pszFileName = psz1+1;
+      int nLen = strlen(pszFileName);
+      char *pszBat = strstr(pszFileName, ".bat");
+      if (pszBat) nLen = pszBat-pszFileName;
+
+      printf("%.*s\t= ", (int)nLen, pszFileName);
+
+      // read the actual command lines
+      long nMaxLines = 10;
+      bool bFirst = 1;
+      while (nMaxLines-- > 0)
+      {
+         if (!fgets(szLineBuf, sizeof(szLineBuf)-10, fin))
+            break;
+         if (!bFirst) printf(" , ");
+         int nLen2 = strlen(szLineBuf);
+         if (nLen2 > 0) nLen2--; // strip linefeed
+         char *pszCmd = szLineBuf;
+         #ifdef _WIN32
+         if ((*pszCmd == '@') && nLen2) { pszCmd++; nLen2--; } // strip silencer
+         #else
+         if ((*pszCmd == '#') && nLen2) { pszCmd++; nLen2--; } // strip silencer
+         #endif
+         printf("%.*s",(int)nLen2, pszCmd);
+         bFirst = 0;
+      }
+
+      printf("\n");
+   }
+
+   fclose(fin);
+
+   return 0;
+}
+
+long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &nTreeMaxTime, SFKFindData *pfdat, long nSinceReason)
 {
    long bIsDir    = 0;
    long bCanRead  = 1;
@@ -6472,7 +6593,7 @@ long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num
    if (!strncmp(pszFileName, glblDotSlash, 2))
       pszFileName += 2;
 
-   listSingleFile(lLevel, pszFileName, nFileTime, nFileSize, 0, pfdat, 0);
+   listSingleFile(lLevel, pszFileName, nFileTime, nFileSize, 0, pfdat, 0, nSinceReason);
    nGlblFiles++;
    nGlblBytes += nFileSize;
 
@@ -6498,7 +6619,7 @@ long execFileStat(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num
                char *psz = oFiles.clNames.getEntry(i, __LINE__);
                num nSize = oFiles.clSizes.getEntry(i, __LINE__);
                num nTime = oFiles.clTimes.getEntry(i, __LINE__);
-               listSingleFile(lLevel+1, psz, nTime, nSize, pszFileName, pfdat, 0);
+               listSingleFile(lLevel+1, psz, nTime, nSize, pszFileName, pfdat, 0, nSinceReason);
                nGlblFiles++;
                nGlblBytes += nSize;
             }
@@ -6952,7 +7073,7 @@ long execDirStat(char *pszDir, long lLevel, long lFiles, long lDirs, num lBytes,
    if (nGlblListMode == 2)
    {
       if ((bGlblWithDirs || bGlblJustDirs) && strcmp(pszDir, ".")) {
-         listSingleFile(lLevel, pszDir, nFileTime, nFileSize, 0, pfdat, 1);
+         listSingleFile(lLevel, pszDir, nFileTime, nFileSize, 0, pfdat, 1, 0);
          /*
          if (bHidden) {
             setTextColor(nGlblFileColor);
@@ -8602,6 +8723,11 @@ long execFTPList(char *pszFileName)
 
    // files of current year get time added on listing, else list year
    if (pFileTime != 0) {
+      if (bGlblFTPListFlatTS) {
+         char *pszFlat = timeAsString(nFTimePre, 1); // 1: flat
+         if (pszFlat) strcopy(abTimeStamp, pszFlat);
+      }
+      else
       if (nSysYear == (ulong)pFileTime->tm_year)
          strftime(abTimeStamp, sizeof(abTimeStamp)-10, "%b %d %H:%M", pFileTime);
       else
@@ -8614,8 +8740,12 @@ long execFTPList(char *pszFileName)
       bGlblFTPReadWrite ? "-rw-rw-rw-":"-r--r--r--",
       numtoa_blank(nFileSize), abTimeStamp, pszFileName);
 
+   if (bGlblDebug)
+      printf("< %s\n", szLineBuf2);
+
    if (sendLine(hGlblTCPOutSocket, szLineBuf2, 1)) // uses szLineBuf
       return 9;
+
    return 0;
 }
 
@@ -8660,6 +8790,7 @@ long execSingleFile(char *pszFile, long lLevel, long &lFiles, long nDirFileCnt, 
    }
 
    // -sincedir: process only files newer than in reference dir
+   long nSinceReason = 0;
    if (pszGlblSinceDir) {
       // build relative name of file to be processed
       char *pszRoot = glblFileSet.getCurrentRoot();
@@ -8685,6 +8816,24 @@ long execSingleFile(char *pszFile, long lLevel, long &lFiles, long nDirFileCnt, 
       ofsSrc.readFrom(pszFile);
       if (!ofsSrc.differs(ofsRef, 1))
          return 0;
+      nSinceReason |= 1; // timestamp difference
+      // timestamp differs, check also content
+      SFKMD5 md5ref;
+      SFKMD5 md5src;
+      long lRCr = getFileMD5(szRefNameBuf, md5ref, 1);
+      long lRCs = getFileMD5(pszFile, md5src, 1);
+      if (lRCs) return 9+perr("unexpected: cannot md5 file: %s\n",pszFile);
+      if (lRCr) {
+         // no ref file: file was added
+         nSinceReason |= 4; // added
+      } else {
+         // compare content of ref and current
+         uchar *pmdr = md5ref.digest();
+         uchar *pmds = md5src.digest();
+         if (!memcmp(pmdr, pmds, 16))
+            return 0; // equal by content
+         nSinceReason |= 2; // file content difference
+      }
    }
 
    switch (nGlblFunc) 
@@ -8695,7 +8844,7 @@ long execSingleFile(char *pszFile, long lLevel, long &lFiles, long nDirFileCnt, 
       case eFunc_JamIndex: return execJamIndex(pszFile);   break;
       case eFunc_SnapAdd : return execSnapAdd(pszFile);    break;
       case eFunc_BinPatch: return execBinPatch(pszFile);   break;
-      case eFunc_FileStat: return execFileStat(pszFile, lLevel, lFiles, lDirs, lBytes, nLocalMaxTime, ntime2, pfdat);  break;
+      case eFunc_FileStat: return execFileStat(pszFile, lLevel, lFiles, lDirs, lBytes, nLocalMaxTime, ntime2, pfdat, nSinceReason);  break;
       case eFunc_Grep    : return execGrep(pszFile);       break;
       case eFunc_Mirror  : return execFileMirror(pszFile, nLocalMaxTime, ntime2, nDirFileCnt); break;
       case eFunc_Run     : return execRunFile(pszFile, lLevel, lFiles, lDirs, lBytes);  break;
@@ -8713,6 +8862,7 @@ long execSingleFile(char *pszFile, long lLevel, long &lFiles, long nDirFileCnt, 
       #endif
       case eFunc_Hexdump : return execHexdump(pszFile, 0, 0);   break;
       case eFunc_Copy    : return execFileCopy(pszFile);     break;
+      case eFunc_AliasList : return execAliasList(pszFile);  break;
       default: break;
    }
    return 0;
@@ -9442,6 +9592,13 @@ long execHexdump(char *pszFile, uchar *pBuf, ulong nBufSize)
             printf("\n");
             continue;
          }
+
+         case 4: { // flat
+            for (long i=0; i<lOutLen; i++)
+               printf("%c",(char)pTmp[i]);
+            // printf("\n");
+            continue;
+         }
       }
       // else fall through to human-readable
 
@@ -9840,17 +9997,19 @@ bool isWriteable(char *pszTmpFile) {
 }
 
 // uses szLineBuf, also for result!
-char *findPathLocation(char *pszCmd)
+char *findPathLocation(char *pszCmd, bool bExcludeWorkDir)
 {
    #ifdef _WIN32
-   // win only: check current dir first (implicite path inclusion)
-   _getcwd(szLineBuf,MAX_LINE_LEN-10);
-   strcat(szLineBuf,glblPathStr);
-   strcat(szLineBuf,pszCmd);
-   if (fileExists(szLineBuf)) {
-      if (bGlblDebug)
-         printf("hit: %s [cwd]\n", szLineBuf);
-      return szLineBuf;
+   if (!bExcludeWorkDir) {
+      // win only: check current dir first (implicite path inclusion)
+      _getcwd(szLineBuf,MAX_LINE_LEN-10);
+      strcat(szLineBuf,glblPathStr);
+      strcat(szLineBuf,pszCmd);
+      if (fileExists(szLineBuf)) {
+         if (bGlblDebug)
+            printf("hit: %s [cwd]\n", szLineBuf);
+         return szLineBuf;
+      }
    }
    #endif
 
@@ -9872,14 +10031,19 @@ char *findPathLocation(char *pszCmd)
       strncpy(szLineBuf, psz1, nLen);
       szLineBuf[nLen] = '\0';
       // now holding single dir in szLineBuf.
-      if (bGlblDebug)
-         printf("probe: %s\n", szLineBuf);
-      strcat(szLineBuf, glblPathStr);
-      strcat(szLineBuf, pszCmd);
-      if (fileExists(szLineBuf)) {
+      if (!strcmp(szLineBuf, ".") && bExcludeWorkDir) {
          if (bGlblDebug)
-            printf("hit: %s\n", szLineBuf);
-         return szLineBuf;
+            printf("skip: %s\n", szLineBuf);
+      } else {
+         if (bGlblDebug)
+            printf("probe: %s\n", szLineBuf);
+         strcat(szLineBuf, glblPathStr);
+         strcat(szLineBuf, pszCmd);
+         if (fileExists(szLineBuf)) {
+            if (bGlblDebug)
+               printf("hit: %s\n", szLineBuf);
+            return szLineBuf;
+         }
       }
       // step to next subpath
       if (*psz2)
@@ -10117,6 +10281,8 @@ long readLineRaw(SOCKET hSock, char *pszLineBuf, bool bAddToRemList, bool bQuiet
       removeCRLF(pszLineBuf);
       // on replies to SLST: store list replies, don't print
       if (bAddToRemList) {
+         // if (bGlblDebug)
+         //   printf("> [store] %s\n", pszLineBuf);
          glblFTPRemList.addEntry(pszLineBuf);
       } else {
          if (!bQuiet) printf("%s\n", pszLineBuf);
@@ -10657,9 +10823,16 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd=0)
          delete [] pszMask;
       }
       else
-      if (bSFT && !strncmp(szLineBuf, "mget ", 5)) 
+      if (bSFT && !strncmp(szLineBuf, "mget", 4)) 
       {
-         char *pszMaskPre = szLineBuf+5;
+         char *pszMaskPre = szLineBuf+4;
+
+         if (*pszMaskPre != ' ') {
+            perr("missing mask. supply name fragment (without *), or just \"*\"\n");
+            continue;
+         }
+         pszMaskPre++;
+
          if (!strncmp(pszMaskPre, "\\*", 2))
             pszMaskPre++; // for linux uniformity
          if ((pszMaskPre[0]=='*') && (pszMaskPre[1]!=0))
@@ -10678,16 +10851,80 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd=0)
                break;
             // -> collects into glblFTPRemList
          }
+
+         if (bGlblDebug)
+            printf("> received %ld filenames\n",glblFTPRemList.numberOfEntries());
+
+         char *apcol[20];
+         memset(apcol, 0, sizeof(apcol));
+
          // now ALL remote files are listed in glblFTPRemList
          // in a RAW format:
-         // -rw-rw-rw- 1 ftp ftp        30353 Sep 08 13:47 readme.txt
+         // -rw-rw-rw- 1 ftp ftp        30353 Sep 08 13:47   readme.txt
+         //    0       1  2   3          4    5   6   7      8
+         // -rw-rw-rw- 1 ftp ftp        30353 20061231235959 readme.txt
+         //    0       1  2   3          4    5              6
          long i=0, nRecv=0, nSkipped=0, nFailed=0;
          for (; i<glblFTPRemList.numberOfEntries(); i++) 
          {
             char *pszFileRaw = glblFTPRemList.getEntry(i, __LINE__);
-            char *psz1 = strchr(pszFileRaw, ':');
-            if (!psz1) { nSkipped++; continue; }
-            char *pszFile = psz1+4; // skip ":47 "
+
+            // parse raw line
+            long ncol = 0;
+            strcopy(szRefNameBuf, pszFileRaw);
+            char *psz1 = szRefNameBuf;
+            while (ncol < 15) {
+               // store column start
+               apcol[ncol++] = psz1;
+               // find end of column
+               skipUntilWhite(&psz1);
+               if (!*psz1) break;
+               *psz1++ = '\0';
+               // find start of next column
+               skipOverWhite(&psz1);
+               if (!*psz1) break;
+            }
+
+            char *pszMonTS = apcol[5]; // month or timestamp
+            bool bHaveFlatTime = 0;
+            if (pszMonTS && isdigit(*pszMonTS))
+                 bHaveFlatTime = 1;
+
+            long iName = 8;
+            if (bHaveFlatTime) {
+               if (ncol < 7)
+                  {  pwarn("wrong format: %s - skipping\n", pszFileRaw); continue; }
+               iName = 6;
+            }
+            else
+            if (ncol < 9)
+               {  pwarn("wrong format: %s - skipping\n", pszFileRaw); continue; }
+
+            // always take filename from original buffer,
+            // blanks may have been replaced by zeros in RefNameBuf.
+            char *pszFile = pszFileRaw + (apcol[iName]-szRefNameBuf);
+            char *pszSize = apcol[4];
+
+            num nFileTime = 0;
+
+            if (bGlblFTPSetAttribs) {
+               if (bHaveFlatTime) {
+                  timeFromString(pszMonTS, nFileTime);
+               } else {
+                  if (apcol[5] && apcol[6] && apcol[7]) {
+                     sprintf(szLineBuf, "%s %s %s",apcol[5],apcol[6],apcol[7]);
+                     timeFromString(szLineBuf, nFileTime);
+                  }
+               }
+               // printf("TIME %s\n",timeAsString(nFileTime));
+            }
+
+            num nFileSize = atonum(pszSize);
+            if (nFileSize <= 0) {
+               printf("] skip, size=%s: %s\n", pszSize, pszFile);
+               continue;
+            }
+
             if (!strcmp(pszMask, "*") || strstr(pszFile, pszMask)) 
             {
                if (!isWriteable(pszFile)) {
@@ -10705,6 +10942,17 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd=0)
                } else {
                   if (getFileBySFT(hSock, pszFile, 1))
                      break;
+                  if (bGlblFTPSetAttribs) {
+                     // experimental: try to set file time
+                     FileStat ofs;
+                     ofs.readFrom(pszFile);
+                     ofs.src.nMTime = nFileTime;
+                     #ifdef _WIN32
+                     ofs.src.bHaveWFT = 0; // no windows filetime
+                     #endif
+                     long lRCT = ofs.writeTo(pszFile);
+                     printf("] filetime set: %s, %ld\n", timeAsString(nFileTime), lRCT);
+                  }
                }
                // ack receive was done above. keep socket open.
                nRecv++;
@@ -11175,7 +11423,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             hGlblTCPOutSocket = hData;
             lRC = walkAllTrees(eFunc_FTPList, lFiles, lDirs, nBytes);
             closesocket(hData); hData = INVALID_SOCKET;
-            printf("dir done, RC %ld\n", lRC);
+            printf("dir done, RC %ld, %ld files.\n", lRC, lFiles);
             if (sendLine(hClient, "226 Closing data connection")) break; // 226, 250
          }
          else
@@ -11194,7 +11442,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             hGlblTCPOutSocket = hData;
             lRC = walkAllTrees(eFunc_FTPNList, lFiles, lDirs, nBytes);
             closesocket(hData); hData = INVALID_SOCKET;
-            printf("dir done, RC %ld\n", lRC);
+            printf("dir done, RC %ld, %ld files.\n", lRC, lFiles);
             if (sendLine(hClient, "226 Closing data connection")) break; // 226, 250
          }
          else
@@ -11308,8 +11556,11 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             if (strlen(szLineBuf2) > 7)
                 sendLine(hClient, "Path ignored - listing only current dir.");
             hGlblTCPOutSocket = hClient;
+            // we're talking SFT with an sfk client, therefore we can send
+            // an sfk-style dir listing with full, flat timestamps.
+            bGlblFTPListFlatTS = 1;
             lRC = walkAllTrees(eFunc_FTPList, lFiles, lDirs, nBytes);
-            printf("dir done, RC %ld\n", lRC);
+            printf("dir done, RC %ld, %ld files.\n", lRC, lFiles);
             if (sendLine(hClient, "226 Listing Done")) break; // 226, 250
          }
          else
@@ -12337,6 +12588,11 @@ int main(int argc, char *argv[])
              "       type \"sfk ftp\" for details.\n"
              #endif
 
+             "   $sfk alias [-list|-del|-ren] [shortname] [=] [command]\n"
+             "       create command aliases to save typing effort. \"sfk alias\" for help.\n"
+             "   $sfk mkcd cdname\n"
+             "       creates an alias remembering the current dir. \"sfk mkcd\" for help.\n"
+
              "   $sfk patch [...]\n"
              "       dynamic source file patching. type \"sfk patch\" for details.\n"
 
@@ -12579,7 +12835,7 @@ int main(int argc, char *argv[])
              "\n"
              "   $options:\n"
              "      -time       show date and time\n"
-             "      -size       show size of files\n"
+             "      -size[=n]   show size of files [n characters wide]\n"
              "      -stat       show statistics (number of files, dirs, bytes)\n"
              "      -withdirs   list also directories\n"
              "      -justdirs   list just directories\n"
@@ -12593,6 +12849,7 @@ int main(int argc, char *argv[])
              "      -old[=n]    sort by time, list oldest   [n] files last\n"
              "      -big[=n]    sort by size, list biggest  [n] files last\n"
              "      -small[=n]  sort by size, list smallest [n] files last\n"
+             "      -late=all   sort by time, list all files\n"
              "      -notime     don't list time, after -late or -old\n"
              "      -nosize     don't list size, after -big  or -small\n"
              "      -pure       pure list of filenames, leave out time, size,\n"
@@ -15434,6 +15691,7 @@ int main(int argc, char *argv[])
                 "               #0x53,0x46,0x4B,0x2D,0x54,0x45,0x53,0x54,0x0D,0x0A,\n"
                 "      -decsrc  lists decimal comma separated values:\n"
                 "               #83,70,75,45,84,69,83,84,13,10,\n"
+                "      -flat    no hexdump at all, dump characters as they come.\n"
                );
 
          if (btcp)
@@ -15473,6 +15731,8 @@ int main(int argc, char *argv[])
          if (!strcmp(argv[iDir], "-hexsrc")) { nGlblHexDumpForm=2; continue; }
          else
          if (!strcmp(argv[iDir], "-decsrc")) { nGlblHexDumpForm=3; continue; }
+         else
+         if (!strcmp(argv[iDir], "-flat")) { nGlblHexDumpForm=4; continue; }
          else
          if (haveParmOption(argv, argc, iDir, "-forward", &pszParm)) {
             if (!pszParm) return 9;
@@ -16020,6 +16280,401 @@ int main(int argc, char *argv[])
       for (int i=0; i<16; i++)
          printf("%02x ", abBuf[i]);
       printf("\n");
+      bDone = 1;
+   }
+
+   // create cd batch to current directory
+   if (!strcmp(pszCmd, "mkcd"))
+   {
+      if (argc < 3) {
+         printx("<help>$sfk mkcd cdname\n"
+                "\n"
+                "   creates an alias batch file, remembering the current directory.\n"
+                "   this batch can be used later to re-enter the remembered directory.\n"
+                "\n"
+                "   #example:\n"
+                "\n"
+                "   1. you are currently working in\n"
+                "         C:\\Documents And Long Complicated Paths\\Users\\You\\Work\n"
+                "\n"
+                "   2. now type:\n"
+                "         #sfk mkcd cd1\n"
+                "            which saves above path in a command \"cd1\".\n"
+                "\n"
+                "   3. you go into a different directory, e.g.\n"
+                "         C:\\Another Project\\Nested Dirs\\Work2\n"
+                "\n"
+                "   4. now type:\n"
+                "         #sfk mkcd cd2\n"
+                "\n"
+                "   => now, anytime you type:\n"
+                "         #cd1\n"
+                "            you jump instantly into\n"
+                "               C:\\Documents And Long Complicated Paths\\Users\\You\\Work\n"
+                "\n"
+                "      and anytime you type:\n"
+                "         #cd2\n"
+                "            you jump instantly into\n"
+                "               C:\\Another Project\\Nested Dirs\\Work2\n"
+                "\n"
+                "   if the creation of the alias fails, please type \"sfk alias\" to read\n"
+                "   about the required directories and access rights.\n"
+            );
+         return 0;
+      }
+
+      if (checkArgCnt(argc, 3)) return 9;
+      char *pszAlias = argv[2];
+
+      // find ourselves, result in szLineBuf
+      char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // 1: exclude work dir
+      if (!pszSFKCmd) return 9+perr("cannot find location of sfk" EXE_EXT " within PATH.\n");
+      // create batch filename parallel to sfk.exe
+      szRefNameBuf[0] = '\0';
+      char *psz1 = strrchr(pszSFKCmd, glblPathChar);
+      if (!psz1) return 9+perr("unable to find path of sfk" EXE_EXT);
+      sprintf(szRefNameBuf, "%.*s", (int)(psz1-pszSFKCmd+1),pszSFKCmd);
+      char *pszRel = szRefNameBuf+strlen(szRefNameBuf);
+      strcat(szRefNameBuf, pszAlias);
+      #ifdef _WIN32
+      strcat(szRefNameBuf, ".bat");
+      #endif
+      char nReply = 'y';
+      if (fileExists(szRefNameBuf)) {
+         printf("%s exists, overwrite? (yes/no) ",szRefNameBuf);
+         fflush(stdout);
+         nReply = getYNAchar();
+      }
+      if (nReply == 'y') 
+      {
+         // determine current directory
+         #ifdef _WIN32
+         _getcwd(szLineBuf,sizeof(szLineBuf)-10);
+         #else
+         getcwd(szLineBuf,sizeof(szLineBuf)-10);
+         #endif
+
+         // write the batch
+         FILE *fout = fopen(szRefNameBuf, "w");
+
+         // write alias batch header for later re-identification.
+         fprintf(fout, "%s\n", pszGlblAliasBatchHead);
+
+         #ifdef _WIN32
+         // include drive change
+         char *psz2 = strchr(szLineBuf, ':');
+         if (psz2)
+            fprintf(fout, "@%.*s\n@cd \"%s\"\n",
+               (int)(psz2-szLineBuf+1),szLineBuf,  // e.g. C:
+               psz2+1);   // rest of path, relative to drive
+         else
+            fprintf(fout, "@cd \"%s\"\n", szLineBuf);
+         #else
+         fprintf(fout, "cd \"%s\"\n", szLineBuf);
+         #endif
+
+         fclose(fout);
+
+         #ifndef _WIN32
+         chmod(szRefNameBuf, S_IREAD | S_IWRITE | S_IEXEC);
+         #endif
+
+         printf("batch created: %s\n", szRefNameBuf);
+         #ifdef _WIN32
+         printf("type \"%s\" to reenter %s\n",pszAlias,szLineBuf);
+         #else
+         printf("type \". %s\" to reenter %s\n",pszAlias,szLineBuf);
+         #endif
+      }
+      bDone = 1;
+   }
+
+   // create alias batch
+   if (!strcmp(pszCmd, "alias"))
+   {
+      if (argc < 3) {
+         printx("<help>$sfk alias [-list|-del|-ren] [shortname] [=] [command]\n"
+                "\n"
+                "   create, list, delete or rename command aliases. aliases are\n"
+                "   short command names selected by yourself to save typing effort.\n"
+                "\n"
+                "   $sfk alias shortname = command ...\n"
+                "\n"
+                "      create an alias. this actually creates a small batch file\n"
+                "      in the directory where sfk itself is located.\n"
+                "\n"
+                "      requirements:\n"
+                "      #-  the sfk executable has been copied into some directory x.\n"
+                "      #-  this directory x must be in your PATH.\n"
+                "      #-  you must have write permission for directory x.\n"
+                "      #-  directory x is NOT the current working directory \".\".\n"
+                "\n"
+                "      if any of these requirements is not met, the command will fail.\n"
+                "      for example, if sfk" EXE_EXT " is located just in your current\n"
+                "      working directory \".\", copy sfk" EXE_EXT " into a different\n"
+                "      directory of the PATH, and then start aliasing.\n"
+                "\n"
+                "      #sfk alias list = sfk list\n"
+                "         creates the alias named \"list\". from now on, you can\n"
+                "         type \"list\" instead of \"sfk list\".\n"
+                "\n"
+                "      #sfk alias wherc = \"sfk list -zip . .jar | sfk filter -+%%1\"\n"
+                "         creates alias \"wherc\", searching for class files in jars.\n"
+                "         after the alias exists, command \"wherc Foo\" executes the\n"
+                "         commands from above, listing all class names with \"Foo\".\n"
+                "\n"
+                #ifdef _WIN32
+                "      #sfk alias alias = sfk alias\n"
+                "         from now on, just type \"alias\" without \"sfk\" to get\n"
+                "         exactly the same functionality, e.g. \"alias -list\".\n"
+                "         note that on Linux, \"alias\" is a predefined shell command,\n"
+                "         so this example will not work unless the alias is renamed.\n"
+                "\n"
+                #else
+                "      #sfk alias sal = sfk alias\n"
+                "         from now on, just type \"sal\" to get the full \"sfk alias\"\n"
+                "         functionality, e.g. \"sal -list\". note that on Linux, \"alias\"\n"
+                "         is a predefined shell command; therefore you can NOT simply say\n"
+                "         \"sfk alias alias sfk alias\", but have to choose a different name.\n"
+                "\n"
+                #endif
+                "   $sfk alias -list\n"
+                "      list all existing aliases. this actually scans the directory\n"
+                "      where sfk is located for batch files containing aliases.\n"
+                "\n"
+                "   $sfk alias -del aliasname\n"
+                "      delete an alias (deletes the associated batchfile).\n"
+                "\n"
+                "   $sfk alias -ren oldname newname\n"
+                "      renane an alias (renames the associated batchfile).\n"
+                "\n"
+               );
+         #ifdef _WIN32
+         printf("   sfk aliases support a maximum of 9 parameters, listed as %%1 to %%9 ");
+         #else
+         printf("   sfk aliases support a maximum of 9 parameters, listed as $1 to $9 ");
+         #endif
+         printf("\n   within the batch files. be careful when using special characters,\n"
+                "   e.g. %% \\ or ! - depending on your environment, they may be removed\n"
+                "   by the shell, or require double quotes \"\" around your command string.\n"
+                );
+         return 0;
+      }
+
+      // find ourselves, result in szLineBuf
+      char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // 1: exclude work dir
+      if (!pszSFKCmd) return 9+perr("cannot find location of sfk" EXE_EXT " within PATH.\n");
+
+      // isolate path of sfk.exe in szRefNameBuf
+      szRefNameBuf[0] = '\0';
+      char *psz1 = strrchr(pszSFKCmd, glblPathChar);
+      if (!psz1) return 9+perr("unable to find path of sfk" EXE_EXT);
+      sprintf(szRefNameBuf, "%.*s", (int)(psz1-pszSFKCmd+1),pszSFKCmd);
+
+      if ((argc == 3) && !strcmp(argv[2], "-list"))
+      {
+         // list all aliases located parallel to sfk.exe,
+         // by scanning the header of all files in it's directory.
+         char *pSubArgv[10];
+         pSubArgv[0] = "sfk-dummy";
+         pSubArgv[1] = "alias-list";
+         pSubArgv[2] = "-norec";
+         pSubArgv[3] = szRefNameBuf;
+         pSubArgv[4] = ".bat";
+         #ifdef _WIN32
+         int nSubArgc = 5; // win: reduce scan to .bat files
+         #else
+         int nSubArgc = 4; // linux: no specific file extension, scan all files
+         #endif
+         int iSubDir  = 3;
+         printx("$current aliases from the sfk home %s :\n", szRefNameBuf);
+         if (lRC = processDirParms("alias-list", nSubArgc, pSubArgv, iSubDir, 3)) return lRC;
+         lRC = walkAllTrees(eFunc_AliasList, lFiles, lDirs, nBytes);
+         bDone = 1;
+      }
+      else
+      if ((argc > 3) && !strcmp(argv[2], "-del"))
+      {
+         // delete one or more aliases
+         for (int iDir=3; iDir < argc; iDir++)
+         {
+            char *pszToDel = argv[iDir];
+            sprintf(szLineBuf, "%s%s", szRefNameBuf, pszToDel);
+            #ifdef _WIN32
+            strcat(szLineBuf, ".bat");
+            #endif
+
+            // check if it's really an alias batch
+            FILE *fin = fopen(szLineBuf, "r");
+            if (!fin) 
+               { perr("%s - no such file\n",szLineBuf); continue; }
+            if (!fgets(szLineBuf2, sizeof(szLineBuf2), fin))
+               { perr("%s - no data\n",szLineBuf); fclose(fin); continue; }
+            fclose(fin);
+            if (strncmp(szLineBuf2, pszGlblAliasBatchHead, strlen(pszGlblAliasBatchHead)))
+               { perr("%s - no valid alias batch, will not delete.\n",szLineBuf); continue; }
+
+            if (remove(szLineBuf))
+               perr("%s - cannot delete file\n",szLineBuf);
+            else
+               printf("alias deleted: %s\n", szLineBuf);
+         }
+         bDone = 1;
+      }
+      else
+      if ((argc >= 5) && !strcmp(argv[2], "-ren"))
+      {
+         // rename an alias
+         char *pszFrom = argv[3];
+         char *pszTo   = argv[4];
+
+         sprintf(szLineBuf, "%s%s", szRefNameBuf, pszFrom);
+         #ifdef _WIN32
+         strcat(szLineBuf, ".bat");
+         #endif
+
+         sprintf(szLineBuf2, "%s%s", szRefNameBuf, pszTo);
+         #ifdef _WIN32
+         strcat(szLineBuf2, ".bat");
+         #endif
+
+         if (fileExists(szLineBuf2))
+            return 9+perr("%s already exists, rename failed.\n", szLineBuf2);
+
+         // check if it's really an alias batch
+         FILE *fin = fopen(szLineBuf, "r");
+         if (!fin) 
+            return 9+perr("%s - no such file\n",szLineBuf);
+         if (!fgets((char*)abBuf, sizeof(abBuf), fin))
+            { fclose(fin); return 9+perr("%s - no data\n",szLineBuf); }
+         fclose(fin);
+         if (strncmp((char*)abBuf, pszGlblAliasBatchHead, strlen(pszGlblAliasBatchHead)))
+            return 9+perr("%s - no valid alias batch, will not rename.\n",szLineBuf);
+
+         if (rename(szLineBuf, szLineBuf2))
+            perr("%s - cannot rename to %s\n",szLineBuf,szLineBuf2);
+         else
+            printf("alias renamed: %s\n", szLineBuf2);
+
+         bDone = 1;
+      }
+      else
+      {
+         // create new alias
+         if (checkArgCnt(argc, 4)) return 9;
+         char *pszAlias = argv[2];
+   
+         // create batch filename parallel to sfk.exe
+         char *pszRel = szRefNameBuf+strlen(szRefNameBuf);
+         strcat(szRefNameBuf, pszAlias);
+         #ifdef _WIN32
+         strcat(szRefNameBuf, ".bat");
+         #endif
+         char nReply = 'y';
+         if (fileExists(szRefNameBuf)) {
+            printf("%s exists, overwrite? (yes/no) ",szRefNameBuf);
+            fflush(stdout);
+            nReply = getYNAchar();
+         }
+         if (nReply == 'y') 
+         {
+            // open output batchfile
+            FILE *fout = fopen(szRefNameBuf, "w");
+
+            // write alias batch header for later re-identification.
+            fprintf(fout, "%s\n", pszGlblAliasBatchHead);
+
+            uchar aHaveSubst[20];
+            memset(aHaveSubst, 0, sizeof(aHaveSubst));
+
+            // collect ALL further parameters, add
+            int iDir = 3, nAdd = 0;
+            if (!strcmp(argv[iDir], "="))
+                iDir++;
+            #ifdef _WIN32
+            fprintf(fout, "@"); // silent, don't list command on execution
+            #endif
+            while (iDir < argc) {
+               char *psz3 = argv[iDir];
+               // check if user supplies parameter substitution
+               for (long i=1; i<10; i++) {
+                  sprintf(szLineBuf, "%%%ld", i);
+                  if (strstr(psz3, szLineBuf))
+                     aHaveSubst[i] = 1;
+               }
+               fprintf(fout, "%s ", argv[iDir]);
+               iDir++;
+               nAdd++;
+            }
+   
+            if (nAdd == 0)
+               perr("missing parameters after \"=\"\n");
+            else {
+               // finalize: add support for not yet used substitution parms
+               for (long i=1; i<10; i++)
+                  if (!aHaveSubst[i])
+                     #ifdef _WIN32
+                     fprintf(fout, "%%%ld ", i);
+                     #else
+                     fprintf(fout, "$%ld ", i);
+                     #endif
+            }
+   
+            fclose(fout);
+
+            #ifndef _WIN32
+            chmod(szRefNameBuf, S_IREAD | S_IWRITE | S_IEXEC);
+            #endif
+
+            printx("$batch created: %s\n", szRefNameBuf);
+            char *pszTmp = loadFile(szRefNameBuf, __LINE__);
+            if (pszTmp) {
+               printf("%s",pszTmp);
+               long nLen = strlen(pszTmp);
+               if ((nLen > 0) && (pszTmp[nLen] != '\n'))
+                  printf("\n");
+               delete [] pszTmp;
+            }
+            printx("$type \"%s\" to use.\n", pszAlias);
+         }
+         bDone = 1;
+      }
+   }
+  
+   // internal, windows only
+   if (!strcmp(pszCmd, "touch"))
+   {
+      if (argc < 3) return 9+perr("supply yyyymmddhhmmss file");
+      char *pszTime = 0;
+      char *pszSrc = 0;
+      char *pszDst = 0;
+      num nTime = 0;
+      if (argc == 3) {
+         pszSrc = argv[2];
+         pszDst = argv[2];
+         nTime = (num)getSystemTime();
+      }
+      else 
+      if (argc == 4) {
+         pszTime = argv[2];
+         pszSrc  = argv[3];
+         pszDst  = argv[3];
+         if (timeFromString(pszTime, nTime)) return 9;
+      }
+      else {
+         if (strcmp(argv[2], "-from")) return 9+perr("unknown option, -from expected: %s\n",argv[2]);
+         pszSrc  = argv[3];
+         pszDst  = argv[4];
+      }
+      FileStat ofs;
+      if (ofs.readFrom(pszSrc))  return 9;
+      if (nTime) {
+         ofs.src.nMTime = nTime;
+         #ifdef _WIN32
+         ofs.src.bHaveWFT = 0;
+         #endif
+      }
+      if (ofs.writeTo(pszDst))   return 9;
       bDone = 1;
    }
 
