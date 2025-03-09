@@ -32,7 +32,6 @@
 #endif
 
 #include "sfkext.hpp"
-#include <math.h>
 
 #ifndef SO_REUSEPORT
  #define SO_REUSEPORT 15
@@ -25438,6 +25437,145 @@ void dospell(char *pszWord, bool bNato, bool bPrefix)
    }
 }
 
+#define regetcol acol[((ilevel/2)+bval)&1]
+// .
+int reformatjson(char *pinbuf, char *poutbuf, char *poutatt, int ioutmax)
+{
+   int ilevel=0;
+   int istate=0;
+   int bkeepquotes=1;
+
+   cchar *acol = "hx";
+   int icol = strlen(acol);
+   int bval = 0;
+
+   char *pout = poutbuf;
+   char *pmax = poutbuf+(ioutmax-10);
+   char *patt = poutatt;
+   char cattr = ' ';
+
+   char *pcur=pinbuf;
+   while (*pcur != 0 && pout+10 < pmax)
+   {
+      cattr = regetcol;
+
+      // handle quotes
+      if (istate==0 && *pcur=='\"') {
+         // ilevel += 2; cattr = regetcol;
+         if (bkeepquotes)
+            { *pout++ = *pcur++; *patt++ = cattr; }
+         else
+            pcur++;
+         istate=1;
+         continue;
+      }
+      if (istate==1) {
+         if (!strncmp(pcur, "\\\"", 2)) {
+            if (bkeepquotes)
+               { *pout++ = *pcur++; *patt++ = cattr; }
+            else
+               pcur++;
+            *pout++ = *pcur++; *patt++ = cattr;
+            continue;
+         }
+         if (*pcur!='\"') {
+            *pout++ = *pcur++; *patt++ = cattr;
+            continue;
+         }
+         if (bkeepquotes)
+            { *pout++ = *pcur++; *patt++ = cattr; }
+         else
+            pcur++;
+         // ilevel -= 2; cattr = regetcol;
+         istate=0;
+         continue;
+      }
+
+      // optimize empty arrays
+      if (!strncmp(pcur, "[[]]", 4)) {
+         *pout++ = *pcur++; *patt++ = cattr;
+         *pout++ = *pcur++; *patt++ = cattr;
+         *pout++ = *pcur++; *patt++ = cattr;
+         *pout++ = *pcur++; *patt++ = cattr;
+         continue;
+      }
+      if (!strncmp(pcur, "[]", 2)) {
+         *pout++ = *pcur++; *patt++ = cattr;
+         *pout++ = *pcur++; *patt++ = cattr;
+         continue;
+      }
+
+      char c = *pcur++;
+
+      switch (c)
+      {
+         case '[':
+         case '{':
+            bval=0;
+            if (pout > poutbuf
+                && (pout[-1] == ' ' || pout[-1] == '\n')) {
+            }
+            else if (pout == poutbuf) {
+            }
+            else {
+               *pout++ = '\n'; *patt++ = cattr;
+               for (int i=0; i<ilevel; i++)
+                  { *pout++ = ' '; *patt++ = cattr; }
+            }
+            *pout++ = c; *patt++ = cattr;
+            ilevel += 2; cattr = regetcol;
+            *pout++ = '\n'; *patt++ = cattr;
+            for (int i=0; i<ilevel; i++)
+               { *pout++ = ' '; *patt++ = cattr; }
+            break;
+
+         case ']':
+         case '}':
+            bval=0;
+            if (pout > poutbuf && pout[-1] == ' ') {
+               ilevel -= 2; cattr = regetcol;
+               pout -= 2; patt -= 2;
+            } else {
+               *pout++ = '\n'; *patt++ = cattr;
+               ilevel -= 2; cattr = regetcol;
+               for (int i=0; i<ilevel; i++)
+                  { *pout++ = ' '; *patt++ = cattr; }
+            }
+            *pout++ = c; *patt++ = cattr;
+            if (*pcur == ',')
+               { *pout++ = *pcur++; *patt++ = cattr; }
+            *pout++ = '\n'; *patt++ = cattr;
+            for (int i=0; i<ilevel; i++)
+               { *pout++ = ' '; *patt++ = cattr; }
+            break;
+
+         case ',':
+            *pout++ = c; *patt++ = cattr;
+            *pout++ = '\n'; *patt++ = cattr;
+            for (int i=0; i<ilevel; i++)
+               { *pout++ = ' '; *patt++ = cattr; }
+            bval=0;
+            break;
+
+         case ':':
+            *pout++ = c; *patt++ = cattr;
+            *pout++ = ' '; *patt++ = cattr;
+            bval=1;
+            break;
+
+         default:
+            *pout++ = c; *patt++ = cattr;
+            break;
+      }
+   }
+   *pout = '\0'; *patt = '\0';
+
+   if (pout+10 >= pmax)
+      return 10;
+
+   return 0;
+}
+
 // -----------------------------------------------------
 
 bool haveParmOption(char *argv[], int argc, int &iDir, cchar *pszOptBase, char **pszOutParm);
@@ -27889,6 +28027,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "                 or SFK_FTP_SUSER.\n"
          "     -timeout=n  set timeout to n seconds. default is 60.\n" // ftpserv
          "     -rw         allow read+write access. default is readonly.\n"
+         "     -notify=h   display an arrow in SFKTray 1.1 running on\n"
+         "                 hostname h whenever files are actually sent.\n"
          "     -maxsize=n  set size limit per file write to this, e.g.\n"
          "                 10m = 10 mbytes. default is no size limit.\n"
          "     -minspace=n set required free disk space for file writing,\n"
@@ -28111,6 +28251,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             if (!pszParm) return 9;
             if (!(nGlblTCPMaxSizeMB = numFromSizeStr(pszParm) / 1000000))
                return 9+perr("-maxsize must be at least \"1m\" for one megabyte");
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-notify", &pszParm)) {
+            if (!pszParm) return 9+perr("-notify requires a parameter.\n");
+            cs.notifyto = pszParm;
             continue;
          }
          if (!strcmp(pszArg, "-anysize")) { // deprecated since 167
@@ -30130,6 +30275,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "        works with files up to 4 mb with dview lite.\n"
              #endif
              );
+      printx("    #sfk hexdump -pure -recsize=500 in.dat\n"
+             "        create a hexdump with 500 bytes per record.\n"
+             );
       printx("    #sfk hexfind in.dat -bin \"/a1a2a3a4/\"\n"
              "        search byte sequence 0xa1a2a3a4 within in.dat\n"
              "    #sfk xhexfind in.dat \"/\\xa1\\xa2\\xa3\\xa4/\"\n"
@@ -30219,6 +30367,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             if (!pszParm) return 9;
             cs.bytesperline = atoi(pszParm);
             int iMaxBytes = (MAX_LINE_LEN / 5) - 10; // "0x00,"
+            if (nGlblHexDumpForm == 1)
+                iMaxBytes = (MAX_LINE_LEN / 2) - 10; // 00 sfk1952
             if (cs.bytesperline < 1 || cs.bytesperline > iMaxBytes)
                return 9+perr("-recsize must be 1 ... %d\n", iMaxBytes);
             continue;
@@ -31505,6 +31655,15 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   $statustext fields\n"
              "      v1         optional protocol version\n"
              "      slot=n     target slot number 1-9\n"
+             "        or\n"
+             "      pat=s      show a pattern, with s like:\n"
+             "                  up      show an up   arrow\n"
+             "                  down    show a down  arrow\n"
+             "                  left    show a left  arrow\n"
+             "                  right   show a right arrow\n"
+             "                  all     highlight all slots\n"
+             "                 requires SFKTray V1.1. looks best\n"
+             "                 with the Pro version (9 lights).\n"
              "      color=s    set color s as one of:\n"
              "                 #red green blue yellow orange gray black\n"
              "                 you may also try:\n"
@@ -31529,17 +31688,22 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              "   $about the target machine\n"
              "      - use \"local\" if SFKTray runs on the same machine\n"
-             "      - else supply hostname or IP\n"
+             "      - else supply hostname or IP, optionally with :port\n"
              "      - default port used by SFKTray is 21343.\n"
              "        SFKTray Free cannot use a different port.\n"
              "        SFKTray Full can be run with a differen port like\n"
              "           sfktray -port=5000\n"
              "        then use: sfk status local:5000 ...\n"
-             "\n"
-             "   $limitations\n"
-             "      only one instance of SFKTray can be used per machine.\n"
+             "      - use port id '2nd' or '3rd' for instance 2 or 3\n"
+             "        of SFKTray Full (ports 21344 and 21345).\n"
+             "\n");
+      printx("   $limitations\n"
              "      SFKTray Free supports 4 slots, i.e. slot=1 to slot=4.\n"
-             "      SFKTray Full supports 9 status slots and is available from:\n"
+             "      Only one instance can be used.\n"
+             "\n"
+             "      SFKTray Full supports 9 status slots per instance,\n"
+             "      and can run up to 3 instances in parallel (27 lights).\n"
+             "      It is available from:\n"
              "\n"
              "        #http://stahlworks.com/sfktray\n"
              "\n"
@@ -31561,6 +31725,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "         tell about an offline service on localhost slot 1\n"
              "      #sfk -var for i from 1 to 9 +status local \"slot=##(i) color=gray\" +endfor\n"
              "         reset all status slots\n"
+             "      #sfk status local \"pat=up color=green blink=fast timeout=10\"\n"
+             "         show a blinking up arrow for 10 seconds. requires SFKTray V1.1\n"
+             "         and looks best with the Pro version (9 lights layout).\n"
+             "      #sfk status local:3rd \"pat=up color=green blink=fast timeout=10\"\n"
+             "         with SFKTray Full: show blinking up arrow in 3rd instance.\n"
              "\n"
              );
       ehelp;
@@ -31624,7 +31793,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             char *psz = strchr(szDstIP, ':');
             if (psz) {
                *psz++ = '\0';
-               ndstport = atoi(psz);
+               if (!strcmp(psz, "2nd"))
+                  ndstport = 21344;
+               else if (!strcmp(psz, "3rd"))
+                  ndstport = 21345;
+               else
+                  ndstport = atoi(psz);
             }
             if (!strcmp(szDstIP, "local") || !strcmp(szDstIP, "."))
                strcpy(szDstIP, "localhost");
@@ -31958,6 +32132,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          */
          "\n");
   printx("   $options\n"
+         "      -notify=h display an arrow in SFKTray 1.1 running on\n"
+         "                hostname h whenever files are actually sent.\n"
          "      -raw      force ftp protocol even when connected with an\n"
          "                sfk ftp server. default under windows, since\n"
          "                sfk 1.8.5, when using port 21.\n"
@@ -32181,6 +32357,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          if (haveParmOption(argx, argc, iDir, "-user", &pszParm)) {
             if (!pszParm) return 9+perr("-user requires a parameter.\n");
             pszUser = pszParm;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-notify", &pszParm)) {
+            if (!pszParm) return 9+perr("-notify requires a parameter.\n");
+            cs.notifyto = pszParm;
             continue;
          }
          if (strBegins(argx[iDir], "-up") || !strcmp(argx[iDir], "-new"))
@@ -37103,7 +37284,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          )
    {
       ifhelp (nparm < 1)
-      printx("<help>$sfk difflines [opts] [file1] file2\n"
+      printx("<help>$sfk [t]difflines [opts] [file1] file2\n"
              "\n"
              "   compare text lines of two files or variables.\n"
              "   from both files, the text content is loaded,\n"
@@ -37113,12 +37294,18 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "     >   means lines were added   in file2\n"
              "     <   means lines were removed in file2\n"
              "\n"
+             "   $chaining support\n"
+             "      use tdifflines to use text from a previous\n"
+             "      command in the command chain.\n"
+             "\n"
              "   $options\n"
              "      -fromvar   use variables instead of files.\n"
              "      -i         read file1 text from stdin,\n"
              "                 and  file2 text from file.\n"
              "      -withsame  also show lines found in both,\n"
              "                 prefixed by \"-\".\n"
+             "      -swap      use file2 as first input\n"
+             "                 and file1 as second input.\n"
              "      -quiet     do not tell statistics.\n"
              "      -nocol     disable color output.\n"
              "\n"
@@ -37139,7 +37326,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       char  *padd=str(">");
       char  *prem=str("<");
       char  *psame=0;
-      bool   bstdin=0;
+      bool   bstdin=0,bswap=0;
+      int    iFirst=iDir;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
@@ -37152,12 +37340,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             { bvar = 1; continue; }
          if (!strcmp(pszArg, "-withsame"))
             { psame=str("-"); continue; }
-         // if (!strcmp(pszArg, "-old")) { // pre193
-         //    padd=str("< :");
-         //    prem=str("> :");
-         //    psame=str("- :");
-         //    continue;
-         // }
+         if (!strcmp(pszArg, "-swap"))
+            { bswap=1; continue; }
          if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(pszArg))
                break; // fall through
@@ -37196,6 +37380,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          if (!prite)
             return 9+perr("no such variable: %s",pszName2);
       } else {
+         if (!pszName2) {
+            perr("missing second filename");
+            if (iFirst > 2)
+               pinf("try +tdifflines to use text from a previous command\n");
+            return 9;
+         }
+
          num ndummy=0;
 
          // sfk1944: -i versus file, or file versus file
@@ -37208,6 +37399,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             delete [] pleft;
             return 9+perr("cannot load: %s\n",pszName2);
          }
+      }
+
+      if (bswap) {
+         uchar *ptmp = pleft;
+         pleft = prite;
+         prite = ptmp;
       }
 
       int astat[3];

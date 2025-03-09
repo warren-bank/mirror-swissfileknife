@@ -57,13 +57,13 @@ How to get SFK up and running anywhere
 
       The Mac binaries are available from:
 
-      -  wget http://stahlworks.com/sfkmac            (Intel i686)
-      -  wget http://stahlworks.com/sfkmacold         (PowerPC)
+      -  curl -o sfkmac http://stahlworks.com/sfkmac     (Intel i686)
+      -  curl -o sfkmac http://stahlworks.com/sfkmacold  (PowerPC)
 
       Alternatively, a self compile under Mac is done by
       getting the sources as described below, then type
 
-         g++ -DMAC_OS_X sfk.cpp sfkext.cpp -o sfk
+         g++ -DMAC_OS_X sfk.cpp sfkext.cpp sfkpack.cpp -o sfk
 
    OR
 
@@ -82,7 +82,7 @@ How to get SFK up and running anywhere
 
          Linux 64-bit compile:
 
-            g++ sfk.cpp sfkext.cpp -o sfk
+            g++ sfk.cpp sfkext.cpp sfkpack.cpp -o sfk
 
    OR
 
@@ -252,18 +252,27 @@ See also:
 
          http://stahlworks.com/depeche-view.html
 
+   -  The whole SFK documentation is available as the paperback book
+      "100 Command Line Tools" on Amazon
+
+   -  The whole SFK documentation is available as an e-book,
+      optimized for reading on mobile devices.
+      For details see www.stahlworks.com
+
+
 The SFKTray GUI Status Display
 ==============================
 
    is a small Windows tool installed by sfktray-set-up.exe.
-   the Freeware edition displays two independent status lights
+   the Freeware edition displays four independent status lights
    in the system tray which can be controlled by the sfk status 
    command like:
 
       sfk status local "v1 slot=1 color=green text='service ok'"
 
+   type "sfk status" for the full syntax.
    a status can be sent from the local or a remote machine by UDP.
-   the Full edition with 9 status lights is available from:
+   the full edition with 9 status lights is available from:
    
       http://stahlworks.com/sfktray
 

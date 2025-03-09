@@ -8,6 +8,31 @@
    the world's fastest source code browser and editor.
 
    1.9.5
+   Revision 2:
+   -  rel: 28.08.2019, Major Update
+   -  sum: improved difflines and reading from std input.
+   -  add: sfk jsonform, reformat JSON data for easy
+           reading and searching
+   -  add: SFKTray V1.1 now supports display of patterns
+           up, down, left, right, all instead of just
+           a single slot. for documentation and example
+           see: sfk status
+   -  add: SFKTray Full V1.1 now supports up to 3
+           instances running in parallel,
+           with a total of up to 27 lights.
+   -  add: sfk sft(serv) option -notify=h to show an
+           up or down arrow in SFKTray on file transfer
+   -  add: tdifflines to use chain text
+           together with a file name
+   -  add: difflines option -swap to change
+           order of input data
+   -  add: windows: snapto -slow option to run with
+           a lower process priority.
+   -  add: windows: fromclip option -tofile x.
+   -  chg: hexdump: can now use -pure -recsize=n
+           to dump n input bytes per output record.
+   -  fix: crash when using -i with empty input
+   -  fix: mac compile
    Initial Release:
    -  rel: 04.06.2019, Major Update
    -  sum: sfk snapto can now include text from
@@ -33,7 +58,7 @@
    -  doc: help office: snapto examples.
    -  doc: sfk view: dview office notes.
    internal:
-   rev4:
+   -  add: -every=2nd, 3rd etc.
    -  add: syncnames
    -  add: snapto outer time, size
    -  fix: chain.justNamesFilter nptr check
@@ -116,9 +141,8 @@
            created unwanted color output.
    internal:
    rev3:
-   -  add: put, alias for sft ... cput
-   -  del: olist documentation
    -  add: fromtcp, replytcp
+   -  del: olist documentation
    -  chg: unified execxfind
 
    1.9.3
@@ -614,10 +638,6 @@
    -  doc: sfk ren: top reference to sfk renfile.
    -  doc: sfk copy: single file copy example.
    internal:
-   Revision 2:
-   -  add: utoa, atou
-   Initial:
-   -  add: chars -full
    -  chg: wtoa, atow now also support -isochars.
    -  chg: sfk ascii now also supports -codepage option.
    -  add: -codepage=a-o to set fixed ansi/oem codepage.
@@ -1437,7 +1457,7 @@
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
 #define SFK_VERSION  "1.9.5" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  ""
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1714,6 +1734,7 @@ int mySetFileTime(char *pszFile, num nTime);
 int installSFK(char *pszFolder, bool byes);
 bool strbeg(char *psz, cchar *pstart);
 bool stribeg(char *psz, cchar *pstart);
+int reformatjson(char *pinbuf, char *poutbuf, char *poutattr, int ioutmax);
 
 bool bGlblRandSeeded = 0;
 
@@ -16605,18 +16626,15 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
       pcs->walkDirDelay  = 100;
       return true;
    }
-   #ifdef _WIN32
-   if (!strcmp(psz1,"-slow")) { // internal
+   if (!strcmp(psz1,"-slow")) { // sfk1952
+      #ifdef _WIN32
       SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
-      return true;
-   }
-   #endif
-   #ifdef SFK_LINUX_FULL
-   if (!strncmp(psz1,"-slow", 5)) {
+      #endif
+      #ifdef SFK_LINUX_FULL
       setPriority(-1);
+      #endif
       return true;
    }
-   #endif
    if (!strcmp(psz1,"-broad"))      {  pcs->incFNameInPath = 1; return true; }   // sfk187 global support
    if (!strcmp(psz1,"-firsthit"))   {  pcs->useFirstHitOnly = 1; return true; }  // sfk187 global support
    if (!strcmp(psz1,"-xchars"))     {  pcs->xchars = 1; return true; }
@@ -16748,8 +16766,9 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
       return true;
    }
    #endif // SFKOFFICE
-   if (!strcmp(psz1, "-keepdata"))  { pcs->keepdata = 1; return true; }
-   if (!strcmp(psz1, "-keepchain")) { pcs->keepchain = 1; return true; }
+   if (!strcmp(psz1, "-keepdata"))   { pcs->keepdata = 1; return true; }
+   if (!strcmp(psz1, "-keepchain"))  { pcs->keepchain = 1; return true; }
+   if (!strncmp(psz1, "-every=", 7)) { pcs->justevery = atoi(psz1+7); return true; }
 
    return false;
 }
@@ -17048,6 +17067,8 @@ cchar *aGlblChainCmds[] =
    "2tabcol",   // internal
    "1put",      // sfk1943 includes putall
    "1mput",     // sfk1944 convenience
+   "6jsonform", // sfk1952 internal
+   "6jform",    // sfk1952 internal
    0
 };
 
@@ -20800,14 +20821,15 @@ char *loadStdIn(num &rnFileSize)
          break;
       }
       memset(pCur, 0, sizeof(SFKLoadNode));
-      if (!pFirst)
-         pFirst = pCur;
 
       int iRead = fread(pCur->abData, 1, sizeof(pCur->abData), stdin);
       if (iRead <= 0) {
          delete pCur;
          break;
       }
+
+      if (!pFirst)
+         pFirst = pCur;
 
       pCur->iSize = iRead;
       iTotal += iRead;
@@ -21952,7 +21974,7 @@ int execDupScan(Coi *pcoi)
          joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pdstroot, psrcrel);
          char *pdst = szRefNameBuf;
          int ihave = fileExists(pdst);
-         if (cs.debug && ihave) printf("skip: %s - have target\n", psrcnam); // °°
+         if (cs.debug && ihave) printf("skip: %s - have target\n", psrcnam);
          if (ihave)
             { glblDupScan.clSkipMatch++; return 0; }
       }
@@ -21965,7 +21987,7 @@ int execDupScan(Coi *pcoi)
          joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, psrcroot, pdstrel);
          char *psrc = szRefNameBuf;
          int ihave = fileExists(psrc);
-         if (cs.debug && ihave) printf("skip: %s - have source\n", pdstnam); // °°
+         if (cs.debug && ihave) printf("skip: %s - have source\n", pdstnam);
          if (ihave)
             { return 0; } // do not count redundant
       }
@@ -25736,6 +25758,14 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
    if (userInterrupt())
       return 9;
 
+   if (cs.justevery > 1) // sfk1952 internal
+   {
+      cs.everycnt++;
+      if (cs.everycnt < cs.justevery)
+         return 0;
+      cs.everycnt = 0;
+   }
+
    #ifdef SFKOFFICE
    // avoid listing the same office name many times on multiple hits
    if (cs.office && pcoi->isOfficeSubEntry()
@@ -28532,7 +28562,7 @@ int execHexdump(Coi *pcoi, uchar *pBuf, uint nBufSize, int iHighOff, int iHighLe
    int lRelPos=0;
    uchar *pTmp = 0;
    uchar ucTmp;
-   uchar abBlockBuf[1000];
+   uchar abBlockBuf[2500]; // sfk1952 up to 2000 input bytes
 
    int nbpl  = bGlblHexDumpWide ?  32 : 16; // bytes per line
    int itext = bGlblHexDumpWide ?  75 : 39; // text begin
@@ -30394,6 +30424,88 @@ static bool showFtpError(char *pszFor)
    return 1;
 }
 
+int udpSend(char *phost, int ndstport,
+   int nlisten, int nownport,
+   uchar *abMsg, int nMsg,
+   num nTimeout, uint nMode
+ );
+
+void sendNotifyStatus(char *pszto, int iwhat)
+{
+   // .
+   // local:2nd/1+2+3
+   char szhost[100+10];  szhost[0]='\0';
+   char szport[100+10];  szport[0]='\0';
+   char szslots[100+10]; szslots[0]='\0';
+
+   char *pszs = pszto;
+   char *psze = pszto;
+   while (*psze!=0 && *psze!=':' && *psze!='/')
+      psze++;
+   mystrcopy(szhost,pszs,mymin(100,(psze-pszs)+1));
+
+   if (!strcmp(szhost, "local"))
+      strcpy(szhost, "localhost");
+
+   pszs = psze;
+   if (*psze==':') {
+      psze++;
+      pszs=psze;
+      while (*psze!=0 && *psze!='/')
+         psze++;
+      mystrcopy(szport,pszs,mymin(100,(psze-pszs)+1));
+   }
+
+   if (!strcmp(szport, "2nd")) strcpy(szport, "21344");
+   if (!strcmp(szport, "3rd")) strcpy(szport, "21345");
+
+   if (*psze=='/') {
+      psze++;
+      pszs=psze;
+      while (*psze!=0 && *psze!='/')
+         psze++;
+      mystrcopy(szslots,pszs,mymin(100,(psze-pszs)+1));
+   }
+
+   int ndstport = 21343;
+   if (szport[0])
+       ndstport = atoi(szport);
+
+   char szmsg[200];
+
+   if (szslots[0]) // user defined slot(s)
+   {
+      char aslots[20]; memset(aslots,0,sizeof(aslots));
+   
+      pszs = szslots;
+      while (*pszs) {
+         char c = *pszs++;
+         if (c >= '0' && c <= '9')
+            aslots[c-'0'] = 1;
+      }
+   
+      for (int i=0; i<20; i++)
+      {
+         if (aslots[i])
+         {
+            sprintf(szmsg, ":status v1 slot=%d color=yellow blink=fast timeout=5,gray", i);
+            udpSend(szhost, ndstport, 0, -1, (uchar*)szmsg, strlen(szmsg), 0, 1);
+         }
+      }
+   }
+   else // default patterns
+   {
+      switch (iwhat) 
+      {
+         case 1: strcpy(szslots,"up"); break;
+         case 2: strcpy(szslots,"down"); break;
+      }
+
+      sprintf(szmsg, ":status v1 pat=%s color=yellow blink=fast timeout=5,gray", szslots);
+      udpSend(szhost, ndstport, 0, -1, (uchar*)szmsg, strlen(szmsg), 0, 1);
+   }
+}
+
 int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszAuthPW, bool bChained)
 {__
    SOCKET hSock = 0;
@@ -30665,6 +30777,8 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
             closesocket(hData); hData = INVALID_SOCKET;
             if (readLine(hSock)) break; // 226 Closing
             // if (setFtpModTime(pcoi, pszFileName, hSock)) break;
+            if (cs.notifyto) // sft.put.single
+               sendNotifyStatus(cs.notifyto, 1); // up
          } else {
             sprintf(szLineBuf2, "SPUT %s", pszFileName); // put
             if (sendLine(hSock, szLineBuf2)) break;
@@ -30674,6 +30788,8 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                if (putFileBySFT(hSock, pcoi, nSFTVer))
                   break;
             // ack receive was done above. keep socket open.
+            if (cs.notifyto) // sft.put.single
+               sendNotifyStatus(cs.notifyto, 1); // up
          }
       }
       else
@@ -30813,6 +30929,9 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
          if (cs.sim && !cs.nohead)
             printx("$[add -yes to execute.]\n");
 
+         if (cs.yes && cs.notifyto && nSent) // sft.mput.direct
+            sendNotifyStatus(cs.notifyto, 1); // up
+
          if (ifile < glblFTPLocList.numberOfEntries())
             bLoop = 0; // fatal, server probably closed connection
       }
@@ -30934,9 +31053,11 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
             printf("%d files of %d %ssent. %d mb, %d sec.\n", nSent, nfiles, cs.sim?"would be ":"", nTotalMB, nelaps);
          }
 
-         if (cs.sim && !cs.nohead) {
+         if (cs.sim && !cs.nohead)
             printx("$[add -yes to execute.]\n");
-         }
+
+         if (cs.yes && cs.notifyto && nSent) // sft.mput.chain
+            sendNotifyStatus(cs.notifyto, 1); // up
 
          if (ifile < nfiles)
             break;
@@ -30958,6 +31079,8 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                if (receiveFileRaw("ftp", hData, localPath(pszFileName), -1, 0,0,0)) // client
                   break;
                closesocket(hData); hData = INVALID_SOCKET; // fix sfk193: close here
+               if (cs.notifyto) // sft.get.single
+                  sendNotifyStatus(cs.notifyto, 2); // down
                if (readLine(hSock)) break; // 226 Closing
             } else {
                if (!cs.verbose) printf("%s", szLineBuf);
@@ -30972,6 +31095,8 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                createOutDirTree(localPath(pszFileName));
                if (getFileBySFT(hSock, localPath(pszFileName), nSFTVer))
                   break;
+               if (cs.notifyto) // sft.get.single
+                  sendNotifyStatus(cs.notifyto, 2); // down
             }
             // ack send was done above. keep socket open.
          }
@@ -31161,6 +31286,9 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
 
          if (cs.sim && !cs.nohead)
             printx("$[add -yes to execute.]\n");
+
+         if (cs.yes && cs.notifyto && nRecv) // sft.mget
+            sendNotifyStatus(cs.notifyto, 2); // down
       }
       else
       if (   bChained
@@ -31277,9 +31405,13 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
             else
                printf("%d files received, %d sec.\n", ndone, nelaps);
          }
-         if (cs.sim && !cs.nohead) {
+
+         if (cs.sim && !cs.nohead)
             printx("$[add -yes to execute.]\n");
-         }
+
+         if (cs.yes && cs.notifyto && ndone) // sft.mget
+            sendNotifyStatus(cs.notifyto, 2); // down
+
          if (ifile<nfiles)
             break;
       }
@@ -35032,6 +35164,8 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                int lRC = sendFileRaw("ftp", hClData, sysPath());
                if (cs.quiet < 2)
                   printf("send file done, RC %d\n", lRC);
+               if (cs.notifyto) // sftserv.get
+                  sendNotifyStatus(cs.notifyto, 2); // down
             }
             closesocket(hClData); hClData = INVALID_SOCKET;
             reply("226 Closing data connection");
@@ -35056,6 +35190,8 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                iSubRC = receiveFileRaw("ftp", hClData, sysPath(), -1, 0,0,0, nClDiskFree); // stor
                if (cs.verbose || iSubRC)
                   printf("> recv file done, RC %d\n", iSubRC);
+               if (cs.notifyto) // sftserv.put
+                  sendNotifyStatus(cs.notifyto, 1); // up
             }
             closesocket(hClData); hClData = INVALID_SOCKET;
             if (iSubRC)
@@ -35239,6 +35375,8 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                int lRC = putFileBySFT(hClClient, pcoi, nSFTVer, 0, 1, bBlockMode); // not quiet, ignore ack
                if (cs.quiet < 2 && lRC > 0)
                   info.print("send sft file done, RC %d\n", lRC);
+               if (cs.notifyto) // sftserv.get
+                  sendNotifyStatus(cs.notifyto, 2); // down
             }
          }
          else
@@ -35263,6 +35401,8 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                   if (cs.quiet < 2 && lRC > 0)
                      info.print("recv sft file done, RC %d\n", lRC);
                   if (lRC) break; // block potential content remainder
+                  if (cs.notifyto) // sftserv.put
+                     sendNotifyStatus(cs.notifyto, 1); // up
                }
             }
             // getFileBySFT includes ack send
@@ -41914,7 +42054,8 @@ void printMainHelp(bool bhelp, char *penv[])
       "   sfk random     - create a random number\n"
       "   sfk prompt     - ask for user input\n"
       "   sfk number     - print number in diverse formats\n"
-      "   sfk xmlform    - reformat xml for easy viewing\n"
+      "   sfk xmlform    - reformat xml  for easy viewing\n"
+      "   sfk jsonform   - reformat json for easy viewing\n"
       "   sfk media      - cut video and binary files\n"
       "   sfk view       - show results in a GUI tool\n"
       #ifdef _WIN32
@@ -44117,7 +44258,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       ifhelp (nparm < 1)
       #ifndef SFKPRO
       printx(
-         "Copyright (c) 2018 by Stahlworks Technologies, www.stahlworks.com.\n"
+         "Copyright (c) 2019 by Stahlworks Technologies, www.stahlworks.com.\n"
          "All rights reserved.\n"
          "\n"
          "Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n"
@@ -44809,6 +44950,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -nosub      or -norec does not include subdirectories (subfolders).\n"
              "      -wrap[=n]   auto-wrap long lines [near column n], e.g. -wrap=80.\n"
              "      -stat       show time stats at end.\n"
+             #ifdef _WIN32
+             "      -slow       run with a lower process priority.\n"
+             #endif
              ,glblPathChar);
       printx("\n"
              "   $see also\n"
@@ -57764,18 +57908,25 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    ifcmd (!strcmp(pszCmd, "toclip")) // +wref
    {
       ifhelp ((iDir < argc) && (!strncmp(argv[iDir], "-h", 2) || !strcmp(argv[iDir], "/?")))
-      printx("<help>$sfk toclip [options]<def>\n"
+      printx("<help>$sfk toclip [options|-h]<def>\n"
              "\n"
              "   copy text to clipboard.\n"
+             "\n"
+             "   $options\n"
+             "      -noline[s]   strip linefeeds from line ends\n"
+             "      -rtrim       strip whitespace at line ends\n"
+             "      -ltrim       strip whitespace at line starts\n"
+             "      -trim        strip whitespace around lines\n"
+             /*
+             "\n"
+             "   $aliases\n"
+             "      #sfk toclipw<def>  copy binary data as wide character\n"
+             "                   unicode text into the clipboard.\n"
+             "                   for help type: sfk toclipw -h\n"
+             */
              "\n");
       webref("clip");
-      printx("   $options\n"
-             "      -noline[s]  strip linefeeds from line ends\n"
-             "      -rtrim      strip whitespace at line ends\n"
-             "      -ltrim      strip whitespace at line starts\n"
-             "      -trim       strip whitespace around lines\n"
-             "\n"
-             "   $examples\n"
+      printx("   $examples\n"
              "      #echo hello | sfk toclip -rtrim -noline\n"
              "         copy the word hello to clipboard\n"
              "\n"
@@ -57885,13 +58036,21 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   // internal
-   if (!strcmp(pszCmd, "toclipw"))
+   if (!strcmp(pszCmd, "toclipw")) // internal
    {
       ifhelp ((iDir < argc) && (!strncmp(argv[iDir], "-h", 2) || !strcmp(argv[iDir], "/?")))
-      printx("<help>$sfk toclipw [options]<def>\n"
+      printx("<help>$sfk toclipw [-h]<def>\n"
              "\n"
              "   copy wide character text to clipboard.\n"
+             "\n"
+             "   requires binary data from a previous command,\n"
+             "   like load or xed.\n"
+             "\n"
+             "   $examples\n"
+             "\n"
+             "      #sfk load in.txt +toclipw\n"
+             "         if in.txt contains unicode wide character text\n"
+             "         then this is put into the clipboard.\n"
              "\n");
       ehelp;
 
@@ -57950,16 +58109,21 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   dump plain text from clipboard to terminal.\n"
              "\n"
              "   $options\n"
-             "      -wait   wait until plain text is available.\n"
-             "      -clear  empty clipboard after use.\n"
-             "      -ltrim  remove whitespace at start of lines.\n"
+             "      -wait      wait until plain text is available.\n"
+             "      -clear     empty clipboard after use.\n"
+             "      -ltrim     remove whitespace at start of lines.\n"
+             "      -tofile x  write text to file x.\n"
              "\n"
              "   $aliases\n"
-             "      #sfk lclip<def>     same as #sfk fromclip -ltrim<def>\n"
-             "                    to get text left side trimmed\n"
-             "      #sfk rawclip<def>   same as #sfk fromclip +toclip<def>\n"
-             "                    to remove unwanted formatting when copying\n"
-             "                    text from a web page into a word processor.\n"
+             "      #sfk lclip<def>      same as #sfk fromclip -ltrim<def>\n"
+             "                     to get text left side trimmed\n"
+             "      #sfk rawclip<def>    same as #sfk fromclip +toclip<def>\n"
+             "                     to remove unwanted formatting when copying\n"
+             "                     text from a web page into a word processor.\n"
+             /*
+             "      #sfk fromclipw<def>  get wide character (unicode) text\n"
+             "                     as binary data. add +hexdump for display.\n"
+             */
              "\n");
       webref("clip");
       printx("   $examples\n"
@@ -57999,14 +58163,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       for (; iDir<argc; iDir++)
       {
          if (!strcmp(argx[iDir], "-wait"))
-            bWait = 1;
-         else
+            { bWait = 1; continue; }
          if (!strcmp(argx[iDir], "-clear"))
-            bClear = 1;
-         else
+            { bClear = 1; continue; }
          if (!strcmp(argx[iDir], "-ltrim"))
-            bltrim = 1;
-         else
+            { bltrim = 1; continue; }
          if (!strncmp(argx[iDir], "-", 1)) {
             if (isDirParm(argx[iDir]))
                break; // fall through
@@ -58082,8 +58243,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
  
       if (pWClip) {
+         if (cs.tomask && cs.tomaskfile)
+            saveFile(cs.tomask, (uchar*)pWClip, nchars*2);
+         else
          if (chain.colany())
-            chain.addBinary((uchar*)pWClip,nchars*2);
+            chain.addBinary((uchar*)pWClip, nchars*2);
          else for (num i=0; i<nchars; i++) {
             ushort c=pWClip[i];
             if (c == '\r')
@@ -58094,7 +58258,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                putwchar(c);
          }
       }
-      else if (bRaw) {
+      else if (cs.tomask && cs.tomaskfile) {
+         saveFile(cs.tomask, (uchar*)pszClip, strlen(pszClip));
+      } else if (bRaw) {
          putClipboard(pszClip);
          if (cs.verbose)
             printf("converted %d bytes.\n", strlen(pszClip));
@@ -63308,7 +63474,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                indent of 3 instead of the default 2.\n"
              "\n"
              "   $aliases\n"
-             "     #sfk xf<def>     same as xmlform.\n"
+             "     #sfk xf<def>        same as xmlform\n"
+             "\n"
+             "   $see also\n"
+             "     #sfk jsonform<def>  reformat JSON data\n"
              "\n");
       webref("xmlform");
       printx("   $examples\n"
@@ -63573,6 +63742,123 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       if (iHardWrap && !cs.nowarn)
          pwarn("%d lines(s) were hard wrapped.\n", iHardWrap);
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
+   ifcmd (!strcmp(pszCmd, "jsonform")  // sfk1952
+          || !strcmp(pszCmd, "jform")
+         )
+   {
+      ifhelp (bFullHelp || (chain.usedata == 0 && nparm < 1))
+      printx("<help>$sfk ... +jsonform\n"
+             "$sfk jform in.json\n"
+             "\n"
+             "   simple JSON text reformatter to allow easy reading\n"
+             "   and searching of JSON data.\n"
+             "\n"
+             "   this command is experimental and may not be suitable\n"
+             "   to reformat JSON data intended for further processing,\n"
+             "   as lines longer than 3900 characters may be hard wrapped.\n"
+             "\n"
+             "   $options\n"
+             "     -i             read text from stdin\n"
+             "     -allocmb=n     use n mbytes output buffer\n"
+             "\n"
+             "   $aliases\n"
+             "     #sfk jform<def>      same as jsonform\n"
+             "\n"
+             "   $see also\n"
+             "     #sfk xmlform<def>    reformat XML data\n"
+             "\n");
+      printx("   $examples\n"
+             "     #sfk jform in.json\n"
+             "       read the file in.json and print it reformatted\n"
+             "\n"
+             "     #sfk load in.json +jform\n"
+             "       the same, but get data from a previous command\n"
+             "\n"
+             "     #sfk load in.json +jform +view\n"
+             "       display in.json reformatted in Depeche View\n"
+             "       to allow easy browsing and searching\n"
+             "\n"
+             "     #sfk web http://myserver/mycall +jform\n"
+             "       call a web URL that sends a JSON reply\n"
+             "       and reformat output for easy reading.\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool bstdin = 0;
+      int  nalloc = 0;
+      char *pszInFile= 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-allocmb", &pszParm)) {
+            if (!pszParm) return 9;
+            nalloc = atol(pszParm);
+            continue;
+         }
+         if (!strcmp(pszArg, "-i"))
+            { bstdin = 1; continue; }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!bstdin && !chain.usedata && !pszInFile) {
+            pszInFile = pszArg;
+            continue;
+         }
+         return 9+perr("unexpected: %s",pszArg);
+      }
+
+      if (!bstdin && !pszInFile && !chain.usedata)
+         return 9+perr("missing input");
+
+      uchar *pData = 0, *pOut = 0, *pAtt = 0;
+      num    nSize = 0,  nOutSize = 0;
+
+      if (loadInput(&pData, 0, &nSize, bstdin, pszInFile, 0))
+         return 9;
+
+      if (pData != 0 && nSize > 0)
+      {
+         if (nalloc)
+            nOutSize = nalloc * 1000000;
+         else
+            nOutSize = (nSize+100) * 3;
+   
+         pOut = new uchar[nOutSize+10];
+         pAtt = new uchar[nOutSize+10];
+
+         if (!pOut || !pAtt)
+            return 9+perr("out of memory (%d mb)", (int)(nOutSize/1000000));
+   
+         if (reformatjson((char*)pData, (char*)pOut, (char*)pAtt, nOutSize))
+            return 9+perr("buffer overflow %d %d",(int)nSize,(int)nOutSize);
+   
+         nOutSize = strlen((char*)pOut);
+   
+         if (nOutSize > 0)
+            dumpOutput(pOut, (char*)pAtt, nOutSize, 0);
+      }
+
+      if (pData) delete [] pData;
+      if (pOut)  delete [] pOut;
+      if (pAtt)  delete [] pAtt;
 
       STEP_CHAIN(iChainNext, 1);
 

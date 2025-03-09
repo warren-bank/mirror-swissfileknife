@@ -31,6 +31,7 @@
 #include <ctype.h>
 #include <assert.h>
 #include <time.h>
+#include <math.h>
 #include <sys/timeb.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -1933,6 +1934,9 @@ public:
    int  makemd5;
    bool crcmd5;            // use crc instead of md5
    bool keepdata;          // keep chaindata with setvar
+   char *notifyto;         // sft(serv)
+   int  justevery;
+   int  everycnt;
 };
 
 // extern struct CommandStats gs;
