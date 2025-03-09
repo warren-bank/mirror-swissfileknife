@@ -65,7 +65,8 @@
 ..\sfk filter -case -lnum testfiles\Formats\12-foo-jam.txt -+bottle -+Trace >>res-15.txt
 ..\sfk test %TCMD% T05.2.filter res-15.txt
 
-..\sfk reflist -quiet -case -dir testfiles -file .hpp -dir testfiles -file .cpp >res-20.txt
+..\sfk reflist -quiet -case -dir testfiles -file .hpp -dir testfiles -file .cpp >res-20-pre.txt
+..\sfk filter res-20-pre.txt >res-20.txt "-!00002 testfiles"
 ..\sfk test %TCMD% T06.1.reflist res-20.txt
 
 ..\sfk patch -qs ..\scripts\50-patch-all-src.cpp >nul

@@ -11,10 +11,18 @@
    -  ntfs handling of links is not yet tested.
    -  unix bash interprets $, ! and probably other chars.
    -  german umlauts not supported in grep.
-   -  sfk ftp put from linux may sometimes wait endless
-      until connection is closed by pressing CTRL+C.
-   -  linux binaries compiled for one distribution often
-      don't work on another (incompatible lib versions).
+
+   1.2.2
+   -  fix: ftp error handling improved. testing and
+           skipping unwritable files before transfer.
+   -  fix: unix compatibility during tree walking.
+   -  fix: deblank now also deblanks directories.
+   -  add: sft101 with skip records to improve flushing.
+   -  fix: ftpserv always said "igoring path" on dir.
+   -  fix: ftp client: better parsing of "-" lines esp. with dir.
+   -  add: mget, mput in case of SFT.
+   -  add: ftp: client and server tell each other supported sft.
+   -  fix: ftpserv: escape key recognition.
 
    1.2.0
    -  fix: bin to text: dynamic nMinWord adaption. by default,
@@ -189,7 +197,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.2.0"
+#define SFK_VERSION  "1.2.2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -445,6 +453,7 @@ enum eWalkTreeFuncs {
    #ifdef WITH_TCP
    eFunc_FTPList     ,
    eFunc_FTPNList    ,
+   eFunc_FTPLocList  ,
    #endif
 };
 
@@ -5983,8 +5992,8 @@ long walkFiles(
 
       bool bIsLink = 0;
 
-      #ifdef DT_LNK
-      // linux
+      /*
+      // ifdef DT_LNK: doesn't work with older linux
       if (e->d_type == DT_LNK)
          bIsLink = 1; // cannot tell here if dir or file link
       else
@@ -5999,8 +6008,9 @@ long walkFiles(
          delete [] pszSub;
          continue;
       }
-      #else
-      // weirdux
+      */
+
+      // general linux, including older variants
       #ifdef S_IFLNK
       if ((hStat1.st_mode & S_IFLNK) == S_IFLNK)
          bIsLink = 1;
@@ -6017,7 +6027,6 @@ long walkFiles(
          delete [] pszSub;
          continue;
       }
-      #endif
 
       /*
          NOTE: these are OCTAL VALUES, NOT hexadecimal.
@@ -6464,6 +6473,7 @@ long getFuzzyTextSum(char *pszFile, uchar *pOutBuf)
       for (ulong i=0; i<nLen; i++)
          if (szLineBuf[i] == '\\')
              szLineBuf[i] = '/';
+      if (nGlblVerbose) printf("sum: \"%s\"\n", szLineBuf);
       // build local checksum over line
       SFKMD5 md5;
       md5.update((uchar*)szLineBuf, nLen);
@@ -7233,25 +7243,32 @@ long execRefProcSrc(char *pszFile)
    return 0;
 }
 
-long execDeblank(char *pszFile)
+long execDeblank(char *pszPath)
 {
-   // replace all blanks in filename by '_'
-   strncpy(szLineBuf, pszFile, MAX_LINE_LEN);
+   // replace blanks in (last part of) path by '_'
+   strncpy(szLineBuf, pszPath, MAX_LINE_LEN);
    szLineBuf[MAX_LINE_LEN] = '\0';
-   
-   char *psz = 0;
-   while (psz = strchr(szLineBuf, ' '))
-      *psz = '_';
 
-   if (!strcmp(szLineBuf, pszFile))
+   char *psz1 = strrchr(szLineBuf, glblPathChar);
+   if (!psz1)
+         psz1 = szLineBuf;
+
+   bool bAny = 0;
+   char *psz2 = 0;
+   while (psz2 = strchr(psz1, ' ')) {
+      *psz2 = '_';
+      bAny = 1;
+   }
+
+   if (!bAny)
       return 0; // nothing to do
 
    if (!bGlblQuiet)
-      printf("%s -> %s\n", pszFile, szLineBuf);
+      printf("%s -> %s\n", pszPath, szLineBuf);
 
    if (bGlblYes) {
-      int nRC = rename(pszFile, szLineBuf);
-      if (nRC) return 1+perr("rename failed on %s\n", pszFile);
+      int nRC = rename(pszPath, szLineBuf);
+      if (nRC) return 1+perr("rename failed on %s\n", pszPath);
    }
 
    return 0;
@@ -7259,6 +7276,7 @@ long execDeblank(char *pszFile)
 
 #ifdef WITH_TCP
 long sendLine(SOCKET hSock, char *psz, bool bQuiet=0);
+long readLine(SOCKET hSock, char *pszLineBuf = szLineBuf, long nMode=0);
 
 long execFTPList(char *pszFileName)
 {
@@ -7316,6 +7334,14 @@ long execFTPNList(char *pszFileName)
 {
    return sendLine(hGlblTCPOutSocket, pszFileName, 1);
 }
+
+StringTable glblFTPRemList;
+StringTable glblFTPLocList;
+
+long execFTPLocList(char *pszFileName)
+{
+   return glblFTPLocList.addEntry(pszFileName);
+}
 #endif
 
 long execSingleFile(char *pszFile, long lLevel, long &lFiles, long nDirFileCnt, long &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
@@ -7352,10 +7378,11 @@ long execSingleFile(char *pszFile, long lLevel, long &lFiles, long nDirFileCnt, 
       #endif
       case eFunc_RefColDst : return execRefColDst(pszFile);  break;
       case eFunc_RefProcSrc: return execRefProcSrc(pszFile); break;
-      case eFunc_Deblank : return execDeblank(pszFile); break;
+      case eFunc_Deblank   : return execDeblank(pszFile);    break;
       #ifdef WITH_TCP
-      case eFunc_FTPList  : return execFTPList(pszFile); break;
-      case eFunc_FTPNList : return execFTPNList(pszFile); break;
+      case eFunc_FTPList   : return execFTPList(pszFile);    break;
+      case eFunc_FTPNList  : return execFTPNList(pszFile);   break;
+      case eFunc_FTPLocList: return execFTPLocList(pszFile); break;
       #endif
       default: break;
    }
@@ -7852,6 +7879,9 @@ long execSingleDir(char *pszName, long lLevel, long &lGlobFiles, FileList &oDirF
            if (bGlblWalkJustDirs)
               lRC = execRunDir(pszName, lLevel, lGlobFiles, lDirs, lBytes);
            break;
+      case eFunc_Deblank :
+           return execDeblank(pszName);
+           break;
       default:
            break;
    }
@@ -8318,7 +8348,7 @@ long sendLine(SOCKET hSock, char *psz, bool bQuiet)
    return 0;
 }
 
-long readLine(SOCKET hSock, char *pszLineBuf = szLineBuf) 
+long readLineRaw(SOCKET hSock, char *pszLineBuf, bool bAddToRemList, bool bQuiet)
 {
   while (1)
   {
@@ -8341,17 +8371,52 @@ long readLine(SOCKET hSock, char *pszLineBuf = szLineBuf)
       if (strstr(pszLineBuf, "\r\n"))
          break;
    }
-   long nLen = strlen(szLineBuf);
-   for (long i=0; i<nLen; i++)
-      if (isprint(pszLineBuf[i]))
-         printf("%c", pszLineBuf[i]);
-   printf("\n");
-   fflush(stdout);
    // reading a block of continued lines?
-   if (pszLineBuf[3] != '-')
-      break; // no: return (last) line
+   if (pszLineBuf[3] == '-' || pszLineBuf[0] == '-') 
+   {
+      removeCRLF(pszLineBuf);
+      // on replies to SLST: store list replies, don't print
+      if (bAddToRemList) {
+         glblFTPRemList.addEntry(pszLineBuf);
+      } else {
+         if (!bQuiet) printf("%s\n", pszLineBuf);
+      }
+      // and continue reading lines
+   }
+   else 
+   {
+      // any other record: print printable parts
+      if (!bQuiet && strncmp(szLineBuf, "SKIP ", 5)) {
+         long nLen = strlen(szLineBuf);
+         for (long i=0; i<nLen; i++)
+            if (isprint(pszLineBuf[i]))
+               printf("%c", pszLineBuf[i]);
+         printf("\n");
+         fflush(stdout);
+      }
+      // and stop reading, return record
+      break;
+   }
   }
    return 0;
+}
+
+// see also forward decl. for default parms
+long readLine(SOCKET hSock, char *pszLineBuf, long nMode)
+{
+   bool bAddToRemList = (nMode & 1) ? 1 : 0;
+   bool bQuiet = (nMode & 2) ? 1 : 0;
+   long lRC = readLineRaw(hSock, pszLineBuf, bAddToRemList, bQuiet);
+   // sft101: optional skip records to enforce socket flushing
+   if (!strncmp(szLineBuf, "SKIP ", 5)) {
+      // read intermediate skip record
+      ulong nLen = (ulong)atol(szLineBuf+5);
+      if (nLen > sizeof(abBuf)-10) nLen = sizeof(abBuf)-10;
+      if (nLen) receiveBlock(hSock, abBuf, nLen, "SKIP");
+      // now read the actual record
+      lRC = readLineRaw(hSock, pszLineBuf, bAddToRemList, bQuiet);
+   }
+   return lRC;
 }
 
 bool isPathTraversal(char *pszFile) {
@@ -8413,7 +8478,7 @@ long sendNum(SOCKET hSock, num nOut, char *pszInfo)
    return 0;
 }
 
-long sendFileRaw(SOCKET hSock, char *pszFile)
+long sendFileRaw(SOCKET hSock, char *pszFile, bool bQuiet=0)
 {
    num nLen = getFileSize(pszFile);
 
@@ -8422,28 +8487,50 @@ long sendFileRaw(SOCKET hSock, char *pszFile)
 
    num nLen2 = 0;
    num nTellStep = 10;
-   num nTellNext = nTellStep;
+   num nTellNext = 0;
    while (nLen2 < nLen) {
       int nRead = fread(abBuf, 1, sizeof(abBuf)-10, fin);
       if (nRead <= 0) return 9+perr("cannot fully read %s\n", pszFile);
-      if (send(hSock, (char*)abBuf, nRead, 0) != nRead) return 9+perr("while sending %s\n", pszFile);
+      if (send(hSock, (char*)abBuf, nRead, 0) != nRead) {
+         perr("connection closed while sending %s.\n", pszFile);
+         perr("the file cannot be written at receiver.\n");
+         return 9;
+      }
       nLen2 += nRead;
       if (nLen2 >= nTellNext) {
          nTellNext += nTellStep;
          nTellStep += nTellStep;
-         printf("%02d%% sending %s ... \r", (int)(nLen2 * 100 / (nLen+1)), pszFile);
+         printf("< %02d%% sending %s, %s bytes \r", (int)(nLen2 * 100 / (nLen+1)), pszFile, numtoa(nLen));
          fflush(stdout);
       }
    }
    fclose(fin);
 
-   printf("%lu bytes sent raw%.20s\n", (ulong)nLen2, pszGlblBlank);
+   printf("< %s sent, %s bytes.       \n", pszFile, numtoa(nLen2));
 
    return 0;
 }
 
+// send SKIP record to force socket flush on linux systems.
+long sendSkipBlock(SOCKET hSock)
+{
+   // so far, no extra dummy data is appended.
+   long nSkipSize = 0;
+   if (nSkipSize) {
+      if (sizeof(abBuf) < (nSkipSize+10000))
+         return 9+perr("internal #201\n");
+      memset(abBuf, 0xEE, nSkipSize);
+      abBuf[nSkipSize-1] = '\n';
+   }
+   // the LF at the end of record should flush the socket.
+   sprintf((char*)abBuf, "SKIP %ld\r\n", nSkipSize);
+   int nLen = strlen((char*)abBuf)+nSkipSize;
+   send(hSock, (char*)abBuf, nLen, 0);
+   return 0;
+}
+
 // INCLUDES ackReceive past file send.
-long putFileBySFT(SOCKET hSock, char *pszFile)
+long putFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0)
 {
    num nLen = getFileSize(pszFile);
    if (nLen <= 0)
@@ -8463,57 +8550,76 @@ long putFileBySFT(SOCKET hSock, char *pszFile)
    long nSent = send(hSock, (char*)pmd5, 16, 0);
    if (nSent != 16) return 9+perr("failed to send md5\n");
 
-   sendFileRaw(hSock, pszFile);
+   // if receiver can't write file, this will fail.
+   if (sendFileRaw(hSock, pszFile, bQuiet))
+      return 9;
+
+   bool bSentSkip = 0;
+   if (nSFTVer >= 101) {
+      // flush the socket through an extra record.
+      sendSkipBlock(hSock);
+      bSentSkip = 1;
+   }
 
    // wait until receival of ack, to avoid transmission break by premature close.
    #ifndef _WIN32
    // known issue: bytes sent from linux may sometimes not receive other side
    //              until connection is closed, e.g. through CTRL+C.
-   printf("> waiting for ack. if this blocks, try CTRL+C.\n");
+   printf("> waiting for ack. if this blocks, try CTRL+C. \r");
+   fflush(stdout);
    #endif
+
    receiveBlock(hSock, abBuf, 4, 0); // 0 == silent mode
    // we do IGNORE the rc here.
 
-   printf("] SEND  %s done, %lu bytes.\n", pszFile, nLen);
+   #ifndef _WIN32
+   printf("                                               \r");
+   fflush(stdout);
+   #endif
 
    return 0;
 }
 
 // MODE 1: receive until END OF DATA (nMaxBytes < 0)
 // MODE 2: receive until nMaxBytes   (nMaxBytes > 0)
-long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes)
+long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0)
 {
    FILE *fout = fopen(pszFile, "wb");
-   if (!fout) return 9+perr("cannot write to %s\n", pszFile);
+   if (!fout) return 9+perr("cannot write to \"%s\"\n", pszFile);
 
    num nLen2 = 0;
    num nTellStep = 10;
-   num nTellNext = nTellStep;
+   num nTellNext = 0;
+   num nRemain = nMaxBytes;
    long nRead = 0;
    while (1) 
    {
       if ((nMaxBytes >= 0) && (nLen2 >= nMaxBytes))
          break;
-      if ((nRead = recv(hSock, (char*)abBuf, sizeof(abBuf)-10, 0)) <= 0)
+      long nBlockLen = sizeof(abBuf)-10;
+      if ((nRemain > 0) && (nBlockLen > nRemain))
+         nBlockLen = nRemain;
+      if ((nRead = recv(hSock, (char*)abBuf, nBlockLen, 0)) <= 0)
          break; // EOD
       nLen2 += nRead;
+      nRemain -= nRead;
       fwrite(abBuf, 1, nRead, fout);
       if (nLen2 >= nTellNext) {
          nTellNext += nTellStep;
          nTellStep += nTellStep;
-         printf("%lu receiving %s ... \r", (ulong)nLen2, pszFile);
+         printf("> %02d%% receiving %s, %s bytes \r", (int)(nLen2 * 100 / (nMaxBytes+1)), pszFile, numtoa(nMaxBytes));
          fflush(stdout);
       }
    }
    fclose(fout);
 
-   printf("%lu bytes written to %s\n", (ulong)nLen2, pszFile);
+   printf("> %s received, %s bytes.       \n", pszFile, numtoa(nLen2));
 
    return 0;
 }
 
 // INCLUDES ack send past file transfer
-long getFileBySFT(SOCKET hSock, char *pszFile)
+long getFileBySFT(SOCKET hSock, char *pszFile, bool bQuiet=0)
 {
    ulong nMetaSize = 0;
    if (readLong(hSock, nMetaSize, "metalen")) return 9;
@@ -8527,13 +8633,16 @@ long getFileBySFT(SOCKET hSock, char *pszFile)
    if (nGlblTCPMaxSizeMB)
       if (nLen > nGlblTCPMaxSizeMB * 1000000)
          return 9+perr("illegal length received, %s\n", numtoa(nLen));
-   printf("< len %s\n", numtoa(nLen));
+
+   // printf("> len %s\n", numtoa(nLen));
 
    // meta 2: 16 bytes md5
    uchar abMD5[100];
    if (receiveBlock(hSock, abMD5, 16, "md5")) return 9;
 
-   receiveFileRaw(hSock, pszFile, nLen);
+   // if this fails, return w/o ack, connection will be dropped.
+   if (receiveFileRaw(hSock, pszFile, nLen, bQuiet))
+      return 9;
 
    // send short confirmation when finished, so client can safely close socket.
    long nSent = send(hSock, (char*)"ok\n\n", 4, 0);
@@ -8549,7 +8658,7 @@ long getFileBySFT(SOCKET hSock, char *pszFile)
    return 0;
 }
 
-long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT)
+long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT, long &nOutSFTVer)
 {
    #ifdef _WIN32
    WORD wVersionRequested = MAKEWORD(1,1);
@@ -8582,13 +8691,20 @@ long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT)
 
    // SFT: first handle FTP handshake
    if (readLine(hSock)) return 9; // 220
-   if (strstr(szLineBuf, "sft 100")) {
-      bSFT = 1;
-      printf("> using sft 1.0\n");
+   char *psz1 = strstr(szLineBuf, ". sft ");
+   if (psz1) {
+      long nSFTVer = atol(psz1+6);
+      if (nSFTVer >= 100) {
+         bSFT = 1;
+         printf("> server speaks sft %ld. mget, mput enabled.\n", nSFTVer);
+         nOutSFTVer = nSFTVer;
+      } else {
+         printf("> unexpected sft info \"%s\"\n", psz1);
+      }
    }
    if (sendLine(hSock, "USER anonymous")) return 9;
    if (readLine(hSock)) return 9; // 331
-   if (sendLine(hSock, "PASS sfk@")) return 9;
+   if (sendLine(hSock, "PASS sft101@")) return 9;
    if (readLine(hSock)) return 9; // 230 login done
    if (sendLine(hSock, "TYPE I")) return 9;
    if (readLine(hSock)) return 9; // 200 OK
@@ -8627,7 +8743,8 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd=0)
 {
    SOCKET hSock = 0;
    bool bSFT = 0;
-   if (ftpLogin(pszHost, nPort, hSock, bSFT)) return 9;
+   long nSFTVer = 0;
+   if (ftpLogin(pszHost, nPort, hSock, bSFT, nSFTVer)) return 9;
 
    struct sockaddr_in DataAdr;
    SOCKET hData = INVALID_SOCKET;
@@ -8709,11 +8826,128 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd=0)
             if (sendLine(hSock, szLineBuf2)) break;
             if (readLine(hSock)) break; // 200 OK, 500 Error
             if (!strncmp(szLineBuf, "200", 3))
-               if (putFileBySFT(hSock, pszFileName))
+               if (putFileBySFT(hSock, pszFileName, nSFTVer))
                   break;
             // ack receive was done above. keep socket open.
          }
          delete [] pszFileName;
+      }
+      else
+      if (!strncmp(szLineBuf, "!", 1)) {
+         // run local command
+         system(szLineBuf+1);
+      }
+      else
+      if (bSFT && !strncmp(szLineBuf, "mput ", 5)) 
+      {
+         char *pszMaskPre = szLineBuf+5;
+         if (!strncmp(pszMaskPre, "\\*", 2))
+            pszMaskPre++; // for linux uniformity
+         if ((pszMaskPre[0]=='*') && (pszMaskPre[1]!=0))
+            pszMaskPre++; // skip *, take pattern
+         // if (strchr(pszMaskPre, '*'))
+         //   { perr("'*' is supported only at the beginning of masks.\n"); continue; }
+         char *pszMask = strdup(pszMaskPre);
+         // NO RETURN FROM HERE
+         long lFiles=0, lDirs=0, lRC=0;
+         num nBytes=0;
+         glblFTPLocList.resetEntries();
+         walkAllTrees(eFunc_FTPLocList, lFiles, lDirs, nBytes);
+         // now ALL local files are listed in glblFTPLocList
+         long i=0, nSent=0, nSkipped=0, nFailed=0;
+         for (; i<glblFTPLocList.numberOfEntries(); i++) 
+         {
+            char *pszFile = glblFTPLocList.getEntry(i, __LINE__);
+            if (!strcmp(pszMask, "*") || strstr(pszFile, pszMask)) 
+            {
+               printf("< 00%% sending %s \r",pszFile);fflush(stdout);
+               sprintf(szLineBuf2, "SPUT %s", pszFile);
+               if (sendLine(hSock, szLineBuf2, 1)) break;
+               if (readLine(hSock, szLineBuf , 2)) break; // 200 OK, 500 Error
+               if (strncmp(szLineBuf, "200", 3)) {
+                  printf("\n");
+                  perr("%s: %s", pszFile, szLineBuf); // no LF. readLine was QUIET
+                  nFailed++; // but continue
+               } else {
+                  if (putFileBySFT(hSock, pszFile, nSFTVer, 1))
+                     break;
+               }
+               // ack receive was done above. keep socket open.
+               nSent++;
+            } else {
+               nSkipped++;
+            }
+         }
+         if (i < glblFTPLocList.numberOfEntries())
+            bLoop = 0; // fatal, server probably closed connection
+         if (nFailed > 0)
+            printf("%ld files sent, %ld failed.\n", nSent, nFailed);
+         else
+            printf("%ld files sent.\n", nSent);
+         // NO RETURN UNTIL HERE
+         delete [] pszMask;
+      }
+      else
+      if (bSFT && !strncmp(szLineBuf, "mget ", 5)) 
+      {
+         char *pszMaskPre = szLineBuf+5;
+         if (!strncmp(pszMaskPre, "\\*", 2))
+            pszMaskPre++; // for linux uniformity
+         if ((pszMaskPre[0]=='*') && (pszMaskPre[1]!=0))
+            pszMaskPre++; // skip *, take pattern
+         // if (strchr(pszMaskPre, '*'))
+         //   { perr("'*' is supported only at the beginning of masks.\n"); continue; }
+         char *pszMask = strdup(pszMaskPre);
+         // NO RETURN FROM HERE
+         sendLine(hSock, "SLST");
+         glblFTPRemList.resetEntries();
+         while (readLine(hSock, szLineBuf, 1) == 0) {
+            if (!strncmp(szLineBuf, "226 ", 4))
+               break;
+            // -> collects into glblFTPRemList
+         }
+         // now ALL remote files are listed in glblFTPRemList
+         // in a RAW format:
+         // -rw-rw-rw- 1 ftp ftp        30353 Sep 08 13:47 readme.txt
+         long i=0, nRecv=0, nSkipped=0, nFailed=0;
+         for (; i<glblFTPRemList.numberOfEntries(); i++) 
+         {
+            char *pszFileRaw = glblFTPRemList.getEntry(i, __LINE__);
+            char *psz1 = strchr(pszFileRaw, ':');
+            if (!psz1) { nSkipped++; continue; }
+            char *pszFile = psz1+4; // skip ":47 "
+            if (!strcmp(pszMask, "*") || strstr(pszFile, pszMask)) 
+            {
+               if (!isWriteable(pszFile)) {
+                  perr("cannot write: %s\n", pszFile);
+                  nFailed++;
+                  continue;
+               }
+               printf("> 00%% receiving %s \r",pszFile);fflush(stdout);
+               sprintf(szLineBuf2, "SGET %s", pszFile);
+               if (sendLine(hSock, szLineBuf2, 1)) break;
+               if (readLine(hSock, szLineBuf , 2)) break; // 200 OK
+               if (strncmp(szLineBuf, "200", 3)) {
+                  printf("\n");
+                  perr("%s", szLineBuf); // no LF. readLine was QUIET
+               } else {
+                  if (getFileBySFT(hSock, pszFile, 1))
+                     break;
+               }
+               // ack receive was done above. keep socket open.
+               nRecv++;
+            } else {
+               nSkipped++;
+            }
+         }
+         if (i < glblFTPRemList.numberOfEntries())
+            bLoop = 0; // fatal, server probably closed connection
+         if (nFailed > 0)
+            printf("%ld files received, %ld failed.\n", nRecv, nFailed);
+         else
+            printf("%ld files received.\n", nRecv);
+         // NO RETURN UNTIL HERE
+         delete [] pszMask;
       }
       else
       if (!strcmp(szLineBuf, "bye")) {
@@ -8824,6 +9058,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
    SOCKET hPasServ  = INVALID_SOCKET;
    SOCKET hData     = INVALID_SOCKET;
    ulong  nPasPort  = 0;
+   long   nClientSFT = 0;
    if (makeServerSocket(nPort, ServerAdr, hServer, "server main port")) return 9;
 
    if (bRW)
@@ -8849,14 +9084,19 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
       setBlocking(hClient, 1);
 
       // login, pseudo-authentication
-      if (sendLine(hClient, "220 sfk instant ftp, " SFK_FTP_TIMEOUT " sec timeout. sft 100.")) { closesocket(hClient); continue; }
+      if (sendLine(hClient, "220 sfk instant ftp, " SFK_FTP_TIMEOUT " sec timeout. sft 101.")) { closesocket(hClient); continue; }
       if (readLine(hClient)) { closesocket(hClient); continue; } // > USER username
       if (sendLine(hClient, "331 User name ok, need password")) { closesocket(hClient); continue; }
       if (readLine(hClient)) { closesocket(hClient); continue; } // > PASS passwd
+      if (!strncmp(szLineBuf, "PASS sft", 8)) {
+         nClientSFT = atol(szLineBuf+8);
+         printf("> client speaks sft: %ld\n", nClientSFT);
+      }
       if (sendLine(hClient, "230 User logged in")) { closesocket(hClient); continue; }
 
       // read client commands
-      while (1)
+      long nbail = 0;
+      while (nbail < 3)
       {
          long lTimeout = 1000 * atol(SFK_FTP_TIMEOUT);
          num t1 = getCurrentTime();
@@ -8864,8 +9104,12 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
          {
             if (hasData(hClient, 500))
                break;
+            if (userInterrupt())
+               break;
             doSleep(500);
          }
+         if (userInterrupt())
+            break;
          if (getCurrentTime() >= t1 + lTimeout) {
             sprintf(szLineBuf2, "500 inactivity timeout (%ld sec)", lTimeout/1000);
             sendLine(hClient, szLineBuf2);
@@ -8873,25 +9117,26 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             break;
          }
 
-         if (readLine(hClient)) break;
+         // use readline without implicite skip processing
+         if (readLineRaw(hClient, szLineBuf, 0, 0)) break;
          removeCRLF(szLineBuf);
 
-         if (!strncmp(szLineBuf, "SYST", 4)) {
+         if (!strncmp(szLineBuf, "SYST", 4)) { nbail=0;
             if (sendLine(hClient, "215 UNIX emulated by SFK.")) break;
             continue;
          }
          else
-         if (!strncmp(szLineBuf, "TYPE ", 5)) {
+         if (!strncmp(szLineBuf, "TYPE ", 5)) { nbail=0;
             if (sendLine(hClient, "200 Command OK")) break;
             continue;
          }
          else
-         if (!strncmp(szLineBuf, "PWD", 3)) {
+         if (!strncmp(szLineBuf, "PWD", 3)) { nbail=0;
             if (sendLine(hClient, "257 \"/\" is current directory.")) break;
             continue;
          }
          else
-         if (!strncmp(szLineBuf, "SIZE ", 5)) {
+         if (!strncmp(szLineBuf, "SIZE ", 5)) { nbail=0;
             char *pszFile = szLineBuf+5;
             if (pszFile[0] == '/')
                 pszFile++;
@@ -8905,7 +9150,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             continue;
          }
          else
-         if (!strncmp(szLineBuf, "MDTM ", 5)) {
+         if (!strncmp(szLineBuf, "MDTM ", 5)) { nbail=0;
             // MDTM 20060604111037
             char *pszFile = szLineBuf+5;
             if (pszFile[0] == '/')
@@ -8920,13 +9165,13 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             continue;
          }
          else
-         if (!strcmp(szLineBuf, "RETR /")) {
+         if (!strcmp(szLineBuf, "RETR /")) { nbail=0;
             if (sendLine(hClient, "550 File not found")) break;
             closesocket(hData); hData = INVALID_SOCKET;
             continue;
          }
          else
-         if (!strncmp(szLineBuf, "CWD ", 4)) {
+         if (!strncmp(szLineBuf, "CWD ", 4)) { nbail=0;
             char *pszPath = szLineBuf+4;
             if (!strcmp(pszPath, "/")) {
                if (sendLine(hClient, "250 CWD OK")) break;
@@ -8936,8 +9181,9 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             continue;
          }
          else
-         if (!strncmp(szLineBuf, "PASV", 4)) 
+         if (!strncmp(szLineBuf, "PASV", 4))
          {
+            nbail=0;
             // establish passive data connection server on demand
             if (hPasServ == INVALID_SOCKET) {
                nPasPort = 0; // find new local port
@@ -8978,6 +9224,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
          else
          if (!strncmp(szLineBuf, "PORT ", 5)) 
          {
+            nbail=0;
             // establish active data connection
             uchar n[6];
             char *psz = szLineBuf+strlen("PORT ");
@@ -8995,6 +9242,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
          else
          if (!strncmp(szLineBuf, "LIST", 4))
          {
+            nbail=0;
             if (hData == INVALID_SOCKET) {
                sendLine(hClient, "500 internal error 1");
                continue;
@@ -9017,6 +9265,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
          else
          if (!strcmp(szLineBuf, "NLST *"))
          {
+            nbail=0;
             if (hData == INVALID_SOCKET) {
                sendLine(hClient, "500 internal error 1");
                continue;
@@ -9035,6 +9284,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
          else
          if (!strncmp(szLineBuf, "RETR ", 5)) 
          {
+            nbail=0;
             if (hData == INVALID_SOCKET) {
                sendLine(hClient, "500 internal error 1");
                continue;
@@ -9058,6 +9308,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
          else
          if (!strncmp(szLineBuf, "STOR ", 5)) 
          {
+            nbail=0;
             if (hData == INVALID_SOCKET) {
                sendLine(hClient, "500 internal error 1");
                continue;
@@ -9081,26 +9332,30 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             if (sendLine(hClient, "226 Closing data connection")) break; // 226, 250
          }
          else
-         if (!strncmp(szLineBuf, "QUIT", 4)) {
+         if (!strncmp(szLineBuf, "QUIT", 4)) { nbail=0;
             break;
          }
          else
-         if (!strncmp(szLineBuf, "SGET ", 5)) {
+         if (!strncmp(szLineBuf, "SGET ", 5)) { nbail=0;
             // sft file retrieve, within control connection
             strcpy(szLineBuf2, szLineBuf);
             char *pszFile = szLineBuf2+5;
             if (isPathTraversal(pszFile)) {
                sendLine(hClient, "500 forbidden path");
+            }
+            else 
+            if (!fileExists(pszFile)) {
+               sendLine(hClient, "500 no such file, or unreadable");
             } else {
                sendLine(hClient, "200 OK, data follows");
                printf("send sft file: \"%s\"\n", pszFile);
-               long lRC = putFileBySFT(hClient, pszFile);
+               long lRC = putFileBySFT(hClient, pszFile, nClientSFT);
                printf("send sft file done, RC %ld\n", lRC);
             }
             // putFileBySFT includes ack receive
          }
          else
-         if (!strncmp(szLineBuf, "SPUT ", 5)) {
+         if (!strncmp(szLineBuf, "SPUT ", 5)) { nbail=0;
             if (!bRW)
                sendLine(hClient, "500 write forbidden");
             else {
@@ -9110,6 +9365,11 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
                if (isPathTraversal(pszFile)) {
                   sendLine(hClient, "500 forbidden path");
                   break; // block potential content coming
+               }
+               else
+               if (!isWriteable(pszFile)) {
+                  sendLine(hClient, "500 cannot write file");
+                  // break;
                } else {
                   sendLine(hClient, "200 OK, send data");
                   printf("recv sft file: \"%s\"\n", pszFile);
@@ -9121,8 +9381,9 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             // getFileBySFT includes ack send
          }
          else
-         if (!strncmp(szLineBuf, "SLST", 4)) {
+         if (!strncmp(szLineBuf, "SLST", 4)) { nbail=0;
             // path is ignored. list only current dir.
+            strcpy(szLineBuf2, szLineBuf);
             if (sendLine(hClient, "150 Listing Directory")) break;
             long lFiles=0, lDirs=0, lRC=0;
             num nBytes=0;
@@ -9133,11 +9394,23 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             printf("dir done, RC %ld\n", lRC);
             if (sendLine(hClient, "226 Listing Done")) break; // 226, 250
          }
+         else
+         if (!strncmp(szLineBuf, "SKIP ", 5)) { nbail=0;
+            // dummy record follows, to enforce line flush.
+            // should be far smaller than abBuf.
+            ulong nLen = (ulong)atol(szLineBuf+5);
+            if (nLen > sizeof(abBuf)-10) nLen = sizeof(abBuf)-10;
+            if (nLen) receiveBlock(hClient, abBuf, nLen, "SKIP");
+            // printf("skip done, %lu bytes\n", nLen);
+            // no ack sending
+         }
          else {
             if (sendLine(hClient, "500 not supported")) break;
-            // break; // block potential content past unknown command
+            // count invalid command, maybe connection is out of control:
+            nbail++;
+            // on 3rd invalid command, connection will be dropped.
          }
-      }  // endwhile (1)
+      }  // endwhile
 
       printf("disconnecting client\n");
       closesocket(hClient);
@@ -9928,7 +10201,7 @@ int main(int argc, char *argv[])
                 "   depending on the background color of your shell, and if you want to post-process\n"
                 "   command output. if you feel lucky, add -col in front of a command, or say\n"
                 "\n"
-                "      export SFK_COLORS=on,def:0      or    export SFK_COLORS=on,def:15\n"
+                "      export SFK_COLORS=on,def:0      or    export SFK_COLORS=on,def:14\n"
                 "      with bright shell backgrounds         with black shell backgrounds\n"
                 );
          #endif
@@ -12275,6 +12548,36 @@ int main(int argc, char *argv[])
          "      #sfk ftp hostname\n"
          "         enter interactive mode, supporting commands:\n"
          "            dir, get filename, put filename.\n"
+         #ifdef _WIN32
+         "            !dir runs the command \"dir\" locally.\n"
+         #else
+         "            !ls runs the command \"ls\" locally.\n"
+         #endif
+         "\n"
+         "   $IF connected with an sfk 1.2.2 ftp server:\n"
+         "\n"
+         "      #sfk ftp farpc mput .cpp\n"
+         "         sends all .cpp files of local dir to farpc.\n"
+         "         subfolder contents are NOT included.\n"
+         "\n"
+         #ifdef _WIN32
+         "      #sfk ftp farpc mget *\n"
+         "         receive all files from farpc's local directory,\n"
+         "         overwriting everything in the local directory.\n"
+         #else
+         "      #sfk ftp farpc mget \\*\n"
+         "         receive all files from farpc's local directory,\n"
+         "         overwriting everything in the local directory.\n"
+         "         do not leave out the slash '\\' before '*',\n"
+         "         which is required due to unix shell expansion.\n"
+         #endif
+         "\n"
+         "      mget and mput can be used in interactive mode as well.\n"
+         "\n"
+         "NOTE: existing files are overwritten <err>without asking back<def>.\n"
+         "      Make sure that ftp server and client are running\n"
+         "      in the correct directories, especially before mput/mget.\n"
+         "\n"
          );
          return 0;
       }
@@ -12290,6 +12593,13 @@ int main(int argc, char *argv[])
             *psz++ = '\0';
             nPort = atol(psz);
          }
+         // ftp client may act on current dir only.
+         if (glblFileSet.beginLayer(false, __LINE__)) return 9;
+         glblFileSet.addRootDir(".", __LINE__, false);
+         glblFileSet.autoCompleteFileMasks(3);
+         glblFileSet.setBaseLayer();
+         bGlblRecurseDirs = 0; // in case of mput
+         // run in interactive or direct mode
          if (argc >= 5) {
             char *pszCmd = argv[3];
             char *pszFileName = argv[4];
@@ -12473,8 +12783,7 @@ int main(int argc, char *argv[])
    // internal
    if (!strcmp(pszCmd, "getlines"))
    {
-      bGlblDebug = 1;
-
+      // bGlblDebug = 1;
       char *pszFile = argv[2];
       FILE *fin = fopen(pszFile, "rb");
       memset(szLineBuf, '$', MAX_LINE_LEN);
@@ -12484,6 +12793,18 @@ int main(int argc, char *argv[])
          memset(szLineBuf, '$', MAX_LINE_LEN);
       }
       fclose(fin);
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "mdfuzzy"))
+   {
+      // nGlblVerbose = 1;
+      char *pszFile = argv[2];
+      if (getFuzzyTextSum(pszFile, abBuf))
+         return 9;
+      for (int i=0; i<16; i++)
+         printf("%02x ", abBuf[i]);
+      printf("\n");
       bDone = 1;
    }
 
@@ -12509,6 +12830,9 @@ int main(int argc, char *argv[])
    glblSFL.reset();
    if (pszGlblDirTimes)
       delete [] pszGlblDirTimes;
+
+   glblFTPRemList.resetEntries();
+   glblFTPLocList.resetEntries();
 
    #ifdef SFK_WINPOPUP_SUPPORT
    winCleanupGUI();
