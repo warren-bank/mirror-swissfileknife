@@ -1,5 +1,5 @@
 /*
-   Micro Tracing Kernel 0.7.1 by stahlworks technologies.
+   Micro Tracing Kernel 0.7.2 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    the following line protects this file against instrumentation:
@@ -8,6 +8,10 @@
    NOTE: Win32 GUI apps should never use "term:" tracing, but only "file:".
 
    Changes:
+   0.7.2
+   -  add: time stamp in front of ever log record
+   -  add: optional tracing of block exits,
+           define MTK_TRACE_BLOCK_EXITS to use.
    0.7.1
    -  add: some marker characters {} around block entries.
    -  chg: improved error message if filename contains quotes.
@@ -15,6 +19,7 @@
    -  fix: after dumpStackTrace, dumpLastSteps the log file was closed
            and therefore no further tracing to file was possible.
    -  fix: compile warnings (signed/unsigned comparison).
+
    0.7.0
    -  chg: mtkdump: now also dumps an ascii representation of the data.
    -  add: mtkb: if provided function name is empty, replace by line number.
@@ -56,6 +61,10 @@
 
 #define MTKMAXMSG   10000  // 1000 (0.1 MB) to 10000 (1.2 MB)
 #define MTKMSGSIZE    118
+
+// trace mode 'b' lists only block entries by default.
+// to list also block exits, set this define:
+// #define MTK_TRACE_BLOCK_EXITS
 
 // some projects provide their own printf implementation
 #ifdef PROJECT_PRINTF
@@ -392,13 +401,92 @@ void MTKMain::traceMethodExit(void *pRefInst, const char *pszFile, int nLine, co
       glblMTKAlive = 0;
       return;
    }
+
+   #ifdef MTK_TRACE_BLOCK_EXITS
+   // trace block exit event?
+   if ((nringx & 2) && apfile[ithread][ilevel] && anline[ithread][ilevel])
+   {
+      const char *pszFile = apfile[ithread][ilevel];
+      int   nLine         = anline[ithread][ilevel];
+      const char *pszFunc = apfunc[ithread][ilevel];
+
+      char szBuf[120];
+      szBuf[0] = '\0';
+
+      // create formatted string: file,line,function
+      //                           50   10    30
+      long noff = 0, nlen = 0;
+      const char *psz = 0;
+
+      // block start marker
+      szBuf[noff++] = ' ';
+      szBuf[noff++] = '{';
+      szBuf[noff] = '\0';
+
+      // filename, if any
+      psz  = pszFile ? pszFile : "";
+      nlen = strlen(psz);
+      if (nlen) {
+         if (nlen > 50) { psz = psz + nlen - 50; nlen = 50; }
+         if (noff+nlen < (long)sizeof(szBuf)-10) {
+            memcpy(szBuf+noff, psz, nlen);
+            szBuf[noff+nlen] = '\0';
+            noff += nlen;
+         }
+      }
+
+      // line number
+      if (noff+20 < (long)sizeof(szBuf)-10) {
+         szBuf[noff++] = ' ';
+         #ifdef _WIN32
+         _ultoa((unsigned long)nLine, szBuf+noff, 10);
+         #else
+         sprintf(szBuf+noff, "%lu", (unsigned long)nLine);
+         #endif
+         noff += strlen(szBuf+noff);
+      }
+
+      // function
+      psz  = pszFunc ? pszFunc : "";
+      nlen = strlen(psz);
+      if (nlen) {
+         if (nlen > 30) { psz = psz + nlen - 30; nlen = 30; }
+         if (noff+nlen < (long)sizeof(szBuf)-10) {
+            szBuf[noff++] = ' ';
+            memcpy(szBuf+noff, psz, nlen);
+            szBuf[noff+nlen] = '\0';
+            noff += nlen;
+         }
+      }
+
+      // block end marker
+      szBuf[noff++] = '}';
+      szBuf[noff++] = ' ';
+      szBuf[noff++] = '<';
+      szBuf[noff] = '\0';
+
+      // dump formatted string (file info is redundant)
+      traceMessageRaw(pszFile, nLine, 'B', szBuf);
+   }
+   #endif // MTK_TRACE_BLOCK_EXITS
+
    apfile[ithread][ilevel] = 0;
    anline[ithread][ilevel] = 0;
    apfunc[ithread][ilevel] = 0;
-   // if (strstr(pszFile, "BHDiag"))
-   //   printf("tmx %x %u %u %s %u\n", nthreadid, ithread, ilevel, pszFile, nLine);
+
    ilevel--;
    alevel[ithread] = ilevel;
+}
+
+static unsigned long localGetCurrentTime()
+{
+   #ifdef _WIN32
+   return (unsigned long)GetTickCount();
+   #else
+   struct timeval tv;
+   gettimeofday(&tv, NULL);
+   return ((unsigned long)tv.tv_sec) * 1000 + ((unsigned long)tv.tv_usec) / 1000;
+   #endif
 }
 
 void MTKMain::traceMessageRaw(const char *pszFile, int nLine, char cPrefix, char *pszRaw)
@@ -507,7 +595,10 @@ void MTKMain::traceMessageRaw(const char *pszFile, int nLine, char cPrefix, char
          long nLen = strlen(pszRaw);
          while (nLen > 0 && (pszRaw[nLen-1]=='\r' || pszRaw[nLen-1]=='\n'))
             nLen--;
-         fprintf(flog, "[%02lX:%c] %s%.*s%.*s\n", ithread, cPrefix, pszAddInfo, (int)ilevel, glblPszBlank, (int)nLen, pszRaw);
+         fprintf(flog, "%lu [%02lX:%c] %s%.*s%.*s\n", 
+            (unsigned long)(localGetCurrentTime() & 65535UL),
+            ithread, cPrefix, pszAddInfo,
+            (int)ilevel, glblPszBlank, (int)nLen, pszRaw);
          if (bflushlog)
             fflush(flog);
       }
@@ -888,3 +979,4 @@ void mtkHexDump(const char *pszLinePrefix, void *pDataIn, long lSize, const char
       noff += 16;
    }
 }
+

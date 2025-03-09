@@ -2,7 +2,7 @@
 #define _MTKTRACE_DEFINED_
 
 /*
-   Micro Tracing Kernel 0.7.1 by stahlworks technologies.
+   Micro Tracing Kernel 0.7.2 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    NOTE: changing this header probably forces recompile of MANY files!
@@ -106,11 +106,36 @@ extern void mtkHexDump(const char *pszLinePrefix, void *pDataIn, long lSize, con
 #define mtkdump(pLinePrefix, pData, nSize) mtkHexDump(pLinePrefix, pData, nSize, __FILE__,__LINE__,'T')
 
 /*
-// example for redirecting a foreign printf-like trace macro to mtk:
-#undef BADTRACE
-extern int  mtkTracePre (const char *pszFile, int nLine, char cPrefix);
-extern void mtkTracePost(const char *pszFormat, ...);
-#define BADTRACE(xwrap) do { if (mtkTracePre(__FILE__,__LINE__,'E')) mtkTracePost xwrap; } while(0)
+   // example for redirecting a foreign printf-like trace macro to mtk:
+   #undef BADTRACE
+   extern int  mtkTracePre (const char *pszFile, int nLine, char cPrefix);
+   extern void mtkTracePost(const char *pszFormat, ...);
+   #define BADTRACE(xwrap) do { if (mtkTracePre(__FILE__,__LINE__,'E')) mtkTracePost xwrap; } while(0)
+*/
+
+/*
+   depending on the platform, strings from mtklog statements may always
+   stay in the code, even if mtklog is defined as nothing.
+   to avoid this, you may use these alternative definitions:
+
+#define mtklog(x)  {mtkTracePre(__FILE__,__LINE__,'D');mtkTracePost x;}
+#define mtkerr(x)  {mtkTracePre(__FILE__,__LINE__,'E');mtkTracePost x;}
+#define mtkwarn(x) {mtkTracePre(__FILE__,__LINE__,'W');mtkTracePost x;}
+#define mtkdump(pLinePrefix, pData, nSize) mtkHexDump(pLinePrefix, pData, nSize, __FILE__,__LINE__,'T')
+
+   then use in your code:
+
+      mtklog(("foo %d bar %s", nFoo, pszBar));
+
+   with double () instead of
+
+      mtklog("foo %d bar %s", nFoo, pszBar);
+
+   and you can be sure that
+
+      #define mtklog(x)
+
+   will really strip everything from the release code.
 */
 
 #endif

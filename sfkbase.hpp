@@ -282,6 +282,7 @@ long  timeFromString (char *psz, num &nRetTime);
 void  doSleep        (long nmsec);
 uchar *loadBinaryFile(char *pszFile, num &rnFileSize);
 bool  infoAllowed    ( );
+struct hostent *sfkhostbyname(const char *pstr, bool bsilent=0);
 
 class IOStatusPhase {
 public:

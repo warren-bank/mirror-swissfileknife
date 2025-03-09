@@ -21,6 +21,36 @@
       -  fwrite is mapped to safefwrite
       to work around the Windows 60 MB I/O bug.
 
+   1.5.7
+   -  chg: BEHAVIOUR CHANGE: sfk tail: now internally
+           uses "seek" instead of "stat" to determine
+           the current file size, as "stat" often fails
+           to reflect file size changes in realtime.
+           use option "-altsize" for old behaviour.
+   -  add: sfk list, sfk help select: examples for
+           exclusion of files and sub folders.
+   -  add: sfk ftp and other network client commands:
+           automatic expansion of target ip number,
+           e.g. sfk ftp 23 == sfk ftp 192.168.1.23
+           if the current host ip is 192.168.1.x.
+   -  add: sfk sft, alias for sfk ftp using port 2121.
+   -  add: sfk sftserv, alias for sfk ftpserv w/port 2121.
+           sft means simple file transfer protocol,
+           which cannot be used on port 21 on systems
+           like windows 7.
+   -  add: sfk webrequest: send a plain HTTP request
+           and show the reply text with headers.
+   -  add: sfk webserv: now also handles HEAD requests,
+           so sfk wget to an sfk webserver no longer
+           produces error messages.
+   -  add: sfk list ... +sft support (ftp on port 2121).
+   -  fix: sfk list mydir .1.cpp did not list .1.cpp files
+           and list mydir !.1.cpp did not exclude them
+           due to incomplete file extension comparison.
+   internal:
+   -  add: sfk tail: option -deep to use different
+           method for file size detection.
+
    1.5.6
    Revision 2:
    -  add: option -textfiles to process only text files.
@@ -1177,8 +1207,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.5.6"  // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "2"
+#define SFK_VERSION  "1.5.7"  // ver_ and check the _PRE definition
+#define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1389,6 +1419,8 @@ mytime_t getSystemTime()
 
 // ====== SFK primitive function library begin ========
 
+char *ownIPList(int &rhowmany, ulong nPort=0, const char *psep=" or ");
+
 // all closesocket calls are redirected to:
 void myclosesocket(SOCKET hsock, bool bread, bool bwrite)
 {
@@ -1481,6 +1513,81 @@ void skipOver(char **pp, char *pdelim) {
 
 void skipToWhite(char **pp) { skipUntil(pp, " \t\r\n"); }
 void skipWhite(char **pp)   { skipOver(pp, " \t\r\n");  }
+
+long prepareTCP()
+{
+   static bool bDone = 0;
+   if (!bDone)
+   {
+      bDone = 1;
+      #ifdef _WIN32
+      WORD wVersionRequested = MAKEWORD(1,1);
+      WSADATA wsaData;
+      if (WSAStartup(wVersionRequested, &wsaData)!=0)
+         return 9+perr("WSAStartup failed\n");
+      #endif
+   }
+   return 0;
+}
+
+char *ownIPList(int &rhowmany, ulong nPort, const char *psep)
+{
+   prepareTCP();
+
+   static char szIPListBuf[200];
+   szIPListBuf[0] = '\0';
+
+   char szPortStr[50];
+   szPortStr[0] = '\0';
+   if (nPort > 0)
+      sprintf(szPortStr, ":%lu", nPort);
+
+   #ifdef _WIN32
+
+   char *pownip = "";
+   struct in_addr addr;
+
+   hostent *pinfo = gethostbyname(""); // fails under linux
+   if (pinfo) {
+      memcpy(&addr,pinfo->h_addr_list[0],sizeof(struct in_addr));
+      pownip = inet_ntoa(addr);
+      strcopy(szIPListBuf, pownip);
+      strcat(szIPListBuf, szPortStr); // if any
+      rhowmany = 1;
+   }
+
+   #else
+
+   // linux: list all existing interface IPV4 addresses
+   struct ifaddrs *pAdrObj = NULL;
+   char szAdrBuf[200]; mclear(szAdrBuf);
+   getifaddrs(&pAdrObj);
+   const char *pprefix = "";
+   int ndone = 0;
+   while (pAdrObj != NULL) {
+     if (pAdrObj->ifa_addr->sa_family==AF_INET && strcmp(pAdrObj->ifa_name, "lo0")) {
+       void *pIPData = &((struct sockaddr_in *)pAdrObj->ifa_addr)->sin_addr;
+       const char *pszIP = inet_ntop(AF_INET, pIPData, szAdrBuf, sizeof(szAdrBuf)-10);
+       if (strcmp(pszIP, "127.0.0.1")) {
+          int nlen = strlen(pszIP);
+          int nrem = (int)sizeof(szIPListBuf) - (int)strlen(szIPListBuf);
+          if (nlen < nrem - 10) {
+             strcat(szIPListBuf, pprefix);
+             strcat(szIPListBuf, pszIP);
+             strcat(szIPListBuf, szPortStr); // if any
+             pprefix = psep;
+             ndone++;
+          }
+       }
+     }
+     pAdrObj = pAdrObj->ifa_next;
+   }
+   rhowmany = ndone;
+
+   #endif
+
+   return szIPListBuf;
+}
 
 // ====== SFK primitive function library end   ========
 
@@ -1896,6 +2003,7 @@ public:
    bool textfiles;         // process only textfiles
    bool binaryfiles;       // process only binaryfiles
    bool packalnum;         // deblank: reduce filenames to alnum
+   bool noipexpand;        // disallow ip number expansion
 };
 
 struct CommandStats gs; // global settings accross whole chain
@@ -2069,6 +2177,47 @@ public:
    cperm;
 
 CommandPermamentStorage::CommandPermamentStorage() { memset(this, 0, sizeof(*this)); }
+
+// a hostbyname with automatic extension of "22" to "192.168.1.22"
+struct hostent *sfkhostbyname(const char *pstr, bool bsilent)
+{
+   char szExpBuf[100];
+
+   char *psz = (char*)pstr;
+
+   bool bdotfirst = 0;
+   if (*psz == '.')
+      { bdotfirst = 1; psz++; }
+   char *ppart = psz;
+
+   bool balldigit = 1;
+   for (; *psz; psz++)
+      if (!isdigit(*psz))
+         { balldigit = 0; break; }
+ 
+   if (!cs.noipexpand && balldigit)
+   {
+      // auto expand "22" or ".22" to "192.168.1.22"
+      mclear(szExpBuf);
+      int   nnum  = 0; // number of own ip's
+      char *plist = ownIPList(nnum, 0, "\t");
+      // copy first 3 segments of own ip, if any
+      char *pseg  = strchr(plist, '.');
+      if (pseg) pseg = strchr(pseg+1, '.');
+      if (pseg) pseg = strchr(pseg+1, '.');
+      if (pseg)
+      {
+         int nlen = (pseg - plist) + 1;
+         memcpy(szExpBuf, plist, nlen);
+         strcpy(szExpBuf+nlen, ppart);
+         if (!bsilent && !cs.noinfo)
+            pinf("[nopre] [using %s]\n", szExpBuf);
+         pstr = szExpBuf;
+      }
+   }
+
+   return gethostbyname(pstr);
+}
 
 // replace \\t and \\xnn by a single character,
 // within a binary block that is not zero-terminated.
@@ -10579,6 +10728,8 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-nocache"))   { setDiskCacheActive(0); return true; }
    #endif // VFILEBASE
 
+   if (strBegins(psz1, "-noipex"))  { pcs->noipexpand = 1; return true; }
+
    // -pure is often a local option, but some commands allow general use:
    if (bGlblAllowGeneralPure && !strcmp(psz1, "-pure"))
       { pcs->pure = 1; return true; }
@@ -11010,6 +11161,7 @@ char *aGlblChainCmds[] =
    "2sort",         // receive TEXT
    "2count",        // receive TEXT
    "1ftp",          // receive filenames
+   "1sft",          // receive filenames
    "0mkdir", "0cd", "0getcwd", "0cwd", // pass-thru
    "0ver",
    "1md5",          // receive files
@@ -12438,6 +12590,21 @@ num getFileSize(char *pszName)
    if (getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFileTime, nFileSize))
       return -1;
    return nFileSize;
+}
+
+num getFileSizeSeek(char *pszName)
+{
+   FILE *fin = fopen(pszName, "rb");
+   if (!fin) return -1;
+
+   if (fseek(fin, 0, SEEK_END))
+      { fclose(fin); return -1; }
+
+   num npos = (num)ftell(fin);
+
+   fclose(fin);
+
+   return npos;
 }
 
 num getFileTime(char *pszName)
@@ -16722,7 +16889,18 @@ bool matchesName(char *pszStr, char *pszMask,
             // special case ".ext" part at end of mask?
             if (!bwild && !bwild2 && szMatchBuf[0] == '.') 
             {
-                char *psz5 = strrchr(pstr1, '.');
+                // compare mask: szMatchBuf e.g. ".1.txt"
+                // against end of: pstr1    e.g. "foo.1.txt"
+                int nMaskLen = strlen(szMatchBuf);
+                int nNameLen = strlen(pstr1);
+
+                // FIX: R157: no longer use strrchr(pstr1, '.')
+                char *psz5 = 0;
+                if (nMaskLen <= nNameLen) {
+                   psz5 = pstr1 + nNameLen - nMaskLen;
+                   if (*psz5 != '.') psz5 = 0;   
+                }
+
                 bool bmatch1 = false;
                 if (!psz5)
                     bmatch1 = false;
@@ -25439,22 +25617,6 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
    return 0;
 }
 
-long prepareTCP() 
-{
-   static bool bDone = 0;
-   if (!bDone) 
-   {
-      bDone = 1;
-      #ifdef _WIN32
-      WORD wVersionRequested = MAKEWORD(1,1);
-      WSADATA wsaData;
-      if (WSAStartup(wVersionRequested, &wsaData)!=0)
-         return 9+perr("WSAStartup failed\n");
-      #endif
-   }
-   return 0;
-}
-
 long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT, long &nOutSFTVer, char *pszPW)
 {
    prepareTCP();
@@ -25466,7 +25628,7 @@ long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT, long &nOutS
    hSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hSock == INVALID_SOCKET) return 9+perr("cannot create socket\n");
 
-   if ((pTarget = gethostbyname(pszHost)) == NULL)
+   if ((pTarget = sfkhostbyname(pszHost)) == NULL)
       return 9+perr("cannot get host, rc=%d\n", netErrno());
 
    memcpy(&sock.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
@@ -26282,7 +26444,7 @@ long connectSocket(char *pszHost, ulong nPort, struct sockaddr_in &ClntAdr, SOCK
       return 9+perr("cannot create %s\n", pszInfo);
 
    struct hostent *pTarget = 0;
-   if ((pTarget = gethostbyname(pszHost)) == NULL)
+   if ((pTarget = sfkhostbyname(pszHost)) == NULL)
       return 9+perr("cannot get host for %s\n", pszInfo);
 
    memcpy(&ClntAdr.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
@@ -26453,7 +26615,7 @@ long udpClient(char *phost, long ndstport, long nlisten, long nownport, uchar *a
    struct sockaddr_in saServerAddr;
 
    struct hostent *pTarget;
-   if ((pTarget = gethostbyname(phost)) == NULL)
+   if ((pTarget = sfkhostbyname(phost)) == NULL)
       return 9+perr("cannot get host %s, rc=%d\n", phost, netErrno());
 
    memcpy(&saServerAddr.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
@@ -26552,7 +26714,7 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
          if (hFront == INVALID_SOCKET) return 9+perr("cannot create forward socket\n");
          static struct hostent *pTarget = 0;
          if (!pTarget) {
-            pTarget = gethostbyname(pszForward);
+            pTarget = sfkhostbyname(pszForward);
             if (!pTarget) return 9+perr("cannot get host: %s\n", pszForward);
             memcpy(&FrontAdr.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
             FrontAdr.sin_family = AF_INET;
@@ -26750,65 +26912,6 @@ long senderr(SOCKET hSock, char *pszFormat, ...)
       printf("< ERROR: %.80s\n", szErrBuf);
 
    return 0;
-}
-
-char *ownIPList(int &rhowmany, ulong nPort=0, const char *psep=" or ")
-{
-   prepareTCP();
-
-   static char szIPListBuf[200];
-   szIPListBuf[0] = '\0';
-
-   char szPortStr[50];
-   szPortStr[0] = '\0';
-   if (nPort > 0)
-      sprintf(szPortStr, ":%lu", nPort);
-
-   #ifdef _WIN32
-
-   char *pownip = "";
-   struct in_addr addr;
-
-   hostent *pinfo = gethostbyname(""); // fails under linux
-   if (pinfo) {
-      memcpy(&addr,pinfo->h_addr_list[0],sizeof(struct in_addr));
-      pownip = inet_ntoa(addr);
-      strcopy(szIPListBuf, pownip);
-      strcat(szIPListBuf, szPortStr); // if any
-      rhowmany = 1;
-   }
-
-   #else
-
-   // linux: list all existing interface IPV4 addresses
-   struct ifaddrs *pAdrObj = NULL;
-   char szAdrBuf[200]; mclear(szAdrBuf);
-   getifaddrs(&pAdrObj);
-   const char *pprefix = "";
-   int ndone = 0;
-   while (pAdrObj != NULL) {
-     if (pAdrObj->ifa_addr->sa_family==AF_INET && strcmp(pAdrObj->ifa_name, "lo0")) {
-       void *pIPData = &((struct sockaddr_in *)pAdrObj->ifa_addr)->sin_addr;
-       const char *pszIP = inet_ntop(AF_INET, pIPData, szAdrBuf, sizeof(szAdrBuf)-10);
-       if (strcmp(pszIP, "127.0.0.1")) {
-          int nlen = strlen(pszIP);
-          int nrem = (int)sizeof(szIPListBuf) - (int)strlen(szIPListBuf);
-          if (nlen < nrem - 10) {
-             strcat(szIPListBuf, pprefix);
-             strcat(szIPListBuf, pszIP);
-             strcat(szIPListBuf, szPortStr); // if any
-             pprefix = psep;
-             ndone++;
-          }
-       }
-     }
-     pAdrObj = pAdrObj->ifa_next;
-   }
-   rhowmany = ndone;
-
-   #endif
-
-   return szIPListBuf;
 }
 
 long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
@@ -27076,12 +27179,16 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
          if (plf) *plf = '\0';
          printf("> %s\n", preq);
 
-         if (!strBegins(preq, "GET ")) {
+         bool bget  = strBegins(preq, "GET ");
+         bool bhead = strBegins(preq, "HEAD ");
+
+         if (!bget && !bhead)
+         {
             senderr(hBack, "500 unsupported command: %.200s", preq);
             break;
          }
 
-         char *psz1 = preq + 4;
+         char *psz1 = preq + (bget ? 4 : 5);
          if (*psz1=='/') psz1++;
          char *psz2 = psz1;
          skipToWhite(&psz2);
@@ -27095,7 +27202,8 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
             strcpy(szFile, "index.html");
          }
 
-         if (!szFile[0]) {
+         if (!szFile[0]) 
+         {
             // list files of current dir
             hGlblTCPOutSocket = hBack;
             sendLine(hBack, "HTTP/1.1 200 OK");
@@ -27103,29 +27211,33 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
             sendLine(hBack, "Content-Type: text/html");
             sendLine(hBack, "Cache-Control: no-cache");
             sendLine(hBack, ""); // plus added \r\n
-            sendLine(hBack, "<html><body>");
-            sendLine(hBack, "Swiss File Knife Instant HTTP Server, " SFK_VERSION ", " VER_STR_OS);
 
-            sendLine(hBack, "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href=\"/\">refresh</a>");
-
-            if (bRW) sendLine(hBack, pUploadForm);
-
-            sendLine(hBack, "<pre>");
-
-            if (szStatus[0]) {
-               snprintf(szLineBuf2, MAX_LINE_LEN, "%s\n", szStatus);
-               sendLine(hBack, szLineBuf2);
+            if (bget)
+            {
+               sendLine(hBack, "<html><body>");
+               sendLine(hBack, "Swiss File Knife Instant HTTP Server, " SFK_VERSION ", " VER_STR_OS);
+   
+               sendLine(hBack, "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href=\"/\">refresh</a>");
+   
+               if (bRW) sendLine(hBack, pUploadForm);
+   
+               sendLine(hBack, "<pre>");
+   
+               if (szStatus[0]) {
+                  snprintf(szLineBuf2, MAX_LINE_LEN, "%s\n", szStatus);
+                  sendLine(hBack, szLineBuf2);
+               }
+   
+               long lFiles=0,lDirs=0;
+               num  nBytes=0;
+               bGlblFTPListFlatTS = 1;
+               bGlblFTPListAsHTML = 1;
+               lRC = walkAllTrees(eFunc_FTPList, lFiles, lDirs, nBytes);
+   
+               sendLine(hBack, "</pre></body></html>");
+               if (!cs.quiet)
+                  printf("< sent content listing.\n");
             }
-
-            long lFiles=0,lDirs=0;
-            num  nBytes=0;
-            bGlblFTPListFlatTS = 1;
-            bGlblFTPListAsHTML = 1;
-            lRC = walkAllTrees(eFunc_FTPList, lFiles, lDirs, nBytes);
-
-            sendLine(hBack, "</pre></body></html>");
-            if (!cs.quiet)
-               printf("< sent content listing.\n");
             break;
          }
 
@@ -27171,30 +27283,33 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
 
          sendLine(hBack, "");
 
-         if (pcoi->open("rb")) {
-            if (strcmp(szFile, "favicon.ico"))
-               senderr(hBack, "failed to open: \"%s\"", pcoi->name());
-            break; 
-         }
-
-         long nread = 0;
-         num  ndone = 0;
-         while ((nread = pcoi->read(abBuf, sizeof(abBuf)-1000)) > 0)
+         if (bget)
          {
-            if (cs.verbose>1) printf("< [%ld bytes data]\n", (long)nread);
-            long nsent = send(hBack, (char*)abBuf, nread, 0);
-            ndone += nsent;
-            if (nsent != nread)
-               { perr("failed to send data (%ld/%ld) %s\n",nsent,nread,netErrStr()); break; }
-         }
-
-         pcoi->close();
-
-         if (!cs.quiet) {
-            if (ndone == nsize)
-               printf("< sent %s bytes, content-type: %s\n",numtoa(ndone),pctype);
-            else
-               printf("< transfer incomplete.\n");
+            if (pcoi->open("rb")) {
+               if (strcmp(szFile, "favicon.ico"))
+                  senderr(hBack, "failed to open: \"%s\"", pcoi->name());
+               break; 
+            }
+   
+            long nread = 0;
+            num  ndone = 0;
+            while ((nread = pcoi->read(abBuf, sizeof(abBuf)-1000)) > 0)
+            {
+               if (cs.verbose>1) printf("< [%ld bytes data]\n", (long)nread);
+               long nsent = send(hBack, (char*)abBuf, nread, 0);
+               ndone += nsent;
+               if (nsent != nread)
+                  { perr("failed to send data (%ld/%ld) %s\n",nsent,nread,netErrStr()); break; }
+            }
+   
+            pcoi->close();
+   
+            if (!cs.quiet) {
+               if (ndone == nsize)
+                  printf("< sent %s bytes, content-type: %s\n",numtoa(ndone),pctype);
+               else
+                  printf("< transfer incomplete.\n");
+            }
          }
 
          // connection close after every request
@@ -31182,7 +31297,7 @@ void resetLoadCaches(bool bfinal)
 StringTable glblSynTests;
 
 void shutdownAllGlobalData()
-{
+{__
    // final cleanup of tmp cmd data
    cleanupTmpCmdData();
 
@@ -31695,7 +31810,8 @@ int main(int argc, char *argv[], char *penv[])
 #endif
 
    // catch all help requests
-   if (argc == 2) {
+   if (argc == 2) 
+   {
       char *pfirst = argv[1];
       if (   !strcmp(pfirst, "-h") || !strcmp(pfirst, "-help")
           || !strcmp(pfirst, "-?") || !strcmp(pfirst, "/?")
@@ -32285,12 +32401,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              );
       printx("\n"
              "   $see also:\n"
+             "      #sfk help select<def> the sfk file selection syntax.\n"
              "      #sfk help opt<def>    for further general options.\n"
              "      #sfk stat<def>        to list directory tree sizes.\n");
       printx("\n"
              "   $examples:\n"
              "      #sfk list .\n"
              "         list all files of current directory and all subdirectories.\n"
+             "      #sfk list mydir <not>.bak <not>.tmp.txt\n"
+             "         list all files within mydir, except .bak and .tmp.txt files.\n"
              "      #sfk list -dir . -file foo .htm .java\\%c\n"
              "         this will find and list the following sample filenames:\n"
              "            thefoobar.dat     - matches anywhere-pattern \"foo\"\n"
@@ -32299,6 +32418,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "         the command will NOT list the following sample filenames:\n"
              "            foosys\\thebar.dat - pattern must match filename, not path.\n"
              "            biginfo.html      - does not match extension \".htm\"\n"
+             "      #sfk list -dir mydir <not>tmp <not><sla>save<sla> -file .txt\n"
+             "         list all .txt files within mydir, excluding all sub folders\n"
+             "         having \"tmp\" in their name, or called exactly \"save\".\n"
              ,glblWildChar,glblWildChar
              );
       printx("      #sfk alias list = sfk list -noop\n"
@@ -32321,8 +32443,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "         using InfoZIP's option \"-@\" to use a filename list from stdin.\n"
              "      #sfk sel src .bak +del\n"
              "         select all .bak files in src, then delete them.\n"
-             "      #sfk list -late mydir +sleep 5000 +loop\n"
-             "         list most recent files of mydir every 5 seconds.\n"
+             "      #sfk list -nosub -late mydir +sleep 5000 +loop\n"
+             "         list most recent files of mydir every 5 seconds,\n"
+             "         excluding all sub folder contents.\n"
              "      #sfk list . .jpg +count\n"
              "         tell the number of .jpg files in current directory tree.\n"
              "      #sfk list . >lslr\n"
@@ -37801,7 +37924,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bDone = 1;
    }
 
-   ifcmd (strBegins(pszCmd, "ftpserv"))
+   ifcmd (strBegins(pszCmd, "ftpserv") || strBegins(pszCmd, "sftserv"))
    {
       if (!bhelp && blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
 
@@ -37855,6 +37978,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "         if this is a problem, do NOT use sfk ftpserv, but download\n"
          "         and install a full-scale ftp server like filezilla.\n"
          "\n"
+         "   $aliases:\n"
+         "      sfk sftserv ...  = the same as sfk ftpserv, but using port 2121.\n"
+         "\n"
          "   $problems and solutions:\n"
          "   if you try to login to the server using a regular ftp client, but\n"
          "   you cannot connect and/or transfer files, then usually there is a\n"
@@ -37879,7 +38005,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       cs.timeOutMSec = 30000;
 
       int   iDir    =     2;
-      ulong nPort   =    21;
+      ulong nPort   =  strBegins(pszCmd, "sftserv") ? 2121 : 21;
       ulong nPort2  =  2121;
       bool  bRW     =     0;
       bool  bRun    =     0;
@@ -37995,7 +38121,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    regtest("ftp 127.0.0.1:5000");
    regtest("ftp 127.0.0.1:5000 get xfile");
 
-   ifcmd (!strcmp(pszCmd, "ftp"))
+   ifcmd (!strcmp(pszCmd, "ftp") || !strcmp(pszCmd, "sft"))
    {
       ifhelp (nparm < 1)
       printx(
@@ -38037,6 +38163,16 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // "      -all      mput, mget: force send/receive of all files,\n"
       // "                not only those that changed.\n"
          "\n"
+         "   $aliases\n"
+         "      sfk sft ...   = the same as sfk ftp, but using port 2121.\n"
+         "\n"
+         "   $automatic IP expansion\n"
+         "      if you are in the same subnet as the target host,\n"
+         "      you may supply only the IP number's last part, e.g.:\n"
+         "         sfk ftp 23 ... == sfk ftp 192.168.1.23 ...\n"
+         "      this feature may or may not work, depending on your\n"
+         "      operating system and number of network interfaces.\n"
+         "\n"
          "   $examples\n"
          "      #sfk ftp farpc put test.zip\n"
          "         send test.zip to farpc\n"
@@ -38057,6 +38193,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "            !ls runs the command \"ls\" locally.\n"
          #endif
          "\n"
+         ,glblWildChar);
+    printx(
          "   $IF connected with an sfk ftp server:\n"
          "\n"
          "      #sfk ftp farpc get the\\sub\\dir\\doc.txt\n"
@@ -38069,6 +38207,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "         send all .txt files within mydir that changed since\n"
          "         the last transmission to farpc. requires option -deep\n"
          "         at server side to allow paths.\n"
+         "\n"
+         "      #sfk sel mydir .txt +sft farpc mput -update\n"
+         "         same as above, but using port 2121 against an sfk\n"
+         "         server started like \"sfk sftserv -rw -deep\".\n"
+         "         recommended to avoid connection problems\n"
+         "         that may occur on ftp default port 21.\n"
          "\n"
          "      #sfk filter filelist.txt +ftp farpc mget mydir\n"
          "         create a list with filenames, download the files listed\n"
@@ -38090,15 +38234,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "\n"
          "NOTE: existing files are overwritten <err>without asking back<def>.\n"
          "      Make sure that ftp server and client are running\n"
-         "      in the correct directories, especially before mput/mget.\n",
-         glblWildChar
+         "      in the correct directories, especially before mput/mget.\n"
          );
       ehelp;
 
       // collect instant command here
       szLineBuf2[0]   = '\0';
       nGlblTCPMaxSizeMB = 0; // no size limit
-      ulong nPort     = 21;
+      ulong nPort     = !strcmp(pszCmd, "sft") ? 2121 : 21;
       cs.subdirs      = 0; // in case of mput
       char *pszHost   = 0;
       long nstate     = 1;
@@ -39350,7 +39493,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    }
 
    // experimental
-   if (strBegins(pszCmd, "webreq"))
+   ifcmd (strBegins(pszCmd, "webreq"))
    {
       ifhelp (nparm < 1)
       printx("<help>$sfk webrequest [options] http://host[:port]/path\n"
@@ -39365,6 +39508,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "   $options:\n"
              "      -verbose  show exactly what is sent to the server,\n"
              "                with each line prefixed by \"<\".\n"
+             "\n"
+             "   $see also:\n"
+             "      #sfk wget<def>  for text and binary file downloads.\n"
              "\n"
              "   $examples:\n"
              "      #sfk webreq http://127.0.0.1/\n"
@@ -39450,7 +39596,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       SOCKET hSock = socket(AF_INET, SOCK_STREAM, 0);
       if (hSock == INVALID_SOCKET)
          return 9+perr("cannot create socket\n");
-      if ((pTarget = gethostbyname(szHost)) == NULL)
+      if ((pTarget = sfkhostbyname(szHost)) == NULL)
          return 9+perr("cannot get host: %s\n", szHost);
 
       memcpy(&sock.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
@@ -42738,7 +42884,6 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      to process chain text, thead or ttail are recommended.\n"
              "\n"
              "   $options\n"
-             "\n"
              "      -lines=n     print first or last n lines (default is 10).\n"
              "      -follow      or -f waits for file changes, printing them endlessly.\n"
              "                   if file is recreated or shrunk, rereads the last lines.\n"
@@ -42748,6 +42893,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      -quiet       do not tell verbosely about read restarts.\n"
              "      -polltime=n  with -follow, specifies the delay in milliseconds before\n"
              "                   the file is checked again for changes. default is 500.\n"
+             "      -altsize     use a different method to determine the file size\n"
+             "                   (stat instead of seek). may help if the default method\n"
+             "                   fails to read the file, or to improve performance.\n"
              "\n"
              "   $examples\n"
              "      #sfk tail -follow logs\\access.log\n"
@@ -42777,6 +42925,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bool bFollow    =   0;
       long nMaxLines  = 10000;
       int  iChainNext =   0;
+      bool bUseSeek   =   1;
 
       for (; iDir<argc; iDir++) 
       {
@@ -42802,6 +42951,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                return 9;
             }
             bFollow = 1;
+            continue;
+         }
+         else
+         if (!strcmp(argv[iDir], "-altsize")) {
+            bUseSeek = 0;
+            if (cs.verbose) pinf("using fseek file size detect\n");
             continue;
          }
          else
@@ -42867,7 +43022,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
    
          if (!cperm.tailnsize) {
-            cperm.tailnsize = getFileSize(pszFile);
+            cperm.tailnsize = bUseSeek ? getFileSizeSeek(pszFile) : getFileSize(pszFile);
             if (cperm.tailnsize < 0) return 9+perr("cannot read: %s\n", pszFile);
          }
    
@@ -42933,7 +43088,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                   while (!userInterrupt()) 
                   {
                      doSleep(nPollTime);
-                     num nsize2 = getFileSize(pszFile);
+                     num nsize2 = bUseSeek ? getFileSizeSeek(pszFile) : getFileSize(pszFile);
                      if (nsize2 < 0) {
                         if (!cs.quiet && !bTold)
                            printf("[file removed, waiting for recreation]\n");
@@ -43020,9 +43175,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       printx("<help>$sfk list ... +[f]view [-noshl|-nocol] [\"-...\"]\n"
              "\n"
              "   display text or file contents with Depeche View, a free high speed\n"
-             "   text file viewer available from http://stahlworks.com/dev/\n"
+             "   text viewer and editor available from http://stahlworks.com/dev/\n"
              "   requires dview, dview.exe or dview.bat being located in the PATH.\n"
-             "   if you have an executable like dview120.exe, rename it before use.\n"
+             "   if you have an executable like dview143.exe, rename it before use.\n"
              "   to run Depeche View under linux, WINE must be installed. google\n"
              "   for \"linux wine\" or search \"wine\" in your package manager.\n"
              "\n"
@@ -45369,7 +45524,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       hSock = socket(AF_INET, SOCK_STREAM, 0);
       if (hSock == INVALID_SOCKET) return 9+perr("cannot create socket\n");
    
-      if ((pTarget = gethostbyname(szHost)) == NULL)
+      if ((pTarget = sfkhostbyname(szHost)) == NULL)
          return 9+perr("cannot get host\n");
    
       memcpy(&sock.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
@@ -46351,6 +46506,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "   $sfk wget url [outdir] [-fullpath]\n"
              "       download http:// content. type \"sfk wget\" for more.\n"
              #endif // VFILENET
+             #ifdef WITH_TCP
+             "   $sfk webrequest http://host[:port]/path\n"
+             "       send an HTTP request and show the detailed reply text.\n"
+             #endif
              "   $sfk split 2000m infile.dat [outfile.dat]\n"
              "   $sfk join infile.dat.part1 [outfile.dat]\n"
              "       split and join large binary files. \"sfk split\" for more.\n"
@@ -46859,6 +47018,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "              sfk run output which produced filename lists.\n"
          );
          #endif
+  printx("   $-noipex<def>    disable automatic IP expansion with some commands.\n");
   printx("   $-arc<def>       with sfk list, lists also archive file contents.\n");
   #ifdef VFILEBASE
   printx("              with some other commands, also process archive file contents.\n"
@@ -47176,9 +47336,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "\n",
          bhelp ? " (type \"sfk help select\")":""
          );
-  printx("   $1. short format file selection set:\n"
+  printx("   $1. short format file selection:\n"
          "\n"
-         "      $dirname [filemask1] [filemask2] [...]\n"
+         "      $dirname [filemask1] [filemask2] [<not>fileexcludemask] [...]\n"
          "\n"
          "      this format supports ONE directory name, followed by many file masks.\n"
          "      it can be used with most commands processing directory trees.\n"
@@ -47196,19 +47356,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "         list, select, stat, run, detab, scantab, hexdump and some more.\n"
          "\n"
          );
-  printx("   $2. long format file selection set:\n"
+  printx("   $2. long format file selection:\n"
          "\n"
          "      $-dir root1 [root2] [<wild>pathmask<wild>] [...] [-file mask1 [mask2] [...]]\n"
-         "         $[-dir root3 root4 -file mask3 <not>xmask4] [...]\n"
+         "         $[-dir root3 root4 <not>direxcludemask -file mask3 <not>xmask4] [...]\n"
          "\n"
          "      this format supports\n"
          "\n"
          "      - several root directory sets, starting with -dir, each of them\n"
-         "        containing many directories, and optionally path masks.\n"
-         "        a path mask is an expression in a directory set containing at least\n"
-         "        one wildcard character \"<wild>\".\n"
+         "        containing many directories, path masks or dir exclusion masks.\n"
+         "        a path mask is an expression in a directory set containing a\n"
+         "        wildcard character \"<wild>\". a dir exclusion mask is started\n"
+         "        by <not> and may be surrounded by <sla> to select exact dir names.\n"
          "\n"
          "      - a file mask set per root directory set, starting with -file.\n"
+         "        this may also contain file exclusions starting with <not>\n"
          "\n");
   printx("      example:\n"
          "\n"
@@ -47222,6 +47384,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "             e.g. mydir1\\core\\include\\foosys.hpp\n"
          "           - 2. the filename contains foo OR bar\n"
          "           - 3. the filename ends with .hpp\n"
+         "\n"
+         "      #sfk scantab -dir mydir1 <not>include -file <not>.tmp <not>.save\n"
+         "         scans all files for TAB characters in folder mydir1,\n"
+         "         excluding all sub dirs having \"include\" in their name,\n"
+         "         and excluding all .tmp and .save files.\n"
          "\n"
          "      supported by:\n"
          "         nearly every command than can process file sets.\n"
@@ -47261,8 +47428,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "         some commands. check each command's local help for more.\n"
          "\n"
          );
-  printx("   $see also: sfk help options\n"
-         "      for general options that can be used with most commands.\n");
+  printx("   $see also:\n"
+         "      #sfk help options<def>  general options for most commands.\n"
+         "      #sfk list<def>          for more file selection examples.\n"
+         );
 
          if (bhelp) printx("\n");
          bDone = 1;

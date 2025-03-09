@@ -23,7 +23,7 @@ How to get SFK up and running anywhere
 
    By browser:
 
-   -  http://stahlworks.com/dev/swiss-file-knife.html
+   -  http://stahlworks.com/sfk/
 
       then click on one of the top links to either download
       binaries instantly, or look further on sourceforge:
@@ -52,7 +52,22 @@ How to get SFK up and running anywhere
 
    OR
 
-   Apple Macintosh and 64-bit Linux in general:
+   Apple Macintosh:
+
+      The Mac binaries are experimental and unsupported,
+      available from:
+
+      -  wget http://stahlworks.com/dev/sfk/sfk-mac-i686.exe   (Intel)
+      -  wget http://stahlworks.com/dev/sfk/sfk-mac-ppc.exe    (PowerPC)
+
+      Alternatively, a self compile under Mac is done by
+      getting the sources as described below, then type
+
+         g++ -DMAC_OS_X sfk.cpp patch.cpp inst.cpp -o sfk
+
+   OR
+
+   64-bit Linux in general:
 
    -  there are no binary distributions so far, but you may compile
       the source code easily, even if you're no software developer.
@@ -64,10 +79,6 @@ How to get SFK up and running anywhere
 
       then extract that by "unzip sfknnn.zip",
       and take a look into do-compile-unix.bat or type:
-
-         Mac compile:
-
-            g++ -DMAC_OS_X sfk.cpp patch.cpp inst.cpp -o sfk
 
          Linux 64-bit compile:
 
@@ -227,22 +238,25 @@ See also:
 
    -  Swiss File Knife Extended Edition (XE) is the commercial version
       of SFK, allowing direct reading of (nested) .zip, .tar.gz and
-      .tar.bz2 file contents.
+      .tar.bz2 file contents. Binaries are available for Windows
+      and 32-Bit Linux (newer and lib5 systems), but not for Mac.
 
          http://stahlworks.com/dev/sfkxe.html
 
-   -  Depeche View for Windows is a realtime text browser
-      that allows instant repeated searches across thousands
-      of text files, especially source code.
+   -  Depeche View for Windows is a text editor and realtime 
+      text viewer that allows instant repeated searches 
+      across thousands of text files, especially source code.
 
       The Base edition (provided also within the sfknnn.zip file)
       is free for private, non-commercial use.
 
-      Depeche View Extended Edition (XE) also provides an integrated
-      text editor, allowing search and edit on the fly. Furthermore, 
-      it can view .zip, .tar.gz and .tar.bz2 contents directly, 
-      without the need for extraction - allowing to research downloaded 
-      open source packages instantly with the least possible effort.
+         http://stahlworks.com/dview/
+
+      Depeche View Extended Edition (XE) allows to search and edit
+      any number of files. Furthermore, it can view .zip, .tar.gz 
+      and .tar.bz2 contents directly, without the need for extraction,
+      allowing to research downloaded open source packages instantly 
+      with the least possible effort.
 
          http://stahlworks.com/dev/dvxe.html
 

@@ -19,7 +19,9 @@
 #define closesocket myclosesocket
 
 #ifndef USE_SFK_BASE
- #define SFK_MEMTRACE
+ #ifdef WINFULL
+  #define SFK_MEMTRACE
+ #endif
 #endif
 
 #ifdef _WIN32
@@ -1557,7 +1559,7 @@ long TCPCore::connect(char *pszHost, long nportin, TCPCon **ppout)
    if (hSock == INVALID_SOCKET)
       return 9+perr("cannot create socket");
 
-   if ((pTarget = gethostbyname(pszHost)) == NULL)
+   if ((pTarget = sfkhostbyname(pszHost)) == NULL)
       return 9+perr("cannot get host\n");
 
    memcpy(&sock.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
@@ -2601,7 +2603,7 @@ long FTPClient::setPassive(TCPCon **ppout)
       return 9+perr("set passive failed: cannot create socket");
 
    struct hostent *pTarget = 0;
-   if ((pTarget = gethostbyname(szIP)) == NULL)
+   if ((pTarget = sfkhostbyname(szIP)) == NULL)
       return 9+perr("set passive failed: cannot get host %s", szIP);
 
    struct sockaddr_in ClntAdr;
