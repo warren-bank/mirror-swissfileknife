@@ -710,6 +710,7 @@ int SFKMatch::init(char *pszFromMask, char *pszToMask, int nFlags)
    bClAlloc = 0;
    iClAppendLEnd = 0;
    iClTo    = 0;
+   iClMaxOrInf = 0;
 
    bClAttr = (nFlags & SFKMATCH_WITHATTRIB) ? 1 : 0;
 
@@ -1557,9 +1558,13 @@ int SFKMatch::parseFromMask(char *pSrcIn)
          if (!strncmp((char*)pSrcCur, "[ortext]", 8))
          {
             pSrcCur += 8;
+            // sfk1943: iClMaxOrInf will count all ortext globally,
+            //    which is actually too large for alloc, but better then too small.
+            if (!bClAlloc)
+               iClMaxOrInf++;
             if (bClAlloc && !aClOrInf[iClFrom]) {
-               aClOrInf[iClFrom] = new int[iClFromTok+4];
-               memset(aClOrInf[iClFrom], 0, sizeof(int) * (iClFromTok+4));
+               aClOrInf[iClFrom] = new int[iClMaxOrInf+4]; // fix sfk1943 NOT iClTok
+               memset(aClOrInf[iClFrom], 0, sizeof(int) * (iClMaxOrInf+4));
                aClOrInf[iClFrom][0] = 1;
             }
             if (aClOrInf && aClOrInf[iClFrom]) {

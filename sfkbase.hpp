@@ -708,7 +708,7 @@ public:
    int  getDirCommand  ( );  // of current root
    int  checkConsistency  ( );
    char *currentInfoLine(int iLine);
-private:
+// private:
    int  ensureBase     (int nTraceLine);
    void  resetAddFlags  ( ); // per layer
    Array clRootDirs;    // row 0: names/str, row 1: command/int, row 2: layer/int
@@ -824,7 +824,7 @@ public:
 
    void  setIsDir    (bool bYesNo); // sets anydir status
    bool  isAnyDir    (int ilevel=0);
-   bool  isTravelDir ( );
+   bool  isTravelDir (bool bTreatOfficeAsFile=0);
    bool  isDirLink   ( );
 
    int  setRef   (char *pszName);
@@ -921,7 +921,7 @@ public:
    #endif
 
    #ifdef SFKPACK
-   bool   isOffice            (int iTraceFrom);
+   bool   isOffice            (int iTraceFrom, bool bIgnoreOfficeMode=0);
    char  *officeSubName       ( );
    int    isOfficeSubEntry    ( );
    int    rawLoadOfficeDir    ( );
@@ -1589,6 +1589,7 @@ public:
    int dirsDeletedWP;
    int filesScanned ;
    int dirsScanned  ;
+   int filesMoved   ;
    int filesDelFailed;
    int filesNewerInDst ;
    int filesStale ; // deletion candidate
@@ -1700,8 +1701,11 @@ public:
    int stathilitelevel;   // stat command: highlight dirs <= this
    bool travelzips;        // traverse zipfile contents
    int  office;            // traverse office contents
+   int  justoffice;        // select just office files
+   bool infilelist;        // processing a file list, not dir and mask
    bool probefiles;        // look into file headers to detect zip etc.
-   bool incbin;            // include binary files in processing
+   bool incbin;            // include all binary files in processing
+   bool incwlbin;          // include white listed binary files
    bool reldist;           // hexfind: tell also relative distances
    #ifdef VFILEBASE
    bool shallowzips;       // list only first level of zips
@@ -1745,7 +1749,7 @@ public:
    bool verify;            // command dependent optimization
    bool prog;              // with progress indicator
    bool noprog;            // no progress indicator
-   bool notext;            // no result text
+   // bool notext;         // no result text (never used)
    bool test;              // filter: run in test mode
    bool copyLinks;         // copy symlinks     , windows only, untested
    bool copyNoBuf;         // copy w/o buffering, windows only, untested
@@ -2218,11 +2222,11 @@ void dumpRepOut(uchar *pSrcCtxData, int iSrcCtxLen,
 void dumpFromToSeparator();
 int atomovrange(char *psz, num *pstart, num *pend);
 int atomovrange(char *psz, int *pstart, int *pend, bool bUseBytes);
-bool matchesDirMask(char *pszFullPath, bool bTakeFullPath, bool bApplyWhiteMasks);
+bool matchesDirMask(char *pszFullPath, bool bTakeFullPath, bool bApplyWhiteMasks, int iFromInfo);
 int execSingleFile(Coi  *pcoi, int lLevel, int &lGlobFiles, int nDirFileCnt, int &lDirs, num &lBytes, num &ntime1, num &ntime2);
 int execSingleDir(Coi  *pcoi, int lLevel, int &lGlobFiles, FileList &oDirFiles, int &lDirs, num &lBytes, num &ntime1, num &ntime2);
 bool matchesCurrentRoot(char *pszDir);
-int matchesFileMask (char *pszFile, char *pszInfoAbsName=0);
+int matchesFileMask (char *pszFile, char *pszInfoAbsName, int iFromInfo);
 extern bool bGlblNoRootDirFiles;
 int saveFile(char *pszName, uchar *pData, int iSize, const char *pszMode="wb");
 int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc=0, char *pszShDst=0);
@@ -2752,6 +2756,9 @@ extern uchar sfkUpperUChar(uchar c);
 extern void  sfkSetHeadMatch(uchar ucFirst, uchar aHeadMatch[]);
 extern char *getMacForIP(uint uiIP);
 extern bool  useOfficeBaseNames();
+extern void  setUsingFileList(int bYesNo);
+extern bool  ispathchr(char c);
+extern int   myfseek(FILE *f, num nOffset, int nOrigin);
 extern SFKChars sfkchars;
 
 #endif // _SFKBASE_HPP_

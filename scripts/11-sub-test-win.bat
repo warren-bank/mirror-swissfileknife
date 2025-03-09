@@ -81,7 +81,7 @@
 %TEXE% patch -qs ..\scripts\50-patch-all-win.cpp >nul
 %TEXE% test %TCMD% T07.1.patch all-src.cpp
 
-%TEXE% snapto=all-src-4.cpp -nometa testfiles\Formats 11-wide-line.txt 13-eof-null.txt 14-all-codes.txt >nul
+%TEXE% snapto=all-src-4.cpp -wlbin -nometa testfiles\Formats 11-wide-line.txt 13-eof-null.txt 14-all-codes.txt >nul
 %TEXE% test %TCMD% T08.1.snapform all-src-4.cpp
 
 %TEXE% find -text testfiles\Formats scope01 quarter03 lead05 >res-21.txt

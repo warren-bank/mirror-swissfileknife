@@ -254,7 +254,8 @@ int
    iClOut,
    iClBestMatch,
    iClRecentDefinedToken,
-   iClRecentCharClassType; // 0:undefined 10:bytes 11:chars
+   iClRecentCharClassType, // 0:undefined 10:bytes 11:chars
+   iClMaxOrInf;         // total no. of [ortext] found
 
 uint8_t
    bClAlloc,

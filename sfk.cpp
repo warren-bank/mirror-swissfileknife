@@ -7,7 +7,64 @@
    The whole source code was created with Depeche View Professional,
    the world's fastest source code browser and editor.
 
+   1.9.5
+   Initial Release:
+   -  rel: 04.06.2019, Major Update
+   -  sum: sfk snapto can now include text from
+           office files like .docx .xlsx .odt,
+           allowing fast loading and browsing
+           of the output file by Depeche View.
+   -  add: sfk olist, list only office files
+           within a folder.
+   -  add: snapto: option -office to include text
+           from office files like .docx .xlsx .odt
+   -  add: snapto, ofind: option -justoffice to read only
+           office files, but not plain text files.
+   -  chg: no longer loading binaries with commands
+           like snapto just due to a file mask,
+           but still by .extension. use option -wlbin
+           for the old behaviour.
+   -  add: difflines: option to read from stdin.
+   -  fix: difflines: example with variables.
+   -  fix: require: if no version info was found
+           it produced a non speaking error.
+           now it assumes version 0.0.0
+   -  fix: sfk ose: missing office file support.
+   -  doc: help office: snapto examples.
+   -  doc: sfk view: dview office notes.
+   internal:
+   rev4:
+   -  add: syncnames
+   -  add: snapto outer time, size
+   -  fix: chain.justNamesFilter nptr check
+   -  add: mput, alias of putall
+
    1.9.4
+   Revision 3:
+   -  rel: 21.03.2019, Minor Update
+   -  sum: improved sfk name and rand. bugfix
+           for simple expressions using ortext.
+   -  fix: simple expressions: crash when using
+           many [ortext] in the same search pattern.
+   -  chg: name: no longer searches in meta data
+           by default, e.g. sfk name 1234 no longer
+           produces unexpected results because
+           their filesize is 1234.
+   -  add: name: option -withmeta and -meta
+           to also search in meta data of index.
+   -  add: name: -spat support.
+   -  add: sfk fileserv, alias of sfk sftserv.
+   -  add: sfk ... +put, alias of +sft ... cput.
+   -  add: sfk ... +putall, alias of +sft ... mput.
+   -  fix: rand: first value per process start
+           contained very few random
+   -  add: rand: now supports larger values,
+           hex output, and setting a seed
+   -  add: treesize: option -gb[yte] to list
+           all sizes in gigabytes.
+   -  add: ping: option -time to display reply
+           time when pinging a single host
+   -  doc: ping: info on graphical ping output
    Revision 2:
    -  rel: 16.02.2019, Major Update
    -  sum: Improved office file text search
@@ -58,6 +115,9 @@
    -  fix: xed: sfk ... +xed without any patterns
            created unwanted color output.
    internal:
+   rev3:
+   -  add: put, alias for sft ... cput
+   -  del: olist documentation
    -  add: fromtcp, replytcp
    -  chg: unified execxfind
 
@@ -1376,8 +1436,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.9.4" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "2"
+#define SFK_VERSION  "1.9.5" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -3367,6 +3427,22 @@ void setArcTravel(bool bYesNo, bool bPreCache, int iProbeFiles)
 }
 
 bool getArcTravel( ) { return cs.travelzips; }
+
+// for dview
+void setLoadOffice(int iYesNo) {
+   gs.office = iYesNo;
+   cs.office = iYesNo;
+   if (!iYesNo) {
+      gs.justoffice = 0;
+      cs.justoffice = 0;
+   }
+}
+
+// for dview
+void setLoadJustOffice(int iYesNo) {
+   gs.justoffice = iYesNo;
+   cs.justoffice = iYesNo;
+}
 
 void setSubLoad(bool bYesNo) {
    mtklog(("setsubload %d", bYesNo));
@@ -7430,6 +7506,13 @@ char *Coi::rootRelName( )
 
 bool useOfficeBaseNames( )
 {
+   #ifdef SFKOFFICE
+   if (!cs.office)
+      return 0;
+   // if (cs.useJustNames == 1) // but not 2
+   //   return 1;
+   return 1; // office basenames always
+   #endif // SFKOFFICE
    return 0;
 }
 
@@ -7494,12 +7577,39 @@ void Coi::stripOfficeName()
 
 int Coi::isOfficeSubEntry()
 {
+   #ifdef SFKOFFICE
+   char *pzip = officeSubName();
+   if (!pzip)    return 0;
+   if (!pzip[0]) return 0; // from "thefile.zip//"
+
+   long nlen = strlen(pzip);
+   if (nlen > 0 && (pzip[nlen-1] == glblPathChar || pzip[nlen-1] == glblWrongPChar))
+      return 2;   // thefile.zip//subdir/
+
+   return 1;   // thefile.zip//subfile.dat
+   #endif // SFKOFFICE
 
    return 0;
 }
 
-bool Coi::isOffice(int iTraceFrom)
+bool Coi::isOffice(int iTraceFrom, bool bIgnoreOfficeMode)
 {
+   #ifdef SFKOFFICE
+
+   if (!bIgnoreOfficeMode && !cs.office) return 0;
+
+   if (bClFSDir) return 0; // native file system dir
+   if (isOfficeSubEntry()) return 0;
+   #ifdef VFILEBASE
+   if (isNet()) return 0;
+   #endif // VFILEBASE
+
+   #ifdef SFKPACK
+   if (endsWithOfficeExt(name(), iTraceFrom))
+      return 1;
+   #endif // SFKPACK
+
+   #endif // SFKOFFICE
 
    return 0;
 }
@@ -7578,7 +7688,7 @@ bool Coi::isAnyDir(int ilevel)
    return bClDir;
 }  // Coi::isAnyDir
 
-bool Coi::isTravelDir( )
+bool Coi::isTravelDir(bool bTreatOfficeAsFile)
 {
    if (bGlblSyntaxTest) {
       // if just simulating, check how the name looks
@@ -7591,7 +7701,10 @@ bool Coi::isTravelDir( )
 
    #ifdef SFKPACK
    if (isOffice(102)) {
-      brawdir = 1; // per definitionem
+      if (bTreatOfficeAsFile)
+         brawdir = 0;
+      else
+         brawdir = 1; // per definitionem
       return brawdir;
    }
    #endif // SFKPACK
@@ -12968,7 +13081,8 @@ void CommandChaining::reset()
    indata->resetEntries();
    outdata->resetEntries();
  
-   justNamesFilter->reset(); // sfk193
+   if (justNamesFilter)
+      justNamesFilter->reset(); // sfk193
 
    nClOutBinarySize = 0;
    nClInBinarySize = 0;
@@ -13102,7 +13216,11 @@ int printEcho(uint nflags, const char *pszFormat, ...)
    return 0;
 }
 
-bool bGlblInSpecificProcessing = 0;
+// sfk1944: bGlblInSpecificProcessing -> inFileList
+void setUsingFileList(int bYesNo)
+{
+   cs.infilelist = bYesNo;
+}
 
 Array glblGrepPat("grep");
 Array glblUnzipMask("unzip");
@@ -14119,21 +14237,35 @@ public:
    int  addFile   (Coi *pcoi);      // copies just name, size
    int  analyze   (bool blistorg);
    void reset     ( );
+   num  getHash   (Coi *pcoi);
 
 public:
    int   analyzeBlock   (int ilo, int ihi, bool blistorg);
    int   bfind          (num nKeySize, int &rindex);
 
    NumTable    clSizes;
+   NumTable    clTimes;
    StringTable clNames; // if name==null, was already processed
    StringTable clRoots;
    NumTable    clSumHi;
    NumTable    clSumLo;
    int   clNumOrgs;
    int   clNumDups;
+   int   clSkipMatch;   // with syncnames
    num   clOrgBytes;
    num   clDupBytes;
    bool  clDiffDirs;    // list only dups from different dirs
+   bool  clSyncNames;
+   bool  clByName;
+   bool  clByTime;
+   bool  clUnsafe;
+   char  *pszClSrcRoot; // with syncnames
+   char  *pszClDstRoot; // with syncnames
+   char  *pszClLog;
+   FILE  *pClLog;
+   char  clLocDupPath[SFK_MAX_PATH+10];
+   char  clLocDupRoot[SFK_MAX_PATH+10];
+   char  clLocTarget[SFK_MAX_PATH+10];
 };
 
 DupScanner::DupScanner() { reset(); }
@@ -14141,6 +14273,7 @@ DupScanner::DupScanner() { reset(); }
 void DupScanner::reset()
 {
    clSizes.resetEntries();
+   clTimes.resetEntries();
    clNames.resetEntries();
    clRoots.resetEntries();
    clSumHi.resetEntries();
@@ -14150,6 +14283,15 @@ void DupScanner::reset()
    clOrgBytes = 0;
    clDupBytes = 0;
    clDiffDirs = 0;
+   clSyncNames = 0;
+   clByName   = 0;
+   clByTime   = 0;
+   clUnsafe   = 0;
+   pszClLog   = 0;
+   pClLog     = 0;
+   clSkipMatch  = 0;
+   pszClSrcRoot = 0;
+   pszClDstRoot = 0;
 }
 
 // rc =0:found_and_index_set
@@ -14199,13 +14341,52 @@ int DupScanner::bfind(num nKeySize, int &rindex)
    return ncmp;
 }
 
+num DupScanner::getHash(Coi *pcoi)
+{
+   num nSize = pcoi->getSize();
+
+   if (nSize <= 0)
+      return nSize;
+
+   if (clByName == 0 && clByTime == 0)
+      return nSize;
+
+   SFKMD5 md5;
+
+   if (clByName) {
+      char *prelname = pcoi->relName();
+      md5.update((uchar*)prelname, strlen(prelname));
+   }
+   if (clByTime) {
+      num nTime = pcoi->getTime();
+      md5.update((uchar*)&nTime, sizeof(nTime));
+   }
+
+   md5.update((uchar*)&nSize, sizeof(nSize));
+
+   uchar *pdig = md5.digest();
+
+   num nResult = 0;
+
+   // use only 6 bytes of digest to keep positive values
+   for (int i=0; i<6; i++)
+   {
+      nResult = (nResult << 8) | (num)(pdig[0]);
+   }
+
+   return nResult;
+}
+
 int DupScanner::addFile(Coi *pcoi)
 {__
    char *pszFile = pcoi->name();
 
-   num nSize = pcoi->getSize();
+   num nSize = getHash(pcoi); // sfk1944 i/o getSize();
+
    if (nSize <= 0)
       return 1;
+
+   num nTime = pcoi->getTime();
  
    // filter by size selection
    if (cs.selMinSize > 0 && nSize < cs.selMinSize)
@@ -14236,6 +14417,7 @@ int DupScanner::addFile(Coi *pcoi)
    do
    {
       if (irc = clSizes.addEntry(nSize  , ipos))   break;
+      if (irc = clTimes.addEntry(nTime  , ipos))   break;
       if (irc = clNames.addEntry(pszFile, ipos))   break;
       if (irc = clRoots.addEntry(glblFileSet.root(), ipos)) break;
       num nDummy = 0;
@@ -14324,11 +14506,21 @@ int DupScanner::analyze(bool blistorg)
 
       // have at least two entries in this block.
       // build content md5sums.
-      int nBlockFiles  = iblockhi-iblocklo;
+      int nBlockFiles   = iblockhi-iblocklo;
       num  nCurFileSize = clSizes.getEntry(iblocklo, __LINE__);
+      num  nCurFileTime = clTimes.getEntry(iblocklo, __LINE__); // -bytime only
+      if (clByName || clByTime)
+      {
+         // 'size' is just a hash. must re-read exact data.
+         char *pszFile = clNames.getEntry(iblocklo, __LINE__);
+         nCurFileSize  = getFileSize(pszFile);
+         if (nCurFileSize < 0)
+            return 9+perr("invalid state, cannot read: %s", pszFile);
+      }
       for (int icur=iblocklo; icur<iblockhi; icur++)
       {__
          char *pszFile = clNames.getEntry(icur, __LINE__);
+         nCurFileTime  = clTimes.getEntry(icur, __LINE__);
 
          info.setProgress(nBlockFiles, icur-iblocklo, "files");
          sprintf(szAddInfo, "%d files of size %s", nBlockFiles, numtoa(nCurFileSize));
@@ -14337,9 +14529,66 @@ int DupScanner::analyze(bool blistorg)
          SFKMD5 md5;
          uchar abDummy[16];
          unsigned char *pmd5 = abDummy;
+
+         if (clUnsafe)
+         {
+            // fast and unsafe comparison
+            do
+            {
+               char *prel = strrchr(pszFile, glblPathChar);
+               if (!prel) return 19+perr("int. #2195193");
+               prel++;
+               if (strlen(prel) < 1) return 19+perr("int. #2195194");
+
+               if (clByName)
+                  md5.update((uchar*)prel,strlen(prel));
+
+               if (clByTime)
+                  md5.update((uchar*)&nCurFileTime,sizeof(nCurFileTime));
+
+               // safety: re-read filesize
+               nCurFileSize = getFileSize(pszFile);
+               if (nCurFileSize < 0)
+                  break;
+
+               // abBuf has 100k total
+               int nprobe = 16384;
+
+               // on small files use just head
+               if (nCurFileSize <= nprobe*2)
+                   nprobe = nprobe*2;
+
+               memset(abBuf, 0, nprobe);
+
+               FILE *fin = fopen(pszFile, "rb");
+               if (!fin) break;
+
+               // 2. by first 8k of file
+               int iread = fread(abBuf, 1, nprobe, fin);
+               if (iread > 0)
+               {
+                  md5.update(abBuf, iread);
+                  if (nCurFileSize >= nprobe*2)
+                  {
+                     // 3. by last 8k of file
+                     myfseek(fin, nCurFileSize-nprobe, SEEK_SET);
+                     iread = fread(abBuf, 1, nprobe, fin);
+                     if (iread > 0)
+                        md5.update(abBuf, iread);
+                  }
+               }
+
+               fclose(fin);
+
+               pmd5 = md5.digest();
+
+            } while (0);
+         }
+         else
          if (!getFileMD5(pszFile, md5, 0, 1))
             pmd5 = md5.digest();
-         else
+
+         if (pmd5 == abDummy)
          {
             // cannot read file: create random digest,
             // to make sure no wrong duplicates are listed.
@@ -14356,16 +14605,6 @@ int DupScanner::analyze(bool blistorg)
          }
          clSumHi.updateEntry(nsumhi, icur);
          clSumLo.updateEntry(nsumlo, icur);
-         /*
-         mtklog("md5raw: %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X"
-            ,pmd5[0],pmd5[1],pmd5[2],pmd5[3],pmd5[4],pmd5[5],pmd5[6],pmd5[7]
-            ,pmd5[8],pmd5[9],pmd5[10],pmd5[11],pmd5[12],pmd5[13],pmd5[14],pmd5[15]);
-         szAddInfo[0] = '\0';
-         strcat(szAddInfo, numtohex(nsumhi));
-         strcat(szAddInfo, " ");
-         strcat(szAddInfo, numtohex(nsumlo));
-         mtklog(("md5num: %s", szAddInfo));
-         */
       }
  
       // all prepared for this block, list results:
@@ -14381,6 +14620,8 @@ int DupScanner::analyze(bool blistorg)
 
 #define checkPtr(ptr,id) do { if (!ptr) return 99+perr("int. #211618" #id); } while (0)
 
+int moveFile(char *pszSrc, char *pszDst);
+
 int DupScanner::analyzeBlock(int ilo, int ihi, bool blistorg)
 {__
    for (int iorg=ilo; iorg<ihi; iorg++)
@@ -14395,6 +14636,9 @@ int DupScanner::analyzeBlock(int ilo, int ihi, bool blistorg)
 
       // see if any dups are present for this
       bool btoldorg=0;
+      int  ilocdups=0;      // no. of local dups
+      clLocDupPath[0]='\0'; // name of last local dup
+      clLocDupRoot[0]='\0'; // root of last local dup
       for (int idup=iorg+1; idup<ihi; idup++)
       {__
          char *pszDup     = clNames.getEntry(idup, __LINE__);  checkPtr(pszDup, 3);
@@ -14409,7 +14653,7 @@ int DupScanner::analyzeBlock(int ilo, int ihi, bool blistorg)
          if (nduphi == nsumhi && nduplo == nsumlo)
          {__
             // found a dup for iorg.
-            if (!blistorg) {
+            if (!clSyncNames && !blistorg) {
                if (chain.colfiles) {
                   // collect dup names for next cmd
                   Coi ocoi(pszDup, pszDupRoot);
@@ -14424,8 +14668,13 @@ int DupScanner::analyzeBlock(int ilo, int ihi, bool blistorg)
                }
             }
 
+            ilocdups++;
+            strcopy(clLocDupPath, pszDup);
+            strcopy(clLocDupRoot, pszDupRoot);
+
             clNumDups++;
-            clDupBytes += clSizes.getEntry(idup, __LINE__);
+            if (!clByName && !clByTime)
+               clDupBytes += clSizes.getEntry(idup, __LINE__);
 
             // mark dup as processed
             clNames.setEntry(idup, str(""));
@@ -14433,7 +14682,7 @@ int DupScanner::analyzeBlock(int ilo, int ihi, bool blistorg)
       }  // endfor potential dups
 
       // if "list just orgs" mode selected
-      if (blistorg)
+      if (!clSyncNames && blistorg)
       {__
          if (chain.colfiles) {
             // collect ORG names for next cmd
@@ -14447,8 +14696,54 @@ int DupScanner::analyzeBlock(int ilo, int ihi, bool blistorg)
          clOrgBytes += clSizes.getEntry(iorg, __LINE__);
       }
 
+      int isubrc = 0;
+
+      // sfk1944: unique dup?
+      if (ilocdups == 1 && clSyncNames == 1)
+      do
+      {__
+         if (cs.debug) printf("sync.org : %s in %s\n", pszOrg, pszOrgRoot);
+         if (cs.debug) printf("sync.dup : %s in %s\n", clLocDupPath, clLocDupRoot);
+         // safety checks
+         if (!strbeg(pszOrg, pszOrgRoot))        return 9+perr("int. #2195191");
+         if (!strbeg(clLocDupPath, clLocDupRoot))  return 9+perr("int. #2195192");
+         if (!strcmp(pszOrgRoot, clLocDupRoot)) {
+            perr("source/target dir must differ");
+            pinf("src: %s\n", pszOrgRoot);
+            pinf("dst: %s\n", clLocDupRoot);
+            return 9;
+         }
+         // relativize names
+         char *pszOrgRel = pszOrg+strlen(pszOrgRoot);
+         if (ispathchr(*pszOrgRel)) pszOrgRel++;
+         char *pszDstRel = clLocDupPath+strlen(clLocDupRoot);
+         if (ispathchr(*pszDstRel)) pszDstRel++;
+         // synthesize destination path
+         joinPath(clLocTarget, SFK_MAX_PATH, clLocDupRoot, pszOrgRel);
+         // if dst exists is was already moved
+         if (!strcmp(pszOrgRel, pszDstRel) || fileExists(clLocTarget)) {
+            if (cs.debug) printf("         > target exists (already moved)\n");
+            break;
+         }
+         if (cs.yes)
+            createOutDirTree(clLocTarget);
+         isubrc = execFileMoveSub(clLocDupPath, clLocTarget);
+         if (!isubrc) {
+            cs.filesMoved++;
+            if (pClLog) {
+               num ntime = time(0);
+               fprintf(pClLog, "%.8s\t%s\t%s\n", timeAsString(ntime,1), clLocDupPath, clLocTarget);
+            }
+         }
+      }
+      while (0);
+
       // mark org as processed
       clNames.setEntry(iorg, str(""));
+
+      // safety on fatal errors like unwriteable output
+      if (isubrc >= cs.treeStopRC)
+         return isubrc;
 
    }  // endfor orgs
  
@@ -15931,7 +16226,6 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (strBegins(psz1, "-nover"))   { pcs->verify = 0; return true; }
    if (strBegins(psz1, "-verify"))  { pcs->verify = 1; return true; }
    if (!strcmp(psz1, "-noprog"))    { pcs->noprog = 1; return true; }
-   if (!strcmp(psz1, "-notext"))    { pcs->notext = 1; return true; }
    if (!strcmp(psz1, "-test"))      { pcs->test = 1; return true; }
    if (!strcmp(psz1, "-oldmd5"))    { bGlblOldMD5 = 1; return true; }
    if (strBegins(psz1, "-withbin"))    { pcs->textfiles = 0; pcs->binaryfiles = 0; return true; }
@@ -16008,6 +16302,9 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
 
    if (!strcmp(psz1, "-allbin") || !strcmp(psz1, "-include-all-binaries"))
       { pcs->incbin = 1; return true; }
+
+   if (!strcmp(psz1, "-xbin") || !strcmp(psz1, "-wlbin")) // sfk1944 internal
+      { pcs->incwlbin = 1; return true; }
 
    if (!strcmp(psz1,"-wrap") || !strcmp(psz1,"-rewrap"))
    {
@@ -16435,6 +16732,22 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
       { pcs->nmore = nGlblConsRows; return true; }
    if (strBegins(psz1, "-more") && isdigit(psz1[5])!=0)
       { pcs->nmore = atoi(psz1+5); return true; }
+   #ifdef SFKOFFICE
+   // if (!strcmp(psz1, "-office2")) { pcs->office = 2; return true; }
+   // if (!strcmp(psz1, "-office"))  { pcs->office = 1; return true; }
+   // sfk1944: -notext was an undocumented, unused option.
+   if (!strcmp(psz1, "-notext"))     { return true; }
+   // sfk1944 limit just to office files with some commands.
+   if (!strcmp(psz1, "-justoffice") || !strcmp(psz1, "-justdoc"))
+      { pcs->justoffice = 1; return true; }
+   if (!strcmp(psz1, "-crcmd5")) // internal, LOCAL only
+      { cs.crcmd5 = 1; return true; }
+   if (!strncmp(psz1, "-crc=", 5)) {
+      cs.bjustcrc = 1;
+      cs.njustcrc = strtoul(psz1+5, 0, 0x10);
+      return true;
+   }
+   #endif // SFKOFFICE
    if (!strcmp(psz1, "-keepdata"))  { pcs->keepdata = 1; return true; }
    if (!strcmp(psz1, "-keepchain")) { pcs->keepchain = 1; return true; }
 
@@ -16733,6 +17046,8 @@ cchar *aGlblChainCmds[] =
    // "8ip", "8bin-to-src",
    "2getcol",   // internal
    "2tabcol",   // internal
+   "1put",      // sfk1943 includes putall
+   "1mput",     // sfk1944 convenience
    0
 };
 
@@ -17186,10 +17501,14 @@ bool isHttpURL(char *psz)
    return 0;
 }
 
-int addConveniencePathMask(char *psz1, int &lRC)
+int addConveniencePathMask(char *psz1, int &lRC, int iFromInfo)
 {
    // turn a file mask into a path mask
    static char szMaskBuf[100];
+
+   if (cs.debug)
+      printf("] addConvPathMask for %s (from=%d)\n", psz1, iFromInfo);
+
    if (containsWildCards(psz1))
       strcopy(szMaskBuf, psz1);
    else
@@ -17207,6 +17526,8 @@ int addConveniencePathMask(char *psz1, int &lRC)
 int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nModeFlags, int *iDirNext, bool *pAnyDone)
 {__
    mtklog(("processDirParms with argc=%d",argc));
+
+   if (cs.debug) printf("process dir parms\n");
 
    int  nAutoComplete = (nModeFlags & 3);
    bool bstrict = (nModeFlags & 4) ? 1 : 0;
@@ -17536,12 +17857,29 @@ int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nModeFla
                }
                case eST_SubDirs : {
                   // add another dir mask, referencing the current layer.
+                  #ifdef SFKOFFICE
+                  // zip.check.mask office.long.subdir
+                  // office: extend -subdir .xlsx to -subdir *.xlsx
+                  if (cs.office && endsWithOfficeExt(psz1,150)) {
+                     if (addConveniencePathMask(psz1,lRC,1))
+                        return 9;
+                  } else
+                  #endif // SFKOFFICE
                   if (glblFileSet.addDirMask(psz1))
                      return 9;
                   bAnyDone = 1;
                   break;
                }
                case eST_FileMasks:
+                  #ifdef SFKOFFICE
+                  // zip.check.mask office.long.file
+                  // office: extend -file .xlsx to -subdir *.xlsx
+                  if (cs.office && endsWithOfficeExt(psz1,150)) {
+                     if (addConveniencePathMask(psz1,lRC,2))
+                        return 9;
+                     bConvenience = 1;
+                  } else
+                  #endif // SFKOFFICE
                   lRC |= glblFileSet.addFileMask(psz1); 
                   break;
                case eST_GrepPat  : {
@@ -17589,6 +17927,8 @@ int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nModeFla
          // OR, if simple drag+drop from explorer, mixed list.
          mtklog(("pdp: short: first=%s havemdfl=%d", pszFirstParm,bGlblHaveMixedDirFileList));
 
+         if (cs.debug) printf("process short format\n");
+
          Coi *pcoi = 0;
          #ifdef VFILEBASE
          pcoi = glblVCache.get(pszFirstParm);
@@ -17599,7 +17939,8 @@ int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nModeFla
          }
          CoiAutoDelete odel(pcoi, 1); // with decref
 
-         if ((!bGlblHaveMixedDirFileList) && pcoi->isTravelDir())
+         // sfk1944: must treat office file parm as normal file (1)
+         if ((!bGlblHaveMixedDirFileList) && pcoi->isTravelDir(1))
          {
             // fetch dir. coi name may have been redirected.
             glblFileSet.addRootDir(pcoi->name(), __LINE__, false, false);
@@ -17632,11 +17973,19 @@ int processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nModeFla
                   return 9;
                }
 
+               #if 0 // def SFKOFFICE - no file mask conversion
+               // zip.check.mask office.short.file
+               // office: extend short file mask to -subdir *.xlsx
+               if (cs.office && endsWithOfficeExt(psz1,151)) {
+                  if (addConveniencePathMask(psz1,lRC,3))
+                     return 9;
+               } else
+               #endif // SFKOFFICE
                #ifdef VFILEBASE
                // zip.check.mask zip.short.file
                // zip: extend short file mask to -subdir *.zip
                if (!cs.shallowzips && cs.xelike && cs.travelzips && isArcFile(psz1)) {
-                  if (addConveniencePathMask(psz1,lRC))
+                  if (addConveniencePathMask(psz1,lRC,4))
                      return 9;
                } else
                #endif // VFILEBASE
@@ -18025,7 +18374,7 @@ int walkFileListFlat(CoiTable &oList, int nFunc, int &rlFiles, num &rlBytes, int
    char szCurPath[300];
    memset(szCurPath, 0, sizeof(szCurPath));
 
-   bGlblInSpecificProcessing = 1;
+   setUsingFileList(1);
 
    int nEntries = oList.numberOfEntries();
    for (int i=0; i<nEntries; i++)
@@ -18071,6 +18420,13 @@ int walkFileListFlat(CoiTable &oList, int nFunc, int &rlFiles, num &rlBytes, int
 
       mtklog(("] wfl: %s   %s   %s   dir=%d", pcoi->name(), pszRoot ? pszRoot : "[no root]", pszRef ? pszRef : "[no ref]", pcoi->isTravelDir()));
 
+      #ifdef SFKOFFICE
+      if (cs.office && pcoi->isOffice(108)) {
+         lRC = walkFiles(pcoi, 0,
+                     rlFiles, oLocDirFiles, rlDirs, rlBytes,
+                     nLocalMaxTime, nTreeMaxTime);
+      } else
+      #endif // SFKOFFICE
       if (cs.withdirs && pcoi->isTravelDir()) {
          // file list mixed with dir names: expect dirname to come last.
          rlFiles  += nLocFiles;
@@ -18105,7 +18461,7 @@ int walkFileListFlat(CoiTable &oList, int nFunc, int &rlFiles, num &rlBytes, int
    rlFiles += nLocFiles;
    rlBytes += nLocBytes;
 
-   bGlblInSpecificProcessing = 0;
+   setUsingFileList(0);
 
    return lRC;
 }
@@ -18352,7 +18708,7 @@ int walkFilesW(ushort *atop, int lLevel)
 
          continue;
       }
-      else if (matchesFileMask(szrelfile))
+      else if (matchesFileMask(szrelfile, 0, 1))
       {
          lRC = execFixFile(aabsfile, &odata);
          // todo: rc mapping?
@@ -20886,7 +21242,8 @@ bool matchesNormName(char *pszStr, char *pszMask,
 // RC 0 : no match
 // RC 1 : match, but just by wildcard
 // RC 2 : match by non wildcard pattern
-int matchesFileMask(char *pszFile, char *pszInfoAbsName)
+// RC 3 : matches by .ext // sfk1944
+int matchesFileMask(char *pszFile, char *pszInfoAbsName, int iFromInfo)
 {
    int iRC = 1;
  
@@ -20925,13 +21282,13 @@ int matchesFileMask(char *pszFile, char *pszInfoAbsName)
          if (matchesNormName(pszNormSubName, pszMask+1, 0, 3)) { // ,3: no start-of-name + cmp-path
             if (nGlblTraceSel & 1) {
                setTextColor(nGlblTraceExcColor);
-               info.print("file-exclud: %s due to \"%s\"\n", pszNormSubName, pszMask);
+               info.print("file-exclud: %s due to \"%s\" (from=%d)\n", pszNormSubName, pszMask, iFromInfo);
                setTextColor(-1);
             }
             return 0;
          } else {
             if (cs.verbose >= 4)
-               printf("1 = msbm (msk %s, str %s)\n", pszMask, pszNormSubName);
+               printf("1 = msbm (msk %s, str %s) (from=%d)\n", pszMask, pszNormSubName, iFromInfo);
          }
       }
       else
@@ -20939,16 +21296,19 @@ int matchesFileMask(char *pszFile, char *pszInfoAbsName)
          iNumberOfWhiteMasks++;
          if (matchesNormName(pszNormSubName, pszMask, 0, 3)) { // ,3: no start-of-name + cmp-path
             iNumberOfWhiteMatches++;
-            if (!containsWildCards(pszMask))
+            if (!containsWildCards(pszMask)) {
                iRC = 2;
+               if (pszMask[0] == '.')  // sfk1944
+                  iRC = 3;
+            }
             if (nGlblTraceSel & 1) {
                setTextColor(nGlblTraceExcColor);
-               info.print("file-wmatch: %s to \"%s\"\n", pszNormSubName, pszMask);
+               info.print("file-wmatch: %s to \"%s\" (from=%d)\n", pszNormSubName, pszMask, iFromInfo);
                setTextColor(-1);
             }
          } else {
             if (cs.verbose >= 4)
-               printf("0 = mswm (msk %s, str %s)\n", pszMask, pszNormSubName);
+               printf("0 = mswm (msk %s, str %s) (from=%d)\n", pszMask, pszNormSubName, iFromInfo);
          }
       }
    }
@@ -20965,11 +21325,11 @@ int matchesFileMask(char *pszFile, char *pszInfoAbsName)
    if (nGlblTraceSel & 1) {
       if (iRC) {
          setTextColor(nGlblTraceIncColor);
-         info.print("file-keep  : %s (wmask=%d/%d bmask=0/%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks);
+         info.print("file-keep  : %s (wmask=%d/%d bmask=0/%d) (from=%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks, iFromInfo);
          // mtklog(("mdm: include %s", pszStr));
       } else {
          setTextColor(nGlblTraceExcColor);
-         info.print("file-exclud: %s (wmask=%d/%d bmask=0/%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks);
+         info.print("file-exclud: %s (wmask=%d/%d bmask=0/%d) (from=%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks, iFromInfo);
          // mtklog(("mdm: exclude %s", pszStr));
       }
       setTextColor(-1);
@@ -20980,7 +21340,7 @@ int matchesFileMask(char *pszFile, char *pszInfoAbsName)
    return iRC;
 }
 
-bool matchesDirMask(char *pszFullPath, bool bTakeFullPath, bool bApplyWhiteMasks)
+bool matchesDirMask(char *pszFullPath, bool bTakeFullPath, bool bApplyWhiteMasks, int iFromInfo)
 {_p("sf.mtchdir")
 
    bool bRC = 1;
@@ -21031,13 +21391,13 @@ bool matchesDirMask(char *pszFullPath, bool bTakeFullPath, bool bApplyWhiteMasks
          if (matchesNormName(pszNormSubName, pszMask+1, 0, 3)) { // ,3: no start-of-name + cmp-path
             if (nGlblTraceSel & 1) {
                setTextColor(nGlblTraceExcColor);
-               info.print("dir-exclude: %s due to \"%s\"\n", pszNormSubName, pszMask);
+               info.print("dir-exclude: %s due to \"%s\" (from=%d)\n", pszNormSubName, pszMask, iFromInfo);
                setTextColor(-1);
             }
             return 0;
          } else {
             if (cs.verbose >= 4)
-               printf("1 = msbm (msk %s, str %s)\n", pszMask, pszNormSubName);
+               printf("1 = msbm (msk %s, str %s) (from=%d)\n", pszMask, pszNormSubName, iFromInfo);
          }
       }
       else
@@ -21050,12 +21410,12 @@ bool matchesDirMask(char *pszFullPath, bool bTakeFullPath, bool bApplyWhiteMasks
             iNumberOfWhiteMatches++;
             if (nGlblTraceSel & 1) {
                setTextColor(nGlblTraceExcColor);
-               info.print("dir-wmatch : %s to \"%s\"\n", pszNormSubName, pszMask);
+               info.print("dir-wmatch : %s to \"%s\" (from=%d)\n", pszNormSubName, pszMask, iFromInfo);
                setTextColor(-1);
             }
          } else {
             if (cs.verbose >= 4)
-               printf("0 = mswm (msk %s, str %s)\n", pszMask, pszNormSubName);
+               printf("0 = mswm (msk %s, str %s) (from=%d)\n", pszMask, pszNormSubName, iFromInfo);
          }
       }
    }
@@ -21072,11 +21432,11 @@ bool matchesDirMask(char *pszFullPath, bool bTakeFullPath, bool bApplyWhiteMasks
    if (nGlblTraceSel & 1) {
       if (bRC) {
          setTextColor(nGlblTraceIncColor);
-         info.print("dir-keep   : %s (wmask=%d/%d bmask=0/%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks);
+         info.print("dir-keep   : %s (wmask=%d/%d bmask=0/%d) (from=%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks, iFromInfo);
          // mtklog(("mdm: include %s", pszStr));
       } else {
          setTextColor(nGlblTraceExcColor);
-         info.print("dir-exclude: %s (wmask=%d/%d bmask=0/%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks);
+         info.print("dir-exclude: %s (wmask=%d/%d bmask=0/%d) (from=%d)\n", pszNormSubName, iNumberOfWhiteMatches, iNumberOfWhiteMasks, iNumberOfBlackMasks, iFromInfo);
          // mtklog(("mdm: exclude %s", pszStr));
       }
       setTextColor(-1);
@@ -21173,6 +21533,16 @@ int execFind(Coi *pcoi)
             cs.anymatches = 1;
 
             if (chain.colfiles) {
+               #ifdef SFKOFFICE
+               // filenames only, as filename chain
+               if (cs.office>0) { // sfk193
+                  if (useOfficeBaseNames())
+                     pcoi->stripOfficeName(); // find -names
+                  if (!chain.hasFile(pcoi->name()))
+                     chain.addFile(*pcoi); // is copied
+               }
+               else 
+               #endif // SFKOFFICE
                   chain.addFile(*pcoi); // is copied
                break;
             }
@@ -21294,7 +21664,8 @@ int execFind(Coi *pcoi)
             else
                info.print("%s\n", szLineBuf3);
          }
-         chain.justNamesFilter->put(szLineBuf3);
+         if (chain.justNamesFilter)
+            chain.justNamesFilter->put(szLineBuf3);
       }
 
    }  // endelse bingrep
@@ -21565,6 +21936,41 @@ int listSingleFile(int lLevel, Coi *pcoi, char *pszParentZip, bool bIsDir, int n
 int execDupScan(Coi *pcoi)
 {
    int irc = 0;
+
+   if (glblDupScan.clSyncNames) 
+   do
+   {
+      char *psrcroot = glblDupScan.pszClSrcRoot;
+      char *pdstroot = glblDupScan.pszClDstRoot;
+
+      char *pabsnam = pcoi->name();
+      if (strbeg(pabsnam, psrcroot))
+      {
+         // have a dst file. is there a matching dst file?
+         char *psrcnam = pabsnam;
+         char *psrcrel = pcoi->rootRelName();
+         joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pdstroot, psrcrel);
+         char *pdst = szRefNameBuf;
+         int ihave = fileExists(pdst);
+         if (cs.debug && ihave) printf("skip: %s - have target\n", psrcnam); // °°
+         if (ihave)
+            { glblDupScan.clSkipMatch++; return 0; }
+      }
+      else
+      if (strbeg(pabsnam, pdstroot))
+      {
+         // have a dst file. is there a matching src file?
+         char *pdstnam = pabsnam;
+         char *pdstrel = pcoi->rootRelName();
+         joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, psrcroot, pdstrel);
+         char *psrc = szRefNameBuf;
+         int ihave = fileExists(psrc);
+         if (cs.debug && ihave) printf("skip: %s - have source\n", pdstnam); // °°
+         if (ihave)
+            { return 0; } // do not count redundant
+      }
+   }
+   while (0);
 
    if (irc = glblDupScan.addFile(pcoi))
       return irc;
@@ -22701,6 +23107,9 @@ int execDirStat(Coi *pcoi, int lLevel, int lFiles, int lDirs, num lBytes, num &n
                case 'k':
                   oprintf(pout, "%s kb, %5d files, %.*s%s\n", numtoa_blank(lBytes/1000, 10), lFiles, nIndent, pszGlblBlank, pszDir);
                   break;
+               case 'g':
+                  oprintf(pout, "%s gb, %5d files, %.*s%s\n", numtoa_blank(lBytes/1000000000, 10), lFiles, nIndent, pszGlblBlank, pszDir);
+                  break;
                default :
                   oprintf(pout, "%5ld mb, %5d files, %.*s%s\n", lMBytes, lFiles, nIndent, pszGlblBlank, pszDir);
                   break;
@@ -22961,6 +23370,28 @@ int walkFiles(
             cs.numHiddenFilesSkipped++;
          }
      }
+     #ifdef SFKOFFICE
+     else // sfk1944 -justoffice filtering
+     if (cs.justoffice
+         && !psub->isAnyDir()
+         && !(psub->isOffice(121,1) || psub->isOfficeSubEntry())
+         && matchesFileMask(psub->name(), psub->name(), 10) < 3
+         )
+     {
+         if (nGlblTraceSel & 1) {
+            setTextColor(nGlblTraceExcColor);
+            info.print("file-exclud: %s (not office)\n", psub->name());
+            setTextColor(-1);
+         }
+     }
+     else // sfk1944 apply filemask to office files
+     if (cs.office
+         && psub->isOffice(122,1) // but not isOfficeSubEntry()
+         && !matchesFileMask(psub->name(), psub->name(), 11))
+     {
+         // skip non-matching .docx etc.
+     }
+     #endif // SFKOFFICE
      else
      {
       if (psub->isAnyDir())
@@ -23007,7 +23438,7 @@ int walkFiles(
          else
          if (bMatch)
          {
-            bMatch = matchesDirMask(psub->name(), 1, 0); // on subdir
+            bMatch = matchesDirMask(psub->name(), 1, 0, 100); // on subdir
             // ,1 : take full path as it's a dir name
             // ,0 : check only against negative dir masks
          }
@@ -23085,12 +23516,23 @@ int walkFiles(
       else
       {
          // normal file: check dir mask also against full file path
-         bool bpmmatch = matchesDirMask(psub->name(), cs.incFNameInPath, 1); // on file
+         bool bpmmatch = matchesDirMask(psub->name(), cs.incFNameInPath, 1, 101); // on file
          // ,0 : default is not to include filename, extract path first
          // ,1 : check both black and white masks against file path
 
-         // normal file: check mask against file name WITHOUT path
-         if (bpmmatch && (matchesFileMask(psub->relName(), psub->name()) > 0))
+         int ifmmatch = 0;
+
+         #ifdef SFKOFFICE
+         // sfk1944: with -office never match filemask against "/document.xml".
+         // getting an officeSubEntry here means checks were done already.
+         if (cs.office && psub->isOfficeSubEntry())
+            ifmmatch = 1; // not matchesFileMask(psub->name(), psub->name(), 20);
+         else
+         #endif // SFKOFFICE
+            ifmmatch = matchesFileMask(psub->relName(), psub->name(), 2);
+
+         // normal file: check file mask
+         if (bpmmatch && (ifmmatch > 0))
          {
             mtklog((" wfiles2.match %s", psub->name()));
 
@@ -23965,12 +24407,14 @@ int execJamFile(Coi *pcoi)
    cchar *pPrefix = pszGlblJamPrefix ? pszGlblJamPrefix : ":file:";
    char *pHeadLine = (char*)pPrefix;
 
-   static char szPureName[SFK_MAX_PATH+10];
+   static char szFullName[SFK_MAX_PATH+10];
+   static char szArchName[SFK_MAX_PATH+10];
    static char szSubFile[SFK_MAX_PATH+10];
 
    char szHeadBuf[250];
    mclear(szHeadBuf);
-   szPureName[0] = '\0';
+   szFullName[0] = '\0';
+   szArchName[0] = '\0';
    szSubFile[0] = '\0';
 
    #ifdef VFILEBASE
@@ -23997,7 +24441,31 @@ int execJamFile(Coi *pcoi)
 
    mtklog(("load: execjam: bin=%d %s", bIsBinary, pcoi->name()));
 
-   strcopy(szPureName, pcoi->name());
+   strcopy(szFullName, pcoi->name());
+
+   num  nOFileTim = 0;
+   num  nOFileSiz = 0;
+
+   #ifdef SFKOFFICE
+   // sfk1934: snapto: prepare to add archive meta infos
+   if (cs.office && mystrrstr(szFullName, glblDubPathStr))
+   {
+      strcopy(szArchName, szFullName);
+      char *pxsla = mystrrstr(szArchName, glblDubPathStr);
+      if (pxsla) {
+         *pxsla++ = '\0';
+         int b1=0,b2=0,b3=0;
+         if (getFileStat(szArchName, b1, b2, b3, nOFileTim, nOFileSiz))
+            { nOFileTim=0; nOFileSiz=0; }
+         // char *psz = strrchr(pxsla, glblPathChar);
+         // if (psz) pxsla = psz;
+         // strcopy(szSubFile, pxsla);
+         // if (!strbeg(szSubFile+1, "sheet")
+         //     && !strbeg(szSubFile+1, "slide"))
+         //    szSubFile[0] = '\0';
+      }
+   }
+   #endif // SFKOFFICE
 
    if (cs.addsnapmeta)
    {
@@ -24008,6 +24476,8 @@ int execJamFile(Coi *pcoi)
       // prepare subfile header with time etc.     123456789012345678901234567890
       char szTimeInfo[50]; mclear(szTimeInfo);  // time=1234567890
       char szSizeInfo[50]; mclear(szSizeInfo);  // size=1000000000
+      char szOTimeInf[50]; mclear(szOTimeInf);  // otime=1234567890
+      char szOSizeInf[50]; mclear(szOSizeInf);  // osize=1000000000
       char szCodeInfo[50]; mclear(szCodeInfo);  // code=utf16le
       char szWebInfo[50];  mclear(szWebInfo);   // webrc=404_error_page
 
@@ -24025,6 +24495,18 @@ int execJamFile(Coi *pcoi)
          strcpy(szSizeInfo, " size=");
          numtoa(nFileSize,1,szSizeInfo+6);
          nMetaLen += strlen(szSizeInfo);
+      }
+
+      if (baddtime && nOFileTim) { // sfk1934 snapto add outer time
+         strcpy(szOTimeInf, " otime=");
+         numtoa(nOFileTim,1,szOTimeInf+7);
+         nMetaLen += strlen(szOTimeInf);
+      }
+
+      if (baddsize && nOFileSiz) { // sfk1934 snapto add outer size
+         strcpy(szOSizeInf, " osize=");
+         numtoa(nOFileSiz,1,szOSizeInf+7);
+         nMetaLen += strlen(szOSizeInf);
       }
 
       if (baddcode && pcoi->isUTF16()) {
@@ -24050,8 +24532,9 @@ int execJamFile(Coi *pcoi)
       if (nPadLen < 0) nPadLen = 0;
 
       // construct padded headline with meta informations
-      snprintf(szHeadBuf, sizeof(szHeadBuf), "%.50s%.*s%.40s%.40s%.40s%.40s",
-         pPrefix, (int)nPadLen, pGlblBlankBuf160, szTimeInfo, szSizeInfo, szCodeInfo, szWebInfo);
+      snprintf(szHeadBuf, sizeof(szHeadBuf), "%.50s%.*s%.40s%.40s%.40s%.40s%.40s%.40s",
+         pPrefix, (int)nPadLen, pGlblBlankBuf160,  //    tim  siz  otm  osz  cod  web
+         szTimeInfo, szSizeInfo, szOTimeInf, szOSizeInf, szCodeInfo, szWebInfo);
 
       pHeadLine = szHeadBuf;
    }
@@ -24065,14 +24548,14 @@ int execJamFile(Coi *pcoi)
 
       if (bIsBinary) {
          // skip all binaries
-         if (glblFileCount.countSkip(szPureName)) {
+         if (glblFileCount.countSkip(szFullName)) {
             if (pGlblJamStatCallBack) {
                int nrc = pGlblJamStatCallBack(pcoi, glblFileCount.value(), cs.lines, (uint)(cs.totalbytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
                mtklog(("%d = jam.stat.callback.5", nrc));
                lRC |= nrc;
             } else {
                info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(cs.totalbytes/1000000UL));
-               info.setStatus("skip", szPureName, 0, eKeepAdd);
+               info.setStatus("skip", szFullName, 0, eKeepAdd);
             }
          }
          return lRC;
@@ -24081,13 +24564,13 @@ int execJamFile(Coi *pcoi)
       // add text files 1:1 keeping exactly the same size,
       // and skip all binary files. no conversions whatsoever.
       if (pcoi->open("rb"))
-         { pwarn("cannot read: %s%s\n", szPureName,pcoi->lasterr()); return 0; }
+         { pwarn("cannot read: %s%s\n", szFullName,pcoi->lasterr()); return 0; }
 
       // . write subfile header
       if (!bGlblJamPure)
       {
          lRC |= dumpJamLine(pHeadLine , 0, 1);   // :file: mtime size
-         lRC |= dumpJamLine(szPureName, 0, 1);   // actual filename
+         lRC |= dumpJamLine(szFullName, 0, 1);   // actual filename
          if (cs.office && szSubFile[0])
             lRC |= dumpJamLine(szSubFile, 0, 1); // e.g. workbook.xml
       }
@@ -24132,7 +24615,7 @@ int execJamFile(Coi *pcoi)
                lRC |= nrc;
             } else {
                info.setAddInfo("%u files, %u mb", (uint)glblFileCount.value(), (uint)(cs.totalbytes/1000000UL));
-               info.setStatus("snap", szPureName, 0, eKeepAdd);
+               info.setStatus("snap", szFullName, 0, eKeepAdd);
             }
          }
  
@@ -24156,35 +24639,40 @@ int execJamFile(Coi *pcoi)
       // should the binary (or forced wrap) file be included?
       bool bProcess = cs.incbin;  // global switch, process all
 
-      bProcess |= bGlblInSpecificProcessing; // within explicite file list
+      bProcess |= cs.infilelist;  // within explicite file list
 
       // text in forced wrap mode: always include
       if (!bIsBinary && cs.rewrap) bProcess = 1;
 
-      if (!bProcess) {
+      if (!bProcess)
+      {
          // binary.whitelist: force binary loading
-         // if listed in a white list file mask.
+         //    if listed in a white list file mask.
+         int   ilimit = 3; // default: require extension match
+         if (cs.incwlbin)
+               ilimit = 2; // reduce to file mask white listing
          char *pszRel = pcoi->relName();
-         if (matchesFileMask(pszRel, szPureName) > 1) // matches by non-wildcard pattern
+         // if (matchesFileMask(pszRel, szFullName, 3) > 1)    // sfk1943 matches by non-wildcard pattern
+         if (matchesFileMask(pszRel, szFullName, 3) >= ilimit) // sfk1944 matches by .ext
             bProcess = 1;
       }
 
       // optional check if target accepts file
       if (bProcess && pGlblJamCheckCallBack) {
-         if (pGlblJamCheckCallBack(szPureName))
+         if (pGlblJamCheckCallBack(szFullName))
             bProcess = 0;
       }
 
       // if not, skip
       if (!bProcess) {
-         if (glblFileCount.countSkip(szPureName)) {
+         if (glblFileCount.countSkip(szFullName)) {
             if (pGlblJamStatCallBack) {
                int nrc = pGlblJamStatCallBack(pcoi, glblFileCount.value(), cs.lines, (uint)(cs.totalbytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
                mtklog(("%d = jam.stat.callback.1", nrc));
                lRC |= nrc;
             } else {
                info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(cs.totalbytes/1000000UL));
-               info.setStatus("skip", szPureName, 0, eKeepAdd);
+               info.setStatus("skip", szFullName, 0, eKeepAdd);
             }
          }
          return lRC;
@@ -24192,11 +24680,11 @@ int execJamFile(Coi *pcoi)
 
       // open binary for read
       if (pcoi->open("rb"))
-         { pwarn("cannot read: %s%s\n", szPureName,pcoi->lasterr()); return 0; }
+         { pwarn("cannot read: %s%s\n", szFullName,pcoi->lasterr()); return 0; }
 
       // write subfile header
       lRC |= dumpJamLine(pHeadLine   , 0, 1);   // :file: mtime size
-      lRC |= dumpJamLine(szPureName, 0, 1);     // actual filename
+      lRC |= dumpJamLine(szFullName, 0, 1);     // actual filename
       if (cs.office && szSubFile[0])
          lRC |= dumpJamLine(szSubFile, 0, 1);   // e.g. workbook.xml
       if (lRC)
@@ -24217,7 +24705,7 @@ int execJamFile(Coi *pcoi)
    {
       num nLocalBytes = 0;
       num nLocalLines = 0;
-      lRC = pGlblJamFileCallBack(szPureName, nLocalLines, nLocalBytes);
+      lRC = pGlblJamFileCallBack(szFullName, nLocalLines, nLocalBytes);
       // should include header, trailer generation
       cs.lines   += nLocalLines;
       cs.totalbytes += nLocalBytes;
@@ -24226,13 +24714,13 @@ int execJamFile(Coi *pcoi)
    {
     // optional check if target accepts file
     if (pGlblJamCheckCallBack) {
-       if (pGlblJamCheckCallBack(szPureName))
+       if (pGlblJamCheckCallBack(szFullName))
           return 1; // skipped
     }
 
     // add file content, check for illegal entries
     if (pcoi->open("rb"))
-      { pwarn("cannot read: %s%s\n", szPureName,pcoi->lasterr()); return 0; }
+      { pwarn("cannot read: %s%s\n", szFullName,pcoi->lasterr()); return 0; }
 
     int nMaxLineLen = sizeof(szLineBuf)-10; // YES, szLineBuf
     memset(abBuf, 0, nMaxLineLen+2); // yes, abBuf is larger by far
@@ -24260,7 +24748,7 @@ int execJamFile(Coi *pcoi)
       nLocalLines++;
 
       if (nLineLen == nMaxLineLen)
-         pwarn("max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, szPureName, nLocalLines);
+         pwarn("max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, szFullName, nLocalLines);
 
       // safety: escape unexpected (mal-format) headers within content
       if (   startsLikeSnapFile((char*)abBuf)
@@ -24281,7 +24769,7 @@ int execJamFile(Coi *pcoi)
          if (!bGlblJamPure)
          {
             lRC |= dumpJamLine(pHeadLine   , 0, 1); // :file: mtime size
-            lRC |= dumpJamLine(szPureName, 0, 1);   // actual filename
+            lRC |= dumpJamLine(szFullName, 0, 1);   // actual filename
             if (cs.office && szSubFile[0])
                lRC |= dumpJamLine(szSubFile, 0, 1); // e.g. workbook.xml
          }
@@ -24340,7 +24828,7 @@ int execJamFile(Coi *pcoi)
             lRC |= nrc;
          } else {
             info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(cs.totalbytes/1000000UL));
-            info.setStatus("snap", szPureName, 0, eKeepAdd);
+            info.setStatus("snap", szFullName, 0, eKeepAdd);
          }
       }
 
@@ -24372,7 +24860,7 @@ int execJamFile(Coi *pcoi)
          lRC |= nrc;
       } else {
          info.setAddInfo("%u files, %u lines, %u mb", (uint)glblFileCount.value(), (uint)cs.lines, (uint)(cs.totalbytes/1000000UL));
-         info.setStatus("snap", szPureName, 0, eKeepAdd);
+         info.setStatus("snap", szFullName, 0, eKeepAdd);
       }
    }
 
@@ -25248,6 +25736,27 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
    if (userInterrupt())
       return 9;
 
+   #ifdef SFKOFFICE
+   // avoid listing the same office name many times on multiple hits
+   if (cs.office && pcoi->isOfficeSubEntry()
+       && useOfficeBaseNames())
+   {
+      Coi otmp(pcoi->name(),0);
+      otmp.stripOfficeName(); // execSingleFile filter for (x)find
+      if (chain.justNamesFilter
+          && chain.justNamesFilter->isset(otmp.name()))
+         return 0;
+   }
+
+   // -crc=x can be used only with office subentries
+   if (cs.bjustcrc) {
+      if (!cs.office)
+         return 19+perr("-crc=x requires office reading mode");
+      if (!pcoi->isOfficeSubEntry())
+         return 0;
+   }
+   #endif // SFKOFFICE
+
    if (cs.walkFileDelay > 0)
       doSleep(cs.walkFileDelay);
 
@@ -26019,7 +26528,7 @@ int execSingleDir(Coi *pcoi, int lLevel, int &nTreeFiles, FileList &oDirFiles, i
       // or process non matching subfolders.
       // ,1 : take full path, is a directory name
       // ,1 : apply also white masks (?)
-      if (!matchesDirMask(pszName, 1, 1)) // on subdir
+      if (!matchesDirMask(pszName, 1, 1, 102)) // on subdir
       {
          if (cs.debug) printf("]  esdir: path mask mismatch\n");
          return 0; // filter from output
@@ -37713,6 +38222,13 @@ int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *p
    bool  bReWrite   = gfilter.bReWrite;
    bool  bFilenames = gfilter.bFilenames;
 
+   #ifdef SFKOFFICE
+   // sfk194 office safety: RE-write forbidden
+   if (bReWrite && !pszOutFile && pcoi)
+      if (pcoi->isOffice(__LINE__) || pcoi->isOfficeSubEntry())
+         return 9+perr("filter -rewrite is not allowed with office file: %s",pcoi->name());
+   #endif // SFKOFFICE
+
    bool bHaveOut = (pszOutFile != 0);
    if (!bHaveOut && pcoi && pcoi->isWriteable())
       pszOutFile = pcoi->name();
@@ -41207,6 +41723,10 @@ void printMainHelp(bool bhelp, char *penv[])
       #else
       "                    list zip and jar contents.\n"
       #endif // VFILEBASE
+      #ifdef SFKOFFICE
+      "   sfk olist      - list office files in a folder,\n"
+      "                    like .docx .xlsx .ods .odt\n"
+      #endif // SFKOFFICE
       "   sfk filefind   - find files by filename\n"
       "   sfk treesize   - show directory size statistics\n"
       "   sfk copy       - copy directory trees additively\n"
@@ -41305,6 +41825,9 @@ void printMainHelp(bool bhelp, char *penv[])
       "search and compare\n"
       "   sfk xfind      - search in text files using\n"
       "                    wildcards and simple expressions\n"
+      #ifdef SFKOFFICE
+      "   sfk ofind      - search in office files .docx .xlsx .ods\n"
+      #endif // SFKOFFICE
       "   sfk xfindbin   - search in text and binary files\n"
       "   sfk xhexfind   - search with hexdump output\n"
       "   sfk extract    - extract data from text and binary\n"
@@ -41417,6 +41940,9 @@ void printMainHelp(bool bhelp, char *penv[])
 
    printHelp(
       "help by subject\n"
+      #ifdef SFKOFFICE
+      "   sfk help office   - how to search in office files\n"
+      #endif // SFKOFFICE
       "   sfk help select   - how dirs and files are selected in sfk\n"
       "   sfk help options  - general options reference\n"
       "   sfk help patterns - wildcards and text patterns within sfk\n"
@@ -42128,7 +42654,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
           || !strcmp(pszCmd, "today")
           || !strcmp(pszCmd, "seluni")
           || !strcmp(pszCmd, "times")
-          || (bGlblOffice && !strcmp(pszCmd, "olist")) // internal
+          || (bGlblOffice && !strcmp(pszCmd, "olist"))
+          || (bGlblOffice && !strcmp(pszCmd, "odir"))
          )
    {
       // fix sfk1833: unwanted list on: sfk tell foo +list
@@ -42138,7 +42665,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          pinf("use \"+list .\" to list the current folder.\n");
          return 9;
       }
-      printHelpText("list", bhelp, strcmp(pszCmd,"olist") ? 0 : 1);
+      if (!strcmp(pszCmd,"olist"))
+         printHelpText("olist", bhelp, 0);
+      else
+         printHelpText("list", bhelp, 0);
       ehelp;
 
       sfkarg;
@@ -42147,6 +42677,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       // the "dir" command is more verbose
       bool bStat = !strcmp(pszCmd, "dir") ? 1 : 0;
+      if (!strcmp(pszCmd, "odir")) bStat = 1;
 
       // larc is the same as list -arc
       if (!strcmp(pszCmd, "larc")) {
@@ -42158,6 +42689,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       if (!strcmp(pszCmd, "seluni"))
          cs.uname = 1;
+
+      #ifdef SFKOFFICE
+      if (!strcmp(pszCmd, "olist") || !strcmp(pszCmd, "odir"))
+         cs.justoffice = 1; // but without cs.office mode
+      #endif // SFKOFFICE
 
       cs.totalbytes = 0; // fix sfk1934
 
@@ -42291,6 +42827,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             cs.selfilerange = atoi(psz2+1);
             continue;
          }
+         #ifdef SFKOFFICE
+         if (cs.justoffice && !strcmp(pszArg, "-deep")) { // sfk1944 internal
+            cs.office = 1;
+            continue;
+         }
+         #endif
          if (isDirParm(pszArg))
             break; // fall through
          if (setGeneralOption(argx, argc, iDir)) {
@@ -43570,46 +44112,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   if (!strcmp(pszCmd, "randhex") || !strcmp(pszCmd, "makepw"))
-   {
-      // todo: join with make-random-file
-      int iFormat = 1;
-      if (!strcmp(pszCmd, "randhex"))
-          iFormat = 2;
- 
-      const char *pszChars = aenc64;
-      int iMaxChars = strlen(pszChars) - 2; // w/o "+/"
-
-      char szBuf[100];
-      szBuf[0] = '\0';
-
-      uchar abBuf[100];
-      mclear(abBuf);
-
-      initRandom(penv);
-
-      int i=0;
-
-      switch (iFormat)
-      {
-         case 1:
-            for (; i<10; i++)
-               szBuf[i] = pszChars[((uint32_t)rand()) % iMaxChars];
-            szBuf[i] = '\0';
-            break;
- 
-         case 2:
-            for (; i<4; i++)
-               abBuf[i] = (uchar)rand();
-            sprintf(szBuf, "%02x%02x%02x%02x", abBuf[0],abBuf[1],abBuf[2],abBuf[3]);
-            break;
-      }
-
-      chain.print("%s", szBuf);
- 
-      bDone = 1;
-   }
-
    ifcmd (!strcmp(pszCmd, "license"))
    {
       ifhelp (nparm < 1)
@@ -44270,8 +44772,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   allowing interactive search and filtering of the content.\n"
              "\n"
              "   $options\n"
-          // "      -office     include text from office files like .docx .xlsx\n"
-          // "                  .ods .odt.\n"
+             "      -office     include text from office files like .docx .xlsx\n"
+             "                  .ods .odt. for details see: sfk help office\n"
+             "      -justoffice reads only office files, but no plain text files.\n"
+             "      -keeputf    keep UTF-8 encoding from office file contents.\n"
+             "                  default is to convert to Ansi characters of your\n"
+             "                  system's codepage.\n"
              "      -fileset x  instead of specifying long lists of -dir / -file\n"
              "                  statements on the command line, you may write them\n"
              "                  all into a text file, then use that. for more infos,\n"
@@ -44282,6 +44788,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("      -hidden     include hidden and system files (not default).\n");
              #endif
       printx("      -allbin     include binary files as text extract (not default).\n"
+             "      -wlbin      include binaries selected by file mask white list.\n" // sfk1944
              #ifdef _WIN32
              "      -binallchars  when extracting text from binaries include all\n"
              "                  printable characters, like accents or non latin.\n"
@@ -44382,9 +44889,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             { bstat = 1; continue; }
          if (!strcmp(pszArg,"-nometa"))
             { cs.addsnapmeta = 0; continue; }
-         if (!strcmp(pszArg,"-office")) // internal
+         if (!strcmp(pszArg,"-office"))     // snapto
             { cs.office = 1; continue; }
-         if (cs.office && !strcmp(pszArg, "-utfout")) // internal
+         if (!strcmp(pszArg,"-justoffice")) // snapto
+            { cs.office = 1; cs.justoffice = 1; continue; }
+         if (cs.office && !strcmp(pszArg, "-keeputf")) // snapto i/o -utfout
             { cs.utfout = 1; continue; }
          if (!strcmp(pszArg,"-raw")) {
             cs.addsnapraw = 1;
@@ -45355,7 +45864,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              #endif
              "      -nosum       print no summary at end of listing.\n"
              "      -sum         print only the summary.\n"
-             "      -kbytes      list all sizes in kbytes.\n"
+             "      -gb[ytes]    list all sizes in gigabytes.\n"
+             "      -kb[ytes]    list all sizes in kilobytes.\n"
              "      -bytes       list all sizes in bytes.\n"
              "      -flat        show the no. of files and bytes per folder\n"
              "                   without its subfolders (do not accumulate).\n"
@@ -45410,32 +45920,30 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             if (nGlblListMinSize < 0) return 9;
             continue;
          }
-         else
          if (strBegins(argx[iDir], "-kb")) {
             cs.listunit = 'k';
             continue;
          }
-         else
          if (strBegins(argx[iDir], "-byte")) {
             cs.listunit = 'b';
             continue;
          }
-         else
+         if (strBegins(argv[iDir], "-gb")) {
+            cs.listunit = 'g'; 
+            continue;
+         }
          if (!strcmp(argx[iDir], "-flat")) {
             cs.flatdirstat = 1;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-nosum", 6)) {
             bSummary = 0;
             continue;
          }
-         else
          if (strBegins(argx[iDir], "-sum")) {
             cs.statonlysum = 1;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-", 1)) {
             if (isDirParm(argx[iDir]))
                break; // fall through
@@ -45444,7 +45952,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             else
                return 9+perr("unknown option: %s\n", argx[iDir]);
          }
-         else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
          // process non-option keywords:
@@ -45480,6 +45987,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                break;
             case 'k':
                printf("%s kb, %5d files, %d dirs, %s bytes.\n", numtoa_blank(nBytes/1000, 10), lFiles, lDirs, numtoa(nBytes));
+               break;
+            case 'g':
+               printf("%s gb, %5d files, %d dirs, %s bytes.\n", numtoa_blank(nBytes/1000000000, 10), lFiles, lDirs, numtoa(nBytes));
                break;
             default :
                printf("%5d mb, %5d files, %d dirs, %s bytes.\n", lMBytes, lFiles, lDirs, numtoa(nBytes));
@@ -46007,6 +46517,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    {
       bool wfilt = strncmp(pszCmd, "wfilt", 5) ? 0 : 1;
 
+      #ifdef SFKOFFICE
+      if (strBegins(pszCmd, "ofilt"))
+         iIsOFilt = 1;
+      #endif // SFKOFFICE
+
       ifhelp (!chain.usedata && !chain.usefiles && (nparm < 1))
       printHelpText("filter", bhelp, wfilt | (iIsOFilt<<1));
       ehelp;
@@ -46021,6 +46536,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bool bfilefilt = 0;
       if (strbeg(pszCmd,"ffilt")) bfilefilt=1;
       if (strbeg(pszCmd,"filefilt")) bfilefilt=1;
+
+      #ifdef SFKOFFICE
+      if (iIsOFilt == 1) {
+         // ffilt of .docx content
+         cs.office    = 1;
+         cs.textfiles = 1;
+         cs.hidezipcomment = 1; // ofilter
+         bfilefilt    = 1;
+      }
+      #endif // SFKOFFICE
 
       memset(&gfilter, 0, sizeof(gfilter));
 
@@ -49605,8 +50130,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
  
       if (chain.usedata)
       {
-         char *psz = chain.indata->getEntry(0, __LINE__);
-         if (!psz) return 9+perr("int. #2118201");
+         // sfk1935 fix: default 0.0.0 if no data present
+         char *psz = str("0");
+         if (chain.indata->numberOfEntries() > 0)
+            psz = chain.indata->getEntry(0, __LINE__);
+
          strcopy(szOwnVersion, psz);
          // enforce quadruple format
          psz = szOwnVersion;
@@ -51860,7 +52388,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   // .
    ifcmd (!strcmp(pszCmd, "move")) // sfk1914
    {
       ifhelp (nparm < 1)
@@ -53387,6 +53914,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (strBegins(pszCmd, "xhex")) {
          bIsXHexFind = 1;
       }
+      #ifdef SFKOFFICE
+      // ofind: alias of xfind -office
+      if (strBegins(pszCmd, "ofind"))
+         iIsOFind = 1;
+      #endif // SFKOFFICE
 
       bIsFHexFind = strBegins(pszCmd, "hexfind");
       bIsFReplace = strBegins(pszCmd, "rep");
@@ -53550,7 +54082,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -nosub        do not include files in subdirectories.\n"
              "      -nobin[ary]   skip binary files.\n");
       if (iIsOFind)
-      printx("      -verbose      always show which file is currently read.\n");
+      printx("      -verbose      always show which file is currently read.\n"
+             "      -justoffice   search only in office files, not in plain text etc.\n"
+             );
       if (bIsXPat)
       printx("      -case         case-sensitive text comparison. default is insensitive.\n"
              "                    for details type: sfk help nocase\n"
@@ -53870,6 +54404,15 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      to extract unmodified binary data you may use either\n"
              "      #sfk xfind -pure ... -tofile<def> or #sfk extract ... -tofile<def>\n"
              "\n");
+      #ifdef SFKOFFICE
+      printx("   $office file support\n"
+             "      #sfk ofind<def>        search in $.xml text file contents<def> of\n"
+             "                       office files like .docx .xlsx .ods .odt.\n"
+          // "      #sfk ofind2<def>       search in $all contents<def> of office files,\n"
+          // "                       including binary data like image files.\n"
+             "      #sfk help office<def>  for more infos and options\n"
+             "\n");
+      #endif // SFKOFFICE
       if (bhelp || !iIsOFind)
       {
       printSearchReplaceCommands();
@@ -54060,6 +54603,29 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              );
       }
       } // endif not ofind
+      #ifdef SFKOFFICE
+      if (bhelp || iIsOFind)
+      {
+      printx(
+         "   $see also\n"
+         "      #sfk xfind<def>        for more search pattern examples\n"
+         "\n"
+         "   $examples\n"
+         "      #sfk ofind mydir \"/myword/\"\n"
+         "         search office and plain text files in mydir\n"
+         "         containing the word 'myword'.\n"
+         "      #sfk ofind mydir \"/myword/\" -names +copy out\n"
+         "         same as above, but copy the found files\n"
+         "         to a folder 'out'.\n"
+         "      #sfk ofind mydir \"/foo*bar/\"\n"
+         "         search foo followed by bar in the same line.\n"
+         "      #sfk ofind -pure mydir \"/foo**bar/[part2]\\n/\"\n"
+         "         search text starting with foo, then several\n"
+         "         text lines, then ending with bar. print\n"
+         "         only the found text between foo and bar.\n"
+         );
+      }
+      #endif // SFKOFFICE
 
       ehelp;
 
@@ -54069,6 +54635,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       char *pszConf = getenv("SFK_CONFIG");
       if (!pszConf) pszConf = str("");
+
+      #ifdef SFKOFFICE
+      if (iIsOFind == 1)
+         cs.office = 1; // read just .xml subfiles
+      #endif // SFKOFFICE
 
       char *pszRepFile  = 0;
       char *pszFirstPat = 0;
@@ -56235,6 +56806,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
           || (bGlblOffice && !strcmp(pszCmd, "oload")) // internal
          )
    {
+      #ifdef SFKOFFICE
+      if (!strcmp(pszCmd, "oload"))
+         iIsOLoad = 1;
+      #endif // SFKOFFICE
 
       ifhelp (nparm < 1)
       if (iIsOLoad)
@@ -56321,6 +56896,14 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       ehelp;
 
       sfkarg;
+
+      #ifdef SFKOFFICE
+      if (iIsOLoad == 1) {
+         cs.office    = 1;
+         cs.textfiles = 1;
+         cs.hidezipcomment = 1; // oload
+      }
+      #endif // SFKOFFICE
 
       bool   bstdin = 0;
       char *pszFile = 0;
@@ -58390,6 +58973,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   The tool allows #browsing of text with soft scrolling<def>\n"
              "   and #instant search<def> as you type or click on words.\n"
              "\n"
+             "   Depeche View can also be used #standalone<def>, to browse and\n"
+             "   search #all text from office 2007 files of a folder<def>.\n"
+             "\n"
              "   Type #sfk getdv<def> to download Depeche View Lite now,\n"
              "   or visit #www.depecheview.com<def> for more infos.\n"
              "   The tool is fully portable and needs no installation.\n"
@@ -58398,8 +58984,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   shown instantly in DView. This requires #dview, dview.exe\n"
              "   or #dview.bat<def> being located in the PATH. If you have downloaded\n"
              "   an executable like dview155.exe, rename it before use.\n"
-             "\n"
-             "   DView can be run under #Linux and Mac<def>, but this is experimental\n"
+             "\n");
+      printx("   DView can be run under #Linux and Mac<def>, but this is experimental\n"
              "   and unsupported. The latest #WINE<def> version must be installed.\n"
              "   Google for \"linux wine\", or search it in your package manager.\n"
              "\n"
@@ -59338,7 +59924,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    ifcmd (!strcmp(pszCmd, "encode") || !strcmp(pszCmd, "decode"))
    {
       ifhelp (nparm < 1)
-      printx("<help>$sfk encode|decode [infile] -format [options]\n"
+      printx("<help>$sfk encode|decode [infile] format [options]\n"
              "\n"
              "   en- or decode text or data.\n"
              "\n"
@@ -60004,19 +60590,35 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
    regtest("dupfind -listorg -minsize=3m");
 
-   ifcmd (!strncmp(pszCmd, "dupfind", 3)) // +wref
+   ifcmd (!strncmp(pszCmd, "dupfind", 3)
+          || !strncmp(pszCmd, "syncname", 8)) // sfk1944 internal
    {
       ifhelp (!chain.usefiles && (nparm < 1))
-      printHelpText("dupfind", bhelp);
+      if (!strncmp(pszCmd, "syncname", 8))
+         printHelpText("syncnames", bhelp);
+      else
+         printHelpText("dupfind", bhelp);
       ehelp;
 
       sfkarg;
 
-      bool blistorg = 0;
+      glblDupScan.reset();
+
+      if (!strncmp(pszCmd, "syncname", 8))
+      {
+         glblDupScan.clSyncNames = 1;
+         glblDupScan.clDiffDirs = 1;
+         cs.crcmd5 = 1;
+      }
+
+      bool blistorg  = 0;
+      int  nsyncdirs = 0;
+      bool bgotdirs  = 0;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
+         char *pszArg  = argx[iDir];
          char *pszParm = 0;
          if (haveParmOption(argx, argc, iDir, "-minsize", &pszParm)) {
             if (!pszParm) return 9;
@@ -60024,18 +60626,34 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             if (cs.selMinSize < 0) return 9;
             continue;
          }
-         else
-         if (!strcmp(argx[iDir], "-diffdir")) {
+         if (!strcmp(pszArg, "-diffdir")) {
             glblDupScan.clDiffDirs = 1;
             continue;
          }
-         else
-         if (!strcmp(argx[iDir], "-listorg")) {
+         if (!strcmp(pszArg, "-listorg")) {
             blistorg = 1;
             continue;
          }
-         else
-         if (!strncmp(argx[iDir], "-", 1)) {
+         if (!strcmp(pszArg, "-byname")) { // internal
+            glblDupScan.clByName = 1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-bytime")) { // internal
+            glblDupScan.clByTime = 1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-unsafe")) { // internal
+            glblDupScan.clUnsafe = 1;
+            cs.crcmd5 = 1;
+            continue;
+         }
+         if (glblDupScan.clSyncNames
+             && haveParmOption(argx, argc, iDir, "-log", &pszParm)) {
+            if (!pszParm) return 9;
+            glblDupScan.pszClLog = pszParm;
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(argx[iDir]))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -60043,21 +60661,49 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             else
                return 9+perr("unknown option: %s\n", argx[iDir]);
          }
-         else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
          // process non-option keywords:
+         if (glblDupScan.clSyncNames) {
+            if (nsyncdirs >= 2) {
+               perr("too many folder names for syncnames");
+               pinf("for detailed selection you may use -dir name1 name2 ...\n");
+               return 9;
+            }
+            glblFileSet.addRootDir(pszArg, __LINE__, false, false);
+            nsyncdirs++;
+            bgotdirs = 1;
+            continue;
+         }
          break;
       }
  
       num nstart = getCurrentTime();
 
       int iDirNext = 0;
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iDirNext))) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, bgotdirs ? 0 : 3, &iDirNext)))
+         return lRC;
       if (btest) return 0;
 
       if (glblDupScan.clDiffDirs && (glblFileSet.numberOfRootDirs() < 2))
          return 9+perr("need at least two -dir parameters with option -diffdir.");
+
+      if (glblDupScan.clSyncNames && (glblFileSet.numberOfRootDirs() != 2))
+         return 9+perr("need two -dir parameters with syncnames");
+
+      cs.sim = !cs.yes; // sfk1944
+
+      if (glblDupScan.clSyncNames) {
+         // get target root
+         glblDupScan.pszClSrcRoot = glblFileSet.clRootDirs.getString(0, 0);
+         glblDupScan.pszClDstRoot = glblFileSet.clRootDirs.getString(0, 1);
+         if (!glblDupScan.pszClSrcRoot || !glblDupScan.pszClDstRoot)
+            return 9+perr("int. #2195276");
+         if (cs.sim && !cs.nohead)
+            printx("$[simulating:]\n");
+         if (cs.yes && glblDupScan.pszClLog)
+            glblDupScan.pClLog = fopen(glblDupScan.pszClLog, "a");
+      }
 
       lRC = walkAllTrees(eFunc_DupScan, lFiles, lDirs, nBytes);
       info.clear();
@@ -60069,19 +60715,32 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       int nelapsed2 = (int)(getCurrentTime() - nstart);
 
-      if (!chain.colany() && !cs.quiet) {
-         printx("$%d duplicates with %d mb.", glblDupScan.clNumDups,(int)(glblDupScan.clDupBytes/1000000));
-         if (blistorg)
-            printx(" $%d originals with %d mb.\n",glblDupScan.clNumOrgs,(int)(glblDupScan.clOrgBytes/1000000));
-         else
-            printf("\n");
-      }
-      if (cs.verbose) {
-         printf("scanned %d file infos in %d msec.\n", glblDupScan.clSizes.numberOfEntries(), nelapsed1);
-         printf("total duplicate scan took %d msec.\n", nelapsed2);
+      if (glblDupScan.clSyncNames) { // sfk1944 internal
+         if (!cs.quiet) {
+            printx("$%s %d files in target dir. <time>skipping %d identical files.\n", cs.sim?"would move":"moved", cs.filesMoved, glblDupScan.clSkipMatch);
+         }
+      } else {
+         if (!chain.colany() && !cs.quiet) {
+            printx("$%d duplicates with %d mb.", glblDupScan.clNumDups,(int)(glblDupScan.clDupBytes/1000000));
+            if (blistorg)
+               printx(" $%d originals with %d mb.\n",glblDupScan.clNumOrgs,(int)(glblDupScan.clOrgBytes/1000000));
+            else
+               printf("\n");
+         }
+         if (cs.verbose) {
+            printf("scanned %d file infos in %d msec.\n", glblDupScan.clSizes.numberOfEntries(), nelapsed1);
+            printf("total duplicate scan took %d msec.\n", nelapsed2);
+         }
       }
 
+      if (glblDupScan.clSyncNames && cs.sim && !cs.nohead)
+         printx("$[add -yes to execute.]\n");
+
+      if (glblDupScan.pClLog)
+         fclose(glblDupScan.pClLog);
+
       glblDupScan.reset();
+      glblOutFileMap.reset();
 
       STEP_CHAIN(iDirNext, 1);
  

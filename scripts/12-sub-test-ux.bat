@@ -82,7 +82,7 @@ $TEXE -nocol remcrlf ../scripts/50-patch-all-ux.cpp >/dev/null
 $TEXE -nocol patch -qs ../scripts/50-patch-all-ux.cpp >/dev/null
 $TEXE -nocol test $TCMD T07.1.patch all-src.cpp
 
-$TEXE -nocol snapto=all-src-4.cpp -nometa testfiles/Formats 11-wide-line.txt 13-eof-null.txt 14-all-codes.txt >/dev/null
+$TEXE -nocol snapto=all-src-4.cpp -wlbin -nometa testfiles/Formats 11-wide-line.txt 13-eof-null.txt 14-all-codes.txt >/dev/null
 $TEXE -nocol test $TCMD T08.1.snapform all-src-4.cpp
 
 $TEXE -nocol find -text testfiles/Formats scope01 quarter03 lead05 >res-21.txt
