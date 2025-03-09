@@ -106,7 +106,7 @@ now, what do we have?
 <li>and we can extend our working environment anytime, by the creation of new batch files in C:\batch.
 </lu>
 <p>
-First of all, download sfk, and copy <b>sfk.exe</b> and <b>sview.exe</b> (in case of windows) to C:\batch.
+First of all, download sfk, and copy <b>sfk.exe</b> to C:\batch.
 <p>
 And from now on, <b>stay in the shell</b>. Whatever follows now, I expect that you have permanent command line access.
 
@@ -132,25 +132,8 @@ This principle can be optimized into <b>pingpong reverse tracking</b>:
 <li>therefore it's called ping-pong: you change between a left and right window, step by step proceeding through a huge source base.
 <li>this principle is efficient with a snapfile only. if you were loading each local sourcefile one by one, you would soon end up with hundreths (thousands?) of opened windows, loosing any overview.
 </lu>
-<p>
-Searching through a codebase this way, using an editor, is already somewhat fast, but it can get even faster. If you're working under windows, sfk provides another tool, called the <i>snap viewer</i>. On the command line, say
-<p>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-<font face="courier"><b>sview all-src.cpp</b></font>
-<p>
-The snapfile is loaded and displayed as read-only in a window. Now,
-<p>
-<lu>
-<li>type whatever word you like - it is searched instantly, and sview jumps to the first hit automatically. To browse through all hits, use <i>mouse wheel down</i> or <i>SHIFT+CursorDown</i>.
-<li>if you left-click on a word, it is SelectedAndSearched automatically. this can be very irritating for the unexperienced user - but remember, <i>snapview is optimized for searching</i>, and nothing else.
-<li>if you right-click on a word, another view window is opened, and again the word is searched for instantly.
-<li>sfk snapview displays a maximum of three viewers side by side.
-<li>if you create further view windows (always by right mouse button), a new line of windows is started from the left.
-<li>for all further howto's, press F8 in snapview, and read the help text.
-</lu>
-<p>
-sfk snapview is optimized for <i>realtime searching</i> in huge snapfiles. case-insensitive lookups over 3 million lines of code take about 1.5 seconds on current machines (e.g., Pentium IV with 1 GB of RAM), case-sensitive lookups about 500 msec.
 
+<p>
 <a name="power-editing">
 <p>
 <b>03: power editing through cluster files.</b> &nbsp;&nbsp;&nbsp; <a href="#top">back to top</a>
@@ -411,15 +394,6 @@ dir C:\%VCURRENT% /S /B >C:\%VCURRENT%\lslr
    just type "jamsrc" to re-create the global source collection.
    this collection is then available under c:\proj100\all-src.cpp
    (if your current codebase number is 100.)
-
-<b>vall.bat</b> - view whole content of working dir in sfk snapview
-@ECHO off
-IF "%VCURRENT%"=="" goto xend
-sview C:\%VCURRENT%\all-src.cpp
-:xend
-
-   usage example: provided that you ran jamsrc2 at least once,
-   type "vall" anytime to perform instant searches across everything.
 
 <b>do-check-all.bat</b> - check if patches can be applied, or are still valid
 @echo off

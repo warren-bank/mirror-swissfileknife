@@ -7,3 +7,4 @@ sfk remcrlf 12-sub-test-ux.bat >nul
 echo created: 03-sfk-selftest-ux.bat
 echo created: 12-sub-test-ux.bat
 echo "now transfer and run 03-sfk-selftest-ux.bat"
+

@@ -25,7 +25,7 @@
 ../sfk grep -pat include -dir testfiles -file .cpp .hpp >res-06.txt
 ../sfk test $TCMD T02.4.grep res-06.txt
 
-../sfk bin-to-src -pack testfiles/Formats/06-binary.jpg res-07.txt
+../sfk bin-to-src -pack testfiles/Formats/06-binary.jpg res-07.txt mydat
 ../sfk test $TCMD T02.5.bin2src res-07.txt
 
 ../sfk filter <testfiles/Formats/07-filter-src.txt -+something -:delete >res-08.txt

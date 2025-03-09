@@ -5,6 +5,7 @@
    then integrated into sfk with the least possible effort.
 
    changes:
+   fix: -nopid now also avoids backup of patchfile itself.
    add: MAX_OUT_LINES extended to 50000, apOut no longer stackbased
    add: -nopid support
    sfk 1.1.2: linux fixes
@@ -155,14 +156,7 @@ int processCmdRoot (char *pszIn) {
    return 0;
 }
 
-static int fileExists(char *pszFileName) {
-   FILE *ftmp = 0;
-   if (ftmp = fopen(pszFileName, "r")) {
-      fclose(ftmp);
-      return 1;
-   }
-   return 0;
-}
+extern long fileExists(char *pszFileName);
 
 int processCmdFile(char *psz);
 extern long printx(const char *pszFormat, ...);
@@ -484,6 +478,8 @@ int patchMain(int argc, char *argv[], int offs)
             }
          }
          // patch applied: save the patchfile for future revoke
+         if (!bGlblNoPID)
+         {
          #ifdef _WIN32
          _mkdir("save_patch");
          #else
@@ -499,6 +495,7 @@ int patchMain(int argc, char *argv[], int offs)
          iRC = system(szCmdBuf);
          if (iRC)
             log(0, "error  : cannot backup patchfile to: %s\n",pszPatchFileBackup);
+         }
       } else {
          if (iRC & 4)
             log(0, "info   : make sure you are above the \"%s\" directory.\n",pszRoot);

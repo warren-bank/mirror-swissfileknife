@@ -2,7 +2,7 @@
 #define _MTKTRACE_DEFINED_
 
 /*
-   Micro Tracing Kernel 0.6.0 by stahlworks technologies.
+   Micro Tracing Kernel 0.6.5 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    NOTE: changing this header probably forces recompile of MANY files!
@@ -11,11 +11,11 @@
 
       export MTK_TRACE=file:twex,filename:log.txt
 
-         t  = mtkTrace statements
-         w  = warnings
-         e  = errors
-         x  = extended trace statements
-         b  = block entrys/exits
+         t  = normal trace msges - e.g. mtklog("received %lu bytes",n);
+         w  = warnings           - e.g. mtkwarn("no input received");
+         e  = errors             - e.g. mtkerr("cannot open file");
+         x  = extended traces    - for internal interfaces
+         b  = block entrys/exits - all _mtkb_ blocks
 
       it is NOT recommended to trace 'b'blocks into tracefile.
       instead, block entries/exits may be logged into the ring buffer
@@ -61,12 +61,18 @@ extern void mtkDumpStackTrace(int bOnlyOfCurrentThread);
 extern void mtkDumpLastSteps(int bOnlyOfCurrentThread);
 extern void mtkSetRingTrace(char *pszMask);
 extern void mtkSetTermTrace(char *pszMask);
-extern void mtkHexDump(const char *pszLinePrefix, const char *pDataIn, long lSize, const char *pszFile, int nLine, char cPrefix);
+
+extern void mtkHexDump(const char *pszLinePrefix, void *pDataIn, long lSize, const char *pszFile, int nLine, char cPrefix);
+// mtkHexDump("mydata> ",abData,nSize,__FILE__,__LINE__,'D');
 
 #ifdef _WIN32
- #define mtklog mtkTracePre(__FILE__,__LINE__,'D'),mtkTracePost
+ #define mtklog  mtkTracePre(__FILE__,__LINE__,'D'),mtkTracePost
+ #define mtkerr  mtkTracePre(__FILE__,__LINE__,'E'),mtkTracePost
+ #define mtkwarn mtkTracePre(__FILE__,__LINE__,'W'),mtkTracePost
 #else
- #define mtklog(form, args...) mtkTraceForm(__FILE__,__LINE__,'D',form, ##args)
+ #define mtklog(form, args...)  mtkTraceForm(__FILE__,__LINE__,'D',form, ##args)
+ #define mtkerr(form, args...)  mtkTraceForm(__FILE__,__LINE__,'E',form, ##args)
+ #define mtkwarn(form, args...) mtkTraceForm(__FILE__,__LINE__,'W',form, ##args)
 #endif
 #define mtkdump(pLinePrefix, pData, nSize) mtkHexDump(pLinePrefix, pData, nSize, __FILE__,__LINE__,'T')
 

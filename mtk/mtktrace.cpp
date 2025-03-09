@@ -1,16 +1,21 @@
 /*
-   Micro Tracing Kernel 0.6.0 by stahlworks technologies.
+   Micro Tracing Kernel 0.6.5 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    the following line protects this file against instrumentation:
    [instrumented]
 
-   So far, this kernel was mainly tested with a Unix derivate.
-   Win32 functionality is still alpha.
-
    NOTE: Win32 GUI apps should never use "term:" tracing, but only "file:".
 
    Changes:
+   -  add: text "error: " and "warning:" on corresponding record types.
+   -  chg: by default, short form "export MTK_TRACE=filename:test.log"
+           now traces twex statements into file.
+           this is different from "export MTK_TRACE=file:,filename:test.log"
+           which defines an output file for mtkDump calls, but does NOT
+           log normal trace messages into file.
+   -  add: optimized cr/lf removal on tracing statements.
+   -  mtkHexDump now expects type void*
    -  fflush on flog writing.
    -  full tracing support via file:
          export MTK_TRACE=file:twex,filename:test.log
@@ -85,6 +90,7 @@ public:
    ulong nfilex;  // dump  extended interface input info file
    const char *pszFilename;
    FILE *flog;
+   uchar bflushlog;
 };
 
 static const char *glblPszBlank =
@@ -120,6 +126,7 @@ MTKMain::MTKMain()
    nfilex = 0;
 
    flog = 0;
+   bflushlog = 1;
 
    const char *pszEnv = getenv("MTK_TRACE");
    if (pszEnv)
@@ -141,12 +148,6 @@ MTKMain::MTKMain()
          setTermTrace((char*)psz1);
       }
 
-      if ((psz1 = strstr(pszEnv, "file:")) != 0)
-      {
-         psz1 += strlen("file:");
-         setFileTrace((char*)psz1);
-      }
-
       if ((psz1 = strstr(pszEnv, "filename:")) != 0) {
          psz1 += strlen("filename:");
          pszFilename = psz1;
@@ -156,7 +157,14 @@ MTKMain::MTKMain()
          else {
             printf("MTKTrace: writing log output into %s\n", pszFilename);
             fflush(stdout);
+            setFileTrace("twex,"); // may be overwritten by "file:" below
          }
+      }
+
+      if ((psz1 = strstr(pszEnv, "file:")) != 0)
+      {
+         psz1 += strlen("file:");
+         setFileTrace((char*)psz1);
       }
    }
 
@@ -206,6 +214,7 @@ void MTKMain::setFileTrace(char *psz1)
          case 'x': nfilex |=  4; break;
          case 'w': nfilex |=  8; break;
          case 'e': nfilex |= 16; break;
+         case 'f': bflushlog = 0; break; // 'f'ast mode: do not flush on every line
          default:
             fprintf(stderr, "ERROR: MTK unsupported file settings, use tbxwe\n");
             break;
@@ -361,6 +370,7 @@ void MTKMain::traceMessageRaw(const char *pszFile, int nLine, char cPrefix, char
    if (!pszFile) pszFile = apprefile[ithread];
    if (!nLine  ) nLine   = anpreline[ithread];
    if (!cPrefix) cPrefix = acpreprefix[ithread];
+   if (!cPrefix) cPrefix = '?'; // shouldn't actually happen
 
    // store thread-index and nesting level
    ulong nprelen = 3;
@@ -374,11 +384,12 @@ void MTKMain::traceMessageRaw(const char *pszFile, int nLine, char cPrefix, char
    amsg[imsg][imax] = '\0';
 
    // strip cr/lf, if any
-   char *pszLF = 0;
-   if ((pszLF = strchr(&amsg[imsg][nprelen], '\n')) != 0)
-      *pszLF = '\0';
-   if ((pszLF = strchr(&amsg[imsg][nprelen], '\r')) != 0)
-      *pszLF = '\0';
+   char *pszMsg = &amsg[imsg][nprelen];
+   long nLen = strlen(pszMsg);
+   while (nLen > 0 && (pszMsg[nLen-1]=='\r' || pszMsg[nLen-1]=='\n')) {
+      pszMsg[nLen-1] = '\0';
+      nLen--;
+   }
 
    // if there is space left, append location info with a linefeed
    if (pszFile != 0) {
@@ -397,6 +408,12 @@ void MTKMain::traceMessageRaw(const char *pszFile, int nLine, char cPrefix, char
       }
    }
 
+   const char *pszAddInfo = "";
+   if (cPrefix == 'E')
+      pszAddInfo = "error: ";
+   if (cPrefix == 'W')
+      pszAddInfo = "warning: ";
+
    // tracing to file selected?
    if (nfilex != 0)
    {
@@ -409,8 +426,13 @@ void MTKMain::traceMessageRaw(const char *pszFile, int nLine, char cPrefix, char
          default : if (!(nfilex &  1)) bSkip = 1; break; // all other messages
       }
       if (!bSkip && (flog != 0)) {
-         fprintf(flog, "[%02lX:%c] %.*s%s\n", ithread, cPrefix, (int)ilevel, glblPszBlank, pszRaw);
-         fflush(flog);
+         // note that pszRaw still contains unwanted CR/LFs.
+         long nLen = strlen(pszRaw);
+         while (nLen > 0 && (pszRaw[nLen-1]=='\r' || pszRaw[nLen-1]=='\n'))
+            nLen--;
+         fprintf(flog, "[%02lX:%c] %s%.*s%.*s\n", ithread, cPrefix, pszAddInfo, (int)ilevel, glblPszBlank, (int)nLen, pszRaw);
+         if (bflushlog)
+            fflush(flog);
       }
    }
 
@@ -757,7 +779,7 @@ void mtkSetTermTrace(char *pszMask) {
       glblMTKInst.setTermTrace(pszMask);
 }
 
-void mtkHexDump(const char *pszLinePrefix, const char *pDataIn, long lSize, const char *pszFile, int nLine, char cPrefix)
+void mtkHexDump(const char *pszLinePrefix, void *pDataIn, long lSize, const char *pszFile, int nLine, char cPrefix)
 {
    char szBuf[128];
    uchar *pData = (uchar *)pDataIn;

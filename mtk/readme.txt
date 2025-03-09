@@ -52,24 +52,24 @@ make a backup of all sources, and then
 
    -  now configure what is done with the traces:
 
-         export MTK_TRACE=ring:t,term:t,filename:dump.txt
+         export MTK_TRACE=ring:twe,term:twe,filename:log.txt
 
       this will
-      -  trace all mtklog statements into an internal ring buffer
-      -  trace all mtklog statements also to terminal.
-         notice that the text is indented according to the nest level.
+      -  trace all mtklog, mtkwarn, mtkerr statements into an internal ring buffer
+      -  trace them also to terminal and into file "log.txt".
+         notice that the text is indented according to each thread's nesting level.
 
       furthermore, if you say somewhere in your sourcecode
 
          mtkDumpStackTrace(1);
 
       then you get a stack trace of the current thread
-      written into dump.txt. if you say
+      written into log.txt. if you say
 
          mtkDumpLastSteps(1);
 
       then you get the last steps of the current thread
-      written into dump.txt.
+      written into log.txt.
 
       other examples:
 
@@ -80,7 +80,7 @@ make a backup of all sources, and then
       this could become a long list (last steps by default
       lists up to 10000 records), therefore it's written to file.
 
-         export MTK_TRACE=ring:tb,term:tb,filename:dump.txt
+         export MTK_TRACE=ring:tb,term:tb,filename:log.txt
 
       lists every single block (method) entry and exit
       both into the ring buffer and onto terminal.

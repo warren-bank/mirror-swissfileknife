@@ -9,7 +9,7 @@
 
 static void *operator new[](size_t size, char *src, int line);
 static void *operator new(size_t size, char *src, int line);
-static void *operator new(size_t size);
+// static void *operator new(size_t size);
 
 static char *sfkmem_file = 0;
 static long  sfkmem_line = 0;

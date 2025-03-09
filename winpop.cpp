@@ -1,8 +1,3 @@
-#ifdef LOCALTEST
- #include <stdio.h>
- #include <string.h>
- #include <windows.h>
-#endif
 
 #include "poprawpic.cpp"
 
@@ -210,7 +205,7 @@ const char *msgAsString(long nMsg) {
 char *pszGlblInfo = "";
 
 bool  bHavePic = 0;
-uchar abPopupPic[24000];
+uchar abPopupPic[pop_BLOCK_SIZE];
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -267,7 +262,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
          {
             if (!bHavePic) {
                bHavePic = 1;
-               fskGetBlock(abPopupPic, 24000);
+               pop_getBlock(abPopupPic, pop_BLOCK_SIZE);
             }
    
             long nWidth  = 200;
@@ -402,10 +397,3 @@ void winCleanupGUI()
       UnregisterClass("MyPopWin", 0);
    }
 }
-
-#ifdef LOCALTEST
-int main(int argc, char *argv[]) {
-   showInfoPopup("TEST-POPUP");
-   return 0;
-}
-#endif
