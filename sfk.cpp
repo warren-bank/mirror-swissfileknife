@@ -7,11 +7,62 @@
    The whole source code was created with Depeche View Professional,
    the world's fastest source code browser and editor.
 
+   1.8.6
+   Revision 3:
+   -  rel: 09.06.2017, Minor Update
+   -  sum: detail improvements of calc and partcopy.
+   -  add: sfk partcopy: option -fromtoinc to include
+           the end offset in output.
+   -  fix: sfk calc: expressions starting with a negative
+           number were not supported.
+   Revision 2:
+   -  rel: 03.06.2017, Minor Update
+   -  sum: fixed output formatting of multiple variables
+           in the same command.
+   -  FIX: Output Change: when formatting multiple variables
+           in the same command like "#(3.3a) #(b) #(c)"
+           then the formatting of the first variable was
+           applied to all following. now only the given
+           formatting per variable is applied.
+   Initial Release:
+   -  rel: 30.05.2017, Major Update
+   -  sum: added easy variable output formatting
+           like #(05i) which pads i to 5 characters
+           with leading zeros. calculator now supports
+           long expressions with many values.
+   -  add: variable formatting on output in C-style
+           notation like #(3.5varname) allowing to fill 
+           text with leading blanks or zeros, and to limit 
+           text to a given number of characters.
+           for details see "sfk help var"
+   -  add: sfk run, perline: now support ufile, upath
+           or qufile, qupath to use unix slashes "/".
+           useful to create html output.
+   -  add: sfk calc: now supports long expressions
+           with more than two values.
+   -  chg: sfk calc: if chain input is used as #text
+           it now fills in the whole text, no longer
+           ignoring characters after first whitespace.
+   -  fix: sfk touch: did not support chaining
+           to following commands.
+   -  fix: sfk httpserv: truncated bad formatted url's
+           like "foo bar.txt" with unencoded blank
+           as "foo". now these produce code 404 only.
+   -  doc: sfk for: example how to copy files.
+   -  doc: sfk perline: example how to create an
+           html file listing images.
+   -  chg: variable functions lpad, rpad are no longer
+           documented but still supported. padding by
+           the new C-style notation is easier.
+   internal:
+   -  web: url encoding of blanks
+
    1.8.5
    Revision 3:
    -  rel: 18.05.2017, Minor Update
    -  sum: sfk version output fixed, which was wrong
-           especially under linux.
+           especially under linux. ftpserv now shows
+           the time of a client connect and disconnect.
    -  fix: sfk version: did not work esp. on linux.
    -  add: ftpserv: console connect time infos.
    Revision 2:
@@ -591,7 +642,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.8.5" // ver_ and check the _PRE definition
+#define SFK_VERSION  "1.8.6" // ver_ and check the _PRE definition
 #define SFK_FIXPACK  "3"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
@@ -711,10 +762,6 @@ static const char *pszGlblVerType = SFK_VERTYPE;
 
 // #define SFK_STRICT_MATCH
 #define SFKVAR // 1770
-
-#ifdef SFKINT
- #define WITH_XCALC
-#endif
 
 #ifdef SFKINT2
  #define SFKPRINTREDIR
@@ -1262,6 +1309,107 @@ double getcalcval(char *psz, char **pcont)
 }
 
 extern cchar *pszGlblBlank;
+
+int sfkcalc(double &r, char *pszFrom, char **ppNext, int iLevel, bool bStopPM=0)
+{
+   double v1=0.0,v2=0.0;
+
+   if (cs.debug) printf("%.*s[%s]\n",iLevel*2,pszGlblBlank,pszFrom);
+
+   char *pszNext=0;
+   int   iOwnBra=0;
+
+   if (isdigit(*pszFrom)!=0 || *pszFrom=='-') {
+      v1=getcalcval(pszFrom,&pszNext);
+      pszFrom=pszNext;
+   } else if (cs.brackets==1 && *pszFrom=='(') {
+      pszFrom++;
+      iOwnBra++;
+      if (sfkcalc(v1,pszFrom,&pszNext,iLevel+1))
+         return 9;
+      pszFrom=pszNext;
+   }
+     else return 9+perr("invalid: %s\n",pszFrom);
+
+   bool bstop=0;
+   while (*pszFrom!=0 && bstop==0)
+   {
+      if (cs.debug) printf("%.*s[%s]\n",iLevel*2,pszGlblBlank,pszFrom);
+      // get * / + -
+      char c = *pszFrom++;
+      switch (c)
+      {
+         case ')':
+            if (!cs.brackets)
+               return 9+perr("invalid: %s\n",pszFrom-1);
+            if (cs.debug) printf("%.*s) %f\n",iLevel*2,pszGlblBlank,v1);
+            if (iOwnBra-- <= 0) {
+               bstop=1;
+               pszFrom--;
+            }
+            continue;
+         case '*':
+            if (cs.brackets==1 && *pszFrom=='(') {
+               pszFrom++;
+               iOwnBra++;
+               if (sfkcalc(v2,pszFrom,&pszNext,iLevel+1))
+                  return 9;
+            } else {
+               v2=getcalcval(pszFrom,&pszNext);
+            }
+            if (cs.debug) printf("%.*s%f * %f = %f\n",iLevel*2,pszGlblBlank,v1,v2,v1*v2);
+            v1 *= v2;
+            pszFrom=pszNext;
+            continue;
+         case '/':
+            if (cs.brackets==1 && *pszFrom=='(') {
+               pszFrom++;
+               iOwnBra++;
+               if (sfkcalc(v2,pszFrom,&pszNext,iLevel+1))
+                  return 9;
+            } else {
+               v2=getcalcval(pszFrom,&pszNext);
+            }
+            if (v2 == 0.0)
+               return 9+perr("division by zero: %s\n",pszFrom);
+            if (cs.debug) printf("%.*s%f / %f = %f\n",iLevel*2,pszGlblBlank,v1,v2,v1/v2);
+            v1 /= v2;
+            pszFrom=pszNext;
+            continue;
+         case '+':
+            if (bStopPM) {
+               pszFrom--;
+               bstop=1;
+               continue;
+            }
+            if (sfkcalc(v2, pszFrom, &pszNext, iLevel+1, 1))
+               return 9;
+            if (cs.debug) printf("%.*s%f + %f = %f\n",iLevel*2,pszGlblBlank,v1,v2,v1+v2);
+            v1 += v2;
+            pszFrom=pszNext;
+            continue;
+         case '-':
+            if (bStopPM) {
+               pszFrom--;
+               bstop=1;
+               continue;
+            }
+            if (sfkcalc(v2, pszFrom, &pszNext, iLevel+1, 1))
+               return 9;
+            if (cs.debug) printf("%.*s%f - %f = %f\n",iLevel*2,pszGlblBlank,v1,v2,v1-v2);
+            v1 -= v2;
+            pszFrom=pszNext;
+            continue;
+         default:
+            return 9+perr("invalid: %s\n",pszFrom-1);
+      }
+   }
+
+   r=v1;
+   if (ppNext) *ppNext=pszFrom;
+
+   return 0;
+}
 
 struct tm *mylocaltime(mytime_t *ptime)
 {
@@ -2810,6 +2958,7 @@ char szAttrBuf3[MAX_LINE_LEN+10];
 char szRefNameBuf[MAX_LINE_LEN+10];
 char szRefNameBuf2[MAX_LINE_LEN+10];
 char szOutNameRecent[MAX_LINE_LEN+10];
+char szTopURLBuf[MAX_LINE_LEN+10];
 char szIOTraceBuf[200];
 bool bGlblToldAboutRecent = 0;
 char szOutNameBuf[MAX_LINE_LEN+10];
@@ -19364,13 +19513,14 @@ enum eRunExpressions
 {
    erun_path      = 0,
    erun_file      = 1,
-   erun_file_     = 2,
-   erun_relfile   = 3,
-   erun_base      = 4,
-   erun_ext       = 5,
-   erun_since     = 6,
-   erun_text      = 7,
-   erun_targ      = 8   // sfk182 with -tomake only
+   erun_upath     = 2,
+   erun_ufile     = 3,
+   erun_relfile   = 4,
+   erun_base      = 5,
+   erun_ext       = 6,
+   erun_since     = 7,
+   erun_text      = 8,
+   erun_targ      = 9   // sfk182 with -tomake only
 };
 
 const char *apRunTokens[] =
@@ -19378,7 +19528,8 @@ const char *apRunTokens[] =
    // new and simple     kept for compatibility     quoted expressions           new ease
    "path"    , ""      , "purepath"    , "ppath"  , "quotpath"     , "qpath"   , "",
    "file"    , ""      , "purefile"    , "pfile"  , "quotfile"     , "qfile"   , "",
-   ""        , ""      , "pure_file"   , "p_file" , "quot_file"    , "q_file"  , "",
+   "upath"   , ""      , ""            , ""       , "quotupath"    , "qupath"  , "",
+   "ufile"   , ""      , ""            , ""       , "quotufile"    , "qufile"  , "",
    "relfile" , "rfile" , "purerelfile" , "prfile" , "quotrelfile"  , "qrfile"  , "qrelfile",
    "base"    , ""      , "purebase"    , "pbase"  , "quotbase"     , "qbase"   , "",
    "ext"     , ""      , "pureext"     , "pext"   , "quotext"      , "qext"    , "",
@@ -19569,6 +19720,7 @@ int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd)
       {
          case erun_file:
          case erun_text:
+         case erun_ufile:
          {
             // replace absolute filename
             memset(szLineBuf, 0, sizeof(szLineBuf));
@@ -19584,34 +19736,11 @@ int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd)
             strcat(szLineBuf, psz2);
             // copy back result
             mystrcopy(pDstBuf, szLineBuf, MAX_LINE_LEN);
-            bDoneAny = 1;
-            break;
-         }
-
-         case erun_file_:
-         {
-            // absolute filename with blanks replaced by "_".
-            // alpha - not yet official.
-            memset(szLineBuf, 0, sizeof(szLineBuf));
-            strncpy(szLineBuf, pDstBuf, psz1-pDstBuf);
-            // middle
-            char *psz2 = psz1+lTokenLen;
-            char *psz3 = szLineBuf+strlen(szLineBuf);
-            if (bQuoted) strcat(szLineBuf, "\"");
-             strcat(szLineBuf, pszFileName);
-            if (bQuoted) strcat(szLineBuf, "\"");
-            // replace blanks, within target buffer
-            while (*psz3) {
-               if (*psz3 == ' ')
-                   *psz3 = '_';
-               psz3++;
-            }
-            // remember position past insert
-            psz1 = pDstBuf+strlen(szLineBuf);
-            // right
-            strcat(szLineBuf, psz2);
-            // copy back result
-            mystrcopy(pDstBuf, szLineBuf, MAX_LINE_LEN);
+            // apply unix path conversion?
+            if (iexp == erun_ufile)
+               for (int i=0; pDstBuf[i]; i++)
+                  if (pDstBuf[i]=='\\')
+                     pDstBuf[i]='/';
             bDoneAny = 1;
             break;
          }
@@ -19637,6 +19766,7 @@ int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd)
          }
 
          case erun_path:
+         case erun_upath:
          {
             // replace filename path
             memset(szLineBuf, 0, sizeof(szLineBuf));
@@ -19656,6 +19786,11 @@ int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd)
             strcat(szLineBuf, psz2);
             // copy back result
             mystrcopy(pDstBuf, szLineBuf, MAX_LINE_LEN);
+            // apply unix path conversion?
+            if (iexp == erun_upath)
+               for (int i=0; pDstBuf[i]; i++)
+                  if (pDstBuf[i]=='\\')
+                     pDstBuf[i]='/';
             bDoneAny = 1;
             break;
          }
@@ -19758,7 +19893,11 @@ int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd)
          {
             if (cs.strict) {
                perr("unknown token in command mask: %s\n",psz1);
-               pinf("use %c%.20s ... to escape the text.\n",*psz1,psz1);
+               if (cs.usevars)
+                  pinf("use %c%.20s or %c%c%.20s to escape the text.\n",
+                     *psz1,psz1, *psz1,*psz1,psz1);
+               else
+                  pinf("use %c%.20s ... to escape the text.\n",*psz1,psz1);
                static bool btold=0;
                if (cs.strict<2 && btold==0) {
                   btold=1;
@@ -29594,10 +29733,19 @@ int httpServ(uint nPort, uint nPort2, bool bDeep, bool bNoList, bool bRW, bool b
             break;
          }
 
+         // .
          char *psz1 = preq + (bget ? 4 : 5);
          if (*psz1=='/') psz1++;
          char *psz2 = psz1;
          skipToWhite(&psz2);
+         // sfk1854: block invalid http path with 404
+         char *psz3 = psz2;
+         skipWhite(&psz3);
+         if (strncmp(psz3, "HTTP/", 5)) {
+            sendLine(hBack, "HTTP/1.1 404 bad URL format");
+            sendLine(hBack, "");
+            break;
+         }
          int nlen = psz2 - psz1;
          if (nlen > SFK_MAX_PATH) nlen = SFK_MAX_PATH;
          memcpy(szFile, psz1, nlen);
@@ -32237,6 +32385,41 @@ int encode64(uchar *psrc, int nsrc, uchar *pdst, int nmaxdst, int nlinechars)
    *pdst = '\0';
 
    return 0;
+}
+
+// rc 0: no change
+// else: szTopURLBuf
+// uses: szLineBuf
+bool encodeURL(char *pszRaw)
+{
+   char abToEncode[256]; // sfk1854 url blank encoding
+   mclear(abToEncode);
+   abToEncode[32] = 1;
+
+   mclear(szLineBuf);
+
+   // http://foo.com/the bar.txt
+   char *ptmp = strstr(pszRaw, "//");
+   if (!ptmp) return 0;
+
+   ptmp += 2;
+   ptmp = strchr(ptmp, '/');
+   if (!ptmp) return 0;
+
+   // on "/the bar.txt"
+   if (!strchr(ptmp, ' ')) return 0;
+
+   if (encodeHex((uchar*)ptmp, strlen(ptmp), szLineBuf, MAX_LINE_LEN, '%', abToEncode) < 0)
+      return 0; // buffer overflow
+
+   snprintf(szTopURLBuf, MAX_LINE_LEN, "%.*s%s",
+      (int)(ptmp-pszRaw), pszRaw, szLineBuf);
+
+   if (cs.debug)
+      printf("encoded: %s\n", szTopURLBuf);
+
+   // http://fo.com/the%20bar.txt
+   return 1;
 }
 
 // return valid value+1, or 0 if it is noise.
@@ -38184,6 +38367,11 @@ void probeStack(int iloadpercall)
 
 SFKMapArgs::SFKMapArgs(char *pszCmd, int argc, char *argv[], int iDir)
 {
+   char szform[100];
+   char szform2[100];
+   szform[0] = '\0';
+   szform2[0] = '\0';
+
    bdead = 0;
    bDoneAlloc = 0;
    pszClEvalOut = 0;
@@ -38252,8 +38440,32 @@ SFKMapArgs::SFKMapArgs(char *pszCmd, int argc, char *argv[], int iDir)
          }
          char *pskip = psrccur;
          psrccur += 2;
+
+         // sfk186: support format spec as first chars:
+         // #(03i) #( 3a) #(- 10a) #(3.3a)
+
+         szform[0] = '\0'; // FIX sfk1862 missing init
+
+         char *pszf = psrccur;
+         int  iform = 0;
+         while (*pszf) {
+            char c = *pszf;
+            if (isdigit(c) || (c=='-' && iform==0) || (c==' ' && iform<2) || c=='.')
+               pszf++;
+            else
+               break;
+            iform++;
+         }
+         if (pszf > psrccur) {
+            int ilen=pszf-psrccur;
+            if (ilen>sizeof(szform)-10)
+                ilen=sizeof(szform)-10;
+            memcpy(szform,psrccur,ilen);
+            szform[ilen]='\0';
+            psrccur = pszf;
+         }
+
          char *pexpstart = psrccur;
-         // .
          // search end of #(strpos(foo,'bar'))
          int inest = 1;
          bool blit = 0, bisfn = 0;
@@ -38320,6 +38532,14 @@ SFKMapArgs::SFKMapArgs(char *pszCmd, int argc, char *argv[], int iDir)
                bdead=1;
                return;
             }
+         }
+
+         // sfk186: apply optional format
+         if (szform[0]) {
+            // "-10.10" -> "%-10.10s"
+            snprintf(szform2, sizeof(szform2)-10, "%%%ss", szform);
+            snprintf(szGlblFormEvalBuf, MAX_LINE_LEN, szform2, pval);
+            pval = szGlblFormEvalBuf;
          }
 
          int nval = strlen(pval);
@@ -42917,6 +43137,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      $<run>base<def>        or $<run>qbase<def>    - the relative base filename, without extension.\n"
              "      $<run>ext<def>         or $<run>qext<def>     - filename extension. foo.bar.txt has extension .txt.\n"
              "      $<run>path<def>        or $<run>qpath<def>    - the path (directory) without filename.\n"
+             "      $<run>ufile<def>       or $<run>upath<def>    - force unix style slashes \"/\" on output.\n"
+             "      $<run>qufile<def>      or $<run>qupath<def>   - unix slashes and quotes combined.\n"
              "      $<run>since<def>       or $<run>qsince<def>   - with option -sincediff: the reference file name.\n"
              "      $<run>text<def>        or $<run>qtext<def>    - one record of input text, similar to <run>file.\n"
              "      $<run>targ<def>        or $<run>qtarg<def>    - with -tomake: target filename.\n"
@@ -45752,6 +45974,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             snprintf(szURL,SFK_MAX_PATH,"http://%s",pSrcName);
             pSrcName=szURL;
          }
+
+         #ifdef SFKINT
+         // sfk1860 url blank encoding
+         if (encodeURL(pSrcName))
+            pSrcName = szTopURLBuf;
+         #endif
+
          // TODO: mem/disk caching is yet undefined
          Coi *psrc = bcache ? glblVCache.get(pSrcName) : 0;
          if (!psrc) {
@@ -51699,14 +51928,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             pszDate = pszParm;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-from", &pszParm)) {
             if (!pszParm) return 9;
             if (pszDate) return 9+perr("-date cannot be combined with -from\n");
             pszFrom = pszParm;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-nsec", &pszParm)) {
             if (!pszParm) return 9;
             if (strlen(pszParm) != 9)
@@ -51714,47 +51941,40 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             nNanoSec = atonum(pszParm);
             continue;
          }
-         else
          if (!strcmp(pszArg, "-force")) {
             bMake = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-atime")) {
             bATime = 1;
             bMTime = 0;
             bCTime = 0;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-mtime")) {
             bATime = 0;
             bMTime = 1;
             bCTime = 0;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-amtime")) {
             bATime = 1;
             bMTime = 1;
             bCTime = 0;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-ctime")) {
             bATime = 0;
             bMTime = 0;
             bCTime = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-full")) {
             bATime = 1;
             bMTime = 1;
             bCTime = 1;
             continue;
          }
-         else
          if (strBegins(pszArg, "-copy")) {
             // copyctom etc.
             pszArg += 5;
@@ -51778,7 +51998,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             bTouchSelf = 1;
             continue;
          }
-         else
          if (!strncmp(pszArg, "-", 1)) {
             // if (isDirParm(pszArg))
             //    break; // fall through
@@ -51787,9 +52006,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             else
                return 9+perr("unknown option: %s\n", pszArg);
          }
-         // else
-         // if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-         //    break;
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
          // process non-option keywords:
          if (!pszDst) {
             pszDst = pszArg;
@@ -51869,6 +52087,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          lRC = walkAllTrees(eFunc_Touch, lFiles, lDirs, nBytes);
          if (cs.sim && !cs.nohead)
             printx("$[add -yes to execute.]\n");
+      }
+
+      if (iChainNext) {
+         STEP_CHAIN(iChainNext, 0);
       }
 
       bDone = 1;
@@ -57604,7 +57826,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (!strcmp(pszCmd, "calc"))
+   if (!strcmp(pszCmd, "oldcalc"))
    {
       ifhelp (nparm < 1)
       printx("<help>$sfk calc \"1+2\"\n"
@@ -57745,11 +57967,195 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (!chain.usedata)
             break;
       }
+
       if (bsum) {
          if (bForceDig == 0 && ((int)r * 1.0) == r)
             chain.print("%1.0f\n",r);
          else
             chain.print("%1.*f\n",iDigits,r);
+      }
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
+   ifcmd (!strcmp(pszCmd, "calc"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk calc \"1+2*3\"\n"
+             "\n"
+             "   do a simple calculation with mathematical\n"
+             "   operators + - * /\n"
+             "\n"
+             "   $options\n"
+             "      -dig[its]=n  round result to n digits\n"
+             "      -form        also print the formula,\n"
+             "                   tab separated after result\n"
+             "\n");
+      printx("   $chaining support\n"
+             "      can use chain input data as ##text within formula.\n"
+             "\n");
+      webref(pszCmd);
+      printx("   $examples\n"
+             "      #sfk calc \"1.0+2.5*3.5\"\n"
+             "        prints 9.75. quotes \"\" are required\n"
+             "        with linux but not under windows.\n"
+             "      #sfk echo \"1+2*3\" +calc \"##text*4\"\n"
+             "        calculates 1 + 2*3*4 = 25\n"
+             "      #sfk echo \"1+2*3\" +calc \"##text\" +calc \"##text*4\"\n"
+             "        calculates (1+2*3) * 4 = 28\n"
+             "      #sfk filt in.txt +calc \"##text\" -form\n"
+             "        calculate all formulas given in in.txt\n"
+             "      #sfk list -size -tabform sfk.exe +filt -utabform \"##col1\"\n"
+             "       #+calc \"##text/1000\" -dig=0\n"
+             "        show the size of sfk.exe in kbytes, rounded to\n"
+             "        zero digits after decimal point.  [29]\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      int    iDigits=6;
+      bool   bForceDig=0,bShowForm=0,bSum=0;
+      double r=0.0,rTotal=0.0;
+      char   *pszExp=0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-digits", &pszParm)) {
+            if (!pszParm) return 9;
+            iDigits = atoi(pszParm);
+            bForceDig = 1;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-dig", &pszParm)) {
+            if (!pszParm) return 9;
+            iDigits = atoi(pszParm);
+            bForceDig = 1;
+            continue;
+         }
+         if (strBegins(pszArg, "-form")) {
+            bShowForm=1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-sum")) {   // internal
+            bSum=1;
+            continue;
+         }
+         if (strBegins(pszArg, "-bra")) { // internal
+            cs.brackets=1;
+            continue;
+         }
+         if (!strcmp(pszArg,"-test"))
+         {
+            #define calctest(x)  \
+               if (!sfkcalc(r,str(#x),0,0)) \
+                  printf("%f / %f\n",x,r);  \
+               else  \
+                  printx("[Red]err: %s[def]\n",str(#x));
+            calctest(1100.0-4+2);
+            calctest(1.5/3.28+4.3+6.7*2.1*3.9*-1.26/5.38-2.3);
+            calctest(1.0-1.0/8*9+1.2*2.3*3.4);
+            calctest(-1.0-2.0*3.0-3.0*4.0+5.0*6.0/7.0/8.0/9.0);
+            calctest(-1.0-2.0/7.0/8.0/9.0+3.0/5.1-4.0/5.2*3.4);
+            if (cs.brackets)
+            {
+               calctest(1.1e3+(-4+2*8.3));
+               calctest((1.1e3-4+2)*8.3);
+               calctest(1100.0-(4+2));
+               calctest((1.2e2*(3.5+1.8-2.3*(-1.5+2.6*4.9))));
+               calctest(15-3*2/(1.5)*2.7-(3.8+(2.9/(1.9-2.5/1.2+4.6))));
+               calctest(1.3e2*4.8+(3.9-2.4/1.5*((12.3-1.8/(5.6/2.4-3.1)))));
+               calctest(1.5/(3.28+4.3+6.7*2.1*3.9*-1.26/(5.38-2.3)));
+               calctest(1.0/(1.0-1.0/(3+5)*9));
+               calctest(1.0/(1.0-1.0/8*9));
+               calctest(1.0/(3+5)*9);
+               calctest(1.0/((8.0+0))*9);
+            }
+            return 0;
+         }
+         if (pszArg[0]=='-' && isdigit(pszArg[1])==0) // sfk1863
+         {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (pszExp)
+            return 9+perr("unexpected: %s\n",pszArg);
+         pszExp = pszArg;
+      }
+
+      if (!pszExp)
+         return 9+perr("missing expression.");
+
+      int iIndex=0;
+      char *pattr=0;
+      char *pline=0;
+
+      while (1)
+      {
+         if (chain.usedata) {
+            if (iIndex >= chain.indata->numberOfEntries())
+               break;
+            pline = chain.indata->getEntry(iIndex++, __LINE__, &pattr);
+            if (!pline) break;
+         }
+
+         char *psz=strstr(pszExp, "$text");
+         if (!psz) psz=strstr(pszExp, "#text");
+         if (psz) {
+            int ileft=psz-pszExp;
+            snprintf(szLineBuf,MAX_LINE_LEN,"%.*s%s%s",
+               ileft,pszExp, pline, psz+5);
+         } else {
+            strcopy(szLineBuf, pszExp);
+         }
+
+         if (bShowForm)
+            snprintf(szLineBuf2,MAX_LINE_LEN,"\t%s",szLineBuf);
+         else
+            szLineBuf2[0]='\0';
+
+         if (sfkcalc(r,szLineBuf,0,0))
+            return 9;
+
+         if (bSum)
+            rTotal += r;
+
+         if (!bSum || bShowForm) {
+            if (bForceDig == 0 && ((int)r * 1.0) == r)
+               chain.print("%1.0f%s\n",r,szLineBuf2);
+            else
+               chain.print("%1.*f%s\n",iDigits,r,szLineBuf2);
+         }
+
+         if (!chain.usedata)
+            break;
+      }
+
+      if (bSum)
+      {
+         r = rTotal;
+
+         if (bShowForm)
+            strcpy(szLineBuf2,"\t:total");
+         else
+            szLineBuf2[0]='\0';
+
+         if (bForceDig == 0 && ((int)r * 1.0) == r)
+            chain.print("%1.0f%s\n",r,szLineBuf2);
+         else
+            chain.print("%1.*f%s\n",iDigits,r,szLineBuf2);
       }
 
       STEP_CHAIN(iChainNext, 1);
@@ -57804,6 +58210,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #+perline -spat \"web -nodump \\q.<run>text/xml/restart.xml\\q\"\n"
              "          on local ip's .100 .101 and .102\n"
              "          call a web command /xml/restart.xml.   [17]\n"
+             "     #sfk sel mydir .jpg +perline -spat \"echo <img src=\\q##ufile\\q \n"
+             "      #width=\\q400\\q> +tofile -append print.html\"\n"
+             "          create a file print.html containing all .jpg files of\n"
+             "          folder mydir, shown with 400 pixels width. [28]\n"
              );
       ehelp;
 
@@ -58788,6 +59198,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   $examples\n"
              "      #sfk for i from 1 to 10 +echo -var \"##(i)\" +endfor\n"
              "         print numbers 1 to 10.\n"
+             "      #sfk -var for i from 1 to 20\n"
+             "       #+copy -ltarg mydir\\in##(i).jpg mydir2\\out##(02i).jpg +endfor\n"
+             "         copy from mydir files in1.jpg, in2.jpg in3.jpg etc.\n"
+             "         to mydir2 as out01.jpg, out02.jpg, out03.jpg, showing\n"
+             "         the target filenames. add -yes after copy to confirm.\n"
              );
       ehelp;
 

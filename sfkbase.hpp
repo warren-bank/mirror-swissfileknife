@@ -1768,6 +1768,7 @@ public:
    bool nosft;             // force ftp protocol
    bool allowsft;          // allow sft protocol
    bool showprotocol;
+   bool brackets;
 };
 
 // extern struct CommandStats gs;

@@ -96,6 +96,8 @@ bool isPathTraversal(char *pszFileIn, bool bDeep);
 void fixPathChars(char *pszBuf);
 uchar mapchar(char ch);
 bool validFromIPMask(char *pszmask);
+int encodeHex(uchar *pszSrc, int iSrcLen, char *pszDst, int iMaxDest, char cPrefix, char *abToEncode);
+bool encodeURL(char *pszRaw);
 
 extern bool bGlblEscape;
 extern num  nGlblMemLimit;
@@ -155,6 +157,7 @@ extern char szAttrBuf2[MAX_LINE_LEN+10];
 extern char szAttrBuf3[MAX_LINE_LEN+10];
 extern char szRefNameBuf[MAX_LINE_LEN+10];
 extern char szRefNameBuf2[MAX_LINE_LEN+10];
+extern char szTopURLBuf[MAX_LINE_LEN+10];
 
 // internal
 int iGlblWebCnt=0;
@@ -18498,24 +18501,50 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      #sfk setvar<def>   set an SFK variable\n"
          "      #sfk getvar<def>   get SFK or environment variable\n"
          "\n");
+  printx("   $sfk variable output formatting\n"
+         "\n"
+         "      $formal syntax:\n"
+         "\n"
+         "         ##(-03.4varname)\n"
+         "\n"
+         "      $with possible control characters:\n"
+         "         -   format left justified, else right\n"
+         "         0   fill with zeros, else with blanks\n"
+         "         .4  take up to 4 chars from variable\n"
+         "\n"
+         "      $example: if variable i contains \"1\" then\n"
+         "\n"
+         "         $command                 output\n"
+         "         +echo -var \">##(i)<\"     >1<\n"
+         "         +echo -var \">##(3i)<\"    >  1<\n"
+         "         +echo -var \">##(-3i)<\"   >1  <\n"
+         "         +echo -var \">##(03i)<\"   >001<\n"
+         "\n"
+         "      $example: if variable s contains \"abcde\" then\n"
+         "\n"
+         "         $command                 output\n"
+         "         +echo -var \">##(.3s)<\"   >abc<\n"
+         "         +echo -var \">##(5.3s)<\"  >  abc<\n"
+         "\n");
   printx("   $sfk variable functions\n"
          "\n"
          "      when reading variable text like ##(varname) some extra\n"
          "      functions can be applied using ##(func(varname,...)).\n"
          "      available functions are:\n"
          "\n"
-         "      $strpos(v,'text')<def>        get index of text within v\n"
-         "      $strpos(v,-case 'text')<def>  same, case sensitive\n"
-         "      $strpos(v,-spat '\\x20')<def>  using slash patterns\n"
-         "      $strrpos(v,'text')<def>       search from right side\n"
-         "      $substr(v,o[,l])<def>         substring from offset o length l.\n"
+         "      #strpos(v,'text')<def>        get index of text within v\n"
+         "      #strpos(v,-case 'text')<def>  same, case sensitive\n"
+         "      #strpos(v,-spat '\\x20')<def>  using slash patterns\n"
+         "      #strrpos(v,'text')<def>       search from right side\n"
+         "      #substr(v,o[,l])<def>         substring from offset o length l.\n"
          "                              use negative o from right side.\n"
-         "      $[l/r]trim(v)<def>            strip whitespace at sides\n"
-         "      $lpad(v,n)<def>               fill left side up to n chars\n"
-         "      $rpad(v,n)<def>               fill right side up to n chars\n"
-         "      $isset(v)<def>                tells 1 if v is set, else 0\n"
-         "      $strlen(v)<def>               number of characters in v\n"
-         "\n"
+         "      #[l/r]trim(v)<def>            strip whitespace at sides\n"
+      // "      #lpad(v,n)<def>               fill left side up to n chars\n"
+      // "      #rpad(v,n)<def>               fill right side up to n chars\n"
+         "      #isset(v)<def>                tells 1 if v is set, else 0\n"
+         "      #strlen(v)<def>               number of characters in v\n"
+         "\n");
+      /*
          "      $examples:\n"
          "      #sfk -var setvar a=\"foo bar\"\n"
          "         #+echo \"##(substr(a,4,3))\"<def>    - prints 'bar'\n"
@@ -18524,6 +18553,13 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "         #+echo \"##(lpad(a,6))\"<def>        - prints '   foo'\n"
          "\n"
          );
+      */
+  printx("      $example: if variable s contains \"foo bar\" then\n"
+         "\n"
+         "      $command                           output\n"
+         "      +echo -var \"##(substr(a,4,3))\"     bar\n"
+         "      +echo -var \"##(strpos(a,'bar'))\"   4\n"
+         "\n");
    }
 
    if (!strcmp(pszSub, "shell"))
@@ -20243,7 +20279,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "                type directly after \"partcopy\" for all infos.\n"
              "      -fromto   use this if you don't want to specify offset\n"
              "                and length for the input, but a start and end\n"
-             "                offset (with length being end minus start).\n"
+             "                offset. end offset is exclusive, i.e. length\n"
+             "                is end minus start.\n"
+             "      -fromtoinc  same as -fromto but including end offset,\n"
+             "                so copy length is (end - start) + 1\n"
              "      -allfrom  copy all from start offset, until end of file.\n"
              "      -noext    do not allow an extension of the output file,\n"
              "                stop with error if writing beyond output end.\n"
@@ -20286,6 +20325,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       num    nSrcOff    = 0;
       num    nDstOff    = 0;
       num    nCopyLen   = 0;
+      num    nCopyInc   = 0;
       num    nSrcEnd    = 0;
       bool   bDelDst    = 0;
       bool   bAbsolute  = 0;
@@ -20302,6 +20342,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       {
          char *pszArg = argx[iDir];
 
+         if (!strcmp(pszArg, "-fromtoinc")) { // sfk1863
+            bAbsolute = 1;
+            nCopyInc  = 1;
+            continue;
+         }
+         else
          if (!strcmp(pszArg, "-fromto")) {
             bAbsolute = 1;
             continue;
@@ -20412,12 +20458,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             nSrcEnd = nInFileSize + nSrcEnd;
          }
          if (cs.verbose)
-            printf("mapping copy length  : %s = %s - %s\n",
+            printf("mapping copy length  : %s = %s - %s%s\n",
                numtoa(nSrcEnd - nSrcOff, 0, sz1),
                numtoa(nSrcEnd, 0, sz2),
-               numtoa(nSrcOff, 0, sz3)
+               numtoa(nSrcOff, 0, sz3),
+               (nCopyInc>0)?" (+1)":""
                );
-         nCopyLen = nSrcEnd - nSrcOff;
+         nCopyLen = (nSrcEnd - nSrcOff) + nCopyInc;
          if (nCopyLen < 0)
             return 9+perr("end offset is lower than start offset");
       }
@@ -25372,6 +25419,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       int isubrc = 0; // used only with single url
 
+      mclear(szLineBuf);
+
       for (int irec=0;;irec++)
       {
          char *pszRec = 0;
@@ -25400,6 +25449,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             snprintf(szURL, SFK_MAX_PATH, "http://%s", pszRec);
             pszRec = szURL;
          }
+
+         // .
+         #ifdef SFKINT
+         // sfk1860 url blank encoding
+         if (encodeURL(pszRec))
+            pszRec = szTopURLBuf;
+         #endif
 
          Coi *psrc = new Coi(pszRec, 0);
          if (!psrc) return 9+perr("out of memory");
@@ -26331,6 +26387,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
+
+
 
 
 
