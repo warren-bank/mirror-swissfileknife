@@ -2645,6 +2645,7 @@ int FTPClient::list(char *pdir, CoiTable **ppout, char *pRootURL)
    TCPCon *pdat = 0;
 
    if (bClSFT) {
+      // if (nClSFTVer >= 105) may use SLSB
       if (pClCtlCon->putf("SLST %s\r\n", pdir)) return 9;
       pdat = pClCtlCon;
    } else {
@@ -2723,6 +2724,8 @@ int FTPClient::list(char *pdir, CoiTable **ppout, char *pRootURL)
       // drw-rw-rw-d 1 ftp ftp            0 20061231235959 mydir
       // -rw-rw-rw-b 1 ftp ftp        30353 20061231235959 test.dat
       //    0        1  2   3          4    5              6
+
+      // since SFT 105, t/b are no longer provided.
 
       char *apcol[20];
       memset(apcol, 0, sizeof(apcol));
@@ -4684,11 +4687,14 @@ int UDPIO::initSendReceive
  
       char name[512];
       PHOSTENT hostinfo;
+      mclear(name);
+      mclear(hostinfo);
+
       if (gethostname(name, sizeof(name)))
          return 11+perr("gethostname failed\n");
 
-      if ((hostinfo=gethostbyname(name)) != NULL)
-         return 11+perr("get ownhost failed\n");
+      if (!(hostinfo=gethostbyname(name)))
+         return 11+perr("get ownhost failed (%s) (2)\n", name);
 
       struct in_addr *pin_addr = (struct in_addr *)*hostinfo->h_addr_list;
       mreq.imr_interface.s_addr = pin_addr->s_addr;

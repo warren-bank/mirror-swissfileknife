@@ -700,12 +700,28 @@ public:
 
    bool  hasSize  ( );
    bool  hasTime  ( );
+   bool  hasAttr  ( );
 
    num   getSize  ( );
    num   getTime  ( );
+   uint  getAttr  ( );
+   // bits 2,1,0  : rwx other
+   // bits 5,4,3  : rwx group
+   // bits 8,7,6  : rwx user
+   // bits 11,10,9: uid, gid, sticky
+   // bits 12...15: linux file types
+   // ------------
+   // bit  30     : sfk: from linux
+   // bit  31     : sfk: attributes are valid
 
    void  setSize  (num nSize );
-   void  setTime  (num nMTime, num nCTime = 0);
+   void  setTime  (num nMTime, num nCTime = 0); // just in memory
+
+   int   writeAttr(uint nattr, bool bFullPreserve); // set and change on disk
+   // RC 0: OK, else error
+   // Changes only bits 0..11 but not the file type.
+   // By default conforms to umask under linux.
+   // With bFullPreserve, umask is ignored and all attribs are written.
 
    bool  isWriteable ( );
 
@@ -823,8 +839,14 @@ public:
    
    int  getOpenElapsedTime  ( );  // elapsed msec since open(), or 0
 
+   int  setKeepTime     (Coi *pSrc);
+
    // how much bytes of a file should be read to detect binary
    static int iBinaryCheckSize;
+
+   // internal
+   static int writeAttrRaw(char *pszFile, uint nattr, bool bFullPreserve, bool bVerbose);
+   static int forceWriteable(char *pszFile);
 
 private:
    // nextEntry() does additional checks, this does none:
@@ -864,6 +886,8 @@ private:
 
    #endif // VFILEBASE
 
+   int   applyWriteCloseTime( );
+
    bool  debug    ( );
 
    // core data for every lightweight Coi:
@@ -887,6 +911,9 @@ private:
    bool  bClArc;
    uchar nClUCS;     // 0:none 0xFE:LE 0xEF:BE
    bool	bClSnap;		// sfk snapfile
+   bool  bClSetWriteCloseTime;
+   // after close(), set file time using MTime and/or CTime
+   uint  nClAttr;    // file attributes
 
    // ON EXTENSIONS ABOVE, ADAPT COI::COPY, Coi::fillFrom!
    // also check FileStat::readFrom, writeTo
@@ -933,6 +960,7 @@ public: // not really
 #define COI_HAVE_BINARY (1UL<<7)
 #define COI_HAVE_NODE   (1UL<<8)
 #define COI_HAVE_ARC    (1UL<<9)
+#define COI_HAVE_ATTR   (1UL<<10)
 
 class CoiTable {
 public:
