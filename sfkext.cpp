@@ -41,7 +41,7 @@ int esys(const char *pszContext, const char *pszFormat, ...);
 int myfseek(FILE *f, num nOffset, int nOrigin);
 bool endsWithExt(char *pname, char *pszextin);
 
-bool endsWithArcExt(char *pname);
+bool endsWithArcExt(char *pname, int iTraceFrom);
 extern cchar *arcExtList[];
 void tellMemLimitInfo();
 int quietMode();
@@ -50,9 +50,19 @@ int createOutDirTree(char *pszOutFile);
 size_t myfwrite(uchar *pBuf, size_t nBytes, FILE *fout, num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
 int getTwoDigitHex(char *psz);
 int sfkmemcmp2(uchar *psrc1, uchar *psrc2, num nlen, bool bGlobalCase, uchar *pFlags);
+void myfgets_init    ( );
+int myfgets         (char *pszOutBuf, int nOutBufLen, FILE *fin, bool *rpBinary=0, char *pAttrBuf=0);
+extern char *ipAsString(struct sockaddr_in *pAddr, char *pszBuffer, int iBufferSize, uint uiFlags=0);
 
 extern bool bGlblEscape;
 extern num  nGlblMemLimit;
+
+extern char szLineBuf[MAX_LINE_LEN+10];
+extern char szLineBuf2[MAX_LINE_LEN+10];
+extern char szLineBuf3[MAX_LINE_LEN+10];
+extern char szAttrBuf[MAX_LINE_LEN+10];
+extern char szAttrBuf2[MAX_LINE_LEN+10];
+extern char szAttrBuf3[MAX_LINE_LEN+10];
 
 #ifndef USE_SFK_BASE
 UDPIO sfkNetIO;
@@ -1984,7 +1994,7 @@ int HTTPClient::getFileHead(char *purl, Coi *pcoi, cchar *pinfo)
       pinf("redirected to %s\n", purl);
 
 		// evaluate new url for archive extensions
-		if (endsWithArcExt(purl)) {
+		if (endsWithArcExt(purl, 7)) {
 			mtklog(("hth: archive detected by redirect: %s", purl));
 			pcoi->setArc(1);
 		}
@@ -2264,7 +2274,7 @@ _
       pinf("redirected to %s\n", purl);
 
 		// evaluate new url for archive extensions
-		if (endsWithArcExt(purl)) {
+		if (endsWithArcExt(purl, 8)) {
 			mtklog(("hto: archive detected by redirect: %s", purl));
 			pcoi->setArc(1);
 		}
@@ -3630,6 +3640,11 @@ int Coi::rawLoadDir( )
    }
    data().bloaddirdone = 1;
 
+   #ifdef SFKDEEPZIP
+   if (cs.probefiles)
+      probeFile();
+   #endif // SFKDEEPZIP
+
    if (isHttp())  return rawLoadHttpDir();
    if (isFtp())   return rawLoadFtpDir();
 
@@ -4226,13 +4241,13 @@ int Coi::loadOwnFileRaw(num nmaxsize, uchar **ppout, num &rsize)
 // rc >0: not loaded, e.g. because file is too large
 int Coi::provideInput(int nTraceLine, bool bsilent)
 {__
-   if (isNet() && isTravelZip(1))
+   if (isNet() && isTravelZip(110,1))
       {_ } // accept, need to cache whole file
    else
    if (isZipSubEntry())
       {_ } // accept, need to cache sub entry via parent
    else {
-      mtklog(("coi::provideInput not needed: %s net=%d tz=%d", name(),isNet(),isTravelZip(1)));
+      mtklog(("coi::provideInput not needed: %s net=%d tz=%d", name(),isNet(),isTravelZip(110,1)));
 _     return 0; // nothing to do
    }
 
@@ -4314,7 +4329,7 @@ bool Coi::isNet() {
 bool Coi::isVirtual(bool bWithRootZips)
 {
    if (isNet() || isZipSubEntry())     return 1;
-   if (bWithRootZips && isTravelZip()) return 1;
+   if (bWithRootZips && isTravelZip(109)) return 1;
    return 0;
 }
 
@@ -8789,9 +8804,9 @@ int execFixFile(ushort *ain, __wfinddata64_t *pdata)
 
    bool bNameDiffers = memcmp(ain, apure, (isrc+1)*2) ? 1 : 0;
 
-   time_t now = time(NULL);
+   mytime_t now = mytime(NULL);
    struct tm *tm = 0;
-   tm = localtime(&now);
+   tm = mylocaltime(&now);
    tm->tm_isdst = -1;
 
    tm->tm_year = adate[0] - 1900;
@@ -8801,7 +8816,7 @@ int execFixFile(ushort *ain, __wfinddata64_t *pdata)
    tm->tm_min  = adate[4];
    tm->tm_sec  = adate[5];
 
-   time_t nTime = mktime(tm);
+   mytime_t nTime = mymktime(tm);
    num nTime2 = (num)nTime;
 
    bool bTimeDiffers = 0;
@@ -9662,6 +9677,1692 @@ int execMedia(char *pszSrc, char *pszOutFile)
       m.iClInvalidFiles++;
 
    return iRC;
+}
+
+int ispuretext(char *psz, char ccurdelim, char coutdelim, char cquote)
+{
+   while (*psz)
+   {
+      char c = *psz++;
+      if (c == ccurdelim)
+         return 1;
+      if (c == coutdelim)
+         return 0;
+      if (c == cquote)
+         return 0;
+   }
+
+   return 1;
+}
+
+int ispurenum(char *psz, char ccurdelim, char coutdelim)
+{
+   /*
+      +123.456e+10
+      -234.387e3
+      -234,387e-3
+   */
+
+   if (*psz=='+' || *psz=='-')
+      psz++;
+
+   int istate = 1;
+
+   while (*psz != 0 && *psz != ccurdelim)
+   {
+      char c = *psz++;
+
+      if (c == coutdelim)
+         return 0;
+
+      switch (istate)
+      {
+         case 1: // expect just digit
+            if (isdigit(c)) {
+               istate = 2;
+               continue;
+            }
+            return 0;
+
+         case 2: // expect digit . , e
+            if (isdigit(c))
+               continue;
+            if (c == '.' || c == ',')
+               continue;
+            if (tolower(c) == 'e') {
+               istate = 3;
+               continue;
+            }
+            return 0;
+
+         case 3: // after e: expect + - digit
+            if (c == '+' || c == '-') {
+               istate = 4;
+               continue;
+            }
+         case 4:
+            if (isdigit(c))
+               continue;
+            return 0;
+      }
+   }
+
+   return 1;
+}
+
+int csvToTab(char *psrc, char *pdst, int imaxdst)
+{
+   char cdelim     = cs.cinsep;
+   char ctab       = cs.coutsep;
+   char cquote     = cs.cquote;
+   char ctabescape = cs.coutsepesc;
+
+   /*
+      5324,John Smith,Los Angeles
+      7936,"James Foo, Dr.",Atlanta
+      3297,"Jack ""Goo"" Bar",San Diego
+      5239,,Nowhere
+      5240,Empty{TAB}City,
+   */
+
+   char *pSrcCur = psrc;
+   char *pSrcMax = psrc + strlen(psrc);
+   char *pDstCur = pdst;
+   char *pDstMax = pdst + (imaxdst - 20);
+
+   int istate   = 0;
+   int binquote = 0;
+
+   while (pSrcCur < pSrcMax && pDstCur < pDstMax)
+   {
+      char c  = *pSrcCur++;
+      char c2 = *pSrcCur;  // NULL if at end
+
+      switch (istate)
+      {
+         case 0:  // expect quote, start of data, delimiter
+            if (c == cquote) {
+               binquote = 1;
+               istate = 1;
+               continue;
+            }
+            if (c == cdelim) {
+               *pDstCur++ = ctab;
+               continue;
+            }
+            istate = 1;
+            // fall through
+
+         case 1:  // expect data byte, escaped quote, delimiter, EOR
+            if (c == cquote && c2 == cquote) {
+               *pDstCur++ = cquote;
+               pSrcCur++;
+               continue;
+            }
+            if (binquote == 0 && c == cdelim) {
+               *pDstCur++ = ctab;
+               istate = 0;
+               continue;
+            }
+            if (binquote == 1 && c == cquote) {
+               // delimiter or EOR must be next
+               binquote = 0;
+               continue;
+            }
+            if (c == ctab) {
+               // remove tabs from input
+               c = ctabescape;
+            }
+            *pDstCur++ = c;
+            continue;
+      }
+   }
+
+   if (pSrcCur >= pSrcMax)
+   {
+      // end of record checks
+      if (pDstCur >= pDstMax)
+         return 10;
+
+      switch (istate)
+      {
+         case 0:  // expect quote, data, delimiter
+            *pDstCur++ = '\0';
+            return 0;
+
+         case 1:  // expect data byte, escaped quote, delimiter, EOR
+            if (binquote)
+               return 11;
+            *pDstCur++ = '\0';
+            return 0;
+      }
+   }
+
+   return 12;
+}
+
+int tabToCsv(char *psrc, char *pdst, int imaxdst)
+{
+   char ctab       = cs.cinsep;
+   char cdelim     = cs.coutsep;
+   char cquote     = cs.cquote;
+   bool bquotetext = cs.quotetext;
+   bool bfullquote = cs.quoteall;
+
+   char *pSrcCur = psrc;
+   char *pSrcMax = psrc + strlen(psrc);
+   char *pDstCur = pdst;
+   char *pDstMax = pdst + (imaxdst - 20);
+
+   int istate   = 0;
+   int binquote = 0;
+   int boutquoteopen = 0;
+
+   while (pSrcCur < pSrcMax && pDstCur < pDstMax)
+   {
+      char c  = *pSrcCur++;
+      char c2 = *pSrcCur;  // NULL if at end
+
+      switch (istate)
+      {
+         case 0:  // expect start of data, tab, quote-to-escape
+            if (c == ctab) {
+               if (bfullquote) {
+                  *pDstCur++ = cquote;
+                  *pDstCur++ = cquote;
+               }
+               *pDstCur++ = cdelim;
+               continue;
+            }
+            // start of data, quote-to-escape
+            if (   bfullquote == 1
+                || (bquotetext && !ispurenum(pSrcCur-1, ctab, cdelim))
+                || (!ispuretext(pSrcCur-1, ctab, cdelim, cquote))
+               )
+            {
+               *pDstCur++ = cquote;
+               boutquoteopen = 1;
+            }
+            istate = 1;
+            // fall through
+
+         case 1:  // expect tab, data byte, quote-to-escape
+            if (c == ctab) {
+               if (boutquoteopen)
+                  *pDstCur++ = cquote;
+               *pDstCur++ = cdelim;
+               boutquoteopen = 0;
+               istate = 0;
+               // tab at end of record?
+               if (pSrcCur >= pSrcMax) {
+                  // then it means a trailing empty field
+                  if (bfullquote) {
+                     *pDstCur++ = cquote;
+                     *pDstCur++ = cquote;
+                  }
+                  // but without extra separator
+               }
+               continue;
+            }
+            if (c == cquote) {
+               // escape quote
+               *pDstCur++ = cquote;
+               *pDstCur++ = cquote;
+               continue;
+            }
+            // continue data
+            *pDstCur++ = c;
+            continue;
+      }
+   }
+
+   if (pSrcCur >= pSrcMax)
+   {
+      // end of record checks
+      if (pDstCur >= pDstMax)
+         return 10;
+
+      switch (istate)
+      {
+         case 0:  // expect start of data, tab
+            *pDstCur++ = '\0';
+            return 0;
+
+         case 1:  // expect tab, data byte
+            if (boutquoteopen)
+               *pDstCur++ = cquote;
+            *pDstCur++ = '\0';
+            return 0;
+      }
+   }
+
+   return 12;
+}
+
+int execCsvConv(bool bToCsv, Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *pszOutFile)
+{
+   FILE *fout = 0;
+
+   // INPUT FILE CLOSES AUTOMATICALLY.
+   FileCloser fcin(pcoi); // does nothing if pcoi == NULL
+
+   if (pcoi)
+   {
+      if (pcoi->open("rb"))
+         return 9+perr("cannot read: %s %s\n", pcoi->name(),pcoi->lasterr());
+   }
+
+   if (pszOutFile)
+      if (!(fout = fopen(pszOutFile, "w")))
+         return 10+perr("cannot write: %s\n", pszOutFile);
+
+   int nMaxLineLen = sizeof(szLineBuf)-10;
+   int ncheckcnt   = 0;
+   int lRC         = 0;
+   int nLine       = 0;
+
+   myfgets_init();
+   while (1)
+   {
+      // --- get next line to linebuf ---
+
+      memset(szAttrBuf, ' ', MAX_LINE_LEN-10);
+      szAttrBuf[MAX_LINE_LEN-10] = '\0';
+
+      int nRead = 0;
+
+      if (pInData) {
+         if (pInData->eod())
+            break;
+         char *pattr = 0;
+         char *psz = pInData->read(&pattr);
+         mystrcopy(szLineBuf, psz, MAX_LINE_LEN);
+         strcat(szLineBuf, "\n"); // force LF
+         int nlen = strlen(szLineBuf);
+         if (pattr) {
+            mystrcopy(szAttrBuf, pattr, MAX_LINE_LEN);
+            if ((int)strlen(szAttrBuf) < nlen-1) {
+               memset(szAttrBuf, ' ', nlen);
+               szAttrBuf[nlen] = '\0';
+            }
+         }
+         nRead = nlen;
+      } else if (pcoi) { // native or virtual file
+         nRead = pcoi->readLine(szLineBuf, nMaxLineLen);
+      } else if (fin)  { // probably stdin
+         nRead = myfgets(szLineBuf, nMaxLineLen, fin, 0, szAttrBuf);
+      }
+      if (!nRead)
+         break; // EOD
+
+      if ((++ncheckcnt > 100000) && ((ncheckcnt & 65535)==0))
+         if (userInterrupt())   // costs a bit of time
+            {  lRC=9; break;  } // stop by escape
+
+      szLineBuf[nRead] = '\0';
+      szAttrBuf[nRead] = '\0';
+      nLine++;
+      removeCRLF(szLineBuf);
+
+      // --- process line ---
+      int isubrc = 0;
+      if (bToCsv == 0)
+         isubrc = csvToTab(szLineBuf, szLineBuf2, MAX_LINE_LEN);
+      else
+         isubrc = tabToCsv(szLineBuf, szLineBuf2, MAX_LINE_LEN);
+      if (isubrc) {
+         if (!cs.nowarn)
+            pwarn("input line %d wrong format (%d): %s", nLine, isubrc, szLineBuf);
+         snprintf(szLineBuf2, MAX_LINE_LEN, "[warning:%d]\t%s", isubrc, szLineBuf);
+      }
+
+      // -- write to output ---
+      if (fout)
+         fprintf(fout, "%s\n", szLineBuf2);
+      else
+      if (chain.coldata)
+         chain.addLine(szLineBuf2, str(""));
+      else
+         printf("%s\n", szLineBuf2);
+   }
+
+   if (fout)
+      fclose(fout);
+
+   return lRC;
+}
+
+UDPCore::UDPCore(int iMaxWait)
+{
+   memset(this, 0, sizeof(*this));
+
+   for (int i=0; i<nClCon; i++)
+      aClCon[i].sock = INVALID_SOCKET;
+
+   nClMaxSock = 0;
+
+   bpure = 1;
+   
+   tstart = getCurrentTime();
+
+   imaxwait = iMaxWait;
+}
+
+UDPCore::~UDPCore( )
+{
+   if (nClCon > 0)
+      perr("missing shutdown() on udpcore %p",this);
+
+   shutdown();
+}
+
+int UDPCore::lastError( )
+{
+   #ifdef _WIN32
+   return WSAGetLastError();
+   #else
+   return errno;
+   #endif
+}
+
+void UDPCore::shutdown( )
+{
+   for (int i=0; i<nClCon; i++) 
+      if (aClCon[i].sock != INVALID_SOCKET)
+         closesocket(aClCon[i].sock);
+
+   memset(this, 0, sizeof(*this));
+
+   for (int i=0; i<nClCon; i++)
+      aClCon[i].sock = INVALID_SOCKET;
+
+   nClMaxSock = 0;
+}
+
+int UDPCore::makeSocket(int iMode, char *pszHost, int nportin)
+{__
+   if (nClCon >= MAX_UDP_CON-2)
+      return 9+perr("too many sockets, cannot connect more");
+
+   mclear(aClCon[nClCon]);
+   aClCon[nClCon].sock = INVALID_SOCKET;
+
+   uint nPort = nportin;
+
+   struct hostent *pTarget;
+   struct sockaddr_in oaddr;
+   SOCKET hSock = 0;
+
+   switch (iMode)
+   {
+      case 1: hSock = socket(AF_INET, SOCK_DGRAM, 0); break;
+      case 2: hSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP); break;
+   }
+
+   if (hSock == INVALID_SOCKET)
+      return 9+perr("cannot create socket, probably missing admin rights");
+
+   UDPCon *pcon = &aClCon[nClCon];
+
+   if ((pTarget = sfkhostbyname(pszHost)) == NULL)
+   {
+      closesocket(hSock);
+      return 9+perr("cannot get host\n");
+   }
+
+   char szBuf[100];
+
+   strcopy(pcon->host, pszHost);
+   pcon->port = nportin;
+
+   pcon->sock = hSock;
+
+   memcpy(&pcon->addr.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
+   pcon->addr.sin_family = AF_INET;
+   pcon->addr.sin_port = htons((unsigned short)nPort);
+
+   char *pstr = ipAsString((struct sockaddr_in *)&pcon->addr,szBuf,sizeof(szBuf),bpure?0:2);
+   strcopy(pcon->ipstr, pstr);
+
+   FD_SET(pcon->sock, &clReadSet);
+
+   nClMaxSock = mymax(nClMaxSock, pcon->sock);
+
+   nClCon++;
+
+   return 0;
+}
+
+int UDPCore::selectInput(int *pIndex, int iMaxWaitMSec)
+{
+   struct timeval tv;
+	tv.tv_sec  = iMaxWaitMSec/1000;
+	tv.tv_usec = (iMaxWaitMSec < 1000) ? iMaxWaitMSec * 1000 : 0;
+
+   memcpy(&clSetCopy, &clReadSet, sizeof(fd_set));
+
+   int nrc = select(nClMaxSock+1,
+      &clSetCopy,
+      NULL,
+      NULL,
+      &tv
+      );
+
+   if (nrc == 0)
+      return 1; // nothing received
+
+   if (nrc < 0)
+      return 9+perr("select() failed, %d",lastError());
+
+   for (int i=0; i<nClCon; i++)
+   {
+      if (FD_ISSET(aClCon[i].sock, &clSetCopy)) 
+      {
+         *pIndex = i;
+         return 0;
+      }
+   }
+
+   return 1; // nothing to do
+}
+
+void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile)
+{
+      /*
+         sfk fromclip +filt -srep "_\\_\\\\_" -srep "_\q_\\\q_" -sform "          \q$col1\\n\q"
+         sfk filt src -rep "_%_%%_" -srep "_\\_\\\\_" -srep "_\q_\\\q_" -sform "         \q$col1\\n\q" +toclip
+      */
+
+      switch (nlang) {
+      case 1:
+      chain.print(
+          "import java.io.*;\n"
+          "\n"
+          "public class %s\n"
+          "{\n"
+          "    static void log(String s) { System.out.println(\"main: \"+s); }\n"
+          "\n"
+          "    public static void main(String args[]) throws Throwable\n"
+          "    {\n"
+          "        if (args.length < 2)\n"
+          "            { log(\"supply in- and output filename.\"); return; }\n"
+          "\n"
+          "        // copy or convert text file\n"
+          "        BufferedReader rin = new BufferedReader(\n"
+          "            new InputStreamReader(\n"
+          "                new FileInputStream(args[0]), \"ISO-8859-1\"\n"
+          "                // or US-ASCII,UTF-8,UTF-16BE,UTF-16LE,UTF-16\n"
+          "                ));\n"
+          "\n"
+          "        PrintWriter pout = new PrintWriter(\n"
+          "            new OutputStreamWriter(\n"
+          "                new FileOutputStream(args[1]), \"ISO-8859-1\"\n"
+          "                ));\n"
+          "\n"
+          "        while (true) {\n"
+          "            String sline = rin.readLine();\n"
+          "            if (sline == null) break; // EOD\n"
+          "            log(\"copying line: \"+sline);\n"
+          "            pout.println(sline);\n"
+          "        }\n"
+          "\n"
+          "        pout.close();\n"
+          "        rin.close();\n"
+          "    }\n"
+          "};\n",
+          pszClassName
+        );
+         break;
+
+      case 2:
+      chain.print(
+         "#include <stdio.h>\n"
+         "#include <string.h>\n"
+         "#include <stdarg.h>\n"
+         "\n"
+         "// print error message with variable parameters.\n"
+         "int perr(const char *pszFormat, ...) {\n"
+         "   va_list argList;\n"
+         "   va_start(argList, pszFormat);\n"
+         "   char szBuf[1024];\n"
+         "   ::vsprintf(szBuf, pszFormat, argList);\n"
+         "   fprintf(stderr, \"error: %%s\", szBuf);\n"
+         "   return 0;\n"
+         "}\n"
+         "\n"
+         "// copy text lines from one file into another.\n"
+         "int main(int argc, char *argv[]) \n"
+         "{\n"
+         "  if (argc < 2) return 9+perr(\"specify input and output filename.\\n\");\n"
+         "\n"
+         "  char *pszInFile  = argv[1];\n"
+         "  char *pszOutFile = argv[2];\n"
+         "\n"
+         "  FILE *fin  = fopen(pszInFile , \"rb\"); if (!fin ) return 9+perr(\"cannot read %%s\\n\" , pszInFile);\n"
+         "  FILE *fout = fopen(pszOutFile, \"wb\"); if (!fout) return 9+perr(\"cannot write %%s\\n\", pszOutFile);\n"
+         "\n"
+         "  char szBuf[1024];\n"
+         "  memset(szBuf, 0, sizeof(szBuf));\n"
+         "  while (fgets(szBuf, sizeof(szBuf)-10, fin)) \n"
+         "  {\n"
+         "     char *psz = strchr(szBuf, '\\r'); if (psz) *psz = '\\0'; // strip cr\n"
+         "           psz = strchr(szBuf, '\\n'); if (psz) *psz = '\\0'; // strip lf\n"
+         "     printf(\"line: \\\"%%s\\\"\\n\", szBuf);\n"
+         "     strcat(szBuf, \"\\n\");\n"
+         "     int nlen = strlen(szBuf);\n"
+         "     if (fwrite(szBuf, 1, nlen, fout) != nlen)\n"
+         "        return 9+perr(\"failed to fully write %%s\\n\", pszOutFile);\n"
+         "  }\n"
+         "\n"
+         "  fclose(fout);\n"
+         "  fclose(fin);\n"
+         "\n"
+         "  return 0;\n"
+         "}\n"
+        );
+         break;
+
+      case 3:
+      chain.print(
+         "@rem windows command shell batch example\n"
+         "@echo off\n"
+         "IF \"%%1\"==\"\" GOTO xerr01\n"
+         "echo \"parameter is %%1\"\n"
+         "GOTO xdone\n"
+         "\n"
+         ":xerr01\n"
+         "echo \"please supply a parameter.\"\n"
+         "echo \"example: mybat parm123\"\n"
+         "GOTO xdone\n"
+         "\n"
+         ":xdone\n"
+         );
+         break;
+
+      case 4:
+      chain.print(
+         "#!/bin/bash\n"
+         "\n"
+         "function pmsg {\n"
+         "   # uses a local variable mystr\n"
+         "   local mystr=\"info: $1\"\n"
+         "   echo $mystr\n"
+         "}\n"
+         "\n"
+         "myparm1=\"$1 and $2\"       # no blanks around \"=\"\n"
+         "\n"
+         "if [ \"$2\" = \"\" ]; then    # requires all blanks\n"
+         "   pmsg \"please supply two parameters.\"\n"
+         "else\n"
+         "   pmsg \"you supplied \\\"$myparm1\\\".\"\n"
+         "\n"
+         "   #  < -lt   > -gt   <= -le   >= -ge   == -eq   != -ne\n"
+         "   i=1\n"
+         "   while [ $i -le 5 ]; do # not \"$i < 5\"\n"
+         "      echo counting: $i   # quotes are optional\n"
+         "      let i+=1            # not \"i += 1\" or \"$i+=1\"\n"
+         "   done\n"
+         "fi\n"
+         );
+         break;
+
+      case 5:
+      chain.print(
+         "sfk select testfiles .txt .hpp .cpp\n"
+         "\n"
+         "   // find words supplied by user.\n"
+         "   // note that %%1 is the same as $1.\n"
+         "   +find\n"
+         "      %%1 %%2 %%3 $4 $5 $6\n"
+         "\n"
+         "   // process files containing hits\n"
+         "   +run -quiet \"sfk echo \\\"Found hit in: [green]$file[def]\\\"\" -yes\n"
+         "\n"
+         "   // run the script by:\n"
+         "   // \"sfk script %s pattern1 [pattern2 ...]\"\n",
+         pszOutFile ? pszOutFile : "thisfile"
+         );
+         break;
+
+      case 6:
+      chain.print(
+         "@echo off\n"
+         "sfk script %s -from begin %%*\n"
+         "GOTO xend\n"
+         "\n"
+         "sfk label begin\n"
+         "\n"
+         "   // select text files from testfiles:\n"
+         "   +select testfiles .txt\n"
+         "\n"
+         "   // filter words foo, and user-supplied:\n"
+         "   +ffilter\n"
+         "      -+foo\n"
+         "      %%1\n"
+         "      %%2\n"
+         "\n"
+         "   // display results in depeche view:\n"
+         "   +view\n"
+         "\n"
+         "   // end of sfk script:\n"
+         "   +end\n"
+         "\n"
+         ":xend\n",
+         pszOutFile ? pszOutFile : "thisfile.bat"
+         );
+         break;
+
+      case 7:
+      chain.print(
+         "#!/bin/bash\n"
+         "sfk script %s -from begin $@\n"
+         "function skip_block\n"
+         "{\n"
+         "sfk label begin\n"
+         "\n"
+         "   // select text files from testfiles:\n"
+         "   +select testfiles .txt\n"
+         "\n"
+         "#  // filter words foo, and user-supplied.\n"
+         "#  // note that # lines are skipped by bash,\n"
+         "#  // but not by sfk.\n"
+         "#  +ffilter\n"
+         "#     -+foo\n"
+         "#     $1\n"
+         "#     $2\n"
+         "\n"
+         "   // display results in depeche view:\n"
+         "   +view\n"
+         "\n"
+         "   // end of sfk script:\n"
+         "   +end\n"
+         "}\n",
+         pszOutFile ? pszOutFile : "thisfile.bat"
+         );
+         break;
+
+      case 8:
+      chain.print(
+         "\n"
+         "// Example source code for image file conversion\n"
+         "// and simple image processing with Java.\n"
+         "// Requires SUN's Java Advanced Imaging I/O Tools.\n"
+         "// Usage: java imtool input.png outbase\n"
+         "// Creates: outbase-jpg.jpg and further.\n"
+         "\n"
+         "import java.io.*;\n"
+         "import java.awt.image.*;\n"
+         "import javax.imageio.*;\n"
+         "import com.sun.image.codec.jpeg.*;\n"
+         "\n"
+         "public class %s\n"
+         "{\n"
+         "    static void log(String s) { System.out.println(s); }\n"
+         "\n"
+         "    public static void main(String args[]) throws Throwable\n"
+         "    {\n"
+         "        if (args.length < 2)\n"
+         "            throw new Exception(\"specify input filename and output basename.\");\n"
+         "\n"
+         "        String src  = args[0];\n"
+         "        String dst1 = args[1]+\"-jpg.jpg\";\n"
+         "        String dst2 = args[1]+\"-png.png\";\n"
+         "        String dst3 = args[1]+\"-green.jpg\";\n"
+         "        String dst4 = args[1]+\"-green.png\";\n"
+         "\n"
+         "        // load a PNG image, with or without transparency (alpha channel).\n"
+         "        BufferedImage buf = ImageIO.read(new File(src));\n"
+         "        int nwidth  = buf.getWidth();\n"
+         "        int nheight = buf.getHeight();\n"
+         "        log(\"width = \"+nwidth+\" pixels, height = \"+nheight);\n"
+         "\n"
+         "        // trivial file conversion: save as a JPEG or PNG image.\n"
+         "        // JPEG will work only if input contained no transparency.\n"
+         "        ImageIO.write(buf, \"jpg\", new File(dst1)); log(dst1);\n"
+         "        ImageIO.write(buf, \"png\", new File(dst2)); log(dst2);\n"
+         "\n"
+         "        // image processing: turn all transparent pixels into green.\n"
+         "\n"
+         "        // 1. get access to main pixels, and transparency.\n"
+         "        WritableRaster rmain = buf.getRaster();\n"
+         "        WritableRaster rtran = buf.getAlphaRaster();\n"
+         "\n"
+         "        // 2. create a memory image to write to, WITHOUT transparency.\n"
+         "        BufferedImage bout  = new BufferedImage(nwidth,nheight,BufferedImage.TYPE_INT_RGB);\n"
+         "        WritableRaster rout = bout.getRaster();\n"
+         "\n"
+         "        int apixm[] = new int[4]; // main  pixel\n"
+         "        int apixt[] = new int[4]; // trans pixel\n"
+         "        int apixr[] = new int[4]; // repl. color\n"
+         "\n"
+         "        apixt[0] = 0xFF; // default is non-transparent\n"
+         "        apixr[1] = 0xFF; // set replacement color to green\n"
+         "\n"
+         "        for (int y=0; y<nheight; y++)\n"
+         "         for (int x=0; x<nwidth; x++) \n"
+         "         {\n"
+         "            rmain.getPixel(x,y,apixm);\n"
+         "            if (rtran != null)\n"
+         "                rtran.getPixel(x,y,apixt);\n"
+         "            if (apixt[0] == 0x00)\n"
+         "                // pixel is fully transparent: set to green\n"
+         "                rout.setPixel(x,y,apixr);\n"
+         "            else\n"
+         "                // else copy through, do not change.\n"
+         "                rout.setPixel(x,y,apixm);\n"
+         "         }\n"
+         "\n"
+         "        // save memory image as JPEG, with control of quality.\n"
+         "        File file = new File(dst3);\n"
+         "        FileOutputStream out = new FileOutputStream(file);\n"
+         "        JPEGImageEncoder encoder = JPEGCodec.createJPEGEncoder(out);\n"
+         "        JPEGEncodeParam param = encoder.getDefaultJPEGEncodeParam(bout);\n"
+         "        param.setQuality((float)90.0, false); // 90 percent quality\n"
+         "        encoder.setJPEGEncodeParam(param);\n"
+         "        encoder.encode(bout);\n"
+         "        out.close();\n"
+         "        log(dst3);\n"
+         "\n"
+         "        // save memory image as PNG.\n"
+         "        ImageIO.write(bout, \"png\", new File(dst4)); log(dst4);\n"
+         "    }\n"
+         "};\n"
+         ,pszClassName
+         );
+         break;
+
+      case 9:
+      chain.print(
+         "<?php\n"
+         "   // simple text file read and write in php.\n"
+         "   // requires the php command line interface:\n"
+         "   // 1. get the php 5.x zip package\n"
+         "   // 2. unzip into a dir like c:\\app\\php\n"
+         "   // 3. set PATH=%PATH%;c:\\app\\php;c:\\app\\php\\ext\n"
+         "   // then run this script by \"php %s\"\n"
+         "\n"
+         "   if ($argc < 3) {\n"
+         "      print(\"usage: php %s infile outfile\\n\");\n"
+         "      return;\n"
+         "   }\n"
+         "\n"
+         "   $ssrc = $argv[1];\n"
+         "   $sdst = $argv[2];\n"
+         "\n"
+         "   if (($fsrc = fopen($ssrc, \"r\")) === false) die(\"cannot read $ssrc\\n\");\n"
+         "   if (($fdst = fopen($sdst, \"w\")) === false) die(\"cannot write $sdst\\n\");\n"
+         "\n"
+         "   $nlines = 0;\n"
+         "   while (!feof($fsrc)) {\n"
+         "      $sline = fgets($fsrc, 4096);\n"
+         "      if (fputs($fdst, $sline) === false)\n"
+         "         { print(\"failed to write (disk full?)\\n\"); break; }\n"
+         "      $nlines++;\n"
+         "   }\n"
+         "\n"
+         "   fclose($fdst);\n"
+         "   fclose($fsrc);\n"
+         "\n"
+         "   print(\"$nlines lines copied from $ssrc to $sdst.\\n\");\n"
+         "?>\n"
+         ,pszOutFile ? pszOutFile : "thisfile.php"
+         ,pszOutFile ? pszOutFile : "thisfile.php"
+         );
+         break;
+
+      case 10:
+      chain.print(
+         "<?php\n"
+         "   // create a thumbnail image from a large image.\n"
+         "   // requires the php command line interface:\n"
+         "   // 1. get the php 5.x zip package\n"
+         "   // 2. unzip into a dir like c:\\app\\php\n"
+         "   // 3. set PATH=PATH;c:\\app\\php;c:\\app\\php\\ext\n"
+         "   // then run this script by \"php %s in.jpg out.jpg\"\n"
+         "\n"
+         "   if ($argc < 3) {\n"
+         "      print(\"usage: php %s input.jpg output.jpg [targetwidth quality]\\n\");\n"
+         "      return;\n"
+         "   }\n"
+         "\n"
+         "   $ssrc = $argv[1];\n"
+         "   $sdst = $argv[2];\n"
+         "   $wdst = isset($argv[3]) ? $argv[3] : 100;\n"
+         "   $nqty = isset($argv[4]) ? $argv[4] :  80;\n"
+         "\n"
+         "   if (strstr($ssrc, \".jpg\"))\n"
+         "      $isrc = ImageCreateFromJPEG($ssrc);\n"
+         "   else\n"
+         "      $isrc = ImageCreateFromPNG($ssrc);\n"
+         "   if ($isrc === false) die(\"cannot load: $ssrc\");\n"
+         "\n"
+         "   $nsrcw = ImageSX($isrc);\n"
+         "   $nsrch = ImageSY($isrc);\n"
+         "   print(\"input: $ssrc with $nsrcw\".\"x$nsrch pixels\\n\");\n"
+         "\n"
+         "   $hdst  = intval($wdst * $nsrch / $nsrcw);\n"
+         "   $idst  = ImageCreateTrueColor($wdst, $hdst);\n"
+         "   if ($idst === false) die(\"cannot create thumb\");\n"
+         "\n"
+         "   imagecopyresampled($idst, $isrc, 0,0,0,0, $wdst,$hdst, $nsrcw, $nsrch);\n"
+         "   imagejpeg($idst, $sdst, $nqty);\n"
+         "   print(\"thumb: $sdst with $wdst\".\"x$hdst pixels, quality=$nqty\\n\");\n"
+         "\n"
+         "   imagedestroy($idst);\n"
+         "   imagedestroy($isrc);\n"
+         "?>\n"
+         ,pszOutFile ? pszOutFile : "thisfile.php"
+         ,pszOutFile ? pszOutFile : "thisfile.php"
+         );
+         break;
+
+      case 11:
+      chain.print(
+         "<html>\n"
+         " <head>\n"
+         "  <title>Welcome to FooBar</title>\n"
+         "   <style type=\"text/css\">\n"
+         "      body     { font: 12px verdana,arial; }\n"
+         "      table    { font: 12px verdana,arial; }\n"
+         "      h1       { font: 16px verdana,arial; font-weight: bold; }\n"
+         "      b.red    { color: #ee6622; }\n"
+         "   </style>\n"
+         "   <script type=\"text/javascript\">\n"
+         "      function hello() {\n"
+         "         document.write(\"hello from JavaScript.\");\n"
+         "      }\n"
+         "   </script>\n"
+         " </head>\n"
+         "<body leftmargin=\"0\" topmargin=\"0\" marginwidth=\"0\" marginheight=\"0\">\n"
+         "\n"
+         "<table width=\"980\" cellspacing=\"0\" cellpadding=\"0\" align=\"center\" border=\"0\">\n"
+         "\n"
+         " <tr>\n"
+         "  <td width=\"120\" align=\"center\" valign=\"middle\">\n"
+         "  &nbsp;<br>\n"
+         "  home\n"
+         "  </td>\n"
+         "  <td width=\"740\" align=\"center\" valign=\"top\">\n"
+         "  &nbsp;<br>\n"
+         "  <h1>Welcome to FooBar.</h1>\n"
+         "  </td>\n"
+         "  <td width=\"120\" align=\"center\" valign=\"middle\">\n"
+         "  &nbsp;<br>\n"
+         "  other\n"
+         "  </td>\n"
+         " </tr>\n"
+         "\n"
+         " <tr>\n"
+         "  <td align=\"center\" valign=\"top\">&nbsp;</td>\n"
+         "  <td>\n"
+         "      <b class=\"red\">bold</b> and normal text.\n"
+         "      <p>\n"
+         "      <script type=\"text/javascript\">\n"
+         "         hello();\n"
+         "      </script>\n"
+         "  </td>\n"
+         "  <td align=\"center\" valign=\"top\">&nbsp;</td>\n"
+         " </tr>\n"
+         "\n"
+         "</table>\n"
+         "\n"
+         "</body>\n"
+         "</html>\n"
+         );
+         break;
+
+      case 12:
+      chain.print(
+         "@rem <?php print(\"\\r\"); /*\n"
+         "@echo off\n"
+         "\n"
+         "IF \"%%1\"==\"\" GOTO xerr01\n"
+         "\n"
+         "sfk script %s -from begin %%*\n"
+         "GOTO xend\n"
+         "\n"
+         ":xerr01\n"
+         "sfk echo \"[green]jpeg image size lister.[def]\"\n"
+         "sfk echo \"lists width, height of all .jpg in a dir.\"\n"
+         "sfk echo \"usage: %s dirname\"\n"
+         "GOTO xend\n"
+         "\n"
+         "   // this script requires the php command line interface:\n"
+         "   // 1. get the php 5.x zip package\n"
+         "   // 2. unzip into a dir like c:\\app\\php\n"
+         "   // 3. set PATH=PATH;c:\\app\\php;c:\\app\\php\\ext\n"
+         "\n"
+         "   // ----- begin of sfk script code -----\n"
+         "\n"
+         "sfk label begin\n"
+         "\n"
+         "   +sel %%1 .jpg\n"
+         "\n"
+         "   +run -quiet -yes \"php %s $file\"\n"
+         "\n"
+         "   +end\n"
+         "\n"
+         "*/ // ----- end of sfk, begin of php script -----\n"
+         "\n"
+         "   // print the width and height in pixel\n"
+         "   // of the supplied image file name:\n"
+         "\n"
+         "   $asize = getimagesize($argv[1]);\n"
+         "   printf(\"w=%%04d h=%%04d %%s\\n\", $asize[0], $asize[1], $argv[1]);\n"
+         "\n"
+         "/* // ----- end of php script, end of batch -----\n"
+         ":xend\n"
+         "@rem */ ?>\n"
+         ,pszOutFile ? pszOutFile : "thisfile.bat"
+         ,pszOutFile ? pszOutFile : "thisfile.bat"
+         ,pszOutFile ? pszOutFile : "thisfile.bat"
+         );
+         break;
+
+      case 13:
+      chain.print(
+         "import java.io.*;\n"
+         "\n"
+         "public class %s\n"
+         "{\n"
+         "    static void log(String s) { System.out.println(s); }\n"
+         "\n"
+         "    // convert a single byte record into a hexdump record.\n"
+         "    // by default, set nrec to 16, and ndoff to 0.\n"
+         "    public static String hexRecord(byte ab[], int noffset, int nlen, int nrec, int ndoff)\n"
+         "    {\n"
+         "        // create hex and text representation\n"
+         "        StringBuffer sline = new StringBuffer();\n"
+         "        StringBuffer stext = new StringBuffer();\n"
+         "        for (int i=0; i<nlen; i++) {\n"
+         "            int nval = ab[noffset+i] & 0xFF;\n"
+         "            if (nval < 0x10) sline.append(\"0\");\n"
+         "            sline.append(Integer.toString(nval, 0x10));\n"
+         "            sline.append(\" \");\n"
+         "            if (Character.isLetter(nval))\n"
+         "                stext.append((char)nval);\n"
+         "            else\n"
+         "                stext.append('.');\n"
+         "        }\n"
+         "        // fill rest of line, if any\n"
+         "        int npadlen = nrec;\n"
+         "        while (stext.length() < npadlen) stext.append(' ');\n"
+         "        npadlen *= 3;\n"
+         "        while (sline.length() < npadlen) sline.append(' ');\n"
+         "        sline.setLength(sline.length()-1);\n"
+         "        // create offset as hex value\n"
+         "        String soffset = \"\";\n"
+         "        soffset = Integer.toString(ndoff, 0x10).toUpperCase();\n"
+         "        while (soffset.length() < 10) soffset = \"0\"+soffset;\n"
+         "        // combine hex, text and offset\n"
+         "        return \">\"+sline.toString().toUpperCase()+\"< \"+stext+\" \"+soffset;\n"
+         "    }\n"
+         "    \n"
+         "    // hexdump a whole byte array, from a given offset.\n"
+         "    // nrec is the number of bytes per output record, use 16 by default.\n"
+         "    // ndosv is the display offset start value, use 0 by default.\n"
+         "    public static void hexDump(byte ab[], int noffset, int nlen, int nrec, int ndoff)\n"
+         "    {\n"
+         "        while (nlen > 0) {\n"
+         "            int nblock  = (nlen < nrec) ? nlen : nrec;\n"
+         "            String srec = hexRecord(ab, noffset, nblock, nrec, ndoff);\n"
+         "            System.out.println(srec);\n"
+         "            noffset += nblock;\n"
+         "            ndoff   += nblock;\n"
+         "            nlen    -= nblock;\n"
+         "        }\n"
+         "    }\n"
+         "\n"
+         "    // hex dump a whole binary file's content\n"
+         "    public static void main(String args[]) throws Throwable\n"
+         "    {\n"
+         "        if (args.length < 1)\n"
+         "            { log(\"usage: java %s inputfilename\"); return; }\n"
+         "\n"
+         "        byte abBuf[] = new byte[1600];\n"
+         "\n"
+         "        FileInputStream oin = new FileInputStream(args[0]);\n"
+         "\n"
+         "        int nread  = 0;\n"
+         "        int ntotal = 0;\n"
+         "        do {\n"
+         "            nread = oin.read(abBuf, 0, abBuf.length);\n"
+         "            if (nread > 0) hexDump(abBuf, 0, nread, 16, ntotal);\n"
+         "            ntotal += nread;\n"
+         "        }   while (nread > 0);\n"
+         "\n"
+         "        oin.close();\n"
+         "    }\n"
+         "}\n"
+          ,pszClassName,pszClassName
+        );
+         break;
+
+      case 14:
+      chain.print(
+         "\n"
+         "import java.awt.*;\n"
+         "import java.awt.event.*;\n"
+         "import java.io.*;\n"
+         "import javax.swing.*;\n"
+         "import java.util.*;\n"
+         "\n"
+         "// can be run both as an applet and a command line application\n"
+         "public class %s extends JApplet implements ActionListener\n"
+         "{\n"
+         "    // a panel to collect all objects for display\n"
+         "    Container clPane = null;\n"
+         "\n"
+         "    // a hashmap to collect the same objects for retrieval by an id\n"
+         "    HashMap<String,Component> clComp = new HashMap<String,Component>();\n"
+         "    // HashMap clComp = new HashMap(); // for JDK 1.4.2\n"
+         "\n"
+         "    // the current add position\n"
+         "    int xadd = 0, yadd = 0;\n"
+         "\n"
+         "    // set component placement cursor to a position\n"
+         "    void setPos(int x,int y) { xadd=x; yadd=y; }\n"
+         "    \n"
+         "    // add and remember a generic component for display.\n"
+         "    // steps the placement cursor w pixels to the right.\n"
+         "    void add(int x,int y,int w,int h,String id,Component o) {\n"
+         "        o.setBounds(x,y,w,h);   // set absolute position of object\n"
+         "        clPane.add(o);          // add to panel to display object\n"
+         "        clComp.put(id, o);      // and remember object in a hashmap\n"
+         "        xadd += w;              // step add position horizontally\n"
+         "    }\n"
+         "    \n"
+         "    // add a non-editable text label\n"
+         "    void addLabel(int w, int h, String id, String text)\n"
+         "        { add(xadd,yadd,w,h, id, new JLabel(text)); }\n"
+         "\n"
+         "    // add a single line editable text field    \n"
+         "    void addTextField(int w, int h, String id, String text)\n"
+         "        { add(xadd,yadd,w,h, id, new JTextField(text)); }\n"
+         "\n"
+         "    // add a multi linex editable text area\n"
+         "    void addTextArea(int w, int h, String id, String text) {\n"
+         "        JTextArea   oarea   = new JTextArea(text);\n"
+         "        JScrollPane oscroll = new JScrollPane(oarea);\n"
+         "        oscroll.setBounds(xadd,yadd,w,h);\n"
+         "        clPane.add(oscroll);\n"
+         "        clComp.put(id,oarea);\n"
+         "    }\n"
+         "\n"
+         "    // add a push button\n"
+         "    void addButton(int w, int h, String id, String text) {\n"
+         "        JButton o = new JButton(text);\n"
+         "        o.addActionListener(this);\n"
+         "        add(xadd,yadd,w,h, id, o);\n"
+         "    }\n"
+         "\n"
+         "    // easy access to any object by its id\n"
+         "    JTextField getTextField(String id) { return (JTextField)clComp.get(id); }\n"
+         "    JTextArea  getTextArea (String id) { return (JTextArea )clComp.get(id); }\n"
+         "    JLabel     getLabel    (String id) { return (JLabel    )clComp.get(id); }\n"
+         "\n"
+         "    // setup visible objects at absolute positions\n"
+         "    private void fillPane() \n"
+         "    {        \n"
+         "        clPane.setLayout(null); // absolute positioning layout\n"
+         "        \n"
+         "        setPos      ( 20, 20);\n"
+         "        addLabel    ( 70, 20, \"lname\", \"filename\");\n"
+         "        addTextField(620, 20, \"tname\", \"c:\\\\test.txt\");\n"
+         "\n"
+         "        setPos      ( 90, yadd + 30);\n"
+         "        addButton   (620, 20, \"bload\", \"load\");\n"
+         "\n"
+         "        setPos      ( 20, yadd + 30);\n"
+         "        addLabel    ( 70, 20, \"lcont\", \"content\");\n"
+         "        addTextArea (620,400, \"acont\", \"\");\n"
+         "    }\n"
+         "\n"
+         ,pszClassName);
+    chain.print(
+         "    // process push button command    \n"
+         "    public void actionPerformed(ActionEvent e) \n"
+         "    {\n"
+         "        String sout = \"\";\n"
+         "        try {\n"
+         "            String scmd = e.getActionCommand();\n"
+         "            if (scmd.equals(\"load\")) \n"
+         "            {\n"
+         "                String sFilename = getTextField(\"tname\").getText();\n"
+         "                BufferedReader rin = new BufferedReader(\n"
+         "                    new InputStreamReader(new FileInputStream(sFilename), \"ISO-8859-1\"));\n"
+         "                while (true) {\n"
+         "                    String sline = rin.readLine();\n"
+         "                    if (sline == null) break; // EOD\n"
+         "                    sout += sline + \"\\n\";\n"
+         "                }\n"
+         "                rin.close();\n"
+         "            }\n"
+         "        } catch (Throwable t) {\n"
+         "            sout = \"\"+t;\n"
+         "        }\n"
+         "        getTextArea(\"acont\").setText(sout);\n"
+         "    }\n"
+         "\n"
+         "    // to run it from the command line:\n"
+         "    public static void main(String[] args)\n"
+         "        { new %s().main2(args); }\n"
+         "\n"
+         "    public void main2(String[] args) {\n"
+         "        JFrame frame = new JFrame(\"Simple File Viewer\");\n"
+         "        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);\n"
+         "        clPane = frame.getContentPane();\n"
+         "        fillPane();\n"
+         "        frame.setSize(760, 560);\n"
+         "        frame.setVisible(true);\n"
+         "    }\n"
+         "\n"
+         "    // to run it as an applet:\n"
+         "  public void init() {\n"
+         "     clPane = new JPanel();\n"
+         "     this.setContentPane(clPane);\n"
+         "     fillPane();\n"
+         "  }\n"
+         "    /*\n"
+         "       create a page \"show.html\" containing\n"
+         "\n"
+         "       <html><body>\n"
+         "          <Applet Code=\"%s.class\" width=800 height=600></Applet>\n"
+         "       </body></html>\n"
+         "      \n"
+         "       and then type \"appletviewer show.html\"\n"
+         "    */\n"
+         "}\n"
+          ,pszClassName,pszClassName
+        );
+        break;
+
+      case 15:
+      chain.printFile(
+"myext@mydomain.org\\chrome\\content\\myext.xul", bWriteFile,
+"<overlay id=\"myextOverlay\" xmlns=\"http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul\">\n"
+"   <script type=\"application/x-javascript\" src=\"chrome://myext/content/myextOverlay.js\"/>\n"
+"   <popup id=\"contentAreaContextMenu\">\n"
+"      <menuitem id=\"myext-sayhello\" label=\"Say Hello\" oncommand=\"sayHello(event);\" />\n"
+"   </popup>\n"
+"</overlay>\n"
+         );
+      chain.printFile(
+"myext@mydomain.org\\chrome\\content\\myextOverlay.js", bWriteFile,
+"function sayHello(event) {\n"
+"   alert(\"hello.\");\n"
+"}\n"
+         );
+      chain.printFile(
+"myext@mydomain.org\\chrome.manifest", bWriteFile,
+"content myext chrome/content/\n"
+"overlay chrome://browser/content/browser.xul chrome://myext/content/myext.xul\n"
+         );
+      chain.printFile(
+"myext@mydomain.org\\install.rdf", bWriteFile,
+"<?xml version=\"1.0\"?>\n"
+"<RDF xmlns=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"\n"
+"     xmlns:em=\"http://www.mozilla.org/2004/em-rdf#\">\n"
+"  <Description about=\"urn:mozilla:install-manifest\">\n"
+"    <em:id>myext@mydomain.org</em:id>\n"
+"    <em:version>0.1.0</em:version>\n"
+"    <em:type>2</em:type>\n"
+"    <em:targetApplication>\n"
+"      <Description>\n"
+"        <em:id>{ec8030f7-c20a-464f-9b0e-13a3a9e97384}</em:id> <!-- Firefox -->\n"
+"        <em:minVersion>1.0</em:minVersion>\n"
+"        <em:maxVersion>3.0.*</em:maxVersion>\n"
+"      </Description>\n"
+"    </em:targetApplication>\n"
+"    <em:name>MyExt</em:name>\n"
+"    <em:description>A very simple demo extension</em:description>\n"
+"    <em:creator>My Self</em:creator>\n"
+"    <em:homepageURL>http://mydomain.org/myext/</em:homepageURL>\n"
+"  </Description>      \n"
+"</RDF>\n"
+         );
+         break;
+ 
+      case 16:
+      chain.print(
+          "/*\n"
+          "   Example for sending UDP color text in C++.\n"
+          "   For more details read \"sfk netlog\".\n"
+          "\n"
+          "   Compile like:\n"
+          "      Windows gcc : g++ %s -lws2_32\n"
+          "      Windows VC  : cl  %s ws2_32.lib\n"
+          "      Linux/Mac   : g++ %s\n"
+          "*/\n"
+          "\n"
+          "#include <stdio.h>\n"
+          "#include <stdlib.h>\n"
+          "#include <string.h>\n"
+          "#include <stdarg.h>\n"
+          "#include <errno.h>\n"
+          "\n"
+          "#ifdef _WIN32\n"
+          "  #include <windows.h>\n"
+          "  #ifdef _MSC_VER\n"
+          "    #define snprintf  _snprintf \n"
+          "    #define vsnprintf _vsnprintf \n"
+          "    #define sockerrno WSAGetLastError()\n"
+          "  #else\n"
+          "    #include <ws2tcpip.h>\n"
+          "    #define sockerrno errno\n"
+          "  #endif\n"
+          "  #define socklen_t int\n"
+          "#else\n"
+          "  #include <sys/socket.h>\n"
+          "  #include <netdb.h>\n"
+          "  #ifdef __APPLE__\n"
+          "    #define SOL_IP IPPROTO_IP\n"
+          "  #endif\n"
+          "  #ifndef INVALID_SOCKET\n"
+          "    #define INVALID_SOCKET -1\n"
+          "  #endif\n"
+          "  #define sockerrno errno\n"
+          "#endif\n"
+          "\n"
+          "char szLineBuf[500];\n"
+          "\n"
+          "int iNetSock = INVALID_SOCKET;\n"
+          "int iRequest = 1;\n"
+          "struct sockaddr_in oAddr;\n"
+          "socklen_t iAddrLen = sizeof(oAddr);\n"
+          "\n"
+          "int perr(const char *pszFormat, ...)\n"
+          "{\n"
+          "   va_list argList;\n"
+          "   va_start(argList, pszFormat);\n"
+          "   vsnprintf(szLineBuf, sizeof(szLineBuf)-10, pszFormat, argList);\n"
+          "   szLineBuf[sizeof(szLineBuf)-10] = '\\0';\n"
+          "   printf(\"Error: %s\\n\", szLineBuf);\n"
+          "   return 0;\n"
+          "}\n"
+          "\n"
+          "int netlog(const char *pszFormat, ...)\n"
+          "{\n"
+          "   char szHeadBuf[100];\n"
+          "   int  iHeadLen = 0;\n"
+          "\n"
+          "   va_list argList;\n"
+          "   va_start(argList, pszFormat);\n"
+          "   vsnprintf(szLineBuf+100, sizeof(szLineBuf)-110, pszFormat, argList);\n"
+          "   szLineBuf[sizeof(szLineBuf)-10] = '\\0';\n"
+          "   \n"
+          "   // change all [red] to compact color codes \\x1Fr\n"
+          "   for (char *psz=szLineBuf+100; *psz; psz++)\n"
+          "      if (psz[0]=='[')\n"
+          "         for (int i=1; psz[i]; i++)\n"
+          "            if (i>=2 && psz[i]==']')\n"
+          "               { psz[0]=0x1F; memmove(psz+2, psz+i+1, strlen(psz+i+1)+1); break; }\n"
+          "\n"
+          "   // add sfktxt header before text\n"
+          "   snprintf(szHeadBuf, sizeof(szHeadBuf)-10, \":sfktxt:v100,req%s,cs1\\n\\n\", iRequest++);\n"
+          "   iHeadLen = strlen(szHeadBuf);\n"
+          "   char *pData = szLineBuf+100-iHeadLen;\n"
+          "   memcpy(pData, szHeadBuf, iHeadLen);\n"
+          "\n"
+          "   sendto(iNetSock, pData, strlen(pData), 0, (struct sockaddr *)&oAddr, iAddrLen);\n"
+          "\n"
+          "   return 0;\n"
+          "}\n"
+          "\n"
+          "int main(int argc, char *argv[])\n"
+          "{\n"
+          "   const char *pszHost = \"localhost\";\n"
+          "   unsigned short iPort = 21323;\n"
+          "   \n"
+          "   #ifdef _MSC_VER\n"
+          "   WORD wVersionRequested = MAKEWORD(1,1);\n"
+          "   WSADATA wsaData;\n"
+          "   if (WSAStartup(wVersionRequested, &wsaData)!=0)\n"
+          "      return 9+perr(\"WSAStartup failed\");\n"
+          "   #endif\n"
+          "\n"
+          "   memset((char *)&oAddr, 0,sizeof(oAddr));\n"
+          "   oAddr.sin_family      = AF_INET;\n"
+          "   oAddr.sin_port        = htons(iPort);\n"
+          "\n"
+          "   struct hostent *pHost = gethostbyname(pszHost);\n"
+          "   memcpy(&oAddr.sin_addr.s_addr, pHost->h_addr, pHost->h_length);\n"
+          "\n"
+          "   if ((iNetSock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)\n"
+          "      return 9+perr(\"cannot create socket\");\n"
+          "\n"
+          "   netlog(\"[Red]Foo[def] and [Blue]bar[def] went to the [Green]zoo[def].\\n\");\n"
+          "   \n"
+          "   return 0;\n"
+          "}\n"
+          "\n"
+          , pszOutFile ? pszOutFile : "netlog.cpp"
+          , pszOutFile ? pszOutFile : "netlog.cpp"
+          , pszOutFile ? pszOutFile : "netlog.cpp"
+          , "%s" // literally
+          , "%d" // literally
+         );
+         if (!pszOutFile)
+            printf("// to write .cpp file use:\n"
+                   "// sfk samp cppnetlog netlog.cpp\n");
+         break;
+ 
+      case 17:
+      if (!pszOutFile) pszClassName = str("netlog");
+      chain.print(
+          "/*\n"
+          "   Example for sending UDP color text in Java.\n"
+          "   For more details read \"sfk netlog\".\n"
+          "*/\n"
+          "\n"
+          "import java.io.*;\n"
+          "import java.net.*;\n"
+          "\n"
+          "public class %s\n"
+          "{\n"
+          "   public static DatagramSocket clSocket = null;\n"
+          "   public static InetAddress clAddress = null;\n"
+          "   public static int iClPort = -1;\n"
+          "   static int iClRequest = 1;\n"
+          "\n"
+          "   public static void init(String sHost, int iPort) throws Throwable\n"
+          "   {\n"
+          "      clAddress = InetAddress.getByName(sHost);\n"
+          "      iClPort = iPort;\n"
+          "      clSocket = new DatagramSocket();\n"
+          "   }\n"
+          "\n"
+          "   public static void log(String sTextIn) throws Throwable\n"
+          "   {\n"
+          "      String sText   = sTextIn+\"\\n\";\n"
+          "\n"
+          "      // change all [red] to compact color codes \\x1Fr\n"
+          "      byte[] abData1 = sText.getBytes();\n"
+          "      int    iSize1  = abData1.length;\n"
+          "      byte[] abData2 = new byte[iSize1+100];\n"
+          "\n"
+          "      // keep 100 bytes space for header\n"
+          "      int i2=100;\n"
+          "      for (int i1=0; i1<iSize1;)\n"
+          "      {\n"
+          "         if (abData1[i1]=='[') {\n"
+          "            i1++;\n"
+          "            if (i1>=iSize1)\n"
+          "               break;\n"
+          "            abData2[i2++] = (byte)0x1F;\n"
+          "            abData2[i2++] = abData1[i1++];\n"
+          "            while (i1<iSize1 && abData1[i1]!=']')\n"
+          "               i1++;\n"
+          "            if (i1<iSize1)\n"
+          "               i1++;\n"
+          "         } else {\n"
+          "            abData2[i2++] = abData1[i1++];\n"
+          "         }\n"
+          "      }\n"
+          "      int iTextSize = i2-100;\n"
+          "\n"
+          "      // add sfktxt header before text\n"
+          "      String sHead = \":sfktxt:v100,req\"+iClRequest+\",cs1\\n\\n\";\n"
+          "      iClRequest++;\n"
+          "      byte abHead[] = sHead.getBytes();\n"
+          "      int iHeadLen  = abHead.length;\n"
+          "      for (int i=0; i<iHeadLen; i++)\n"
+          "         abData2[100-iHeadLen+i] = abHead[i];\n"
+          "      int iStartOff = 100-iHeadLen;\n"
+          "      int iFullSize = iHeadLen+iTextSize;\n"
+          "\n"
+          "      DatagramPacket packet = new DatagramPacket(abData2, iStartOff, iFullSize, clAddress, iClPort);\n"
+          "      clSocket.send(packet);\n"
+          "   }\n"
+          "\n"
+          "   public static void main(String args[]) throws Throwable\n"
+          "   {\n"
+          "      %s.init(\"localhost\", 21323);\n"
+          "      %s.log(\"[Red]Foo[def] and [Blue]bar[def] went to the [Green]zoo[def].\");\n"
+          "   }\n"
+          "}\n"
+          "\n"
+          , pszClassName
+          , pszClassName
+          , pszClassName
+          );
+         if (!pszOutFile)
+            printf("// to write .java file use:\n"
+                   "// sfk samp javanetlog netlog.java\n");
+         break;
+      }
+}
+
+// internal check: structure alignments must be same as in sfk.cpp
+void getAlignSizes2(int &n1, int &n2, int &n3)
+{
+   n1 = (int)sizeof(AlignTest1);
+   n2 = (int)sizeof(AlignTest2);
+   n3 = (int)sizeof(AlignTest3);
+}
+
+/*
+   =====================================================================================
+   SFK ping support code. Must be LAST in sfkext.cpp as it changes structure alignments!
+   =====================================================================================
+*/
+
+#ifdef _WIN32
+
+#define ICMP_ECHO_REPLY    0
+#define ICMP_DEST_UNREACH  3
+#define ICMP_ECHO_REQUEST  8
+#define ICMP_TTL_EXPIRE    11
+
+#ifndef ICMP_MINLEN
+ #define ICMP_MINLEN 8
+#endif
+#ifndef ICMP_ECHOREPLY
+ #define ICMP_ECHOREPLY 0
+#endif
+#ifndef ICMP_ECHO
+ #define ICMP_ECHO 8
+#endif
+
+#ifdef _MSC_VER
+ #pragma pack(1)  // CHANGES STRUCTURE ALIGNMENTS FROM HERE!
+#endif
+
+struct icmp {
+    BYTE icmp_type;          // ICMP packet type
+    BYTE icmp_code;          // Type sub code
+    USHORT icmp_cksum;
+    USHORT icmp_id;
+    USHORT icmp_seq;
+    ULONG timestamp;    // not part of ICMP, but we need it
+};
+
+struct ip { // IPHeader {
+    BYTE h_len:4;           // Length of the header in dwords
+    BYTE version:4;         // Version of IP
+    BYTE tos;               // Type of service
+    USHORT total_len;       // Length of the packet in dwords
+    USHORT ident;           // unique identifier
+    USHORT flags;           // Flags
+    BYTE ttl;               // Time to live
+    BYTE proto;             // Protocol number (TCP, UDP etc)
+    USHORT checksum;        // IP checksum
+    ULONG source_ip;
+    ULONG dest_ip;
+};
+
+#else
+
+ #include <sys/param.h>
+ #include <sys/file.h>
+ #include <netinet/in_systm.h>
+ #include <netinet/ip.h>
+ #include <netinet/ip_icmp.h>
+
+// some linux/mac sys\param.h define that:
+#ifdef isset
+ #undef isset
+#endif
+
+#endif
+
+#define	DEFDATALEN	(64-ICMP_MINLEN)	/* default data length */
+#define	MAXIPLEN	60
+#define	MAXICMPLEN	76
+#define	MAXPACKET	(65536 - 60 - ICMP_MINLEN)/* max packet size */
+
+static ushort in_cksum(ushort *addr, unsigned len)
+{
+   ushort answer = 0;
+   uint sum = 0;
+   while (len > 1)  {
+      sum += *addr++;
+      len -= 2;
+   }
+   if (len == 1) {
+      *(unsigned char *)&answer = *(unsigned char *)addr ;
+      sum += answer;
+   }
+   sum = (sum >> 16) + (sum & 0xffff);
+   sum += (sum >> 16);
+   answer = ~sum;
+   return answer;
+}
+
+void UDPCore::stepPing(int i)
+{
+   int iResendTime = imaxwait/2;
+   if (iResendTime < 400)
+       iResendTime = 400;
+
+   switch (aClCon[i].istate)
+   {
+      case 0:
+         sendPing(i);
+         aClCon[i].istate = 1;
+         break;
+
+      case 1:
+         if (getCurrentTime() - tstart < iResendTime)
+            break;
+         // sendPing(i);
+         aClCon[i].istate = 2;
+         break;
+   }
+}
+
+int UDPCore::sendPing(int i)
+{
+   int datalen = DEFDATALEN;
+   u_char outpack[MAXPACKET];
+   char szSenderInfo[200];
+
+   mclear(outpack);
+   mclear(szSenderInfo);
+
+   aClCon[i].idelay = -1;
+
+   struct icmp *icp = (struct icmp *)outpack;
+
+	icp->icmp_type   = ICMP_ECHO;
+	icp->icmp_code   = 0;
+	icp->icmp_cksum  = 0;
+	icp->icmp_seq    = 123+i;	/* seq and id must be reflected */
+	icp->icmp_id     = getpid()+i;
+
+	int cc = datalen + ICMP_MINLEN;
+	icp->icmp_cksum = in_cksum((unsigned short *)icp,cc);
+
+   num tstart = getCurrentTime();
+
+	int isent = sendto(aClCon[i].sock, (char *)outpack, cc, 0,
+      (struct sockaddr*)&aClCon[i].addr, (socklen_t)sizeof(struct sockaddr_in));
+
+   aClCon[i].tsent = getCurrentTime();
+
+	if (isent != cc)
+	{
+      perr("ping: send error (%d/%d) to %s\n", isent, cc, aClCon[i].ipstr);
+      return -5;
+	}
+
+   if (bverbose)
+	  printf("ping: sent to #%u at %s\n", i, ipAsString(&aClCon[i].addr, szSenderInfo, sizeof(szSenderInfo)-10, 1));
+
+   return 0;
+}
+
+int UDPCore::recvPing(int i, int *pDelay)
+{
+   int packlen = DEFDATALEN + MAXIPLEN + MAXICMPLEN;
+	u_char packet[DEFDATALEN + MAXIPLEN + MAXICMPLEN + 10];
+   char szSenderInfo[200];
+
+   struct sockaddr_in from;
+   int hlen = 0, end_t = 0;
+   num tend = 0;
+
+   mclear(packet);
+   mclear(szSenderInfo);
+
+	int fromlen = sizeof(sockaddr_in);
+	int ret = 0;
+	if ((ret = recvfrom(aClCon[i].sock, (char *)packet, packlen, 0,(struct sockaddr *)&from, (socklen_t*)&fromlen)) < 0)
+	   return -7+perr("ping: receive error\n");
+	
+   if (bverbose)
+	  printf("%d = recv\n", ret);
+
+	struct ip *ip = (struct ip *)((char*)packet);
+	
+	hlen = sizeof(struct ip);
+	
+	if (ret < (hlen + ICMP_MINLEN))
+	   return -8+perr("ping: reply too short\n");
+	
+	struct icmp *icp = (struct icmp *)(packet + hlen);
+
+   char *pszfrom = ipAsString(&from, szSenderInfo, sizeof(szSenderInfo)-10, 1);
+	
+	if (icp->icmp_type != ICMP_ECHOREPLY)
+   {
+	   if (bverbose)
+			printf("ping: got an invalid reply type %u from %s\n", icp->icmp_type, pszfrom);
+         return 7;
+   }
+
+   if (bverbose)
+		printf("ping: got an echo reply from %s\n", pszfrom);
+
+	if (icp->icmp_seq != 123+i)
+	{
+      if (bverbose)
+			printf("ping: received invalid sequence (%u/%u) from %s\n", icp->icmp_seq, 123+i, pszfrom);
+      return 5;
+	}
+
+	if (icp->icmp_id != getpid()+i)
+	{
+      if (bverbose)
+			printf("ping: received id %u from %s\n", icp->icmp_id, pszfrom);
+      return 6;
+	}
+
+   aClCon[i].idelay = (int)(getCurrentTime() - aClCon[i].tsent);
+
+   *pDelay = aClCon[i].idelay;
+
+   int icopy = ret;
+   if (icopy > sizeof(aClCon[i].reply))
+       icopy = sizeof(aClCon[i].reply);
+   memcpy(aClCon[i].reply, packet, icopy);
+   aClCon[i].replylen = icopy;
+
+   aClCon[i].istate = 3;
+
+   iClResponses++;
+
+   return 0;
 }
 
 #endif // USE_SFK_BASE

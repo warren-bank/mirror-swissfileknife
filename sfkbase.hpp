@@ -36,7 +36,7 @@
 #include <sys/stat.h>
 
 #ifdef _WIN32
-  #define FD_SETSIZE 200   // must be set before windows.h
+  #define FD_SETSIZE 300
   #include <windows.h>
   #ifndef _MSC_VER
    #include <ws2tcpip.h>
@@ -204,14 +204,23 @@ extern char  glblWildInfoStr[20];   // "+ or \\*";
 #ifdef _WIN32
  typedef __int64 num;
  #ifdef SFK_W64
- typedef __time64_t mytime_t;
+  typedef __time64_t mytime_t;
+  #define mymktime _mktime64
+  #define mytime _time64
  #else
- typedef time_t mytime_t;
+  typedef time_t mytime_t;
+  #define mymktime mktime
+  #define mytime time
  #endif
 #else
  typedef long long num;
  typedef time_t mytime_t;
+ #define mymktime mktime
+ #define mytime time
 #endif
+
+extern struct tm *mylocaltime(mytime_t *ptime);
+extern struct tm *mygmtime(mytime_t *ptime);
 
 extern char *numtostr(num n, int nDigits, char *pszBuf, int nRadix);
 extern char *numtoa_blank(num n, int nDigits=12);
@@ -254,6 +263,8 @@ extern int shrinkFormTextBlock(char *psz, int &rLen, bool bstrict, bool xchars=0
 #endif // SFKNOVFILE
 
 #define WITH_CASE_XNN
+
+#define SFKDEEPZIP   // since sfk 175
 
 int isDir(char *pszName);
 cchar *sfkLastError();
@@ -797,6 +808,7 @@ public:
    bool   isBinaryFile  ( );
    uchar  isUTF16       ( ); // 0x00==none 0xFE==le 0xEF==be
    bool	 isSnapFile		( );
+   void   probeFile     ( ); // read file header if not done yet
 
    // readLine alloc's another I/O buffer on demand:
    int   readLine   (char *pszOutBuf, int nOutBufLen);
@@ -811,7 +823,7 @@ public:
 
    #ifndef VFILEZIP
    int  isZipSubEntry  ( )   { return 0; }
-   bool   isTravelZip   (bool braw=0) { return 0; }
+   bool   isTravelZip   (int iTraceFrom, bool braw=0) { return 0; }
    void   setArc        (bool bIsArchive) { }
    bool   isKnownArc    ( )   { return 0; }
    #endif
@@ -1430,15 +1442,16 @@ public:
    int badOutDir;       // rename
    int lines    ;
    num  maxFileTime;
-   uint listForm;   // list -size etc.
-   bool listTabs;   // split columns by tab char
-   int  flatTime;   // show flat file times
+   uint listForm;    // list -size etc.
+   bool listTabs;    // split columns by tab char
+   bool listContent; // list zip etc. info
+   int  flatTime;    // show flat file times
    bool sim   ;      // just simulate command
    bool nohead;      // leave out some header, trailer info
    bool pure  ;      // extra info if -pure was specified
    bool dostat;      // copy: list just size statistics
    bool tailTail;    // running tail, not head
-   int tailLines;   // head, tail
+   int tailLines;    // head, tail
    bool tailFollow;  // head, tail
    char *tomask;     // output filename mask
    bool  tomaskfile; // -to mask is a single filename
@@ -1520,6 +1533,7 @@ public:
    uint addsnapmeta;      // bit 0:time 1:size 2:encoding
    int stathilitelevel;   // stat command: highlight dirs <= this
    bool travelzips;        // traverse zipfile contents
+   bool probefiles;        // look into file headers to detect zip etc.
    bool incbin;            // include binary files in processing
    bool reldist;           // hexfind: tell also relative distances
    #ifdef VFILEBASE
@@ -1660,6 +1674,9 @@ public:
    bool setndate;          // fixfile
    bool dumpfrom;          // (x)replace
    bool dumpboth;          // (x)replace
+   num  maxscan;           // (x)replace
+   bool nodump;            // udpdump -forward
+   bool prefix;            // udpcast -prefix
 };
 
 extern struct CommandStats cs;
@@ -1801,6 +1818,77 @@ FileStat clOutStat;
 char  *pszClM3UText;
 char  *pszClM3UFileEntry;  // pointer into M3UText
 };
+
+class FileCloser {
+public:
+    FileCloser  (Coi *pcoi); // can be NULL
+   ~FileCloser  ( );
+private:
+    Coi *pClCoi;
+};
+
+class CommandChaining
+{
+public:
+   CommandChaining ( );
+
+   bool  colfiles;   // collect filenames
+   bool  usefiles;   // use collected filenames
+   bool  coldata;    // collect data
+   bool  usedata;    // use collected data
+   bool  colbinary;  // with coldata: next command accepts binary
+
+   CoiTable *infiles;   // while using filenames
+   CoiTable *outfiles;  // while collecting filenames
+
+   StringPipe *indata;  // text and attributes
+   StringPipe *outdata; // text and attributes
+   StringPipe *storedata;
+
+   bool  text2files;
+   bool  files2text;
+
+   int  init();
+   void  reset();    // per loop
+   void  shutdown();
+   bool  colany() { return colfiles || coldata; }
+   bool  useany() { return usefiles || usedata; }
+   int  moveOutToIn(char *pszCmd);
+   int  convInDataToInFiles ( );
+
+   int  addLine(char *pszText, char *pszAttr, bool bSplitByLF=0);
+   int  addToCurLine(char *pszWords, char *pszAttr, bool bNewLine=0);
+
+   int  addFile(Coi &ocoi); // is COPIED
+   int  numberOfInFiles() { return infiles->numberOfEntries(); }
+   Coi  *getFile(int nIndex); // returns null on wrong index
+
+   int  print(char cattrib, int nflags, cchar *pszFormat, ...);
+   int  print(cchar *pszFormat, ...); // multi-line support
+
+   int  printFile(cchar *pszOutFile, bool bWriteFile, cchar *pszFormat, ...);
+
+   void  dumpContents();   // to terminal
+
+   int   addBinary(uchar *pData, int iSize);
+   uchar *loadBinary(num &rSize); // owned by caller
+
+   num   nClOutBinarySize;  // for binary write
+   num   nClInBinarySize;   // for binary read
+   uint  nClOutCheckSum;
+   uint  nClInCheckSum;
+
+private:
+   char  szClPreBuf[MAX_LINE_LEN+10];
+   char  szClPreAttr[MAX_LINE_LEN+10];
+   char  szClBuf[MAX_LINE_LEN+10];
+   char  szClAttr[MAX_LINE_LEN+10];
+   char  szClBinBuf[32768+100];
+   int   iClBinBufUsed;
+   bool  btold1;
+};
+
+extern CommandChaining chain;
 
 int joinPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2, int *pFlexible=0);
 void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1);

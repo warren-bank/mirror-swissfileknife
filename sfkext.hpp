@@ -671,3 +671,57 @@ extern UDPIO sfkNetSrc;
 
 extern int netErrno();
 extern char *netErrStr(int ncode=-1);
+extern void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile);
+
+#define MAX_UDP_CON (mymin(300, FD_SETSIZE))
+
+struct UDPCon
+{
+   char     host[128];
+   char     ipstr[128];
+   char     reply[128];
+   int      port;
+   struct   sockaddr_in addr;
+   SOCKET   sock;
+   num      tsent;
+   int      idelay;
+   int      replylen;
+   int      istate;
+};
+
+class UDPCore
+{
+public:
+      UDPCore  (int iMaxWait);
+     ~UDPCore  ( );
+
+   int   makeSocket  (int iMode, char *phost, int nport);
+   void  shutdown    ( );
+
+   int   selectInput (int *pIndex, int iMaxWaitMSec);
+   int   lastError   ( );
+
+   void  stepPing    (int i);
+   int   sendPing    (int i);
+   int   recvPing    (int i, int *pDelay);
+
+   UDPCon   aClCon[MAX_UDP_CON+2];
+   int      nClCon;    // must be < FD_SETSIZE
+   int      nClMaxSock;
+   int      iClResponses;
+
+   fd_set   clReadSet; // all sockets pending accept and read
+   fd_set   clSetCopy;
+
+   int   bverbose;
+   int   bpure;
+   num   tstart;
+   int   imaxwait;
+};
+
+class AlignTest1 { public: int a1; char c1; };
+class AlignTest2 { public: int a1; char c1; char c2; };
+class AlignTest3 { public: int a1; char c1; char c2; char c3; };
+
+extern void getAlignSizes1(int &n1, int &n2, int &n3);
+extern void getAlignSizes2(int &n1, int &n2, int &n3);
