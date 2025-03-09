@@ -7,7 +7,7 @@ friend class Array;
 public:
    StringTable          ( );
   ~StringTable          ( );
-   long addEntry        (char *psz);
+   long addEntry        (char *psz, long nAtPos=-1);
    long numberOfEntries ( );
    char *getEntry       (long iIndex, int nTraceLine);
    long  setEntry       (long iIndex, char *psz);
