@@ -27,9 +27,14 @@
 
 #include "sfknet.hpp"
 
+#ifndef SO_REUSEPORT
+ #define SO_REUSEPORT 15
+#endif
+
 int perr(const char *pszFormat, ...);
 int pwarn(const char *pszFormat, ...);
 int pinf(const char *pszFormat, ...);
+
 extern bool endsWithArcExt(char *pname);
 extern num nGlblMemLimit;
 extern cchar *arcExtList[];
@@ -39,6 +44,12 @@ extern bool bGlblEscape;
 extern char *getHTTPUserAgent();
 extern int createOutDirTree(char *pszOutFile);
 extern size_t myfwrite(uchar *pBuf, size_t nBytes, FILE *fout, num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
+
+#ifndef USE_SFK_BASE
+UDPIO sfkNetIO;
+#endif // USE_SFK_BASE
+
+#ifdef VFILEBASE
 
 // vfile processing caches
 CoiMap glblVCache;      // downloaded zip's cache
@@ -590,7 +601,7 @@ int CoiMap::bfindDMeta(num nsumlo,num nsumhi,int &rindex)
    while (1)
    {
       if (nbot > ntop) // shouldn't happen
-         { perr(0, "int. 187281850"); ncmp=-1; break; }
+         { perr("int. 187281850"); ncmp=-1; break; }
 
       ndist = ntop - nbot;
       // mtklog(("dist %d bot %d top %d",ndist,nbot,ntop));
@@ -1337,7 +1348,8 @@ int TCPCore::incref( )  { return ++nClRefs; }
 int TCPCore::decref( )  { return --nClRefs; }
 int TCPCore::refcnt( )  { return nClRefs;   }
 
-int TCPCore::lastError( ) {
+int TCPCore::lastError( ) 
+{
    #ifdef _WIN32
    return WSAGetLastError();
    #else
@@ -3161,7 +3173,7 @@ void FTPClient::closeFile( )
    #ifdef USE_SFT
    if (bClSFT)
    {
-      // °sender will wait now until we confirm successful transfer.
+      // sender will wait now until we confirm successful transfer.
       TCPCon *pcon = pClCtlCon;
 
       mtklog(("ftp: closeFile %s remain=%d", file.name ? file.name : "", (int)file.remain));
@@ -4406,4 +4418,1248 @@ num Coi::getUsedBytes()
    //    rbuf.data, pzip
 
    return nsize;
+}
+
+#endif // VFILEBASE
+
+// ----------------------------------------------------------------
+
+int netErrno()
+{
+   #ifdef _WIN32
+   return WSAGetLastError();
+   #else
+   return errno;
+   #endif
+}
+
+char *netErrStr(int ncode)
+{
+   if (ncode < 0)
+      ncode = netErrno();
+
+   static char szErrBuf[200];
+ 
+   const char *perr = "";
+
+   #ifdef _WIN32
+   switch (ncode)
+   {
+      case WSAEWOULDBLOCK      : perr="WSAEWOULDBLOCK"; break;
+      case WSAEINPROGRESS      : perr="WSAEINPROGRESS"; break;
+      case WSAEALREADY         : perr="WSAEALREADY"; break;
+      case WSAENOTSOCK         : perr="WSAENOTSOCK"; break;
+      case WSAEDESTADDRREQ     : perr="WSAEDESTADDRREQ"; break;
+      case WSAEMSGSIZE         : perr="WSAEMSGSIZE"; break;
+      case WSAEPROTOTYPE       : perr="WSAEPROTOTYPE"; break;
+      case WSAENOPROTOOPT      : perr="WSAENOPROTOOPT"; break;
+      case WSAEPROTONOSUPPORT  : perr="WSAEPROTONOSUPPORT"; break;
+      case WSAESOCKTNOSUPPORT  : perr="WSAESOCKTNOSUPPORT"; break;
+      case WSAEOPNOTSUPP       : perr="WSAEOPNOTSUPP"; break;
+      case WSAEPFNOSUPPORT     : perr="WSAEPFNOSUPPORT"; break;
+      case WSAEAFNOSUPPORT     : perr="WSAEAFNOSUPPORT"; break;
+      case WSAEADDRINUSE       : perr="WSAEADDRINUSE"; break;
+      case WSAEADDRNOTAVAIL    : perr="WSAEADDRNOTAVAIL"; break;
+      case WSAENETDOWN         : perr="WSAENETDOWN"; break;
+      case WSAENETUNREACH      : perr="WSAENETUNREACH"; break;
+      case WSAENETRESET        : perr="WSAENETRESET"; break;
+      case WSAECONNABORTED     : perr="WSAECONNABORTED"; break;
+      case WSAECONNRESET       : perr="WSAECONNRESET"; break;
+      case WSAENOBUFS          : perr="WSAENOBUFS"; break;
+      case WSAEISCONN          : perr="WSAEISCONN"; break;
+      case WSAENOTCONN         : perr="WSAENOTCONN"; break;
+      case WSAESHUTDOWN        : perr="WSAESHUTDOWN"; break;
+      case WSAETOOMANYREFS     : perr="WSAETOOMANYREFS"; break;
+      case WSAETIMEDOUT        : perr="WSAETIMEDOUT"; break;
+      case WSAECONNREFUSED     : perr="WSAECONNREFUSED"; break;
+      case WSAELOOP            : perr="WSAELOOP"; break;
+      case WSAENAMETOOLONG     : perr="WSAENAMETOOLONG"; break;
+      case WSAEHOSTDOWN        : perr="WSAEHOSTDOWN"; break;
+      case WSAEHOSTUNREACH     : perr="WSAEHOSTUNREACH"; break;
+      case WSAENOTEMPTY        : perr="WSAENOTEMPTY"; break;
+      case WSAEUSERS           : perr="WSAEUSERS"; break;
+      case WSAEDQUOT           : perr="WSAEDQUOT"; break;
+      case WSAESTALE           : perr="WSAESTALE"; break;
+      case WSAEREMOTE          : perr="WSAEREMOTE"; break;
+   }
+   #else
+   switch (ncode)
+   {
+      case EWOULDBLOCK         : perr="EWOULDBLOCK"; break;
+      case EINPROGRESS         : perr="EINPROGRESS"; break;
+      case EALREADY            : perr="EALREADY"; break;
+      case ENOTSOCK            : perr="ENOTSOCK"; break;
+      case EDESTADDRREQ        : perr="EDESTADDRREQ"; break;
+      case EMSGSIZE            : perr="EMSGSIZE"; break;
+      case EPROTOTYPE          : perr="EPROTOTYPE"; break;
+      case ENOPROTOOPT         : perr="ENOPROTOOPT"; break;
+      case EPROTONOSUPPORT     : perr="EPROTONOSUPPORT"; break;
+      case ESOCKTNOSUPPORT     : perr="ESOCKTNOSUPPORT"; break;
+      case EOPNOTSUPP          : perr="EOPNOTSUPP"; break;
+      case EPFNOSUPPORT        : perr="EPFNOSUPPORT"; break;
+      case EAFNOSUPPORT        : perr="EAFNOSUPPORT"; break;
+      case EADDRINUSE          : perr="EADDRINUSE"; break;
+      case EADDRNOTAVAIL       : perr="EADDRNOTAVAIL"; break;
+      case ENETDOWN            : perr="ENETDOWN"; break;
+      case ENETUNREACH         : perr="ENETUNREACH"; break;
+      case ENETRESET           : perr="ENETRESET"; break;
+      case ECONNABORTED        : perr="ECONNABORTED"; break;
+      case ECONNRESET          : perr="ECONNRESET"; break;
+      case ENOBUFS             : perr="ENOBUFS"; break;
+      case EISCONN             : perr="EISCONN"; break;
+      case ENOTCONN            : perr="ENOTCONN"; break;
+      case ESHUTDOWN           : perr="ESHUTDOWN"; break;
+      case ETOOMANYREFS        : perr="ETOOMANYREFS"; break;
+      case ETIMEDOUT           : perr="ETIMEDOUT"; break;
+      case ECONNREFUSED        : perr="ECONNREFUSED"; break;
+      case ELOOP               : perr="ELOOP"; break;
+      case ENAMETOOLONG        : perr="ENAMETOOLONG"; break;
+      case EHOSTDOWN           : perr="EHOSTDOWN"; break;
+      case EHOSTUNREACH        : perr="EHOSTUNREACH"; break;
+      case ENOTEMPTY           : perr="ENOTEMPTY"; break;
+      case EUSERS              : perr="EUSERS"; break;
+      case EDQUOT              : perr="EDQUOT"; break;
+      case ESTALE              : perr="ESTALE"; break;
+      case EREMOTE             : perr="EREMOTE"; break;
+   }
+   #endif
+
+   #ifdef _WIN32
+   if (strBegins((char*)perr, "WSA")) perr += 3;
+   #endif
+
+   if (strlen(perr))
+      snprintf(szErrBuf, sizeof(szErrBuf)-10, "status=%d (%s)", ncode, perr);
+   else
+      snprintf(szErrBuf, sizeof(szErrBuf)-10, "status=%d", ncode);
+
+   return szErrBuf;
+}
+
+// ----------------------------------------------------------------
+
+UDPIO::UDPIO( )
+{
+   rawInit();
+}
+
+void UDPIO::rawInit( )
+{
+   memset(this, 0, sizeof(*this));
+
+   fdClSocket = INVALID_SOCKET;
+   mclear(szClDescription);
+   mclear(clTargetAddr);
+   mclear(clRawInAddr);
+   mclear(clInBufInAddr);
+   iClOwnReceivePort = 0;
+   iClTargetSendPort = 0;
+   bClMulticast = 0;
+   bClVerbose = false;
+   iClPackageSize = 1000;
+   bClRawText = 0;
+   iClReqNum = 1;
+   iClTimeout = 1000;
+   cClCurrentInColor = ' ';
+   cClTellColor = '\0';
+   iClUsingAltPortInsteadOf = -1;
+}
+
+UDPIO::~UDPIO( )
+{
+   if (fdClSocket != INVALID_SOCKET)
+      closesocket(fdClSocket);
+}
+
+bool UDPIO::isOpen( )
+{
+   return (fdClSocket != INVALID_SOCKET) ? 1 : 0;
+}
+
+int UDPIO::closeAll( )
+{
+   if (fdClSocket != INVALID_SOCKET)
+   {
+      closesocket(fdClSocket);
+   }
+
+   rawInit();
+ 
+   return 0;
+}
+
+bool UDPIO::isMulticast( )
+{
+   return bClMulticast;
+}
+
+// RC  9 : cannot create socket
+//    10 : cannot bind socket
+//    11 : cannot multicast
+int UDPIO::initSendReceive
+ (
+   const char *pszDescription,
+   int iOwnReceivePort,
+   int iTargetSendPort,
+   char *pszTargetAddress,
+   uint uiFlags
+ )
+{
+   strcopy(szClDescription, pszDescription);
+
+   iClOwnReceivePort = iOwnReceivePort;
+   iClTargetSendPort = iTargetSendPort;
+   iClUsingAltPortInsteadOf = -1;
+
+   // printf("UDP: initSendReceive ownport=%d targport=%d addr=%s\n",
+   //   iOwnReceivePort, iTargetSendPort, pszTargetAddress);
+
+   bClMulticast = (uiFlags & 1) ? 1 : 0;
+   bool bReuse  = (uiFlags & 2) ? 1 : 0;
+   bool bRetry  = (uiFlags & 4) ? 1 : 0;
+
+   if (pszTargetAddress && !strncmp(pszTargetAddress, "224.", 4))
+      bClMulticast = true;
+
+   int fdTmp = socket(AF_INET, SOCK_DGRAM, 0);
+
+   if (fdTmp < 0)
+   {
+      perr("Error creating socket for %s. errno=%u %s\n",
+         szClDescription, netErrno(), netErrStr());
+      return 9;
+   }
+
+   if (bReuse)
+   {
+      int nOnVal = 1;
+      setsockopt(fdTmp, SOL_SOCKET, SO_REUSEADDR, (const char *)&nOnVal, sizeof(nOnVal));
+   }
+
+   if (iOwnReceivePort >= 0)
+   {
+      int iMaxTry = bRetry ? 5 : 1;
+
+      for (int itry=0; itry<iMaxTry; itry++)
+      {
+         // on port conflict, retry 10 ports higher
+         iClOwnReceivePort = iOwnReceivePort + itry * 10;
+   
+         // own address for input
+         struct sockaddr_in saOwnAddr;
+         memset((char *)&saOwnAddr, 0,sizeof(saOwnAddr));
+
+         saOwnAddr.sin_family      = AF_INET;
+         saOwnAddr.sin_port        = htons(iClOwnReceivePort);
+         saOwnAddr.sin_addr.s_addr = INADDR_ANY;
+      
+         if (bind(fdTmp, (struct sockaddr *)&saOwnAddr, sizeof(saOwnAddr)) >= 0) {
+            if (itry > 0)
+               iClUsingAltPortInsteadOf = iOwnReceivePort;
+            break; // OK
+         }
+
+         if (itry < iMaxTry-1) {
+            pwarn("Cannot listen on port %d, retrying on %d.", iClOwnReceivePort, iClOwnReceivePort+10);
+            // and reloop
+         } else {
+            perr("Cannot listen on port %d, rc=%d.", iClOwnReceivePort, netErrno());
+            perr("Missing access rights, or port used by other program.\n");
+            return 10;
+         }
+      }
+   }
+
+   if (isMulticast())
+   {
+      struct ip_mreq mreq;
+      memset(&mreq, 0, sizeof(mreq));
+      mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+
+      #ifdef MAC_OS_X
+        #define SOL_IP IPPROTO_IP
+      #endif
+
+      #ifdef _WIN32
+ 
+      char name[512];
+      PHOSTENT hostinfo;
+      if (gethostname(name, sizeof(name)))
+         return 11+perr("gethostname failed\n");
+
+      if ((hostinfo=gethostbyname(name)) != NULL)
+         return 11+perr("get ownhost failed\n");
+
+      struct in_addr *pin_addr = (struct in_addr *)*hostinfo->h_addr_list;
+      mreq.imr_interface.s_addr = pin_addr->s_addr;
+      mreq.imr_multiaddr.s_addr = inet_addr(pszTargetAddress);
+
+      // force IP_ADD_MEMBERSHIP of ws2tcpip.h
+      #define MY_IP_ADD_MEMBERSHIP 12
+
+      if (setsockopt(fdTmp, IPPROTO_IP, MY_IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq)) != 0 )
+         return 11+perr("Join multicast failed. Errno=%u (%s)",  netErrno(), netErrStr());
+
+      // in case of error 10042 see
+      //    http://support.microsoft.com/kb/257460
+      // wrong winsocket header, runtime linkage etc.
+ 
+      #else
+
+      if (inet_aton(pszTargetAddress, &mreq.imr_multiaddr) == 0)
+      {
+         perr("Join multicast failed: bad address %s\n", pszTargetAddress);
+         return 11; // cannot multicast
+      }
+
+      if (setsockopt(fdTmp, SOL_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0 )
+      {
+         perr("No default-route to support multicast.");
+         perr("Try 'route add -net 224.000 netmask 240.000 eth0'");
+         return 11;
+      }
+
+      #endif
+ 
+      // printf("mcast: fd=%d outport=%d inport=%d group=%s active.\n",
+      //   fdTmp, iClTargetSendPort, iClOwnReceivePort, pszTargetAddress);
+
+      // do not call gethostbyname, but set addr manually
+      memset((char *)&clTargetAddr, 0,sizeof(clTargetAddr));
+
+      clTargetAddr.sin_family      = AF_INET;
+      clTargetAddr.sin_addr.s_addr = inet_addr(pszTargetAddress);
+      clTargetAddr.sin_port        = htons((int)iClTargetSendPort);
+   }
+   else
+   {
+      // printf("udp: fd=%d outport=%d inport=%d active.\n",
+      //   fdTmp, iClTargetSendPort, iClOwnReceivePort);
+
+      if (setTarget(pszTargetAddress, iClTargetSendPort))
+         return 12;
+   }
+ 
+   fdClSocket = fdTmp;
+
+   return 0;
+}
+
+int UDPIO::setTarget(char *pszTargetAddress, int iTargetPort)
+{
+   memset((char *)&clTargetAddr, 0,sizeof(clTargetAddr));
+
+   struct hostent *pTarget;
+   if ((pTarget = sfkhostbyname(pszTargetAddress)) == NULL)
+      return 11+perr("cannot get host %s, rc=%d\n", pszTargetAddress, netErrno());
+
+   clTargetAddr.sin_family = AF_INET;
+   memcpy(&clTargetAddr.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
+   clTargetAddr.sin_port   = htons((int)iTargetPort);
+
+   return 0;
+}
+
+// RC  0 : OK
+//     9 : send failed, no socket
+//    10 : send failed, transmission error
+//    11 : send failed, wrong parameters
+int UDPIO::sendData(uchar *pData, int iDataSize)
+{
+   if (fdClSocket == INVALID_SOCKET)
+      return 9+perr("send: invalid UDP socket\n");
+
+   if (sendto(fdClSocket, (char *)pData, iDataSize, 0,
+          (struct sockaddr *)&clTargetAddr, sizeof(clTargetAddr)) != iDataSize)
+   {
+      perr("send: failed errno=%d %s\n", netErrno(), netErrStr());
+      return 12;
+   }
+
+   return 0;
+}
+
+// RC >  0 : number of bytes received
+// RC <= 0 : error
+int UDPIO::receiveData(
+   uchar *pBuffer, int iBufferSize,
+   struct sockaddr_in *pAddrIncoming,
+   int iSizeOfAddrIncoming
+ )
+{
+   if (fdClSocket == INVALID_SOCKET)
+      return -1;
+
+   struct sockaddr addrIncoming;
+   memset(&addrIncoming, 0, sizeof(addrIncoming));
+
+   socklen_t clilen = sizeof(addrIncoming);
+
+   // receive with 10 bytes buffer tolerance.
+   // result is guaranteed to be zero terminated.
+   int iRead = recvfrom(fdClSocket, (char*)pBuffer, iBufferSize-10, 0, &addrIncoming, &clilen);
+
+   if (pAddrIncoming != 0 && clilen == iSizeOfAddrIncoming)
+      memcpy(pAddrIncoming, &addrIncoming, iSizeOfAddrIncoming);
+
+   // always guarantee zero termination.
+   if (iRead >= 0)
+      pBuffer[iRead] = '\0';
+
+   return iRead;
+}
+
+bool UDPIO::isDataAvailable(int iSec, int iMSec)
+{
+   if (fdClSocket == INVALID_SOCKET)
+      return false;
+
+   struct timeval tv;
+   fd_set fdvar;
+
+   tv.tv_sec  = iSec;
+   tv.tv_usec = iMSec ? iMSec * 1000 : 100;
+
+   FD_ZERO(&fdvar);
+   FD_SET(fdClSocket, &fdvar);
+
+   if (select(fdClSocket+1, &fdvar, 0, 0, &tv) > 0)
+      return 1;
+
+   return 0;
+}
+
+// SYNC also: sendDuplexReply
+int UDPIO::addHeader( )
+{
+   iClRecentReqNum = iClReqNum;
+
+   char szStartColor[20];
+   szStartColor[0] = '\0';
+   if (cClTellColor) 
+   {
+      sprintf(szStartColor, ",sc%c", cClTellColor);
+      cClTellColor = '\0';
+   }
+
+   sprintf(aClRawOutBuf, ":sfktxt:v100,req%d%s,rt0%s%s,fl\n", 
+      iClReqNum++,
+      bClDuplex ? ",copy" : "",
+      bClColor ? ",cs1" : "",
+      szStartColor
+      );
+
+   // remember index of retry number
+   char *psz = strstr(aClRawOutBuf, ",rt0");
+   if (psz)
+      iClRetryOff = (psz - aClRawOutBuf) + 3;
+   
+   // remember index of split line indicator
+   iClSLIOff = strlen(aClRawOutBuf) - 3;
+
+   for (int i=0; i<iClCommand; i++) 
+   {
+      strcat(aClRawOutBuf, ":");
+      strcat(aClRawOutBuf, aClCommand[i]);
+      strcat(aClRawOutBuf, "\n");
+   }
+   strcat(aClRawOutBuf, "\n");
+   
+   iClCommand = 0;
+
+   iClHeadSize = strlen(aClRawOutBuf);
+   iClOutIndex = iClHeadSize;
+   return 0;
+}
+
+bool UDPIO::hasCachedOutput( )
+{
+   return iClOutIndex > iClHeadSize ? 1 : 0;
+}
+
+int UDPIO::flushSend(bool bTellAboutSplitLine)
+{
+   // set optional split line indicator in header
+   if (   !bClRawText && bTellAboutSplitLine 
+       && iClSLIOff > 0 && iClSLIOff < iClHeadSize
+      )
+      aClRawOutBuf[iClSLIOff] = 's'; // ,fl -> ,sl
+
+   int irc = 0;
+   int itry = 0;
+   
+   // printf("-----------------------------\n");
+
+   for (; itry<10; itry++)
+   {
+      if (itry >= 5) {
+         perr("line broken, failed to send package %d times.\n", itry);
+         irc = 9;
+         break;
+      }   
+      
+      if (iClRetryOff > 0 && iClRetryOff < iClHeadSize) {
+         aClRawOutBuf[iClRetryOff] = itry + '0';
+      }
+
+      if ((irc = sendData((uchar*)aClRawOutBuf, iClOutIndex)))
+         break;
+         
+      // printf("SENT: %s\n", aClRawOutBuf);
+
+      if (bClDuplex)
+      {
+         if (!isDataAvailable(0, iClTimeout))
+            continue; // retry send
+
+         aClRawInBuf2[0] = '\0';
+
+         int i = receiveData((uchar*)aClRawInBuf2, sizeof(aClRawInBuf2)-100);
+         if (i <= 0)
+            continue; // retry send
+
+         // printf("RECV: \"%s\" (%d)\n", aClRawInBuf2, i);
+
+         // :sfktxt:v100,rep123,ok\n\n
+         char *psz = strstr(aClRawInBuf2, ",rep");
+         if (!psz) {
+            perr("wrong -duplex reply received: %.30s", aClRawInBuf2);
+            irc = 9;
+            break;
+         }
+
+         int iReqNum = iClRecentReqNum;
+         int iRepNum = atoi(psz+4);
+         if (iRepNum < iReqNum) 
+         {
+            // happens when sending retry requests which are answered 
+            // AFTER we already sent the next original request.
+            pwarn("duplex: old reply record (%d/%d), lines may be duplicated\n", iReqNum, iRepNum);
+            irc = 5;
+            break;
+         }
+         else
+         if (iRepNum != iReqNum)
+         {
+            // should not happen.
+            pwarn("duplex: wrong reply record (%d/%d), lines may be invalid\n", iReqNum, iRepNum);
+            irc = 5;
+            break;
+         }
+
+         // package was fully confirmed
+         break;
+      }
+      else
+         break;
+   }
+
+   iClHeadSize = 0;
+   iClOutIndex = 0;
+   iClCommand  = 0;
+   iClSLIOff   = 0;
+
+   return irc;
+}
+
+int UDPIO::addCommand(char *pszCmd)
+{
+   int iMaxCommands = sizeof(aClCommand)/sizeof(aClCommand[0]);
+   if (iClCommand < 0 || iClCommand >= iMaxCommands-2)
+      return 5;
+      
+   int iMaxCopy = sizeof(aClCommand[0])-2;
+   strncpy(aClCommand[iClCommand], pszCmd, iMaxCopy);
+   aClCommand[iClCommand][iMaxCopy-2] = '\0';
+   iClCommand++;
+   
+   return 0;
+}
+
+char UDPIO::sfkToNetColor(char c)
+{
+   switch (c)
+   {
+      // keep these as is
+      case 'r': case 'g': case 'b': case 'y': case 'c': case 'm':
+      case 'R': case 'G': case 'B': case 'Y': case 'C': case 'M':
+         return c;
+
+      // white is sfk-internally coded as v to separate from
+      // logical 'w'arning color.
+      case 'v': return 'w';
+      case 'V': return 'W';
+
+      // default color ' ' is marked as 'd'
+      case ' ': return 'd';
+   }
+   
+   // all other cases are sfk logical colors
+   extern int sfkMapAttrToColor(char cAttr);
+   int nSFKIntColor = sfkMapAttrToColor(c);
+   
+   // bit   0:bright 1:red 2:green 3:blue
+   // value     1       2      4      8
+   switch (nSFKIntColor)
+   {
+      case  0: case 1: return 'd';
+      case  2: return 'r';
+      case  3: return 'R';
+      case  4: return 'g';
+      case  5: return 'G';
+      case  6: return 'y';
+      case  7: return 'Y';
+      case  8: return 'b';
+      case  9: return 'B';
+      case 10: return 'm';
+      case 11: return 'M';
+      case 12: return 'c';
+      case 13: return 'C';
+      case 14: return 'w';
+      case 15: return 'W';
+   }
+
+   // all other cases
+   return 'd';
+}
+
+int UDPIO::checkTellCurrentColor(char cSFKAttrib)
+{
+   if (iClOutIndex > 0)
+      return 5; // something was cached already
+
+   cClTellColor = sfkToNetColor(cSFKAttrib);
+   
+   return 0;
+}
+
+int UDPIO::addOrSendText(char *pszInText, char *pszInAttr)
+{
+   if (bClRawText)
+   {
+      bClColor = 0;
+      return addOrSendText(pszInText, strlen(pszInText), 0);
+   }
+
+   int iPhrase = 0;
+   int iSrcCur = 0;
+   int iAttCur = 0;
+   
+   // next addHeader should tell about color coding
+   bClColor = 1;
+
+   // if nothing was cached or sent yet, tell current color
+   char cFirstColor = pszInAttr[0] ? pszInAttr[0] : ' ';
+   checkTellCurrentColor(cFirstColor);
+
+   // force setting of current color on every line start
+   char aOld = '\0';
+
+   char szCmd[30];
+
+   memset(szCmd, 0, sizeof(szCmd));
+   szCmd[0] = (char)0x1F;
+
+   int irc = 0;
+
+   while (1)
+   {
+      char c = pszInText[iSrcCur];
+      char a = pszInAttr[iAttCur];
+
+      if (!c)
+         break;
+
+      // attribs may end sooner, e.g. on LF of text
+      if (a)
+         iAttCur++;
+      else
+         a = aOld;
+
+      if (a != aOld) 
+      {
+         // color change: flush recent phrase, if any
+         if (iSrcCur > iPhrase)
+            if ((irc = addOrSendText(pszInText+iPhrase, iSrcCur-iPhrase, 0)))
+               return irc;
+         iPhrase = iSrcCur;
+
+         // send \x1F and color code
+         szCmd[1] = sfkToNetColor(a);
+         if ((irc = addOrSendText(szCmd, 2, 1)))
+            return irc;
+         
+         // switch current color
+         aOld = a;
+      }
+      
+      if (((uchar)c) == 0x1FU)
+      {
+         // input contains non control \x1F: flush phrase
+         if (iSrcCur > iPhrase)
+            if ((irc = addOrSendText(pszInText+iPhrase, iSrcCur-iPhrase, 0)))
+               return irc;
+         iPhrase = iSrcCur;
+
+         // send escaped \x1F\x1F
+         szCmd[1] = sfkToNetColor(a);
+         if ((irc = addOrSendText(szCmd, 2, 1)))
+            return irc;
+      }
+      
+      iSrcCur++;
+   }
+
+   // flush remainder:
+   if (iSrcCur > iPhrase)
+      if ((irc = addOrSendText(pszInText+iPhrase, iSrcCur-iPhrase, 0)))
+         return irc;
+
+   return 0;
+}
+
+int UDPIO::addOrSendText(char *pszPhrase, int iPhraseLen, bool bNoWrap)
+{
+   int irc = 0;
+
+   if (!iClOutIndex && !bClRawText)
+      addHeader();
+
+   // package size with tolerance for EOL etc.
+   int iNettoPackSize = iClPackageSize - 4;
+
+   int iSrcLenRaw = iPhraseLen;
+   int iCopyLen   = iSrcLenRaw;
+
+   char *pszSrcCur= pszPhrase;
+   int iSrcRemain = iSrcLenRaw;
+
+   // color control sequences should never be split
+   if (bNoWrap != 0 && iClOutIndex + iCopyLen > iNettoPackSize)
+   {
+      // therefore don't try to wrap, but flush immediately
+      if ((irc = flushSend(0)))
+         return irc;
+
+      if (!bClRawText)
+         addHeader();
+
+      // iClOutIndex was reset, is now after new header.
+   }
+
+   while (   iCopyLen > 0
+          && iClOutIndex + iCopyLen > iNettoPackSize
+         )
+   {
+      // phrase does not fit completely.
+      // try a soft wrap based on CR or LF.
+      // we do NOT consider control sequences here.
+      int iWrap = 0;
+      for (int i=0; iClOutIndex+i<iNettoPackSize;)
+      {
+         if (!strncmp(pszSrcCur+i, "\r\n", 2))
+            { iWrap=i+2; i+=2; } // after EOL
+         else
+         if (pszSrcCur[i]=='\r' || pszSrcCur[i]=='\n')
+            { iWrap=i+1; i++; }  // after EOL
+         else
+            i++;
+      }
+
+      bool bSplitLine = 0;
+
+      if (iWrap > 0) {
+         iCopyLen = iWrap; // until wrap point
+         // printf("... soft wrap %d\n", iWrap);
+      }
+      else
+      if (iClOutIndex - iClHeadSize > 0) {
+         // found no soft wrap point, but there is cached text
+         iCopyLen = 0;     // flush recent as is
+         // printf("... flush recent %d\n", iClOutIndex - iClHeadSize);
+      }
+      else {               // hard wrap
+         iCopyLen = iNettoPackSize - iClOutIndex;
+         bSplitLine = 1;
+         // printf("... hard wrap %d %d %d\n", iCopyLen, iNettoPackSize, iClOutIndex);
+      }
+      
+      // printf("addOrSend: %.*s (%d)\n", (int)iCopyLen, pszSrcCur, iCopyLen);
+         
+      if (iCopyLen > 0)
+         memcpy(aClRawOutBuf+iClOutIndex, pszSrcCur, iCopyLen);
+      iClOutIndex += iCopyLen;
+
+      if ((irc = flushSend(bSplitLine)))
+         return irc;
+
+      if (!bClRawText)
+         addHeader();
+
+      pszSrcCur  += iCopyLen;
+      iSrcRemain -= iCopyLen;
+      iCopyLen    = iSrcRemain;
+   }
+   
+   if (iCopyLen > 0)
+   {
+      // add (last part of) phrase to cache
+      memcpy(aClRawOutBuf+iClOutIndex, pszSrcCur, iCopyLen);
+      iClOutIndex += iCopyLen;
+   }
+   
+   return irc;
+}
+
+int UDPIO::storeHeader(char *pszRaw, int iHeadLen)
+{
+   /*
+      :sfktxt:v100,req1,copy,scd\n
+      :clear\n
+      :setpos,10,10\n
+      :status,step 1\n
+   */
+
+   if (iHeadLen > sizeof(aClHeaderBuf)-100)
+       iHeadLen = sizeof(aClHeaderBuf)-100;
+   memcpy(aClHeaderBuf, pszRaw, iHeadLen);
+   aClHeaderBuf[iHeadLen] = '\0';
+
+   char *pszLine = aClHeaderBuf;
+
+   // parse headline
+   while (*pszLine)
+   {
+      if (*pszLine=='\n')
+         { pszLine++; break; }
+      if (*pszLine==',') {
+         pszLine++;
+         if (!strncmp(pszLine, "req", 3))
+            iClInReqNum = atoi(pszLine+3);
+         if (!strncmp(pszLine, "rt", 2))
+            iClInRetryNum = atoi(pszLine+2);
+         if (!strncmp(pszLine, "copy", 4))
+            bClCopyRequest = 1; // duplex
+         if (!strncmp(pszLine, "cs1", 3))
+            bClDecodeColor = 1;
+         if (bClDecodeColor && !strncmp(pszLine, "sc", 2))
+            cClCurrentInColor = pszLine[6]; // start color
+         continue;
+      }
+      pszLine++;
+   }
+   
+   // parse commands.
+   while (*pszLine)
+   {
+      // valid command lines must end with LF
+      char *pszNext = strchr(pszLine, '\n');
+      if (!pszNext)
+         break; // possibly truncated header
+      *pszNext++ = '\0';
+
+      if (!strcmp(pszLine, ":clear"))
+         bClCmdClear = 1;
+
+      // to next line
+      pszLine = pszNext;
+   }
+
+   return 0;
+}
+
+// IN : aClRawInBuf1 with mixed text
+// OUT: aClRawInBuf2 with plain text
+//      aClRawInAttr2 with color attributes
+int UDPIO::decodeColorText(int iFromOffset)
+{
+   aClRawInBuf2[0]  = '\0';
+   aClRawInAttr2[0] = '\0';
+
+   int iSrcCur = iFromOffset;
+
+   int iDstCur = 0;
+   int iDstMax = sizeof(aClRawInBuf2) - 100;
+   
+   int iAttCur = 0;
+   int iAttMax = sizeof(aClRawInAttr2) - 100;
+
+   char a = cClCurrentInColor;
+
+   while (iDstCur < iDstMax)
+   {
+      char c = aClRawInBuf1[iSrcCur];
+
+      if (!c)
+         break;
+
+      if (bClDecodeColor!=0 && ((uchar)c) == 0x1FU)
+      {
+         // control sequence. get next char.
+         iSrcCur++;
+         char c2 = aClRawInBuf1[iSrcCur];
+
+         if (!c2)
+         {
+            // invalid sequence at end of text.
+            // treat as single control char.
+            aClRawInBuf2[iDstCur++] = c;
+            if (iAttCur < iAttMax)
+             aClRawInAttr2[iAttCur++] = a;
+            pwarn("invalid control sequence in color text\n");
+            break;
+         }
+         
+         if (((uchar)c2) == 0x1FU)
+         {
+            // escaped \x1F. replace by single char.
+            aClRawInBuf2[iDstCur++] = c;
+            if (iAttCur < iAttMax)
+             aClRawInAttr2[iAttCur++] = a;
+
+            iSrcCur++;
+            continue;
+         }
+         
+         // change current color
+         a = c2;
+         
+         // also remember for package spanning text
+         cClCurrentInColor = a;
+         
+         iSrcCur++;
+         continue;
+      }
+      
+      // copy through plain text char
+      aClRawInBuf2[iDstCur++] = c;
+      if (iAttCur < iAttMax)
+       aClRawInAttr2[iAttCur++] = a;
+
+      iSrcCur++;
+   }
+
+   // MUST zero terminate.
+   aClRawInBuf2[iDstCur] = '\0';
+   aClRawInAttr2[iAttCur] = '\0';
+
+   return 0;
+}
+
+int UDPIO::getClientIndex(struct sockaddr_in *pAddr, bool *pFound)
+{
+   int iEmpty  = -1;
+   int nOldest =  0;
+   int iOldest =  0;
+
+   struct UCPClientState *pcln = 0;
+
+   for (int i=0; i<UDPIO_MAX_CLIENTS; i++)
+   {
+      pcln = &aClClients[i];
+
+      // empty slot?
+      if (!pcln->ntime) {
+         if (iEmpty < 0)
+            iEmpty = i;
+         continue;
+      }
+      // oldest slot?
+      if (nOldest==0 || pcln->ntime<nOldest) {
+         nOldest = pcln->ntime;
+         iOldest = i;
+      }
+      // matching?
+      if (   pAddr->sin_addr.s_addr == pcln->addr.sin_addr.s_addr
+          && pAddr->sin_port == pcln->addr.sin_port
+         )
+      {
+         *pFound = 1;
+         return i;
+      }
+   }
+
+   int iReuse = (iEmpty >= 0) ? iEmpty : iOldest;
+
+   pcln = &aClClients[iReuse];
+
+   memset(pcln, 0, sizeof(aClClients[iReuse]));
+   pcln->ntime = getCurrentTime();
+   pcln->reqnum = 0; // filled in later
+   memcpy(&pcln->addr, pAddr, sizeof(struct sockaddr_in));
+   pcln->color = 'd';
+
+   return iReuse;
+}
+
+void dumpdata(const char *pszTitle, char *psz) 
+{
+   printf("%s : \"", pszTitle);
+   while (*psz) {
+      switch (*psz) {
+         case 0x1F: printf("{COL}"); break;
+         case '\r': printf("{CR}"); break;
+         case '\n': printf("{LF}"); break;
+         default  : putchar(*psz);
+      }
+      psz++;
+   }
+   printf("\"\n");
+}
+
+bool UDPIO::hasCachedInput( )
+{
+   return iClRawInputCached > 0 ? 1 : 0;
+}
+
+int UDPIO::receiveText( )
+{
+   // to detect mixed input from different clients
+   int iRecentClient = iClClient;
+   bool bChangedClient = 0;
+
+   if (!iClRawInputCached)
+   {
+      // cache is empty, get next network packet
+      mclear(clRawInAddr);
+      int clilen = sizeof(clRawInAddr);
+      bool bSkipDecode = 0;
+      
+      // reinit per packet
+      aClRawInBuf1[0]   = '\0';
+      aClRawInBuf2[0]   = '\0';
+      aClRawInAttr2[0]  = '\0';
+      bClForceNextInput = 0;
+
+      // taken from header, if any
+      iClInReqNum = 0;
+      iClInRetryNum = 0;
+      bClCopyRequest = 0;
+      cClCurrentInColor = 'd';
+      bClCmdClear = 0;
+      bClContinuedStream = 0;
+      bClDecodeColor = 0;
+
+      int iRawRead = receiveData((uchar*)aClRawInBuf1, sizeof(aClRawInBuf1)-100,
+                                 &clRawInAddr, clilen);
+      if (iRawRead <= 0)
+         return 0;
+
+      // data is zero terminated.
+      // dumpdata("RECV", aClRawInBuf1); fflush(stdout);
+
+      // set current client index by input address
+      bool bClientRefound = 0;
+      iClClient = getClientIndex(&clRawInAddr, &bClientRefound);
+
+      // detect mixed client input
+      if (iRecentClient != iClClient)
+         bChangedClient = 1;
+      
+      bClRawText = 1;
+
+      // parse header, if any
+      if (!strncmp(aClRawInBuf1, ":sfktxt:", 8))
+      {
+         char *pszPastHeader = strstr(aClRawInBuf1, "\n\n");
+         if (pszPastHeader) 
+         {
+            // parse header
+            pszPastHeader += 2; // keep the LFs
+            int iHeadLen = pszPastHeader - aClRawInBuf1;
+            storeHeader(aClRawInBuf1, iHeadLen);
+            // sets reqnum, copyreq, currentcolor, cmdclear
+
+            // is there a continued stream with a client?
+            if (bClientRefound) {
+               // normal transfer: reqnum increments by one
+               if (iClInReqNum == aClClients[iClClient].reqnum + 1)
+                  bClContinuedStream = 1;
+               // retry transfer: trynum increments by one
+               if (   iClInReqNum == aClClients[iClClient].reqnum
+                   && iClInRetryNum == aClClients[iClClient].copytry + 1)
+               {
+                  // the client sent us same record TWICE because
+                  // it received the first reply with a huge delay.
+                  // repair this: the stream is still intact
+                  bClContinuedStream = 1;
+                  // we already replied for that reqnum, therefore
+                  aClClients[iClClient].copytry++;
+                  bClCopyRequest = 0;
+                  // and the dup text must be dropped.
+                  // because we skip colorDecode:
+                  aClRawInBuf2[0] = '\0';
+                  // leads to iToCopy == 0 below.
+                  bSkipDecode = 1;
+               }
+            }
+            aClClients[iClClient].reqnum = iClInReqNum;
+
+            // then reuse recent color. redundant to storeHeader.
+            if (bClContinuedStream && bClDecodeColor)
+               cClCurrentInColor = aClClients[iClClient].color;
+
+            // reply duplex request immediately
+            if (bClCopyRequest) {
+               bClCopyRequest = 0;
+               sendDuplexReply(&clRawInAddr);
+            }
+
+            // apply color decoding. will just copy thru if bClDecodeColor==0
+            if (!bSkipDecode) {
+               int iText = pszPastHeader - aClRawInBuf1;
+                decodeColorText(iText);
+                // from InBuf1 to InBuf2
+               aClClients[iClClient].color = cClCurrentInColor;
+            }
+
+            // cached in RawInBuf2, RawInAttr2
+            bClRawText = 0;
+            
+            // printf("PART: \"%s\" clf=%d cstrm=%d\n", aClRawInBuf2, bClientRefound, bClContinuedStream);
+         }
+         // else fall thru as raw text
+      }
+
+      if (bClRawText)
+      {
+         // take plain UDP text as is
+         memcpy(aClRawInBuf2, aClRawInBuf1, iRawRead);
+         aClRawInBuf2[iRawRead] = '\0';
+         memset(aClRawInAttr2, 'd', iRawRead);
+         aClRawInAttr2[iRawRead] = '\0';
+      }
+   }
+
+   // new or cached text input is now in RawInBuf2, RawInAttr2.
+   int iToCopy = strlen(aClRawInBuf2);
+   // can be NULL if input was just a color control sequence!
+   // in this case, only state information like reqnum is cached.
+
+   // when should we print collected chars to terminal?
+   // - if the sfktxt client changed
+   bool bShouldFlush = bChangedClient;
+   // - OR if same client has no continued stream
+   if (!bClContinuedStream)
+        bShouldFlush = 1;
+   // but never on raw text input, unless option LFOnRaw is set
+   if (bClRawText && !bClAppendLFOnRaw) 
+      bShouldFlush = 0;
+
+   // if there a partial line stored in output, we MUST feed the line
+   // -  if the client changed
+   // -  if the same client provides a mismatched request number
+   if (iClInBufUsed > 0 && bShouldFlush)
+   {
+      // then the output line MUST be flushed now.
+      // we keep current input in aClRawInBuf2.
+      // all state like iClClient stays as is.
+      iClRawInputCached = iToCopy; // can be NULL!
+      bClForceNextInput = 1;
+      // printf("back: caller must flush %d (1)\n", iClInBufUsed);
+      return 1;
+   }
+
+   // is enough space in rejoin buffer for further text?
+   if (iClInBufUsed + iToCopy > MAX_LINE_LEN)
+   {
+      // not enough space in inbuf for additional text.
+      // caller must flush input. this flag signals
+      // that no end of line char should be searched.
+      iClRawInputCached = iToCopy; // can be NULL!
+      bClForceNextInput = 1;
+      // printf("back: caller must flush %d (2)\n", iClRawInputCached);
+      return 1;
+   }
+   
+   // add next line part to line rejoin buffer
+   memcpy(aClInBuf+iClInBufUsed, aClRawInBuf2, iToCopy);
+   memcpy(aClInAtt+iClInBufUsed, aClRawInAttr2, iToCopy);
+   
+   // on add of first part also copy sender info
+   if (!iClInBufUsed)
+      memcpy(&clInBufInAddr, &clRawInAddr, sizeof(clRawInAddr));
+
+   // no cache remains   
+   iClRawInputCached = 0;
+
+   iClInBufUsed += iToCopy;
+   
+   aClInBuf[iClInBufUsed] = '\0';
+   aClInAtt[iClInBufUsed] = '\0';
+
+   // caller must consume new input lines as soon as
+   // getNextInput() returns a complete line.
+   
+   // printf("join: \"%s\"\n", aClInBuf);
+   
+   return 0;
+}
+
+int UDPIO::sendDuplexReply(struct sockaddr_in *pAddr)
+{
+   if (fdClSocket == INVALID_SOCKET)
+      return 9;
+
+   char szReply[200];
+   
+   snprintf(szReply, sizeof(szReply)-10,
+      ":sfktxt:v100,rep%d,rt%d,ok\n\n",
+      iClInReqNum, iClInRetryNum
+      );
+
+   int iSendSize = strlen(szReply);
+
+   if (sendto(fdClSocket, szReply, iSendSize, 0,
+          (struct sockaddr *)pAddr, sizeof(struct sockaddr_in)) != iSendSize
+      )
+      return 10;
+
+   aClClients[iClClient].copyreq = iClInReqNum;
+   aClClients[iClClient].copytry = iClInRetryNum;
+
+   return 0;
+}
+
+char *UDPIO::getNextCommand( )
+{
+   if (bClCmdClear) {
+      bClCmdClear = 0;
+      return (char*)"clear";
+   }
+   return 0;
+}
+
+char *UDPIO::getNextInput(char **ppAttr, struct sockaddr_in *pSenderAddr)
+{
+   if (iClInBufUsed <= 0)
+      return 0;
+
+   bool bAllowJoin = 1;
+   if (bClRawText && bClAppendLFOnRaw)
+        bAllowJoin = 0;
+
+   // when receiving raw text, take input as is.
+   // if input buffer overflows, also take as is.
+   if (!bClForceNextInput && bAllowJoin)
+   {
+      // wait for next CR or LF
+      char cLast = aClInBuf[iClInBufUsed-1];
+      if (cLast!='\r' && cLast!='\n')
+         return 0;
+   }
+   
+   bClForceNextInput = 0;
+
+   iClInBufUsed = 0;
+
+   if (ppAttr)
+      *ppAttr = aClInAtt;
+
+   if (pSenderAddr)
+      memcpy(pSenderAddr, &clInBufInAddr, sizeof(struct sockaddr_in));
+
+   // dumpdata("nxin", aClInBuf);
+
+   return aClInBuf;
 }

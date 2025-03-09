@@ -13,6 +13,12 @@
 
 #ifdef _WIN32
  #define WINFULL
+#else
+ #ifdef __APPLE__
+  #ifndef MAC_OS_X
+   #define MAC_OS_X
+  #endif
+ #endif
 #endif
 
 #include <stdlib.h>

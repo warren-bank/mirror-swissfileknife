@@ -1,4 +1,6 @@
 
+#ifdef VFILEBASE
+
 #ifdef USE_DCACHE
 
 // area one, ordered by namesum
@@ -481,4 +483,186 @@ extern ConCache glblConCache;
 extern CoiMap glblVCache;
 extern KeyMap glblCircleMap;
 
+#endif // VFILEBASE
 
+
+/*
+   sfktxt protocol fields:
+      v100  :  version 1.0.0
+      reqn  :  request number n, with n >= 1
+      rtn   :  retry number n, 0 to 3
+      copy  :  request a reply for request
+      repn  :  reply to request number n
+      cs1   :  text is encoded using color scheme 1:
+               \x1F + color code: rgbymc (dark) RGBYMC (bright) 
+                  wW = white  , viewers with white background may use gray 
+                  d  = default, viewers with white background will use black
+               if \x1F was found in original input, it is escaped as \x1F\x1F
+      scr   :  start color is 'r'ed for this message
+      fl    :  finished line, last line of packet is complete
+      sl    :  split line, last line continues in next packet
+      
+   sfktxt conventions:
+      -  if sender sends ,copy the receiver must reply immediately
+         with a ,rep record. otherwise, the line is broken.
+      -  as long as no CR or LF is received, text must be joined into
+         one large line. typical maximum line length is about 4000 chars.
+         large lines spanning multiple packets are also marked by ,sl.
+      -  if ,sc is found receiver should set initial color to that value.
+
+   example message:
+
+      data (\n == LF, \x1F == character with code 0x1F)
+         :sfktxt:v100,req1,rt0,cs1,scR,fl\n
+         :clear\n
+         \n
+         \x1FRfoo\x1Fd and \x1Fbbar\n
+
+      remarks
+         -  req1   : the first request from this client
+         -  rt0    : this is the original message, no retries yet
+         -  cs1    : uses color coded text with 0x1F tags
+         -  scR    : start color is bright 'R'ed
+         -  fl     : last line is finished, no spanning of messages
+         -  :clear : viewer should clear the log then add text
+         -  there is no ",copy" field, so sender expects no reply
+         -  \x1FRfoo\x1Fd and \x1Fbbar\n
+            print "foo" in bright red, then 'd'efault color etc.
+*/
+
+#define UDPIO_MAX_CLIENTS 128
+
+class UDPIO
+{
+public:
+      UDPIO    ( );
+     ~UDPIO    ( );
+
+void
+      rawInit  ( );
+
+int
+      initSendReceive   (const char *pszDescription,
+                         int iOwnReceivePort,
+                         // provide -1 to allocate any port from system
+                         int iTargetSendPort,
+                         char *pszTargetHostname,
+                         // provide a single machine's IP for Unicast.
+                         // provide 224.0.0.x to use Multicast.
+                         // provide NULL to use a Unicast IP later.
+                         uint uiFlags=0
+                         // 1 : force multicast
+                         // 2 : reuse address
+                         // 4 : retry on alternative ports
+                        ),
+      setTarget         (char *pszHostname, int iPort),
+
+      // --------- raw I/O ---------
+      sendData          (uchar *pData, int iDataSize),
+      receiveData       (uchar *pBuffer, int iBufferSize,
+                         struct sockaddr_in *pAddrIncoming=0,
+                         int iSizeOfAddrIncoming=0
+                        ),
+      closeAll          ( );
+
+bool
+      isOpen            ( ),
+      isMulticast       ( ),
+      isDataAvailable   (int iSec=0, int iMSec=0);
+
+      // -------- network text I/O ----------
+int   // RC 0 == OK
+      addCommand        (char *pszCmd), // call before sendText
+      addOrSendText     (char *pszText, char *pszAttr),
+      addOrSendText     (char *pszPhrase, int iPhraseLen, bool bNoWrap),
+      flushSend         (bool bTellAboutSplitLine),
+      addHeader         ( ),
+      receiveText       ( ),  // MUST call getNextInput next
+      storeHeader       (char *pszRaw, int iHeadLen),
+      sendDuplexReply   (struct sockaddr_in *pTo),
+      decodeColorText   (int iFromOffset),
+      checkTellCurrentColor (char c),
+      getClientIndex    (struct sockaddr_in *pAddr, bool *pFound);
+bool
+      hasCachedInput    ( ),
+      hasCachedOutput  ( );
+char
+     *getNextCommand    ( ),  // NULL if none
+     *getNextInput      (char **ppAttr=0,
+                         struct sockaddr_in *pSenderAddr=0), 
+                        // returns NULL if none
+     *peekHeader        (char *pszField),
+      sfkToNetColor     (char c);
+
+char
+      szClDescription   [30];
+int
+      iClOwnReceivePort,
+      iClTargetSendPort,
+      iClTimeout,
+      fdClSocket;
+bool
+      bClMulticast,
+      bClVerbose,
+      bClRawText,
+      bClCmdClear,
+      bClDuplex,
+      bClColor,
+      bClCopyRequest,
+      bClContinuedStream,
+      bClForceNextInput,
+      bClAppendLFOnRaw,
+      bClDecodeColor;
+
+char
+      cClTellColor,
+      cClCurrentInColor;
+
+struct sockaddr_in 
+      clTargetAddr,
+      clRawInAddr,      // of current received package
+      clInBufInAddr;    // for start of text line
+char  
+      aClHeaderBuf      [1000+100],
+      aClCommand        [10][100],
+      aClRawOutBuf      [2500+100],
+      aClRawInBuf1      [2500+100],
+      aClRawInBuf2      [2500+100],
+      aClRawInAttr2     [2500+100],
+      aClInBuf          [MAX_LINE_LEN+1000],
+      aClInAtt          [MAX_LINE_LEN+1000];
+int
+      iClPackageSize,
+      iClCommand,
+      iClHeadSize,
+      iClOutIndex,
+      iClInBufUsed,
+      iClRawInputCached,
+      iClReqNum,
+      iClRecentReqNum,
+      iClInReqNum,
+      iClInRetryNum,
+      iClRetryOff,      // retry number offset in header
+      iClSLIOff,        // split line indicator offset in header
+      iClClient,        // current client index
+      iClUsingAltPortInsteadOf;  // if bind on selected port failed,
+      // alternative port is used, and failed port is flagged here.
+
+struct UCPClientState
+{
+   num    ntime;        // if 0, slot is empty
+   int    reqnum;       // most recent received reqnum
+   struct sockaddr_in addr;
+   int    copyreq;      // recent reqnum of copy answer
+   int    copytry;      // recent trynum of copy answer
+   char   color;        // text color at end of recent record
+}
+   aClClients  [UDPIO_MAX_CLIENTS+10];
+};
+
+#ifndef USE_SFK_BASE
+extern UDPIO sfkNetIO;
+#endif // USE_SFK_BASE
+
+extern int netErrno();
+extern char *netErrStr(int ncode=-1);
