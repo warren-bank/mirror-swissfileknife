@@ -1590,6 +1590,8 @@ public:
    bool force;
    bool syncFiles;   // sync files instead of copy
    bool syncOlder;   // with sync, copy older over newer files
+   bool flat;        // copy: flat output filenames
+   char cflatpat;    // how to join flat output name
    bool nonames;     // do NOT print/pass :file records
    bool noind;       // no indentation
    char *runCmd;     // default: "" if not set.

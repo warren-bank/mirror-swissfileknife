@@ -8,6 +8,17 @@
    the world's fastest source code browser and editor.
 
    1.9.1
+   Revision 3:
+   -  rel: 28.05.2018, Minor Update
+   -  sum: sfk copy new option -flat to collect all into
+           one folder with flat filenames. the sfk book
+           is now available in print on Amazon.
+           search "100 command line tools", or "sfk tutorial".
+   -  add: copy: option -flat to copy all files into a
+           single output dir without sub folders.
+   -  doc: zipto: removed redundant example.
+   -  doc: name: copy -flat example.
+   -  doc: filter: -tolower/upper notice correction.
    Revision 2:
    -  rel: 17.04.2018, Minor Update
    -  sum: Better support for folder zipping if no sub folder
@@ -61,6 +72,8 @@
    -  doc: xed: example to swap char groups.
    -  doc: run: time measurement example.
    internal:
+   revision 3:
+   -  clp: code cleanup of udpdump.
    revision 2:
    -  add: general option -nosub2 to exclude subfolders
            and also hide subfolder names like in:
@@ -987,7 +1000,7 @@
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
 #define SFK_VERSION  "1.9.1" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "2"
+#define SFK_FIXPACK  "3"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -30295,7 +30308,6 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
                sendto(nsock, (char*)abBuf, nRead, 0, (struct sockaddr*)&inAddr, nadrlen);
             }
 
-            // .
             if (pszForward !=0)
             {
                // prefix data by sender ip, port,
@@ -45129,7 +45141,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   if (!strcmp(pszCmd, "goto"))
+   ifcmd (!strcmp(pszCmd, "goto"))
    {
       ifhelp (nparm < 1)
       printx("<help>$sfk goto label\n"
@@ -45605,12 +45617,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n");
       webref("run");
       printx("   $examples\n"
-             "      #sfk run \"attrib -R <run>qfile\" -quiet testfiles\\FooBank\\BarDriver -yes\n"
+             "      #sfk run \"attrib -R <run>qfile\" -quiet testfiles\\FooBank\\BarDriver\n"
              "         removes readonly attribute on all files within BarDriver\n"
              "      #sfk run \"<img src=<run>quottext>\" -dir . -file .jpg -nohead >index.html\n"
              "         create html-style image list of all jpegs (using just simulation).\n"
              "         note that option -nohead removes the [simulating:] info text lines.\n"
-             "      #type dirlist.txt | sfk run -idirs \"xcopy \\\"x:<sla><run>path\\\" \\\"z:<sla><run>path\\\" /I /D\" -yes\n"
+             "      #type dirlist.txt | sfk run -idirs \"xcopy \\\"x:<sla><run>path\\\" \\\"z:<sla><run>path\\\" /I /D\"\n"
              "         update-copy all directories from dirlist.txt from x: to z:\n"
              "      #sfk run \"diff oldsrc<sla><run>file newsrc<sla><run>file\" -relnames -sincediff oldsrc newsrc\n"
              "         compare directories, run \"diff\" on all files with different content.\n"
@@ -45622,7 +45634,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         open all .txt files in vi. <run>qfile is added automatically.\n"
              "      #sfk sel . .avi +run \"ffmpeg -i <run>file -f image -t .02 thumbs<sla><run>base-%%d.jpg\"\n"
              "         extract first image from all .avi movies, videos using ffmpeg.\n"
-             "      #sfk sel -since 30m . .cpp .hpp +run -printcmd \"rm <run>path/<run>base.o\" -yes\n"
+             "      #sfk sel -since 30m . .cpp .hpp +run -printcmd \"rm <run>path/<run>base.o\"\n"
              "         delete all object files of source codes changed in the last 30 minutes\n"
              "      #sfk echo -lines 100 101 102 +run \"showstatus.bat <run>text\"\n"
              "         run showstatus.bat three times with the given numbers, e.g. local ip's.\n");
@@ -48560,8 +48572,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   -  how to fill in an XML file with program meta data\n"
              "   -  scripting with variables and parameters\n"
              "\n"
-             "-  $page links!<def> much better than a printed book, just touch\n"
-             "   a link and jump to related content, instantly.\n"
+             "-  $page links!<def> touch and jump to related content, instantly.\n"
              "   feature may depend on PDF reader used. test it with the\n"
              "   free Demo PDF available on stahlworks.com\n"
              "\n"
@@ -48572,6 +48583,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              #ifdef _WIN32
              "To open a web browser now, type: #sfk book web\n"
              #endif
+             "\n"
+             "$----------------- Want paper? ---------------\n"
+             "\n"
+             "       Get the $paperbacks on Amazon!<def>\n"
+             "\n"
+             "Search #100 Command Line Tools<def> or #SFK Tutorial\n"
+             "\n"
              );
       ehelp;
 
@@ -48841,9 +48859,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                 of 1048576 bytes each.\n"
              "\n"
              "   $aliases\n"
-             "      $diskspace<def>  same as space\n"
-             "      $fsinfo<def>     same as filesys\n"
-             "      $freespace<def>  tell only free space\n"
+             "      $sfk diskspace<def>  same as space\n"
+             "      $sfk fsinfo<def>     same as filesys\n"
+             "      $sfk freespace<def>  tell only free space\n"
              "\n");
       printx("   $chaining support\n"
              "      cannot use chain input data.\n"   // sfk1833
@@ -48875,8 +48893,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                of 1048576 bytes each.\n"
              "\n"
              "   $aliases\n"
-             "      $diskspace<def>  same as space\n"
-             "      $freespace<def>  tell only free space\n"
+             "      $sfk diskspace<def>  same as space\n"
+             "      $sfk freespace<def>  tell only free space\n"
              "\n");
       webref(pszCmd);
       printx("   $examples\n"
@@ -49498,6 +49516,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              // "   -mem=mb       during read, data is cached in memory to reduce head movements\n"
              // "                 on HD. the buffer size (default=100mb) can be changed here.\n"
                 "   -ltarg        always list target filenames (instead of source filenames).\n"
+                "   -flat[=c]     do not create sub folders in output, but copy all into the\n"
+                "                 same single output dir, with long flat names joined by '-'\n"
+                "                 or a given character c.\n"
                 );
          if (bext)
          printx("   -deep         verify content of files with same time and size. this takes\n"
@@ -49609,6 +49630,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                 "         and mydir2 to mydir3, excluding files in sub folders \"save\",\n"
                 "         and excluding .bak files (type whole command in one line).\n"
                 "         type \"sfk list\" for more on -sincedir, -sinceadd or -sincedif.\n"
+                "\n"
+                "      #sfk sel website .jpg .png .gif +copy tmp -flat\n"
+                "         copy all images from all subfolders within website into\n"
+                "         a single flat output folder tmp, without any sub folders.\n"
+                "         this allows to get an image overview (gallery) by opening\n"
+                "         tmp within windows explorer.\n"
                 "\n");
          if (bext)
          printx("      #sfk sync -save x:\\ e:\\ -dir src -wipe\n"
@@ -49704,6 +49731,21 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          }
          if (!strcmp(argx[iDir], "-deep")) {
             bGlblIgnoreTime = 1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-flat")) {
+            cs.flat = 1;
+            cs.cflatpat = '-';
+            cs.listTargets = 1;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-flat", &pszParm)) {
+            if (!pszParm) return 9;
+            if (strlen(pszParm)>1)
+               return 9+perr("supply only a single character for -flat\n");
+            cs.flat = 1;
+            cs.cflatpat = pszParm[0];
+            cs.listTargets = 1;
             continue;
          }
          if (!strcmp(argx[iDir], "-style")) {

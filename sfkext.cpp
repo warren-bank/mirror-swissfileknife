@@ -18955,8 +18955,10 @@ int execDirCopy(char *pszSrc, FileList &oDirFiles)
    return 0;
 }
 
-// USES:
-//    szAttrBuf, szRefNameBuf, szLineBuf1/2 (indirectly)
+// .
+// USES: 
+//    szAttrBuf, szAttrBuf2, szRefNameBuf, szRefNameBuf2,
+//    szLineBuf1/2 (indirectly)
 int execFileCopy(Coi *pcoi)
 {__
    char *pszSrc      = pcoi->name();
@@ -18988,10 +18990,20 @@ int execFileCopy(Coi *pcoi)
    // expect Src to contain a RELATIVE path, e.g.
    //    data\tmp1.txt  data\sub\tmp2.txt
    // strip the original base path, if any
-   char *pszRelSrc = relName(pszSrcRaw, pszSrc);
+   char *pszRelSrc  = relName(pszSrcRaw, pszSrc);
  
+   if (cs.flat) {
+      char cjoin = cs.cflatpat ? cs.cflatpat : '-';
+      strcopy(szAttrBuf2, pszRelSrc);
+      for (int i=0; szAttrBuf2[i]; i++) {
+         if (!ispathchr(szAttrBuf2[i]))
+            continue;
+         szAttrBuf2[i] = cjoin;
+      }
+      pszRelSrc = szAttrBuf2;
+   }
+
    // build full target name: d:/tmp/subdir/thefile.txt
-   // sprintf(szRefNameBuf, "%s%c%s", pszDstRaw, glblPathChar, pszRelSrc);
    joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszDstRaw, pszRelSrc);
 
    if (cs.debug)
@@ -21280,8 +21292,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
           // "                   convert only remaining ISO characters to UTF-8. conversion may\n"
           // "                   not work if multiple ISO characters (accents) appear grouped.\n"
              );
-      printx("      -tolower     or -toupper convers a-z to lower- or uppercase. does not convert\n"
-             "                   any special characters like accents or umlauts.\n"
+      printx("      -tolower     or -toupper convers a-z to lower- or uppercase.\n"
              /*
              "      -decode:hex      decode hex data like 666f6f as foo\n"
              "      -decode:_hex     decode prefixed hex like _66_6f_6f as foo\n"
@@ -26168,6 +26179,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      #sfk name tree .hpp +fview\n"
              "         load and view all .hpp files having \"tree\"\n"
              "         in their name or path. (\"sfk view\" for more)\n"
+             "      #sfk name metronome .mp3 +copy tmp -flat\n"
+             "         copy all .mp3 files with metronome into a single\n"
+             "         output folder, without sub folders.\n"
              );
       ehelp;
 
@@ -27043,15 +27057,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
    bool bnetdump = 0;
    bool budpcast = 0;
 
-   #ifdef SFKNEWDUMP
-   bool bnewdump = 1;
-   #else
-   bool bnewdump = 0;
-   #endif
-
-   ifcmd (   (!bnewdump && strBegins(pszCmd, "hexdump"))
-          || (!bnewdump && strBegins(pszCmd, "postdump"))
-          || strBegins(pszCmd, "tcpdump")
+   ifcmd (   strBegins(pszCmd, "tcpdump")
           || strBegins(pszCmd, "udpdump")
           || strBegins(pszCmd, "knxdump")
           || !strcmp(pszCmd, "udpforward")
@@ -27071,23 +27077,17 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
               || (!bknx && (argc < 3) && (bnet || !chain.usefiles))
              )
 
-      // if dumping all help text, run three passes
-      for (int ihelp=0; ihelp<3; ihelp++) {
+    // if dumping all help text, run two passes
+    for (int ihelp=1; ihelp<3; ihelp++) 
+    {
 
       // create different help pages for sfk ask:
       if (bhelp)
          switch (ihelp) {
-            case 0 : btcp=0; budp=0; bnet=0; break; // hexdump help
             case 1 : btcp=1; budp=0; bnet=1; break; // tcpdump help
             case 2 : btcp=0; budp=1; bnet=1; break; // udpdump help
          }
 
-      if (!bnet)
-      printx("<help>$sfk hexdump [-showle] [-wide] [...] dir .ext1 .ext2 .ext3\n"
-             "\n"
-             "   create human-readable hexdump of binary file(s).\n"
-            );
-      else
       if (buca)
       printx("<help>$sfk udpcast [options] [fromgroup] fromport -to host:port\n"
              "\n"
@@ -27110,8 +27110,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       printx("\n"
              "   $options\n");
       if (bknx)
-      printx("      -full   print knx messages with full details.\n"
-             );
+      printx("      -full   print knx messages with full details.\n");
       else
       if (buca)
       printx("      -to ip:port  forward to a single ip address and port.\n"
@@ -27134,7 +27133,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      -post    reduced format e.g. for forum posts\n"
              "      -min     minimal format with alnum only text\n"
              );
-      if (bnet) {
+
       if (bknx)
          { }
       else
@@ -27153,10 +27152,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      -timeout number of milliseconds to wait after last transfer\n" // tcpdump
              "               until connections are closed. default is 60000,\n"
              "               or 10000 if http is detected.\n");
-      } else {
-      printx("      -nofile  or -nofilenames does not list the filename(s).\n"
-             "      -rawname prints filename without :file prefix\n");
-      }
 
       if (!bknx && !buca)
       printx("      -pure    lists flat hex characters:\n"
@@ -27165,18 +27160,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "               #0x53,0x46,0x4B,0x2D,0x54,0x45,0x53,0x54,0x0D,0x0A,\n"
              "      -decsrc  lists decimal comma separated values:\n"
              "               #83,70,75,45,84,69,83,84,13,10,\n"
-             );
-      if (!bnet)
-      printx("      -off[set] n1    dump from offset n1 to file end.\n"
-             "                      n1 can be negative, for example\n"
-             "                      -off=-100 dumps last 100 bytes of file.\n"
-             "      -last n1        same as -offset -n1\n"
-             "      -offlen n1 n2   dump from offset n1 only n2 bytes.\n"
-             "      -notrail     no trailing comma \",\" at end of hex/dec src\n"
-             "      -norectrail  no trailing comma at end of every src record\n"
-             "      -recsize n   only with -hex/decsrc, -pure or -flat:\n"
-             "               change no. of input bytes dumped per record.\n"
-             "               with default output format, use -wide instead.\n"
              );
 
       if (bnet && !bknx && !buca)
@@ -27228,7 +27211,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "     #sfk udpdump -knx<def>   - print knx messages (sfk help knx)\n"
              );
 
-      if (btcp) {
+      if (btcp) 
+      {
       printx("\n"
              "   $see also\n"
              "     #sfk udpdump<def> - dump incoming UDP packets.\n"
@@ -27253,8 +27237,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "        After the test, disable the proxy setting in your browser.\n"
              );
       }
-      else
-      if (budp) {
+      else if (budp) 
+      {
       if (buca)
       printx("\n"
              "   $aliases\n"
@@ -27297,38 +27281,15 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "        e.g. 192.168.1.100 but not 192.168.100.1\n"
              );
       }
-      else {
-      printx("\n"
-             "  $aliases\n"
-             "    #sfk hexdumple<def> - same as \"sfk hexdump -showle\" for text\n"
-             "    #sfk postdump<def>  - same as \"sfk hexdump -post\" for forums\n"
-             "\n"
-             "  $see also\n"
-             "    #sfk hextobin<def>  - convert hex dump back to original data.\n"
-             "\n");
-      webref(pszCmd);
-      printx("  $examples\n"
-             "    #sfk hexdump -offlen 4221566976 96 part1.avi\n"
-             "        dumps 96 bytes from offset 4221566976 within part1.avi\n"
-             "\n"
-             "    #sfk hexdump -offlen 0xFBA00000 0x60 part1.avi\n"
-             "        the same as above, but using hexadecimal numbers\n"
-             #ifdef _WIN32
-             "\n"
-             "    #sfk postdump test.dat +toclip\n"
-             "        put test.dat contents into clipboard for posting\n"
-             #endif
-             );
-      }
 
-      if (bhelp) { printx("\n"); } else break; }
-      // end of three passes if dumping all help text
+      if (bhelp) { printx("\n"); } else break; 
+
+    } // end of two passes if dumping all help text
 
       ehelp;
 
       sfkarg;
 
-      // .
       uchar abMsg[2000+100];
       char  szListenBuf[100];
       char  szForwardBuf[100];
@@ -27336,13 +27297,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       int   nMsg = 0;
       int   nMsgMax = sizeof(abMsg)-100;
       mclear(abMsg);
-
-      if (strBegins(pszCmd, "postdump")) {
-         nGlblHexDumpForm=5; cs.bytesperline=16;
-      }
-      if (strBegins(pszCmd, "mindump")) {
-         nGlblHexDumpForm=6; cs.bytesperline=16;
-      }
 
       // internal: hexdumple as alias for hexdump -showle
       if (strstr(pszCmd, "le"))
@@ -27379,50 +27333,35 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       {
          char *pszArg  = argx[iDir];
          char *pszParm = 0;
-         if (   !strcmp(argx[iDir], "-show-line-endings")
-             || !strcmp(argx[iDir], "-showle")
+         if (   !strcmp(pszArg, "-show-line-endings")
+             || !strcmp(pszArg, "-showle")
             )
          {
             cs.leattr = 'e';
             continue;
          }
-         else
-         if (!strcmp(argx[iDir], "-wide")) {
+         if (!strcmp(pszArg, "-wide")) {
             bGlblHexDumpWide = 1;
             continue;
          }
-         else
-         if (!strcmp(argx[iDir], "-lean") || !strcmp(argx[iDir], "-narrow"))
+         if (!strcmp(pszArg, "-lean") || !strcmp(pszArg, "-narrow"))
          {
             bGlblHexDumpWide = 0;
             continue;
          }
-         else
-         if (!strcmp(argx[iDir], "-pure"))   { nGlblHexDumpForm=1; continue; }
-         else
-         if (!strcmp(argx[iDir], "-hexsrc")) { nGlblHexDumpForm=2; continue; }
-         else
-         if (!strcmp(argx[iDir], "-decsrc")) { nGlblHexDumpForm=3; continue; }
-         else
-         if (strBegins(argx[iDir], "-notrail")) { cs.dumptrail=1; continue; }
-         else
-         if (strBegins(argx[iDir], "-norectrail")) { cs.dumptrail=2; continue; }
-         else
-         if (!strcmp(argx[iDir], "-flat")) { nGlblHexDumpForm=4; continue; }
-         else
-         if (!strcmp(argx[iDir], "-post")) { nGlblHexDumpForm=5; cs.bytesperline=16; continue; }
-         else
-         if (!strcmp(argx[iDir], "-min"))  { nGlblHexDumpForm=6; cs.bytesperline=16; continue; }
-         else
-         if (strBegins(argx[iDir], "-sep")) { cs.separator=1; continue; }
-         else
-         if (strBegins(argx[iDir], "-nosep")) { cs.separator=0; continue; }
-         else
-         if (!strcmp(argx[iDir], "-nolf")) { cs.nolf=1; continue; }
-         else
-         if (strBegins(argx[iDir], "-bon"))
+         if (!strcmp(pszArg, "-pure"))   { nGlblHexDumpForm=1; continue; }
+         if (!strcmp(pszArg, "-hexsrc")) { nGlblHexDumpForm=2; continue; }
+         if (!strcmp(pszArg, "-decsrc")) { nGlblHexDumpForm=3; continue; }
+         if (strBegins(pszArg, "-notrail")) { cs.dumptrail=1; continue; }
+         if (strBegins(pszArg, "-norectrail")) { cs.dumptrail=2; continue; }
+         if (!strcmp(pszArg, "-flat")) { nGlblHexDumpForm=4; continue; }
+         if (!strcmp(pszArg, "-post")) { nGlblHexDumpForm=5; cs.bytesperline=16; continue; }
+         if (!strcmp(pszArg, "-min"))  { nGlblHexDumpForm=6; cs.bytesperline=16; continue; }
+         if (strBegins(pszArg, "-sep")) { cs.separator=1; continue; }
+         if (strBegins(pszArg, "-nosep")) { cs.separator=0; continue; }
+         if (!strcmp(pszArg, "-nolf")) { cs.nolf=1; continue; }
+         if (strBegins(pszArg, "-bon"))
             { pszGroup = str("224.0.0.251"); nPort = 5353; continue; }
-         else
          if (strBegins(pszArg, "-knx")) {
             cs.knx=2;
             if (!strcmp(pszArg, "-knxfull"))
@@ -27430,29 +27369,24 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.separator=1;
             continue;
          }
-         else
          if (cs.knx && !strcmp(pszArg, "-full")) {
             cs.knx=1;
             continue;
          }
-         else
          if (budpcast && !strcmp(pszArg, "-dump")) {
             cs.nodump=0;
             continue;
          }
-         else // sfk1833: -text+parm with knx only
          if (cs.knx && haveParmOption(argx, argc, iDir, "-text", &pszParm)) {
             if (!pszParm) return 9;
             cs.knxtext = pszParm;
             continue;
          }
-         else // sfk1833: -text w/o parm for easy plain text dump
          if (!strcmp(pszArg, "-text")) {
             nGlblHexDumpForm = 4;   // same as -flat
             cs.nohead = 1;          // same as -nohead
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-recsize", &pszParm)) {
             if (!pszParm) return 9;
             cs.bytesperline = atoi(pszParm);
@@ -27461,7 +27395,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                return 9+perr("-recsize must be 1 ... %d\n", iMaxBytes);
             continue;
          }
-         else
          if (   (budpcast && haveParmOption(argx, argc, iDir, "-tolist", &pszParm))
              || haveParmOption(argx, argc, iDir, "-forwardbylist", &pszParm)
             )
@@ -27474,7 +27407,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                return 9+perr("cannot read forward file: %s\n", pszForward);
             continue;
          }
-         else
          if (   (budpcast && haveParmOption(argx, argc, iDir, "-to", &pszParm))
              || haveParmOption(argx, argc, iDir, "-forward", &pszParm) != 0
             )
@@ -27489,22 +27421,18 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             nForward = atol(psz);
             continue;
          }
-         else
          if (!strcmp(pszArg, "-prefix")) {
             cs.prefix=1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-defix")) {
             cs.prefix=2;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-nodump")) {
             cs.nodump=1;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-timeout", &pszParm)) { // tcpdump
             if (!pszParm) return 9;
             cs.timeOutMSec = atol(pszParm);
@@ -27514,7 +27442,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             }
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-offlen", &pszParm))
          {
             if (!pszParm) return 9;
@@ -27534,7 +27461,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
             continue;
          }
-         else
          if (   haveParmOption(argx, argc, iDir, "-off"   , &pszParm)
              || haveParmOption(argx, argc, iDir, "-offset", &pszParm)
             )
@@ -27551,7 +27477,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-last", &pszParm))
          {
             if (!pszParm) return 9;
@@ -27562,61 +27487,47 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
             continue;
          }
-         else
-         if (!strcmp(argx[iDir], "-echo")) {
+         if (!strcmp(pszArg, "-echo")) {
             bEcho = 1;
             continue;
          }
-         else
-         if (!strcmp(argx[iDir], "-rawname")) {
-            cs.rawfilename = 1;
-            continue;
-         }
-         else
          if (haveParmOption(argx, argc, iDir, "-maxdump", &pszParm)) {
             if (!pszParm) return 9;
             cs.maxdump = atoi(pszParm);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-stop", &pszParm)) {
             cs.stopcnt = pszParm ? atoi(pszParm) : 1;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-from", &pszParm)) {
             if (!pszParm) return 9;
             validFromIPMask(pszParm);
             pszFromMask = pszParm;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-notfrom", &pszParm)) {
             if (!pszParm) return 9;
             validFromIPMask(pszParm);
             pszNotFromMask = pszParm;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-size", &pszParm)) {
             if (!pszParm) return 9;
             iMinSize = atoi(pszParm);
             iMaxSize = iMinSize;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-minsize", &pszParm)) {
             if (!pszParm) return 9;
             iMinSize = atoi(pszParm);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-maxsize", &pszParm)) {
             if (!pszParm) return 9;
             iMaxSize = atoi(pszParm);
             continue;
          }
-         else
          if (   haveParmOption(argx, argc, iDir, "-data", &pszParm)
              || haveParmOption(argx, argc, iDir, "-show", &pszParm)
             )
@@ -27655,8 +27566,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             }
             continue;
          }
-         else
-         if (!strcmp(argx[iDir], "-code")) {
+         if (!strcmp(pszArg, "-code")) {
          printf(
             "   // typical program code to receive a udp with sender address\n"
             "   unsigned char abData[2048];\n"
@@ -27686,43 +27596,37 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             );
             return 0;
          }
-         else
-         if (!strncmp(argx[iDir], "-", 1)) {
-            if (isDirParm(argx[iDir]))
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
+               return 9+perr("unknown option: %s\n", pszArg);
          }
-         else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
 
          bGotNoOpt = 1;
 
-         if (bnetdump)
-         {
-            // non-option parameter: can be port or 224.0.0.x group
-            if (!pszGroup && strchr(argx[iDir], '.')) {
-               strcopy(szListenBuf, argx[iDir]);
-               pszGroup = szListenBuf;
-               // also accept 224.0.0.x:port notation
-               char *psz = strchr(szListenBuf, ':');
-               if (psz) {
-                  *psz++ = '\0';
-                  nPort = atol(psz);
-               }
-               continue;
+         // non-option parameter: can be port or 224.0.0.x group
+         if (!pszGroup && strchr(pszArg, '.')) {
+            strcopy(szListenBuf, pszArg);
+            pszGroup = szListenBuf;
+            // also accept 224.0.0.x:port notation
+            char *psz = strchr(szListenBuf, ':');
+            if (psz) {
+               *psz++ = '\0';
+               nPort = atol(psz);
             }
-            else
-            if (nPort == -1) {
-               nPort = atol(argx[iDir]);
-               continue;
-            }
+            continue;
+         }
+         if (nPort == -1) {
+            nPort = atol(pszArg);
+            continue;
          }
 
-         break; // fall through to non-option processing
+         return 9+perr("unexpected: %s", pszArg);
       }
  
       if (cs.knx) {
@@ -27748,12 +27652,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             return 9+perr("specify port number to listen on.\n");
          if (btest) return 0;
          udpAnyServ(nPort, pszForward, nForward, pszGroup, bEcho, pszFromMask, pszNotFromMask, iMinSize, iMaxSize, abMsg, nMsg, nFlags);
-      } else {
-         if (bGotNoOpt)
-            if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iChainNext)))
-               return lRC;
-         if (btest) return 0;
-         lRC = walkAllTrees(eFunc_Hexdump, lFiles, lDirs, nBytes);
       }
 
       if (iChainNext) {
@@ -32209,12 +32107,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "     #sfk seluni mydir +zipto out\n"
              "       add all files of mydir as UTF-8 filenames,\n"
              "       supporting filenames of any language, like\n"
-             "       cyrillic, greek or chinese.\n"
-             "\n"
-             "     #sfk seluni mydir +zipto out\n"
-             "       same as above. use seluni only with +zipto\n"
-             "       as other sfk functions will fail to read\n"
-             "       the listed utf-8 filenames.\n"
+             "       cyrillic, greek or chinese. use seluni only\n"
+             "       with +zipto as other sfk functions will fail\n"
+             "       to read the listed utf-8 filenames.\n"
              "\n"
              "     #sfk sel -dir mydir -subdir <not>save <not><sla>tmp\n"
              "      #-file <not>.bak <not>old +zipto out\n"
@@ -32990,7 +32885,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          #endif
       }
 
-      if (cs.sim==1 && cs.filesExisting>0) {
+      if (cs.sim==1 && cs.filesExisting>0 && cs.catzip==0) {
          pwarn("%d existing files will be replaced.\n", cs.filesExisting);
          pinf("use -todir x to extract to folder x.\n");
       }
@@ -34036,6 +33931,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
+
+
+
 
 
 
