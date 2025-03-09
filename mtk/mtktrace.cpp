@@ -59,7 +59,7 @@
 #define ulong unsigned long
 #define uchar unsigned char
 
-#define MTKMAXMSG   10000  // 1000 (0.1 MB) to 10000 (1.2 MB)
+#define MTKMAXMSG    1000  // 1000 (0.1 MB) to 10000 (1.2 MB)
 #define MTKMSGSIZE    118
 
 // trace mode 'b' lists only block entries by default.
@@ -151,7 +151,12 @@ MTKMain::MTKMain()
    ncurthridx = 0;
    nlockmode = 0;
 
+   #ifdef MTK_TRACE_FULL_RING
+   nringx = 0xFF;
+   #else
    nringx = 0;
+   #endif
+
    ntermx = 0;
    nfilex = 0;
 

@@ -315,6 +315,7 @@ void  doSleep        (int nmsec);
 uchar *loadBinaryFile(char *pszFile, num &rnFileSize);
 bool  infoAllowed    ( );
 struct hostent *sfkhostbyname(const char *pstr, bool bsilent=0);
+int   setaddr(struct sockaddr_in *paddr, char *pszHostOrIPPart, bool bsilent=0);
 
 class IOStatusPhase {
 public:
@@ -672,6 +673,19 @@ private:
    int nReadIndex;
 };
 
+class FileList {
+public:
+   FileList       ( );
+  ~FileList       ( );
+   int  addFile        (char *pszAbsName, char *pszRoot, num nTimeStamp, num nSize, char cSortedBy=0);
+   int  checkAndMark   (char *pszName, num nSize);
+   void  reset          ( );
+   StringTable clNames;
+   StringTable clRoots;
+   NumTable    clTimes;
+   NumTable    clSizes;
+};
+
 #ifdef _WIN32
  #ifdef SFK_W64
   typedef __finddata64_t SFKFindData;
@@ -925,11 +939,12 @@ public:
    void   rawCloseFtpSubFile  ( );
 
    // http pages and files
-   bool   rawIsHttpDir    ( );
-   //     rawLoadDir     ( )  // is generic
-   Coi   *rawNextHttpEntry( );
-   void   rawCloseHttpDir ( ); 
-   int   rawLoadHttpDir  ( );
+   bool   rawIsHttpDir     ( );
+   //     rawLoadDir       ( )  // is generic
+   Coi   *rawNextHttpEntry ( );
+   void   rawCloseHttpDir  ( ); 
+   int    rawLoadHttpDir   ( );
+   bool   isHttpDirByName  (char *psz);
 
    int   rawOpenHttpSubFile  (cchar *pmode);
    size_t rawReadHttpSubFile  (void *pbufin, size_t nBufSize);
@@ -1156,6 +1171,18 @@ private:
       bool bClDecRef;   // on dtr, do a single decref
 };
 
+class AutoCoiDirClose {
+public:
+      AutoCoiDirClose (Coi *pcoi) { pClCoi = pcoi; }
+     ~AutoCoiDirClose ( ) {
+         if (pClCoi->isDirOpen()) {
+            mtklog(("auto-close coi %p", pClCoi));
+            pClCoi->closeDir();
+         }
+      }
+   Coi *pClCoi;
+};
+
 enum eProgressInfoKeepFlags {
    eKeepProg   = (1<<0),
    eKeepAdd    = (1<<1),
@@ -1177,11 +1204,11 @@ public:
    void  printLine       (int nFilter=0); // print final status, including newline
    void  cycle           ( );  // print status if enough time elapsed
    void  clear           ( );  // clear status, if it was printed
-   int  print           (const char *pszFormat, ...);
+   int   print           (const char *pszFormat, ...);
    void  setProgress     (num nMax, num nCur, cchar *pszUnit);
    void  setStatProg     (cchar *pverb, cchar *psubj, num nMax, num nCur, cchar *pszUnit);
 
-private:
+// private:
    void  fixAddInfoWidth ( );
    void  dumpTermStatus  ( );
    void  clearTermStatus ( );  // if anything to clear
@@ -1474,6 +1501,7 @@ public:
    bool useJustNames;// create a list of filenames
    bool countMatchLines; // count no. of matching lines
    bool yes;
+   bool logcmd;
    bool force;
    bool syncFiles;   // sync files instead of copy
    bool syncOlder;   // with sync, copy older over newer files
@@ -1677,6 +1705,8 @@ public:
    num  maxscan;           // (x)replace
    bool nodump;            // udpdump -forward
    bool prefix;            // udpcast -prefix
+   int  maxwait;           // network
+   bool upath;             // run
 };
 
 extern struct CommandStats cs;
@@ -1890,6 +1920,13 @@ private:
 
 extern CommandChaining chain;
 
+enum eConvTargetFormats
+{
+   eConvFormat_LF     = 1,
+   eConvFormat_CRLF   = 2,
+   eConvFormat_ShowLE = 4
+};
+
 int joinPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2, int *pFlexible=0);
 void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1);
 char *timeAsString(num nTime, int iMode=0);
@@ -1901,6 +1938,13 @@ void dumpRepOut(uchar *pSrcCtxData, int iSrcCtxLen,
 void dumpFromToSeparator();
 int atomovrange(char *psz, num *pstart, num *pend);
 int atomovrange(char *psz, int *pstart, int *pend, bool bUseBytes);
+bool matchesDirMask(char *pszFullPath, bool bTakeFullPath, bool bApplyWhiteMasks);
+int execSingleFile(Coi  *pcoi, int lLevel, int &lGlobFiles, int nDirFileCnt, int &lDirs, num &lBytes, num &ntime1, num &ntime2);
+int execSingleDir(Coi  *pcoi, int lLevel, int &lGlobFiles, FileList &oDirFiles, int &lDirs, num &lBytes, num &ntime1, num &ntime2);
+bool matchesCurrentRoot(char *pszDir);
+int matchesFileMask (char *pszFile, char *pszInfoAbsName=0);
+extern bool bGlblNoRootDirFiles;
+int saveFile(char *pszName, uchar *pData, int iSize, const char *pszMode="wb");
 
 #ifdef _WIN32
 int makeWinFileTime(num nsrctime, FILETIME &rdsttime, num nSrcNanoSec=0);
