@@ -287,8 +287,11 @@ extern int shrinkFormTextBlock(char *psz, int &rLen, bool bstrict, bool xchars=0
 #endif // defined(SFKPRO)
 
 #define WITH_CASE_XNN
+#define SFKDEEPZIP   // sfk175
 
-#define SFKDEEPZIP   // since sfk 175
+#ifndef SFKNOPACK
+ #define SFKPACK      // sfk191
+#endif
 
 #ifdef _WIN32
  #define SFK_UNAME   // sfk190
@@ -381,6 +384,15 @@ public:
      ~CharAutoDelPP ( )         { if (*ppClPtr) delete [] *ppClPtr; }
 private:
       char **ppClPtr;
+};
+
+class AutoRestoreInt {
+public:
+      AutoRestoreInt (int *pInt) { pClPtr = pInt; iClVal = *pInt; }
+     ~AutoRestoreInt ( )         { *pClPtr = iClVal; }
+private:
+      int *pClPtr;
+      int  iClVal;
 };
 
 // max length of sfk (internal) filenames and URL's
@@ -761,7 +773,11 @@ public:
    char  *root(bool braw=0);  // "" if none, with braw: 0 if none
    char  *ref (bool braw=0);  // "" if none, with braw: 0 if none
 
-   // ushort *wname( );
+   #ifdef WINFULL
+   bool    haswname( );
+   ushort *wname( );
+   int     setwname(ushort *p);
+   #endif
 
    #ifdef VFILEBASE
    char  *orgName( );      // same as name() except on redirects
@@ -776,7 +792,8 @@ public:
    int  setName  (char *pszName, char *pszOptRootDir=0);
    // if rootdir is not given, the old one is kept.
 
-   bool hasName  ( );
+   bool hasName      ( );
+   bool hasBadName   ( );
 
    void  setIsDir    (bool bYesNo); // sets anydir status
    bool  isAnyDir    (int ilevel=0);
@@ -825,7 +842,7 @@ public:
    char  *getExtStr  ( );           // null if none
 
    // check if coi is an existing file
-   bool  existsFile  (bool bOrDir=0);
+   bool  existsFile  (bool bOrDir=0, int *pIsDir=0);
 
    // data I/O functions:
    bool   isFileOpen ( );
@@ -835,6 +852,8 @@ public:
    size_t read       (void *pbuf, size_t nbufsize);
    size_t readRaw    (void *pbuf, size_t nbufsize);
    void   close      ( );
+   int    remove     ( );
+   int    closeAndRemove   ( );
 
    int    seek       (num nOffset, int nOrigin);
    // rc0:ok >=0:failed to seek
@@ -992,8 +1011,9 @@ public:
    bool  debug    ( );
 
    // core data for every lightweight Coi:
-   char  *pszClName;
-   ushort *pwClName; // windows: wide char name
+   char  *pszClName;    // ansi or utf
+   char  *pszClUName;   // just utf
+   ushort *pwClName;    // windows: wide char name
    char  *pszClRoot;
    char  *pszClRef;
    char  *pszClExtStr;
@@ -1014,6 +1034,8 @@ public:
    uchar nClUCS;     // 0:none 0xFE:LE 0xEF:BE
    bool  bClSnap;    // sfk snapfile
    bool  bClSetWriteCloseTime;
+   bool  bClBadName; // windows: after conversion
+   bool  bClUniName; // set cs.uname when processing
    // after close(), set file time using MTime and/or CTime
    uint  nClAttr;    // file attributes
 
@@ -1079,16 +1101,18 @@ public:
    CoiTable             ( );
   ~CoiTable             ( );
 
+   // use THIS for a simple coi list:
    int addEntry        (Coi &ocoi, int nAtPos=-1);
-   // adds a COPY of the supplied coi.
+   // it adds a COPY of the supplied coi.
 
    int removeEntry     (int nAtPos);
    int numberOfEntries ( );
-   Coi  *getEntry       (int iIndex, int nTraceLine);
+   Coi  *getEntry      (int iIndex, int nTraceLine);
    int  setEntry       (int iIndex, Coi *pcoi);
    int addSorted       (Coi &ocoi, char cSortedBy, bool bUseCase);
-   void resetEntries    ( );
-   bool isSet           (int iIndex);
+   void resetEntries   ( );
+   bool isSet          (int iIndex);
+
 private:
    int expand          (int nSoMuch);
    int nClArraySize;
@@ -1410,7 +1434,7 @@ int getFileSystemInfo(
    uint &rOutVolID
    );
    
-int createOutDirTree(char *pszOutFile, KeyMap *pOptMap=0);
+int createOutDirTree(char *pszOutFile, KeyMap *pOptMap=0, bool bForDir=0);
 
 #ifdef _WIN32
 void timetToFileTime(num ntimet, FILETIME *pft);
@@ -1454,6 +1478,7 @@ public:
 
    static int toutf8 (char *pszOut, int iMaxOut, uint ch);
    static int toutf8 (char *pszOut, int iMaxOut, char *pszIsoText, bool bSafe=0);
+   static bool isValidUTF8 (char *psz);
 
    bool  hasChar();
    uint  nextChar();
@@ -1466,6 +1491,8 @@ private:
    int   readRaw();
    int   readSeq();
    int   icur, imax;
+   bool  banychars;
+   bool  bbadchars;
    uchar *psrc;
 };
 
@@ -1505,6 +1532,7 @@ public:
    int numHiddenDirs  ; // for list stats
    int numHiddenFilesSkipped ;
    int numHiddenDirsSkipped  ;
+   int numBadFileNames; // unreadable unicodes
    int binariesSkipped ;
    int addedFilesSkipped ; // on -sincedif
    int shadowsWritten ;
@@ -1535,6 +1563,7 @@ public:
    int tailLines;    // head, tail
    bool tailFollow;  // head, tail
    char *tomask;     // output filename mask
+   char *todir;      // output dir
    bool  tomaskfile; // -to mask is a single filename
    char tomake[200]; // option -tomake
    char curcmd[50+10]; // current command. sfk1834 no pointer
@@ -1755,8 +1784,12 @@ public:
    char *rentodir;         // rename moveto dir
    bool exact;
    bool listfiles;
-   bool uname;             // windows only: utf names
-   bool tname;             // windows only: transcript names
+   bool uname;             // windows: utf names
+   bool unameauto;
+   bool unameout;
+   bool showrawname;
+   bool tname;             // windows: transcript names
+   bool aname;             // windows: ansi from wide char read
    bool dewide;            // fixfile
    bool rewide;            // fixfile
    bool setftime;          // fixfile
@@ -1804,11 +1837,30 @@ public:
    int  numFilesOK;
    bool usecolor;          // sfk189
    bool usehelpcolor;      // sfk189
+   #ifdef SFKPACK
+   void *zfout;
+   bool bzip2;
+   bool force64;
+   bool catzip;
+   bool toziplist;
+   bool addmeta;
+   char *tozipname;
+   uint nzipredundant;
+   #endif // SFKPACK
    int  tracecase;
    bool nocasemin;         // sfk190 just latin a-z
    bool binallchars;       // sfk190 for binary extracts
    bool outcconv;
    bool forcecconv;
+   int  ifailedchars;
+   int  iinvalidutfmarks;
+   int  inonutfhicodes;
+   bool nozipmeta;
+   bool keepbadout;
+   int  iutfnames;
+   int  iexecfiles;
+   bool bzipto;
+   bool bnoextutf;
 };
 
 // extern struct CommandStats gs;
@@ -1856,6 +1908,9 @@ enum eWalkTreeFuncs {
    eFunc_GetPic      ,
    eFunc_XFind       ,
    eFunc_SumFiles
+   #ifdef SFKPACK
+   , eFunc_ZipTo
+   #endif // SFKPACK
 };
 
 // temporary file class, REMOVING THE FILE IN DESTRUCTOR.
@@ -2102,6 +2157,7 @@ int joinShadowPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2);
 int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot);
 int mygetpos64(FILE *f, num &rpos, char *pszFile);
 int mysetpos64(FILE *f, num pos, char *pszFile);
+extern int bGlblCollectHelp;
 
 #ifdef _WIN32
 char *winSysError();
@@ -2290,7 +2346,6 @@ public:
 
 #ifdef SFKINT
  #define WITH_FTP_LIMITS
- // #define SFKPIC
 #endif
 
 #define MAX_FTP_VDIR 10
@@ -2476,11 +2531,13 @@ class SFKChars
 public:
       SFKChars ( );
 
-   void   init       ( );
+   int    init       ( );
    int    setocp     (ushort i);
    int    setacp     (ushort i);
    ushort getocp     ( );  // calls init().
    ushort getacp     ( );  // calls init().
+
+   int    wlen       (ushort *puni);
 
    // fast calls using maps
    ushort ansitouni  (uchar  c);
@@ -2491,15 +2548,18 @@ public:
    uchar  oemtoansi  (uchar  c);
    uchar  ansitooem  (uchar  c);
 
-   void   stroemtoansi  (char *psz, int *pChg=0);
-   void   stransitooem  (char *psz, int *pChg=0);
+   int    stroemtoansi  (char *psz, int *pChg=0, bool bNoDefault=0);
+   int    stransitooem  (char *psz, int *pChg=0, bool bNoDefault=0);
+
+   int    strunitoansi  (ushort *puni, int iunilen,
+                         char *pansi, int imaxansi);
 
    // internal
    ushort ibytetouni (uchar c, ushort icp);
 
 bool     bclinited;
 ushort   iclocp, iclacp;
-bool     bsysocp, bsysacp;
+bool     bsysocp, bsysacp, banycp;
 
 ushort   amap1[256];    // oem to uni
 uchar    amap2[65536];  // uni to oem
@@ -2509,6 +2569,9 @@ uchar    amap4[65536];  // uni to ans
 
 uchar    amap5[256];    // oem to ans
 uchar    amap6[256];    // ans to oem
+
+uchar    amap5err[256];
+uchar    amap6err[256];
 
 char     sztmp[50];
 ushort   awtmp[50];
@@ -2556,12 +2619,10 @@ public:
    char   *vname  ( );
    ushort *wname  ( );
 
-char
-   szname   [sfkmaxname+20];
-ushort
-   awname   [sfkmaxname+20];
-ushort
-   nstate;
+char   szname  [sfkmaxname+20];
+ushort awname  [sfkmaxname+20];
+ushort nstate;
+bool   bbadconv;
 };
 
 #ifdef SFKPIC

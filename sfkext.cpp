@@ -1,4 +1,3 @@
-
 #ifndef SFK_JUST_OSE
 
 #define USE_DCACHE
@@ -43,6 +42,7 @@
 
 extern struct CommandStats gs;
 extern struct CommandStats cs;
+extern struct CommandStats cspre;
 
 extern int nGlblFunc;
 
@@ -50,6 +50,11 @@ extern unsigned char abBuf[MAX_ABBUF_SIZE+100];
 
 extern Array glblGrepPat;
 
+#ifdef _WIN32
+bool vname();
+#endif
+
+extern cchar *pszGlblBlank;
 const char *getSFKVersion();
 int parseVersion(char *psz, int nmaxlen, StringMap &rmap);
 int perr(const char *pszFormat, ...);
@@ -109,10 +114,19 @@ void mystrcatf(char *pOut, int nOutMax, cchar *pszFormat, ...);
 int cbSFKMatchOutFN(int iFunction, char *pMask, int *pIOMaskLen, uchar **ppOut, int *pOutLen);
 void copySFKMatchOptions();
 int mySetFileTime(char *pszFile, num nTime);
-int createOutDirTreeW(char *pszOutFile, KeyMap *pOptMap);
-int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd);
+int createOutDirTreeW(char *pszOutFile, KeyMap *pOptMap, bool bForDir=0);
+int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd, bool bUniPath=0);
 bool matchstr(char *pszHay, char *pszPat, int nFlags, int &rfirsthit, int &rhitlen);
 int dumpOutput(uchar *pOutText, char *pOutAttr, num nOutSize, bool bHexDump);
+int sfkmkdir(char *pszName, bool braw=0);
+int ansiToUTF(char *pdst, int imaxdst, char *psrc);
+void utfToAnsi(char *pdst, int imaxdst, char *psrc);
+int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, bool &bSize, bool &bPure, bool &bOptErr);
+const char *getPureSFKVersion();
+const char *getShortOSName();
+bool anyHiCodes(char *psz);
+
+extern CoiTable glblFileListCache;
 
 extern bool bGlblHaveInteractiveConsole;
 extern bool bGlblEscape;
@@ -162,7 +176,7 @@ extern int nGlblTimeColor      ;
 extern int nGlblTraceIncColor  ;
 extern int nGlblTraceExcColor  ;
 
-bool bGlblRandSeeded = 0;
+extern bool bGlblRandSeeded;
 
 extern char szLineBuf[MAX_LINE_LEN+10];
 extern char szLineBuf2[MAX_LINE_LEN+10];
@@ -275,6 +289,14 @@ uchar *sfkgetvar(char *pname, int *plen)
       if (plen)
          *plen = strlen(psz);
       return (uchar*)psz;
+   }
+   if (!strcmp(pname, "sys.slash")) // sfk191 #(sys.slash)
+   {
+      #ifdef _WIN32
+      return (uchar*)"\\";
+      #else
+      return (uchar*)"/";
+      #endif
    }
 
    uchar *pres = (uchar*)glblSFKVar.get(pname);
@@ -15150,6 +15172,1861 @@ void SFKPic::copyFrom(SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst
 
 #endif // SFKPIC
 
+#ifdef SFKPACK
+
+#define FOR_SFK_INCLUDE
+#include "sfkpackio.hpp"
+
+#define crc32 sfkPackSum
+
+StringTable glblZipList;
+
+// IN: if pout==0 use cs.outfile
+int execPackFile(Coi *pin, Coi *pout, bool bPack)
+{
+   if (cs.debug)
+      printf("execPackFile  :  %s\n", pin->name());
+
+   if (cs.yes == 0)
+   {
+      num nFileSize = pin->getSize();
+      info.print("file %03dm %s\n", (int)(nFileSize/1000000), pin->name());
+      cs.totaloutbytes += nFileSize;
+      return 0;
+   }
+
+   num nstart = getCurrentTime();
+   num ntold  = nstart;
+
+   if (pin->open("rb"))
+      return 9+perr("cannot read: %s\n", pin->name());
+
+   uint crcraw = 0;
+   uint crcout = 0;
+   uint crcthru= 0;
+
+   num nTotalIn = pin->getSize();
+   num nInTime  = pin->getTime();
+   num nPosPackSize = 0;
+
+   if (pout==0)
+      return 9;
+   if (pout->open("wb"))
+      return 9;
+
+   int iInBufSize  = 100000;
+   int iOutBufSize = iInBufSize;
+   int iOutCacheSize = 2000000;
+
+   char *pInBuf  = new char[iInBufSize+100];
+   char *pOutBuf = new char[iOutBufSize+100];
+   char *pOutCache = new char[iOutCacheSize+100];
+
+   if (!pInBuf || !pOutBuf || !pOutCache)
+      return 9+perr("outofmem\n");
+
+   CharAutoDel odel1(pInBuf);
+   CharAutoDel odel2(pOutBuf);
+   CharAutoDel odel3(pOutCache);
+
+   SFKPackStream ostrm;
+   mclear(ostrm);
+
+   ostrm.bPack = bPack;
+   ostrm.bFast = cs.fastcomp;
+
+   sfkPackStart(&ostrm);
+
+   bool bLastBlock = 0, bCopyThrough = 0;
+   int  bReloop = 0, nRead = 0, isubrc = 0;
+
+   num nDoneIn  = 0;
+   num nDoneOut = 0;
+
+   int irc = 0;
+
+   char szAddInfo[100];    szAddInfo[0] = '\0';
+   char szLeftInfo[100];   szLeftInfo[0] = '\0';
+
+   strcpy(szLeftInfo,bPack?"pack":"unpak");
+
+   info.setProgress(nTotalIn, nDoneIn, "bytes", 1);
+   info.setAction(szLeftInfo, pin->name(), "");
+
+   while (1)
+   {
+      if (bReloop == 0)
+      {
+         int iMaxRead = iInBufSize;
+
+         nRead  = (int)pin->read(pInBuf, iMaxRead);
+
+         if (nRead < 1)
+            break;
+         if (nRead < iMaxRead)
+            bLastBlock = 1;
+
+         nDoneIn += nRead;
+
+         ostrm.pin  = (uchar*)pInBuf;
+         ostrm.nin  = nRead;
+
+         cs.totalinbytes += nRead;
+         sprintf(szLeftInfo, "%04dm", (int)(cs.totalinbytes/1000000));
+      }
+
+      ostrm.pout = (uchar*)pOutBuf;
+      ostrm.nout = iOutBufSize;
+
+      isubrc = sfkPackProc(&ostrm, bLastBlock, &bReloop);
+
+      if (   isubrc != 0 
+          && isubrc != 1  // EOD
+          && isubrc != -5 // Z_BUF_ERROR is ignored!
+         )
+      {
+         perr("extract error %d\n",isubrc);
+         irc = isubrc;
+         break;
+      }
+
+      if (ostrm.nout > 0)
+      {
+         nDoneOut += ostrm.nout;
+
+         if (pout->write((uchar*)ostrm.pout, ostrm.nout) < ostrm.nout) {
+            perr("cannot fully write, disk full\n");
+            irc = 9;
+            break;
+         }
+      }
+
+      if (getCurrentTime() - ntold >= 5000)
+      {
+         info.setAction(szLeftInfo, pin->name(), 0, eKeepAdd);
+
+         ntold = getCurrentTime();
+
+         num iElapsed = getCurrentTime() - nstart;
+         num nTimeEst = (nTotalIn * iElapsed) / (nDoneIn ? nDoneIn : 1);
+         num nTimeRem = nTimeEst - iElapsed;
+
+         // avoid 64 * 64 bit overflow on output estimation
+         num nDoneOutMB = nDoneOut / 1000000;
+         num nTotalInMB = nTotalIn / 1000000;
+         num nDoneInMB  = nDoneIn  / 1000000;
+
+         if (nDoneInMB > 0)
+         {
+            int iRatio    = (nDoneOut * 100) / (nDoneIn ? nDoneIn : 1);
+            num nOutEstMB = (nDoneOutMB * nTotalInMB) / (nDoneInMB ? nDoneInMB : 1);
+            sprintf(szAddInfo, "=> %02d%% %sm %ds", iRatio, numtoa(nOutEstMB), (int)(nTimeRem/1000));
+            info.setStatus(szLeftInfo, pin->name(), szAddInfo);
+         }
+      }
+
+      info.setProgress(nTotalIn, nDoneIn, "bytes", 1);
+   }
+
+   sfkPackEnd(&ostrm);
+
+   pout->close();
+   pin->close();
+
+   cs.totaloutbytes += nDoneOut;
+
+   int iElapsed = getCurrentTime() - nstart;
+
+   int iRatio   = (nDoneOut * 100) / (nDoneIn ? nDoneIn : 1);
+
+   info.print("%s %d/%d mb in %03d ms (%s/%s)\n",
+      bPack?"packed":"unpked",
+      (int)(nTotalIn/1000000), (int)(nDoneOut/1000000),
+      iElapsed,
+      numtoa(nTotalIn, 1, szLineBuf), 
+      numtoa(nDoneOut, 1, szLineBuf2)
+      );
+
+   return irc;
+}
+
+bool isEmpty(char *psz);
+
+// --------------------- zip support ---------------------
+
+typedef struct tm_zip_s
+{
+    uint tm_sec;
+    uint tm_min;
+    uint tm_hour;
+    uint tm_mday;
+    uint tm_mon;
+    uint tm_year;
+} tm_zip;
+
+typedef struct
+{
+    tm_zip      tmz_date;
+    ulong       dosDate;
+    ulong       internal_fa;
+    ulong       external_fa;
+} zip_fileinfo;
+
+extern "C"
+{
+int zipOpenNewFileInZip3_64(void *file, const char* filename,
+  const zip_fileinfo* zipfi,
+  const void* extrafield_local, uint size_extrafield_local,
+  const void* extrafield_global, uint size_extrafield_global,
+  const char* comment, int method, int level, int raw,
+  int windowBits, int memLevel, int strategy,
+  const char* password, ulong crcForCrypting, int zip64);
+
+int zipOpenNewFileInZip4_64(void *file, const char* filename,
+  const zip_fileinfo* zipfi,
+  const void* extrafield_local, uint size_extrafield_local,
+  const void* extrafield_global, uint size_extrafield_global,
+  const char* comment, int method, int level, int raw,
+  int windowBits, int memLevel, int strategy,
+  const char* password, ulong crcForCrypting,
+  uLong versionMadeBy, uLong flagBase, int zip64);
+
+int zipWriteInFileInZip(void *file, const void* buf, unsigned int len);
+int zipCloseFileInZip(void *file);
+int zipClose(void *file, const char* global_comment);
+}
+
+int sfkOpenNewFileInZip(void *file,
+      const char* filename, const zip_fileinfo* zipfi,
+      const void* extrafield_local, uInt size_extrafield_local,
+      const void* extrafield_global, uInt size_extrafield_global,
+      const char* comment, int method, int level, int raw,
+      int windowBits,int memLevel, int strategy,
+      const char* password, uLong crcForCrypting,
+      uLong versionMadeBy, uLong flagBase, int zip64);
+
+void zipGetStatus(void *file, sfkuint64 *pTotalOut);
+
+#ifdef _WIN32
+unum getWinFileTime(char *pszFileName)
+{
+   FileStat ofs;
+   if (ofs.readFrom(pszFileName))
+      return 0;
+
+   FILETIME *pft = &ofs.src.ftMTime;
+   unum nwft =     (((unum)pft->dwHighDateTime) << 32)
+                |  (((unum)pft->dwLowDateTime));
+
+   return nwft;
+}
+#endif
+
+void printFile(cchar *pszVerb, cchar *pszName, num nDoneIn, num nDoneOut, int nflags=0)
+{
+   bool bloud       = (nflags & 1);
+   bool bForceRatio = (nflags & 2) ? 1 : 0;
+   bool bShowFlags  = (nflags & 8) ? 1 : 0;
+   bool bIsUTF      = (nflags & 16) ? 1: 0;
+   bool bIsExec     = (nflags & 32) ? 1: 0;
+   bool bIsDir      = (nflags & 64) ? 1: 0;
+   bool bIsAutoUTF  = (nflags & 128) ? 1: 0;
+
+   if (bloud == 0 && cs.quiet > 0)
+      return;
+
+   char szAnsi[SFK_MAX_PATH+100];
+   char szRatio[30]; szRatio[0]='\0';
+   char szAttr[30];  szAttr[0]='\0';
+
+   #ifdef _WIN32
+   if (cs.uname && !cs.showrawname)
+      utfToAnsi(szAnsi, SFK_MAX_PATH, (char*)pszName);
+   else
+   #endif
+      strcopy(szAnsi, pszName);
+
+   strcpy(szRatio, bForceRatio ? "---- " : "");
+
+   num nToShow = nDoneIn;
+
+   if (nDoneOut > 0) {
+      nToShow = nDoneOut;
+      int iRatio = (nDoneOut * 100) / (nDoneIn ? nDoneIn : 1);
+      sprintf(szRatio, "%03d%% ", iRatio);
+   } else {
+      // strcpy(szRatio, "100% ");
+   }
+
+   if (bShowFlags) 
+   {
+      bIsUTF |= bIsAutoUTF;
+      char cExec = bIsDir ? ' ' : 'x';
+      char cUTF  = bIsAutoUTF ? '*' : 'u';
+      if (bIsUTF && !bIsExec)
+         sprintf(szAttr, " $%c", cUTF);
+      else if (!bIsUTF && bIsExec)
+         sprintf(szAttr, " $%c", cExec);
+      else if (bIsUTF==1 && bIsExec==1 && cExec!=' ')
+         sprintf(szAttr, " $%c%c", cUTF, cExec); // rare case, indent change ok
+      else
+         strcpy(szAttr, " $ ");
+   }
+
+   cchar *pspc = pszVerb[0] ? " " : "";
+   cchar *pvcol = strcmp(pszVerb, "replc") ? "" : "<warn>";
+
+   if (nToShow == 0) // dir
+      printx("%s%s%s<time>----%s<def><nocol> %s%s\n", pvcol, pszVerb, pspc, szAttr, szRatio, szAnsi);
+   else if (nToShow < 1000)
+      printx("%s%s%s<time>%03u %s<def><nocol> %s%s\n", pvcol, pszVerb, pspc, (uint)(nToShow), szAttr, szRatio, szAnsi);
+   else if (nToShow < 1000000)
+      printx("%s%s%s$%03uk%s<def><nocol> %s%s\n", pvcol, pszVerb, pspc, (uint)(nToShow/1000), szAttr, szRatio, szAnsi);
+   else
+      printx("%s%s%s#%03.0fm%s<def><nocol> %s%s\n", pvcol, pszVerb, pspc, (nToShow/1000000.0), szAttr, szRatio, szAnsi);
+}
+
+char *relativePath(char *psrc)
+{
+   #ifdef _WIN32
+   int ilen = strlen(psrc);
+   if (ilen>=2 && isalpha(*psrc)!=0 && psrc[1]==':') {
+      psrc += 2;
+      while (*psrc=='\\' || *psrc=='/')
+         psrc++;
+   } else {
+      while (*psrc=='\\' || *psrc=='/')
+         psrc++;
+   }
+   #else
+   while (*psrc=='/')
+      psrc++;
+   #endif
+
+   return psrc;
+}
+
+SFKChars zipchars; // cp437 support
+
+StringTable glblZipDirs;
+CoiTable    glblUnzipDirs;
+CoiTable    glblZipSortSize;
+CoiTable    glblZipSortTime;
+
+void makeUniPathChars(char *psz) {
+   for (; *psz; psz++)
+      if (*psz=='\\')
+         *psz='/';
+}
+
+void utftooem(char *poem, int imaxoem, char *putf) 
+{
+   char *pmaxoem = poem+imaxoem;
+   UTF8Codec utf((char*)putf, strlen(putf));
+   while (utf.hasChar()) {
+      if (poem+6 >= pmaxoem)
+         break;
+      ushort nuni = utf.nextChar();
+      uchar noem = zipchars.unitooem(nuni);
+      if (noem == 0) {
+         sprintf(poem, "#U%04x", nuni);
+         poem += 6;
+      } else {
+         *poem++ = noem;
+      }
+   }
+   *poem='\0';
+}
+
+// .
+// bDir 1: physical folder
+// bDir 2: virtual folder just in zip
+int execZipFile(Coi *pin, int bDir, int iLevel)
+{
+   if (cs.debug) printf("----- execZipFile -----\n");
+
+   // utf-mode only
+   if (!cs.uname)
+      return 9+perr("int. error #218411\n");
+
+   // cannot accept http:// etc.
+   if (pin->isNet()) {
+      perr("cannot use for zip: %s", pin->name());
+      pinf("download files before zipping.\n");
+      return 9;
+   }
+
+   // is this the add virtual folder call?
+   bool bVDir = (bDir >= 2) ? 1 : 0;
+
+   if (cs.aname && pin->bClBadName)
+   {
+      perr("cannot read unicode filename: %s\n", pin->name());
+      cs.numBadFileNames++;
+      return 9;
+   }
+
+   char szAbsNameUTF[SFK_MAX_PATH+100];   szAbsNameUTF[0]='\0';
+   char szAbsPathUTF[SFK_MAX_PATH+100];   szAbsPathUTF[0]='\0';
+   char szRelPathUTF[SFK_MAX_PATH+100];   szRelPathUTF[0]='\0';
+   char szRelPathOEM[SFK_MAX_PATH+100];   szRelPathOEM[0]='\0';
+   char szParPathUTF[SFK_MAX_PATH+100];   szParPathUTF[0]='\0';
+   char szParPathSla[SFK_MAX_PATH+100];   szParPathSla[0]='\0';
+   char szParPathOEM[SFK_MAX_PATH+100];   szParPathOEM[0]='\0';
+   char szInZipNameUTF[SFK_MAX_PATH+100]; szInZipNameUTF[0]='\0';
+   char szInZipNameOEM[SFK_MAX_PATH+100]; szInZipNameOEM[0]='\0';
+   char szMatchBuf[SFK_MAX_PATH+100];     szMatchBuf[0]='\0';
+   char szToMaskBuf[SFK_MAX_PATH+100];    szToMaskBuf[0]='\0';
+
+   cchar *pind = pszGlblBlank;
+   int    iind = iLevel;
+
+   // --- 1. all must be utf internal ---
+
+   strcopy(szAbsNameUTF, pin->name());
+
+   #ifdef _WIN32
+   // handle sfk sel ... +zipto
+   if (cs.bzipto==1 && cspre.uname==0) {
+      // filename list was passed, pin has no utf so far.
+      // actively convert to utf-8.
+      ansiToUTF(szAbsNameUTF, SFK_MAX_PATH, pin->name());
+      // must do this as cs.uname expects utf name for access
+      pin->setName(szAbsNameUTF);
+   }
+   #endif
+
+   if (cs.debug) printf("%.*sAbsNameUTF: %s\n",iind,pind, szAbsNameUTF);
+
+   bool bNameSeemsUTF = UTF8Codec::isValidUTF8(szAbsNameUTF);
+   bool bAnyHiCodes   = anyHiCodes(szAbsNameUTF);
+
+   if (bAnyHiCodes==1 && bNameSeemsUTF==0)
+      cs.inonutfhicodes = 1;
+
+   // --- 2. instant dir entry creation check ---
+
+   strcopy(szAbsPathUTF, szAbsNameUTF);
+   int iAbsPathLen = strlen(szAbsPathUTF);
+
+   if (bVDir)
+      { } // don't touch the vdir/ path
+   if (bDir) {
+      // get pure dir name without slash
+      while (iAbsPathLen>0 && szAbsPathUTF[iAbsPathLen-1]==glblPathChar)
+         iAbsPathLen--;
+      szAbsPathUTF[iAbsPathLen]='\0';
+   } else {
+      // extract dir name from file name
+      char *psz = strrchr(szAbsPathUTF,glblPathChar);
+      if (psz)
+         *psz='\0';
+      else
+         szAbsPathUTF[0]='\0'; // no path given
+   }
+   iAbsPathLen = strlen(szAbsPathUTF);
+
+   if (cs.debug) printf("%.*sAbsPathUTF: %s\n",iind,pind, szAbsPathUTF);
+
+   // only in main pass
+   if (bVDir==0 && cs.toziplist==0)
+   do
+   {
+      // path name valid at all?
+      if (iAbsPathLen<1) break;
+      #ifdef _WIN32
+      if (szAbsPathUTF[iAbsPathLen-1]==':') break;
+      #endif
+
+      // is dir already contained in existing zip?
+      // ziplist contains
+      // -  non absolute path
+      // -  forward slashes
+      char *pszrel = relativePath(szAbsPathUTF);
+      strcopy(szRelPathUTF, pszrel);
+      strcat(szRelPathUTF, "/");
+      makeUniPathChars(szRelPathUTF);
+      utftooem(szRelPathOEM, SFK_MAX_PATH, szRelPathUTF);
+
+      if (cs.debug) printf("%.*s  RelPathUTF: %s\n",iind,pind, szRelPathUTF);
+      if (cs.debug) printf("%.*s  RelPathOEM: %s\n",iind,pind, szRelPathOEM);
+
+      if (glblZipList.find(szRelPathUTF) != -1) break;
+      if (glblZipList.find(szRelPathOEM) != -1) break;
+
+      // instant add-dir due to first file of dir?
+      if (bDir==0) 
+      {
+         // if not yet done for this file
+         if (glblZipDirs.find(szAbsPathUTF) != -1)
+            break;
+         Coi otmp(szAbsPathUTF,0);
+         execZipFile(&otmp,1,iLevel+1);
+      }
+      else 
+      {
+         // this is the add-dir call
+         do
+         {
+            // is there a parent dir?
+            strcopy(szParPathUTF, szAbsPathUTF);
+            char *psz = strrchr(szParPathUTF, glblPathChar);
+            if (!psz) break;
+            *psz = '\0';
+
+            if (cs.debug) printf("%.*s  ParPathUTF: %s\n",iind,pind, szParPathUTF);
+
+            int iParDirLen = strlen(szParPathUTF);
+            if (iParDirLen < 1) break;
+            #ifdef _WIN32
+            if (szParPathUTF[iParDirLen-1]==':') break;
+            #endif
+
+            strcopy(szParPathSla, szParPathUTF);
+            strcat(szParPathSla, "/");
+
+            utftooem(szParPathOEM, SFK_MAX_PATH, szParPathSla);
+
+            if (cs.debug) printf("%.*s  ParPathOEM: %s\n",iind,pind, szParPathOEM);
+
+            if (glblZipList.find(szParPathSla) != -1) break; // in-zip utf
+            if (glblZipList.find(szParPathOEM) != -1) break; // in-zip oem
+
+            if (glblZipDirs.find(szParPathUTF) != -1) break; // created utf
+
+            // then add parent dir first
+            Coi otmp(szParPathUTF,0);
+            execZipFile(&otmp,1,iLevel+1);
+         } while (0);
+
+         // then add our path
+         glblZipDirs.addEntry(szAbsPathUTF);
+         // fall through
+      }
+   }
+   while (0);
+
+   // --- 3. setup in-zip raw file name ---
+
+   // non absolute filename
+   char *pszrel = relativePath(szAbsNameUTF);
+   strcopy(szRelPathUTF, pszrel);
+   makeUniPathChars(szRelPathUTF);
+
+   // force slash after folder names
+   int iRelPathLen = strlen(szRelPathUTF);
+   if (bDir>0 && iRelPathLen>0 && szRelPathUTF[iRelPathLen-1]!='/')
+      strcat(szRelPathUTF, "/");
+
+   // block some path traversals
+   if (   strBegins(szRelPathUTF, "../")
+       #ifndef _WIN32
+       || strBegins(szRelPathUTF, "~/")
+       #endif
+      )
+   {
+      perr("forbidden path start: %s", szRelPathUTF);
+      pinf("cd to folder before zipping.\n");
+      return 9;
+   }
+
+   // create in-zip filename:
+   if (cs.tomask!=0 && bVDir==0)
+   {
+      ansiToUTF(szToMaskBuf, SFK_MAX_PATH, cs.tomask);
+      Coi osub(szRelPathUTF, 0);
+      int nrc = renderOutMask(szInZipNameUTF, &osub, szToMaskBuf, cs.curcmd, 1);
+      if (nrc > 0)
+         return 19+perr("invalid -asdir given");
+   } else {
+      strcopy(szInZipNameUTF, szRelPathUTF);
+   }
+   utftooem(szInZipNameOEM, SFK_MAX_PATH, szInZipNameUTF);
+
+   if (cs.debug) printf("%.*sInZipNmUTF: %s\n",iind,pind, szInZipNameUTF);
+   if (cs.debug) printf("%.*sInZipNmOEM: %s\n",iind,pind, szInZipNameOEM);
+
+   // check against ziplist
+   if (   glblZipList.find(szInZipNameUTF) != -1
+       || glblZipList.find(szInZipNameOEM) != -1
+      )
+   {
+      if (bDir) {
+         // a folder entry already exists in the zip.
+         // ignore silently, we cannot update the timestamp.
+         return 0;
+      }
+
+      perr("already exists in zip: %s\n", szInZipNameUTF);
+      cs.nzipredundant++;
+      return 9;
+   }
+   if (glblZipDirs.find(szInZipNameUTF) != -1)
+      return 0; // already created
+
+   int nPrintFlags = 8 + (bDir ? 64 : 0);
+
+   // ----- prepare setexec -----
+   bool bSetExec = 0;
+   int iMasks = glblGrepPat.numberOfEntries();
+   for (int imask=0; imask<iMasks; imask++)
+   {
+      // TEMPORARY use of szAttrBuf2 to build /mask/
+      snprintf(szMatchBuf, MAX_LINE_LEN, "/%s/", szInZipNameUTF);
+      char *pmask = glblGrepPat.getString(imask);
+      int n1=0, n2=0;
+      bool bneg   = 0;
+      if (*pmask==glblNotChar)
+         { bneg=1; pmask++; }
+      bool bmatch = matchstr(szMatchBuf, pmask, 0, n1, n2);
+      if (bneg) {
+         // apply blacklisting: -setexec .h !.html
+         if (bmatch)
+            { bSetExec=0; break; }
+      } else {
+         // apply whitelisting: -setexec .sh
+         if (bmatch)
+            { bSetExec=1; }
+      }
+   }
+   if (bSetExec)
+      nPrintFlags |= 32;
+
+   /*
+      we now have:
+      -  szInZipNameUTF
+      -  szInZipNameOEM, possibly with #Uxxxx marks
+      with sfk zip
+      -  create main filename as OEM
+      -  create 7075 extension as UTF
+         if utf differs at all
+      with sfk zipuni (unameout)
+      -  create main filename as UTF
+   */
+   bool  bNeedOutUTF = strcmp(szInZipNameOEM, szInZipNameUTF) ? 1 : 0;
+   uLong nInZipFlags = 0;
+
+   #ifdef _WIN32
+   char *pszPriOutName = szInZipNameOEM;
+   char *pszExtOutName = szInZipNameUTF;
+   if (bNeedOutUTF) {
+      if (cs.unameout) {
+         pszPriOutName = szInZipNameUTF;
+         pszExtOutName = 0;
+         nInZipFlags = (1U << 11);
+      }
+      nPrintFlags |= 16;
+      cs.iutfnames++;
+   } else {
+      pszExtOutName = 0;
+   }
+   #else
+   // linux: only one name
+   char *pszPriOutName = szInZipNameUTF;
+   char *pszExtOutName = 0;
+   if (UTF8Codec::isValidUTF8(szInZipNameUTF))
+   {
+      nInZipFlags = (1U << 11);
+      nPrintFlags |= 16;
+      cs.iutfnames++;
+   }
+   #endif
+
+   if (cs.debug) printf("%.*s=> OutNamePri: %s\n",iind,pind, pszPriOutName);
+   if (cs.debug) printf("%.*s=> OutNameExt: %s\n",iind,pind, pszExtOutName ? pszExtOutName : "");
+
+   if (cs.yes == 0)
+   {
+      if (!cs.toziplist)
+      {
+         info.clear();
+         printFile("add", szInZipNameUTF, pin->getSize(), 0, nPrintFlags);
+         cs.totaloutbytes += pin->getSize();
+
+         if (bDir == 0) {
+            pin->setExtStr(szInZipNameUTF);
+            if (cs.listBySize)
+               glblZipSortSize.addSorted(*pin, 'S', 0);
+            if (cs.listByTime)
+               glblZipSortTime.addSorted(*pin, 't', 0);
+            if (!bDir) cs.filesChg++;
+         }
+      }
+      return 0;
+   }
+
+   // --- render output subfile ---
+
+   num nstart = getCurrentTime();
+   num ntold  = nstart;
+
+   int iInBufSize = 100000;
+
+   char *pInBuf   = new char[iInBufSize+100];
+
+   if (!pInBuf)
+      return 19+perr("outofmem\n");
+
+   CharAutoDel odel1(pInBuf);
+
+   if (bDir==0)
+      if (pin->open("rb"))
+         return 9+perr("cannot read: %s\n", pin->name());
+
+   uint crcraw = 0;
+   uint crcout = 0;
+   uint crcthru= 0;
+
+   num nTotalIn = pin->getSize();
+   num nInTime  = pin->getTime();
+   num nPosPackSize = 0;
+
+   num nDoneIn  = 0;
+   num nDoneOut = 0;
+
+   int zip64 = (nTotalIn >= 2000 * 1000000) ? 1 : 0;
+
+   if (cs.force64)
+       zip64 = 1;
+
+   zip_fileinfo zi;
+   mclear(zi);
+
+   uchar aExtraFields[SFK_MAX_PATH+200];
+   mclear(aExtraFields);
+
+   unum nNTFSTime = (nInTime * 10000000) + 116444736000000000LL;
+
+   #ifdef _WIN32
+   // cannot handle vnames, due to getFileStat.
+   //   nNTFSTime = getWinFileTime(pin->name());
+   //   if (cs.verbose) printf("store ntfstime: %s\n",numtoa(nNTFSTime));
+   #endif
+
+   uchar *p = aExtraFields;
+   ushort nExtraSize1=0, nExtraSize2=0, nExtraSize3=0;
+
+   // --- NTFS Extra Field ---
+   
+   nExtraSize1 = 8 + 24; // from: reserved
+
+   *p++ = 0x0A;   // ntfs tag
+   *p++ = 0x00;
+   *p++ = nExtraSize1;
+   *p++ = (nExtraSize1 >> 8);
+
+    p  += 4;      // reserved
+
+   *p++ = 0x01;   // time tag
+   *p++ = 0x00;
+
+   *p++ = 24;     // tag len
+   *p++ = 0;
+
+   for (int k=0; k<3; k++)
+   {
+      uint nlo = (uint)(nNTFSTime);
+      uint nhi = (uint)(nNTFSTime >> 32);
+      for (int i=0; i<4; i++)
+         { *p++ = nlo; nlo >>= 8; }
+      for (int i=0; i<4; i++)
+         { *p++ = nhi; nhi >>= 8; }
+   }
+
+   nExtraSize1 += 4; // add header
+
+   // --- Unix Extra Field ---
+
+   nExtraSize2 = 12; // from: access time
+
+   *p++ = 0x0D;   // unix tag
+   *p++ = 0x00;
+   *p++ = nExtraSize2;
+   *p++ = (nExtraSize2 >> 8);
+
+   uint nlo = (uint)(nInTime);   // access time
+   for (int i=0; i<4; i++)
+      { *p++ = nlo; nlo >>= 8; }
+
+   nlo = (uint)(nInTime);   // mod time
+   for (int i=0; i<4; i++)
+      { *p++ = nlo; nlo >>= 8; }
+
+   for (int i=0; i<4; i++)  // uid, gid
+      *p++ = 0;
+
+   nExtraSize2 += 4; // add header
+
+   // --- windows: utf path extra field ---
+
+   #ifdef _WIN32
+   if (pszExtOutName)
+   {
+      // sfk zip (not zipuni): utf as extension
+      uint iutflen = strlen(pszExtOutName);
+      nExtraSize3 = 5 + iutflen;
+
+      *p++ = 0x75;
+      *p++ = 0x70;
+      *p++ = nExtraSize3;
+      *p++ = (nExtraSize3 >> 8);
+
+      *p++ = 0x01;
+
+      // uint ncrc = sfkPackSum((uchar*)pszExtOutName, iutflen, 0);
+      uint ncrc = sfkPackSum((uchar*)pszPriOutName, strlen(pszPriOutName), 0);
+      for (int i=0; i<4; i++)
+         { *p++ = ncrc; ncrc >>= 8; }
+
+      for (int i=0; i<iutflen; i++)
+         *p++ = pszExtOutName[i];
+
+      nExtraSize3 += 4; // add header
+   }
+   #endif
+
+   // --- end extra fields ---
+
+   ushort nTotalExtraSize = nExtraSize1 + nExtraSize2 + nExtraSize3;
+
+   // versionMadeBy: important for +x flag support
+   uLong nVersionMadeBy = 0;
+
+   #ifdef _WIN32
+   // this causes NAME DECODE FAILURE at other unzip tools.
+   // therefore behave like 7zip.exe and NULL it.
+   // Info-Zip zip.exe writes "11" here which is bullshit.
+   //    nVersionMadeBy = ((uint)10) << 8;   // Windows NTFS
+   #else
+    #ifdef MAC_OS_X
+    nVersionMadeBy = ((uint)7) << 8;   // Macintosh
+    #else
+    // this is required for +x support by extractors:
+    nVersionMadeBy = ((uint)3) << 8;   // Unix
+    #endif
+   #endif
+
+   mytime_t now      = (mytime_t)nInTime;
+   struct tm *mytm   = mylocaltime(&now);
+   zi.tmz_date.tm_sec  = mytm->tm_sec;
+   zi.tmz_date.tm_min  = mytm->tm_min;
+   zi.tmz_date.tm_hour = mytm->tm_hour;
+   zi.tmz_date.tm_mday = mytm->tm_mday;
+   zi.tmz_date.tm_mon  = mytm->tm_mon ;
+   zi.tmz_date.tm_year = mytm->tm_year;
+
+   #ifndef _WIN32
+   // linux: set file mode as high word
+   pin->nClStatus = 0;
+   pin->readStat('a');
+   uint nAttr = pin->getAttr();
+   zi.external_fa = nAttr << 16; // linux +x flag
+   #endif
+
+   // apply -setexec .sh on all systems
+   if (bSetExec) 
+   {
+      // must fake Unix otherwise +x will be ignored
+      if (nVersionMadeBy == 0)
+         nVersionMadeBy = ((uint)3) << 8; // fake Unix
+      zi.external_fa |= (((uint)0000100) << 16); // +x
+   }
+
+   // complete VersionMadeBy with zip version
+   nVersionMadeBy |= 20; // zip version used for create
+
+   int err = sfkOpenNewFileInZip(cs.zfout, 
+      pszPriOutName, 
+      &zi,
+      aExtraFields, nTotalExtraSize,  // extrafield_local
+      aExtraFields, nTotalExtraSize,  // extrafield_global
+      NULL,    // comment
+      cs.bzip2 ? Z_BZIP2ED : Z_DEFLATED,
+      cs.bzip2 ? Z_BEST_COMPRESSION : Z_DEFAULT_COMPRESSION,
+      0,
+      -15,     // MAX_WBITS
+      8,       // DEF_MEM_LEVEL,
+      Z_DEFAULT_STRATEGY,
+      0,       // password,
+      crcraw,
+      nVersionMadeBy,
+      nInZipFlags, // nInZipFlags
+      zip64     // zip64
+      );
+
+   if (err) {
+      pin->close();
+      perr("cannot init compression (%d): %s",err,szAbsNameUTF);
+      return 19;
+   }
+
+   info.setProgress(nTotalIn, nDoneIn, "bytes", 1);
+   info.setAction("pack", szInZipNameUTF, "");
+
+   char szAddInfo[200];
+   char szOutEst[50];
+
+   sfkuint64 n1=0,n2=0,n3=0;
+
+   zipGetStatus(cs.zfout, &n1);
+
+   int irc = 0;
+
+   if (bDir==0)
+   while (1)
+   {
+      if (userInterrupt())
+         { irc = 19; break; }
+
+      int nRead  = (int)pin->read(pInBuf, iInBufSize);
+      if (nRead < 1)
+         break;
+
+      nDoneIn += nRead;
+
+      if (zipWriteInFileInZip(cs.zfout, pInBuf, nRead))
+         { irc = 20; break; }
+
+      zipGetStatus(cs.zfout, &n2);
+      nDoneOut = n2 - n1;
+
+      num nnow = getCurrentTime();
+      if (   nnow - nstart >= 3000
+          && nnow - ntold  >= 1000
+         )
+      {
+         info.setAction("pack", szInZipNameUTF, 0, eKeepAdd);
+
+         ntold = getCurrentTime();
+
+         num iElapsed = getCurrentTime() - nstart;
+         num nTimeEst = (nTotalIn * iElapsed) / (nDoneIn ? nDoneIn : 1);
+         num nTimeRem = nTimeEst - iElapsed;
+         num nRemSec  = nTimeRem / 1000;
+         num nRemDMin = nRemSec / 6;
+
+         // avoid 64 * 64 bit overflow on output estimation
+         num nDoneOutMB = nDoneOut / 1000000;
+         num nTotalInMB = nTotalIn / 1000000;
+         num nDoneInMB  = nDoneIn  / 1000000;
+
+         if (nDoneInMB > 0)
+         {
+            int iRatio    = (nDoneOut * 100) / (nDoneIn ? nDoneIn : 1);
+            num nOutEstMB = (nDoneOutMB * nTotalInMB) / (nDoneInMB ? nDoneInMB : 1);
+
+            if (nOutEstMB >= 1000)
+               sprintf(szOutEst, "%1.1fgb", nOutEstMB/1000.0);
+            else
+               sprintf(szOutEst, "%1.0fmb", nOutEstMB*1.0);
+
+            if (nRemDMin >= 20)
+               sprintf(szAddInfo, "=> %02d%% %s %1.0fmin", iRatio, szOutEst, nRemDMin/10.0);
+            else
+               sprintf(szAddInfo, "=> %02d%% %s %dsec", iRatio, szOutEst, (int)nRemSec);
+
+            info.setStatus("pack", szInZipNameUTF, szAddInfo);
+         }
+      }
+
+      info.setProgress(nTotalIn, nDoneIn, "bytes", 1);
+   }
+
+   if (zipCloseFileInZip(cs.zfout))
+      irc = 21;
+
+   zipGetStatus(cs.zfout, &n2);
+   nDoneOut = n2 - n1;
+
+   if (bDir==0)
+      pin->close();
+
+   info.clear();
+   if (bDir)
+      printFile("added", szInZipNameUTF, 0, 0, 2 | nPrintFlags);
+   else
+      printFile("added", szInZipNameUTF, nTotalIn, nDoneOut, nPrintFlags);
+
+   cs.totaloutbytes += nDoneOut;
+   if (!bDir) cs.filesChg++;
+
+   return irc;
+}
+
+void change_file_date2(const char *filename, uLong dosdate, tm_unz tmu_date) 
+{
+#ifdef _WIN32
+  HANDLE hFile;
+  FILETIME ftm,ftLocal,ftCreate,ftLastAcc,ftLastWrite;
+  hFile = CreateFileA(filename,GENERIC_READ | GENERIC_WRITE,
+                      0,NULL,OPEN_EXISTING,0,NULL);
+  GetFileTime(hFile,&ftCreate,&ftLastAcc,&ftLastWrite);
+  DosDateTimeToFileTime((WORD)(dosdate>>16),(WORD)dosdate,&ftLocal);
+  LocalFileTimeToFileTime(&ftLocal,&ftm);
+  SetFileTime(hFile,&ftm,&ftLastAcc,&ftm);
+  CloseHandle(hFile);
+#else
+  struct utimbuf ut;
+  struct tm newdate;
+  newdate.tm_sec = tmu_date.tm_sec;
+  newdate.tm_min=tmu_date.tm_min;
+  newdate.tm_hour=tmu_date.tm_hour;
+  newdate.tm_mday=tmu_date.tm_mday;
+  newdate.tm_mon=tmu_date.tm_mon;
+  if (tmu_date.tm_year > 1900)
+      newdate.tm_year=tmu_date.tm_year - 1900;
+  else
+      newdate.tm_year=tmu_date.tm_year ;
+  newdate.tm_isdst=-1;
+  ut.actime=ut.modtime=mktime(&newdate);
+  utime(filename,&ut);
+#endif
+}
+
+void getExtraTags(uchar abExtra[], uint nMaxExtra, unum aTimes[], int &b64size, char *pszUTFName)
+{
+   uchar *pcur = abExtra;
+   uchar *pmax = pcur + nMaxExtra;
+
+   while (pcur < pmax)
+   {
+      // printf(" extra %s\n", dataAsHex(abExtra,36));
+      // 0    2    4        8    10   12
+      // 0A00 2000 00000000 0100 1800 0062C2DA 2673D301 0062C2DA2673D3010062C2DA
+      uint nextag =     ((uint)pcur[0])
+                     |  ((uint)pcur[1] << 8);
+      uint nexlen =     ((uint)pcur[2])
+                     |  ((uint)pcur[3] << 8);
+
+      if (nextag == 0)
+         break;
+
+      if (cs.verbose >= 2) {
+         printf("  tag: 0x%04x len=%02u %s\n", 
+            nextag, nexlen, dataAsHex(pcur,4+nexlen));
+      }
+
+      if (nextag == 0x01)
+      {
+         // 64 bit size tag
+         b64size = 1;
+      }
+      else if (nextag == 0x0A)
+      {
+         // read NTFS tag:
+         //  0           2           4
+         //  ushort tag, ushort len, uint null,
+         //  8              10
+         //  ushort timeid, ushort timelen 24,
+         //  12
+         //  24 bytes of time
+         uchar *p = pcur;
+         ushort ntaglen = nexlen;
+         if (ntaglen < 32)
+            break;
+         if (p[8]!=0x01 || p[9]!=0x00) // Time
+            break;
+         ushort ntimelen = ((ushort)p[10]) | ((ushort)p[11]<<8);
+         if (ntimelen < 24)
+            break;
+         uchar *p2 = p + 12;
+   
+         for (int i=0; i<3; i++)
+         {
+            unum nlo  =    ((uint)p2[0])
+                        |  (((uint)p2[1]) << 8)
+                        |  (((uint)p2[2]) << 16)
+                        |  (((uint)p2[3]) << 24);
+            p2 += 4;
+            unum nhi  =    ((uint)p2[0])
+                        |  (((uint)p2[1]) << 8)
+                        |  (((uint)p2[2]) << 16)
+                        |  (((uint)p2[3]) << 24);
+            aTimes[i] = (nhi << 32) | nlo;
+         }
+      }
+      else if (nextag == 0x7075)
+      {
+         // read utf path tag:
+         // 7570 1F00 01 749855A9 6D79...
+         // 0    2    4  5        9
+         // tag  len  vs namecrc  name
+         uchar *p2 = pcur+4;
+         uchar nversion = *p2++;
+         unum ncrc =    ((uint)p2[0])
+                     |  (((uint)p2[1]) << 8)
+                     |  (((uint)p2[2]) << 16)
+                     |  (((uint)p2[3]) << 24);
+         p2 += 4;
+         int nnamelen = nexlen - 5;
+         // todo: utfname crc check
+         if (nnamelen>0 && nnamelen<SFK_MAX_PATH) {
+            memcpy(pszUTFName, p2, nnamelen);
+            pszUTFName[nnamelen] = '\0';
+         }
+      }
+
+      pcur += 4 + nexlen;
+   }
+}
+
+mytime_t zipTimeToMainTime(num nZipTime);
+
+bool anyHiCodes(char *psz) 
+{
+   uchar *p = (uchar*)psz;
+   for (; *p; p++)
+      if (*p >= 0x80)
+         return 1;
+   return 0;
+}
+
+int zipOEMToUTF(char *pdst, int imaxdst, char *psrc)
+{
+   char *pdstcur=pdst;
+   char *pdstmax=pdst+imaxdst;
+   while (*psrc!=0 && pdstcur+10<pdstmax)
+   {
+      uchar cans  = *psrc++;
+      ushort nuni = zipchars.oemtouni(cans);
+      int iwrite  = UTF8Codec::toutf8((char*)pdstcur, 10, nuni);
+      #if 0
+      printf("oem %02x -> uni %04x -> %d %.*s %02x %02x\n",
+         cans,nuni,iwrite,iwrite,pdstcur,(uint)pdstcur[0]&0xff,(uint)pdstcur[1]&0xff);
+      #endif
+      pdstcur += iwrite;
+   }
+   *pdstcur = '\0';
+   return 0;
+}
+
+int execUnzip(char *pszInFile)
+{
+   char szAddInfo[100];
+   char szSizeBuf[100];
+   char szTimeBuf[100];
+   char szToMaskBuf[SFK_MAX_PATH+10];
+
+   glblUnzipDirs.resetEntries();
+
+   int irc  = 0;
+
+   int iout = 0;
+   // 0: list content
+   // 1: test integrity
+   // 2: dump to terminal
+   // 3: extract to files
+
+   if (cs.catzip)    iout = 2;
+   else if (cs.test) iout = 1;
+   else if (cs.yes)  iout = 3;
+
+   uint size_buf = 8192;
+
+   uchar *buf = new uchar[size_buf+100];
+
+   if (!buf)
+      return 9+perr("out of memory");
+
+   UCharAutoDel odel(buf);
+
+   unzFile uf = unzOpen64(pszInFile);
+   if (uf == 0) {
+      perr("invalid zip file: %s",pszInFile);
+      pinf("[nopre] the central directory was not found. the file may be incomplete,\n");
+      pinf("[nopre] part of a multi part archive (which is not supported by sfk),\n");
+      pinf("[nopre] or no zip file at all.\n");
+      return 9;
+   }
+
+   KeyMap newDirMap;
+
+   // unz_global_info64 gi;
+   unz_global_info gi;
+
+   memset(&gi, 0, sizeof(gi));
+   int opt_overwrite = 1;
+   int opt_extract_without_path = 0;
+   const char *password = 0;
+
+   // todo: unzGetGlobalInfo64 struct size mismatch,
+   // with crash after call due to corrupted stack.
+   //  sizeof(unz_global_info64) outside: 12
+   //  sizeof(unz_global_info64) inside : 16
+   // printf("passing gi %d %d\n",sizeof(gi),sizeof(uLong));
+   // int err = unzGetGlobalInfo64(uf, &gi); // crash after call
+
+   int err = unzGetGlobalInfo(uf, &gi);
+
+   if (err)
+      return 10;
+
+   char szGlobalComment[200+10];
+   mclear(szGlobalComment);
+   if (!cs.yes && !cs.toziplist && !glblGrepPat.numberOfEntries())
+   {
+      if (unzGetGlobalComment(uf, szGlobalComment, sizeof(szGlobalComment)-10) > 0) {
+         setTextColor(nGlblTimeColor);
+         printf("%s\n", szGlobalComment);
+         setTextColor(-1);
+      }
+   }
+
+   unz_file_info64 file_info;
+
+   uchar abExtraField[1024+100]; mclear(abExtraField);
+   char  szFileComment[300+100]; mclear(szFileComment);
+   char  szflags[100];           mclear(szflags);
+   char  szExtUTFName[SFK_MAX_PATH+20]; mclear(szExtUTFName);
+
+   bool buname = cs.uname;
+
+   // szRefNameBuf: original name/        within zip
+   // szLineBuf2  : local    name\        relative
+   // szLineBuf3  : local    outdir\name\ if used
+
+   for (num i=0; i<gi.number_entry; i++)
+   {
+      szRefNameBuf[0] = '\0';
+      szFileComment[0] = '\0';
+      mclear(abExtraField);
+
+      err = unzGetCurrentFileInfo64(uf, &file_info,
+               szRefNameBuf, MAX_LINE_LEN,
+               abExtraField, sizeof(abExtraField)-100,
+               szFileComment, sizeof(szFileComment)-100);
+
+      if (err)
+         return 9+perr("zip format error, cannot get fileinfo (rc=%d)", err);
+
+      // szRefNameBuf is now cp437 or UTF-8
+      strcopy(szLineBuf2, szRefNameBuf);
+
+      bool bNameSeemsUTF = UTF8Codec::isValidUTF8(szRefNameBuf);
+      bool bAnyHiCodes   = anyHiCodes(szRefNameBuf);
+
+      int  b64size   = 0;
+      uint nVersionMadeBy = file_info.version;
+      uint nverneed  = file_info.version_needed;
+      uint nflag     = file_info.flag;
+      uint ncmethod  = file_info.compression_method;
+      uint crc       = file_info.crc;
+      unum nRawSize  = file_info.uncompressed_size;
+      unum nPackSize = file_info.compressed_size;
+      uint dosDate   = file_info.dosDate;
+      uint nFileAttrInt = file_info.internal_fa;
+      uint nFileAttr = file_info.external_fa;
+      tm_unz *pttime = &file_info.tmu_date;
+
+      int nPrintFlags = 8;
+
+      if (nflag & (1U << 11)) { // utf8
+         cs.uname = 1;
+      } else {
+         cs.uname = buname;
+         if (cs.uname) {
+            if (bNameSeemsUTF)
+               nPrintFlags |= 128; // unmarked utf
+         } else {
+            if (bNameSeemsUTF) {
+               // conflict! name seems UTF8 but is not marked
+               // correctly within the zip file.
+               if (cs.unameauto) {
+                  cs.uname = 1;
+                  nPrintFlags |= 128;
+               } else {
+                  cs.iinvalidutfmarks++;
+               }
+            }
+            if (!cs.uname) {
+               // extend oem to utf
+               zipOEMToUTF(szLineBuf3, MAX_LINE_LEN, szLineBuf2);
+               #if 0
+               printf("expand.from %s %d\n",szLineBuf2,zipchars.getocp());
+               printf("expand.to   %s\n",szLineBuf3);
+               #endif
+               strcopy(szLineBuf2, szLineBuf3);
+               cs.uname = 1;
+            }
+         }
+      }
+
+      unum aNTFSTime[3]; mclear(aNTFSTime);
+      szExtUTFName[0]='\0';
+   
+      getExtraTags(abExtraField, sizeof(abExtraField)-100,
+         aNTFSTime, b64size, szExtUTFName);
+
+      if (cs.bnoextutf==0 && szExtUTFName[0]!=0) {
+         strcopy(szLineBuf2, szExtUTFName);
+         cs.uname = 1;
+         nflag |= (1U << 11);
+      } else {
+         if (cs.bnoextutf==0 && bAnyHiCodes==1 && bNameSeemsUTF==0)
+            cs.inonutfhicodes++;
+      }
+
+      if (cs.force==0 && isPathTraversal(szLineBuf2,1)!=0) {
+         perr("invalid path start of zip entry: %s", szLineBuf2);
+         pinf("use option -force if you really want to extract this.\n");
+         return 9;
+      }
+
+      unum nFileTime = 0;
+      cchar *pszTimeInfo = "no";
+
+      // -  if NTFS time is given
+      //    -  under windows, use it directly
+      //    -  under linux, derive linux time
+      // -  else if unixtime is given, use that
+      // -  else if dostime  is given, use that
+      if (aNTFSTime[0] != 0)
+      {
+         nFileTime  = aNTFSTime[0];
+         nFileTime -= 116444736000000000LL;
+         nFileTime /= 10000000;
+         pszTimeInfo = "ntfs";
+      }
+      else if (pttime->tm_year != 0)
+      {
+         uLong year = (uLong)pttime->tm_year;
+         if (year>=1980)
+             year-=1980;
+         else if (year>=80)
+             year-=80;
+         dosDate = 
+             (uLong) (((pttime->tm_mday) + (32 * (pttime->tm_mon+1)) + (512 * year)) << 16) |
+                     ((pttime->tm_sec/2) + (32* pttime->tm_min) + (2048 * (uLong)pttime->tm_hour));
+         nFileTime  = zipTimeToMainTime(dosDate);
+         pszTimeInfo = "tmu";
+      }
+      else if (dosDate != 0)
+      {
+         nFileTime  = zipTimeToMainTime(dosDate);
+         pszTimeInfo = "dos";
+      }
+
+      // convert slashes to local.
+      // change invalid characters.
+      for (char *p=szLineBuf2; *p; p++)
+      {
+         if (*p == glblWrongPChar)
+             *p = glblPathChar;
+         #ifdef _WIN32
+         if (*p == ':')
+             *p = '_';
+         #endif
+      }
+
+      bool bDir = 0;
+      int iNameLen = strlen(szLineBuf2);
+      if (iNameLen > 0 && szLineBuf2[iNameLen-1] == glblPathChar) {
+         szLineBuf2[iNameLen-1] = '\0';
+         bDir = 1;
+      }
+
+      // ----- filter by masks -----
+      int iMasks = glblGrepPat.numberOfEntries();
+      int iPosMasks=0, iPosMatch=0;
+      bool bskip = 0;
+      for (int imask=0; imask<iMasks; imask++)
+      {
+         // TEMPORARY use of szLineBuf3 to build /mask/
+         snprintf(szLineBuf3, MAX_LINE_LEN, "%c%s%c", glblPathChar, szLineBuf2, glblPathChar);
+         char *pmask = glblGrepPat.getString(imask);
+         int n1=0, n2=0;
+         bool bneg   = 0;
+         if (*pmask==glblNotChar)
+            { bneg=1; pmask++; }
+         bool bmatch = matchstr(szLineBuf3, pmask, 0, n1, n2);
+         if (bneg) {
+            // apply blacklisting: -pat .h !.html
+            if (bmatch)
+               { iPosMasks=0; iPosMatch=0; bskip=1; break; }
+         } else {
+            // prepare whitelisting
+            iPosMasks++;
+            if (bmatch)
+               iPosMatch++;
+         }
+      }
+      // apply whitelisting: -pat /mysubdir/
+      if (iPosMasks>0 && iPosMatch==0)
+         bskip = 1;
+
+      if (bskip) {
+         // jump past sub file
+         if ((i+1) < gi.number_entry) {
+            err = unzGoToNextFile(uf);
+            if (err)
+               { perr("failed to skip in file (%d)", err); break; }
+         }
+         continue;
+      }
+
+      // render output filename
+      #if 1
+      if (cs.todir)
+      {
+         #ifdef _WIN32
+         if (cs.uname)
+            ansiToUTF(szToMaskBuf, SFK_MAX_PATH, cs.todir);
+         else
+         #endif
+            strcopy(szToMaskBuf, cs.todir);
+         joinPath(szLineBuf3, MAX_LINE_LEN, szToMaskBuf, szLineBuf2);
+         if (strlen(szLineBuf3)+10 >= SFK_MAX_PATH)
+            return 9+perr("output name too long: %s\n", szLineBuf3);
+      }
+      #else
+      if (cs.tomask) 
+      {
+         #ifdef _WIN32
+         if (cs.uname)
+            ansiToUTF(szToMaskBuf, SFK_MAX_PATH, cs.tomask);
+         else
+         #endif
+            strcopy(szToMaskBuf, cs.tomask);
+         Coi osub(szLineBuf2, 0);
+         int nrc = renderOutMask(szLineBuf3, &osub, szToMaskBuf, cs.curcmd);
+         if (nrc > 0)
+            return 9+perr("invalid -todir given");
+      }
+      #endif
+      else 
+      {
+         strcopy(szLineBuf3, szLineBuf2);
+      }
+
+      Coi ocoi(szLineBuf3, 0);
+
+      int bDirExists=0;
+      int bFileExists=0;
+      if ((bFileExists = ocoi.existsFile(1,&bDirExists)))
+      {
+         cs.filesExisting++;
+         if (bDirExists==1 && bDir==0) {
+            perr("folder exists: %s\n",ocoi.name());
+            perr("cannot extract file with same name.\n");
+            return 9;
+         }
+      }
+
+      bool bNameIsUTF  = 0;
+      strcpy(szflags, "----");
+
+      if (nflag == (1U << 11)) {
+         strcpy(szflags, "utf8");
+         bNameIsUTF = 1;
+         nPrintFlags |= 16;
+      } else if (nflag > 0) {
+         sprintf(szflags, "%04x", nflag);
+      }
+
+      strcpy(szSizeBuf, numtoa_blank(nRawSize, 10));
+      strcpy(szTimeBuf, timeAsString(nFileTime, 0, 0));
+
+      char szMethod[50];
+      sprintf(szMethod, "m%02u", ncmethod);
+      switch (ncmethod) {
+         case 0         : strcpy(szMethod, "-------"); break;
+         case Z_DEFLATED: strcpy(szMethod, "deflate"); break;
+         case Z_BZIP2ED : strcpy(szMethod, "bzip2"); break;
+      }
+
+      char szAttr[50];
+      uint nFileMode = (nFileAttr >> 16);
+      sprintf(szAttr, "%c%c%c%c",
+         nFileMode & 0040000 ? 'd':'-',
+         nFileMode & 0000400 ? 'r':'-',
+         nFileMode & 0000200 ? 'w':'-',
+         nFileMode & 0000100 ? 'x':'-'
+         );
+      bool bAttrExec = (nFileMode & 0000100) ? 1 : 0;
+
+      char szMadeBy[50]; szMadeBy[0]='\0';
+      char szFromOS[50]; szFromOS[0]='\0';
+      uint nVersionOS = (nVersionMadeBy >> 8);
+      bool bFromLinuxMac = 0;
+      switch (nVersionOS) {
+         case 10: strcpy(szFromOS, "win " ); break;
+         case  3: strcpy(szFromOS, "unix "); bFromLinuxMac=1; break;
+         case  7: strcpy(szFromOS, "mac " ); bFromLinuxMac=1; break;
+         case  0: break; // default otherwise name decode may fail
+         default: sprintf(szFromOS, "os=%u ", nVersionOS); break;
+      }
+      if (bFromLinuxMac==1) {
+         if ((nFileMode & 0000100)!=0) {
+            nPrintFlags |= 32; 
+            if (bDir==0 && (nFileMode & 0040000)==0)
+               cs.iexecfiles++;
+         }
+         if ((nFileMode & 0040000)!=0) nPrintFlags |= 64;
+      }
+      if (cs.verbose>1)
+         sprintf(szMadeBy, "vm:%02u.%02u ",
+            nVersionMadeBy >> 8,
+            nVersionMadeBy & 0xFFU);
+
+      if (cs.uname && bNameSeemsUTF)
+         cs.iutfnames++;
+
+      if (iout < 1)
+      {
+         if (cs.toziplist) {
+            glblZipList.addEntry(szRefNameBuf);
+         }
+         else
+         if (cs.verbose) {
+            printf("%s %s %s%sv%02u %s %s %s %s %s %08x %s\n",
+               szSizeBuf, szTimeBuf,
+               szMadeBy, szFromOS,
+               (uint)nverneed,
+               // nFileMode, 
+               szAttr,
+               szflags,
+               b64size ? "x64" : "x32",
+               pszTimeInfo,
+               szMethod,
+               (uint)crc,
+               szRefNameBuf // ocoi.name()
+               );
+            if (szFileComment[0]) {
+               setTextColor(nGlblTimeColor);
+               printf("%s\n", szFileComment);
+               setTextColor(-1);
+            }
+         } else {
+            printFile((bFileExists && !bDir) ? "replc" : "write", 
+               ocoi.name(), nRawSize, 0, nPrintFlags);
+            if (szFileComment[0]) {
+               setTextColor(nGlblTimeColor);
+               printf("           %s\n", szFileComment);
+               setTextColor(-1);
+            }
+         }
+
+         cs.totaloutbytes += nRawSize;
+         if (!bDir) cs.filesChg++;
+
+         // jump past sub file
+         if ((i+1) < gi.number_entry) {
+            err = unzGoToNextFile(uf);
+            if (err)
+               { perr("failed to skip in file (%d)", err); break; }
+         }
+         continue;
+      }
+      if (iout == 2 && cs.nonames == 0) {
+         if (!chain.colany())
+            printx("<file>%s\n", ocoi.name());
+         else
+            chain.print("%s:file:\n%s\n", (i==0)?"":"\n", ocoi.name());
+      }
+
+      if (bDir)
+      {
+         if (iout >= 3 && ocoi.rawIsDir() == 0)
+         {
+            // create dir
+            int isubrc=0;
+            #ifdef _WIN32
+            if (vname())
+               isubrc = createOutDirTreeW(ocoi.name(), &newDirMap, 1);
+            else
+            #endif
+               isubrc = createOutDirTree(ocoi.name(), &newDirMap, 1);
+            if (isubrc)
+               return 9;
+
+            // set dir time
+            if (nFileTime > 0)
+            {
+               #if 1
+               // postpone settm as it changes on every file
+               // created within the folder.
+               ocoi.nClMTime = nFileTime;
+               ocoi.setIsDir(1);
+               ocoi.bClUniName = cs.uname;
+               glblUnzipDirs.addEntry(ocoi);
+               #else
+               int isubrc = ocoi.setFileTime(nFileTime);
+               info.print("settm %s\n", ocoi.name());
+               #endif
+            }
+            else
+            {
+               info.print("keept %s\n", ocoi.name());
+            }
+         }
+
+         // jump past sub file
+         if ((i+1) < gi.number_entry) {
+            err = unzGoToNextFile(uf);
+            if (err)
+               { perr("failed to skip in file (%d)", err); break; }
+         }
+
+         continue;
+      }
+
+      // extract subfile
+      err = unzOpenCurrentFilePassword(uf, password);
+
+      if (err) {
+         switch (err) {
+          case UNZ_BADZIPFILE: perr("bad content or crc: %s", ocoi.name()); break;
+          case UNZ_CRCERROR  : perr("checksum mismatch: %s", ocoi.name());  break;
+          default            : perr("cannot read subfile (rc=%d): %s", err, ocoi.name()); break;
+         }
+         irc = 9;
+         break;
+      }
+
+      bool bCanWriteFile = 0;
+
+      if (iout >= 3)
+      {
+         // should not be required
+         int isubrc=0;
+         #ifdef _WIN32
+         if (vname())
+            isubrc = createOutDirTreeW(ocoi.name(), &newDirMap);
+         else
+         #endif
+            isubrc = createOutDirTree(ocoi.name(), &newDirMap);
+         if (isubrc)
+         {
+            perr("cannot write: %s\n", ocoi.name());
+            if (!cs.force)
+               return 9;
+         }
+
+         if (ocoi.open("wb"))
+         {
+            perr("cannot write: %s\n", ocoi.name());
+            if (!cs.force) {
+               static bool btold=0;
+               if (!btold)
+                  pinf("use option -force to ignore errors.\n");
+               btold=1;
+               return 9;
+            }
+            cs.numBadFiles++;
+         }
+         else
+         {
+            bCanWriteFile = 1;
+         }
+      }
+
+      char szOutDone[50];
+
+      uint crcraw = 0;
+      uint crcout = 0;
+      num  nDoneOut = 0;
+
+      if (iout != 2) info.setAction(cs.test?"test":"unpak", ocoi.name(), "");
+
+      num nstart = getCurrentTime();
+      num ntold  = getCurrentTime();
+      num nTotalOut = nRawSize;
+
+      while (1)
+      {
+         if (userInterrupt())
+            { irc = 1; break; }
+
+         int iread = unzReadCurrentFile(uf, buf, size_buf);
+
+         if (iread == 0)
+            break;
+
+         if (iread<0)
+         {
+            printf("cannot read subfile (rc=%d): %s", iread, ocoi.name());
+            irc = 9;
+            break;
+         }
+
+         if (iread>0)
+         {
+            if (iout == 1)
+               { }
+            else if (iout == 2)
+            {
+               if (chain.coldata) {
+                  // no binary support, we need the file headers.
+                  if (chain.addStreamAsLines(2, (char*)buf, iread))
+                     break;
+               } else {
+                  fwrite(buf, 1, iread, stdout);
+               }
+            }
+            else if (bCanWriteFile)
+            {
+               if (ocoi.write((uchar*)buf, iread) < iread)
+               {
+                  perr("cannot fully write, disk full\n");
+                  irc = 9;
+                  break;
+               }
+            }
+
+            crcraw = crc32((uchar*)buf, iread, crcraw);
+
+            nDoneOut += iread;
+            cs.totaloutbytes += iread;
+         }
+
+         num nnow = getCurrentTime();
+         if (   (iout&1) != 0
+             && nnow - nstart >= 3000
+             && nnow - ntold  >= 1000
+            )
+         {
+            ntold = getCurrentTime();
+ 
+            num iElapsed = getCurrentTime() - nstart;
+            num nTimeEst = (nRawSize * iElapsed) / (nDoneOut ? nDoneOut : 1);
+            num nTimeRem = nTimeEst - iElapsed;
+            num nRemSec  = nTimeRem / 1000;
+            num nRemDMin = nRemSec / 6;
+ 
+            // avoid 64 * 64 bit overflow on output estimation
+            num nTotalOutMB = nTotalOut / 1000000;
+            num nDoneOutMB  = nDoneOut  / 1000000;
+ 
+            if (nTotalOutMB > 0)
+            {
+               if (nTotalOutMB >= 1000)
+                  sprintf(szOutDone, "%1.1f/%1.1fgb", nDoneOutMB/1000.0, nTotalOutMB/1000.0);
+               else
+                  sprintf(szOutDone, "%1.0f/%1.0fmb", nDoneOutMB*1.0, nTotalOutMB*1.0);
+
+               if (nRemDMin >= 20)
+                  sprintf(szAddInfo, "=> %s %1.0fmin", szOutDone, nRemDMin/10.0);
+               else
+                  sprintf(szAddInfo, "=> %s %dsec", szOutDone, (int)(nRemSec));
+
+               info.setStatus(cs.test?"test":"unpak", ocoi.name(), szAddInfo);
+            }
+         }
+
+         if ((iout&1) != 0) info.setProgress(nTotalOut, nDoneOut, "bytes");
+      }
+
+      if (irc) {
+         if (iout >= 3) {
+            pinf("[nopre] cleaning up: %s\n", ocoi.name());
+            ocoi.closeAndRemove();
+         }
+         break;
+      }
+
+      if (iout >= 3)
+      {
+         if (bCanWriteFile == 0)
+         {
+            info.print("skipd %s\n", ocoi.name());
+         }
+         else
+         {
+            if (cs.verbose)
+               info.print("wrote %s (using %s time)\n", ocoi.name(), pszTimeInfo);
+            else {
+               info.clear();
+               printFile("wrote", ocoi.name(), nRawSize, 0, nPrintFlags);
+            }
+   
+            ocoi.close();
+   
+            int iElapsed = getCurrentTime() - nstart;
+    
+            // verify by file size
+            if (nDoneOut != nRawSize)
+               return 9+perr("output size mismatch (%s/%s)\n",
+                  numtoa(nDoneOut,1,szLineBuf),numtoa(nRawSize));
+
+            if (nFileTime > 0)
+            {
+               ocoi.setFileTime(nFileTime);
+            }
+    
+            #ifndef _WIN32
+            if (bFromLinuxMac && bAttrExec)
+            {
+               // set linux +x flag
+               struct stat64 ostat;
+               if (stat64(ocoi.name(), &ostat) == 0)
+               {
+                  // extend existing flags by +x
+                  uint nattr = (1U << 31) | ostat.st_mode | (1U << 6) | (1U << 3) | (1U << 0);
+                  Coi::writeAttrRaw(ocoi.name(), nattr, 0, 0);
+               }
+            }
+            #endif
+         }
+      }
+
+      err = unzCloseCurrentFile(uf);
+
+      if (err) {
+         switch (err) {
+          case UNZ_BADZIPFILE: perr("bad content or crc: %s", ocoi.name()); break;
+          case UNZ_CRCERROR  : perr("checksum mismatch: %s", ocoi.name());  break;
+          default            : perr("cannot read subfile (rc=%d): %s", err, ocoi.name()); break;
+         }
+         if (iout >= 3 && cs.keepbadout == 0) {
+            pinf("[nopre] cleaning up: %s\n", ocoi.name());
+            ocoi.closeAndRemove();
+         }
+         irc = 9;
+         break;
+      } else if (iout == 1) {
+         info.clear();
+         printFile("tested", ocoi.name(), nRawSize, 0, nPrintFlags);
+      }
+
+      cs.filesChg++;
+
+      // jump past sub file
+      if ((i+1) < gi.number_entry)
+      {
+         err = unzGoToNextFile(uf);
+
+         if (err!=UNZ_OK)
+         {
+            perr("error %d with zipfile in unzGoToNextFile\n",err);
+            break;
+         }
+      }
+   }
+
+   unzClose(uf);
+
+   // set times of all folders
+   {
+      int nDirs = glblUnzipDirs.numberOfEntries();
+      for (int i=0; i<nDirs; i++)
+      {
+         Coi *pcoi = glblUnzipDirs.getEntry(i, __LINE__);
+         if (cs.verbose)
+            info.print("settm %s\n", pcoi->name());
+         cs.uname = pcoi->bClUniName;
+         int isubrc = pcoi->setFileTime(pcoi->nClMTime);
+         if (isubrc)
+            pwarn("cannot set dir time (%d): %s\n", isubrc, pcoi->name());
+      }
+      glblUnzipDirs.resetEntries();
+   }
+
+   cs.uname = buname;
+
+   return irc;
+}
+
+#endif // SFKPACK
 
 size_t myfread(uchar *pBuf, size_t nBytes, FILE *fin , num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
 char getYNAchar();
@@ -18572,6 +20449,7 @@ printx("\n"
        "        $[0.100 bytes]<def>           - 0 to 100 bytes\n"
        "        $[.100000 bytes]<def>         - up to 100000 bytes\n"
        "        $[1.* bytes]<def>             - 1 to default maximum bytes\n"
+       "        $[2 chars]<def>               - exactly 2 chars\n"
        "        $[30 bytes]<def>              - exactly 30 bytes\n"
        "        $[byte of aeiou]<def>         - one vocal (a OR A OR e OR ...),\n"
        "                                  case insensitive by default.\n"
@@ -18879,6 +20757,105 @@ void arcinf(int iind);
 
 void printHelpText(cchar *pszSub, bool bhelp, bool bext)
 {
+   if (!strcmp(pszSub, "xe"))
+   {
+
+      #ifndef VFILEMAX
+      printx("<help>$about sfk xe:\n",
+             bhelp ? " (type \"sfk help xe\")":"");
+      printx("\n"
+         "   Swiss File Knife Extended Edition (SFK XE) is the commercial\n"
+         "   edition of SFK, available from StahlWorks Technologies.\n"
+         );
+      printx("\n"
+         " $SFK XE Archive File Content Reading\n"
+         "\n"
+         "   Swiss File Knife Extended Edition features full content\n"
+         "   reading of zip, tar and tar.gz files. Zip files are\n"
+         "   detected by file extension or optional content scanning.\n"
+         "   For the full list of directly supported zip file extensions\n"
+         "   type \"sfk help opt\" and read more under option -arc.\n"
+         "\n"
+         "   sfk xe can not only read top-level contents of a zip,\n"
+         "   but also contents of zips embedded within other zips,\n"
+         "   e.g. jar archives within a zip package.\n"
+         "\n"
+         "   under xe, the following commands provide zip processing:\n"
+         "\n"
+         "      find, hexfind, xfind, xtext, xhexfind, extract,\n"
+         "      list, filter, snapto\n"
+         "\n"
+         "   as usual, the output of such commands (text streams or filename lists)\n"
+         "   can be processed by subsequent chain commands, just as with sfk base.\n"
+         "\n"
+         "   $LIMITATIONS:\n"
+         "\n"
+         "    - zip file contents #must fit completely into memory<def>.\n"
+         "      in general, zip files below 100 mb should be ok.\n"
+         "      contents larger then the current -memlimit (default: 300mb)\n"
+         "      will be skipped. if you increase the -memlimit, your machine\n"
+         "      must have enough memory, or sfk may run endless or even crash.\n"
+         "\n"
+         "    - multi-part archives (split zip files) are #not<def> supported.\n"
+         "      the whole content of a zip archive must be provided in one file.\n"
+         "\n"
+         "    - the zip files must use a #normal compression format (%s%s)<def>,\n"
+         "      e.g. as it is produced by the InfoZIP or WinZIP tool.\n"
+         "      (most zip files in the internet use normal compression.)\n"
+         "      exotic compressions and 64-bit zip files are NOT supported.\n"
+         "\n"
+         "    - time or attribute informations (sfk list -time ...) of zip\n"
+         "      file entries may be inaccurate or missing, all you get is\n"
+         "      the actual contents (zip file entry data) for processing.\n"
+         , "de", "flate"
+         );
+
+      printx("\n"
+         "   $examples\n"
+         "\n"
+         "      #sfk list -arc -time -size -tofile lslrx .\n"
+         "         list all files, all contents of zip, jar etc. archives,\n"
+         "         and all files of archives contained within archives,\n"
+         "         creating one large file list within file \"lslrx\".\n"
+         "         type \"sfk list\" to get more infos on that example.\n"
+         "\n"
+         "      #sfk filt -arc \"-ls+public class\" -dir src.zip -file .java\n"
+         "         find public classes in all .java files of src.zip\n"
+         );
+
+      printx("\n"
+         " $SFK XE Fast Replace\n"
+         "\n"
+         "   Swiss File Knife Extended Edition contains a different\n"
+         "   implementation of the replace command, allowing high speed\n"
+         "   different-length replacements in large files. It can replace\n"
+         "   directly from one file to another file, or use temporary files\n"
+         "   to store the output intermediately. This means the file size\n"
+         "   is not limited by the available memory, and even files with\n"
+         "   many gigabytes of size can be processed.\n"
+         );
+ 
+      printx("\n"
+         " $SFK XE Replace with Wildcards and SFK Expressions\n"
+         "\n"
+         "   Swiss File Knife Extended Edition contains command $xreplace<def>\n"
+         "   supporting $wildcards * and ?<def> as well as $SFK Expressions<def>\n"
+         "   $within brackets []<def>. SFK Expressions are NOT regular expressions\n"
+         "   but use a simpler, human readable syntax.\n"
+         "   Type #sfk help xpat<def> for the full SFK Expression syntax.\n"
+         );
+
+      printx("\n"
+         "   $SFK Extended Edition is available from:\n"
+         "\n"
+         "      http://stahlworks.com/\n"
+         "\n"
+         );
+      #endif
+
+      return;
+   }
+
    if (!strcmp(pszSub, "ftpprot"))
    {
       printx(
@@ -20255,6 +22232,10 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "          #+echo -var \"foo is: ##(fooval)\"\n"
          "            extract foo=(any text) from in.txt, place the found\n"
          "            text into variable fooval, then print it. [19]\n"
+         "\n");
+  printx("   $sfk predefined variables\n"
+         "\n"
+         "      <examp>##(sys.slash)<def>    produces \\ under windows, / under linux.\n"
          "\n");
   printx("   $environment variable access\n"
          "\n"
@@ -22070,8 +24051,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
    ifcmd (!strcmp(pszCmd, "split")) // +wref
    {
-      if (!bhelp && blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
-
       ifhelp (nparm < 2)
       printx("<help>$sfk split partsize inputfile [outputfilebase] [-nov[erify]]]]\n"
              "\n"
@@ -22143,6 +24122,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       int   iDigits      = 1;
       bool  bTextMode    = 0;
 
+      int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
          char *pszParm = 0;
@@ -22152,7 +24132,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             if (nWorkBufSize <= 0) return 9;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-getsize", &pszParm)) {
             if (!pszParm) return 9;
             // ntries:delay
@@ -22162,45 +24141,40 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                iGetSizeDelay = atoi(pszDelay+1);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-digits", &pszParm)) {
             if (!pszParm) return 9;
             iDigits = atoi(pszParm);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-dig", &pszParm)) {
             if (!pszParm) return 9;
             iDigits = atoi(pszParm);
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-altsize")) {
             iAltSize = 1;
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-update")) {
             bUpdate = 1;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-nov", 4)) {
             bVerify = 0;
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-text")) {
             bTextMode = 1;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-", 1)) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
                return 9+perr("unknown option: %s\n", argx[iDir]);
          }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
 
          // process non-option keywords:
          if (!pszSplitSize) { pszSplitSize = argx[iDir]; continue; }
@@ -22463,13 +24437,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             return 9+perr("verification of output failed! splitting is incomplete.\n");
       }
 
+      STEP_CHAIN(iChainNext, 0);
+
       bDone = 1;
    }
 
    ifcmd (!strcmp(pszCmd, "join"))
    {
-      if (!bhelp && blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
-
       ifhelp (nparm < 1)
       printx("<help>$sfk join inputfile.part1 [outputfilebase] [-test]\n"
              "\n"
@@ -22512,29 +24486,30 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       char *pszDst        = 0;
       bool bTest = 0;
 
+      int iChainNext = 0;
       for (; iDir < argc; iDir++)
       {
          if (!strcmp(argx[iDir], "-test")) {
             bTest = 1;
             continue;
          }
-
          if (!strncmp(argx[iDir], "-", 1)) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
                return 9+perr("unexpected option: %s\n",argx[iDir]);
          }
-
-         // first non-option parm
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
          if (!pszFirstInput) { pszFirstInput = argx[iDir]; continue; }
          if (!pszDst       ) { pszDst        = argx[iDir]; continue; }
-
          return 9+pbad(pszCmd,argx[iDir]);
       }
 
       if (execJoin(pszFirstInput, pszDst, bTest, 0))
          return 9;
+
+      STEP_CHAIN(iChainNext, 0);
 
       bDone = 1;
    }
@@ -22629,6 +24604,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       char   sz1[50],sz2[50],sz3[50];
 
       int nstate = 1;
+      int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
@@ -22638,22 +24614,18 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             nCopyInc  = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-fromto")) {
             bAbsolute = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-allfrom")) {
             bAllFrom = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-noext")) {
             bNoExt = 1;
             continue;
          }
-         else
          if (strBegins(pszArg, "-append")) {
             pszArg = str("-0");
             // fall through
@@ -22669,6 +24641,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             else
                return 9+perr("unknown option: %s\n", pszArg);
          }
+         else
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
 
          // process non-option keywords:
          switch (nstate++) {
@@ -22874,6 +24849,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             printf("%s bytes copied.\n", numtoa(nTotal));
       }
 
+      STEP_CHAIN(iChainNext, 0);
+
       bDone = 1;
    }
 
@@ -22953,6 +24930,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       int irepeat = 0;
 
       int nstate = 1;
+      int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
@@ -22990,6 +24968,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             else
                return 9+perr("unknown option: %s\n", pszArg);
          }
+         else
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
 
          // process non-option keywords:
          switch (nstate) {
@@ -23158,6 +25139,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       nGlblHexDumpOff = 0;
       nGlblHexDumpLen = 0;
 
+      STEP_CHAIN(iChainNext, 0);
+
       bDone = 1;
    }
 
@@ -23325,6 +25308,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       int   iSubRC=0;
 
       int istate = 0;
+      int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
          char *pszParm  = argx[iDir];
@@ -23334,11 +25318,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             cs.quiet   = 1;
             continue;
          }
-         else if (!strcmp(pszParm, "-joinraw")) {
+         if (!strcmp(pszParm, "-joinraw")) {
             m.bClJoinOutput = 1;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-joinfull", &pszParm2)) {
             if (!pszParm2) return 9;
             m.bClJoinOutput = 1;
@@ -23346,14 +25329,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             m.setFixParms(pszParm2);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-fix", &pszParm2)) {
             if (!pszParm2) return 9;
             m.bClFixOutput = 1;
             m.setFixParms(pszParm2);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-movesrcto", &pszParm2)) {
             if (!pszParm2) return 9;
             if (!isDir(pszParm2))
@@ -23361,19 +25342,18 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             strcopy(m.szClMoveSrcOutDir, pszParm2);
             continue;
          }
-         else if (!strcmp(pszParm, "-keepbook")) {
+         if (!strcmp(pszParm, "-keepbook")) {
             m.bClHaveKeep = 1;
             continue;
          }
-         else if (!strcmp(pszParm, "-keeptmp")) {
+         if (!strcmp(pszParm, "-keeptmp")) {
             m.bClKeepTmp = 1;
             continue;
          }
-         else if (!strcmp(pszParm, "-scan")) {
+         if (!strcmp(pszParm, "-scan")) {
             m.bClScan = 1;
             continue;
          }
-         else
          switch (istate)
          {
             case 4: // keep
@@ -23422,6 +25402,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             else
                return 9+perr("unknown option: %s\n", argx[iDir]);
          }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
 
          // non option keywords
          if (!chain.usefiles && !bHaveInFile) {
@@ -23510,6 +25492,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             m.iClDoneFiles, (int)(m.nClGlobalBytes/1000000));
       }
 
+      STEP_CHAIN(iChainNext, 0);
+
       bDone = 1;
    }
 
@@ -23552,10 +25536,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       char *pszSrc = 0;
       char *pszDst = 0;
-      int  nloops = 1;
+      int   nloops = 1;
       char *pszCmd = 0;
+      bool  bForceSeed = 0;
 
       int nstate = 1;
+      int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
          if (!strncmp(argx[iDir], "-", 1)) {
@@ -23564,6 +25550,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             else
                return 9+perr("unknown option: %s\n", argx[iDir]);
          }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
 
          // process non-option keywords:
          switch (nstate++) {
@@ -23583,7 +25571,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (pszCmd && !strstr(pszCmd, "$outfile"))
          return 9+perr("missing phrase $outfile in user command");
 
-      srand((unsigned)time(NULL));
+      if (bGlblRandSeeded==0 || bForceSeed==1) {
+         bGlblRandSeeded = 1;
+         unsigned nSeed = (unsigned)time(NULL);
+         srand(nSeed); // data, checks seeded
+      }
 
       num nInFileSize = getFileSize(pszSrc);
       if (nInFileSize < 0)
@@ -23689,6 +25681,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          }
 
       }  // endfor loops
+
+      STEP_CHAIN(iChainNext, 0);
 
       bDone = 1;
    }
@@ -24813,7 +26807,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       char *pszConfFile=0,*pszConf=0,*pszForward=0;
       int istate=0;
 
-      srand(time(0));
+      srand(time(0)); // portmon
 
       // important default ports used by windows
       ushort audpdef[] = 
@@ -25842,6 +27836,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "        dumps 96 bytes from offset 4221566976 within part1.avi\n"
              "    #sfk hexdump -offlen 0xFBA00000 0x60 part1.avi\n"
              "        the same as above, but using hexadecimal numbers\n"
+             "    #sfk echo foo +atow +hexdump -pure -off 2\n"
+             "        convert string to UCS2 wide chars, then\n"
+             "        dump this without the 2 bytes BOM header\n"
              #ifdef _WIN32
              "    #sfk postdump test.dat +toclip\n"
              "        put test.dat contents into clipboard for posting\n"
@@ -26938,10 +28935,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          closesocket(iNetSock);
       }
       else
-      if (bTCP)
+      if (bTCP) {
+         memcpy(abMsg+nMsg, "\r\n", 2);
+         nMsg += 2;
          tcpClient(szDstIP, ndstport, nlisten, nownport, abMsg, nMsg, nTimeout);
-      else
+      } else {
          udpSend(szDstIP, ndstport, nlisten, nownport, abMsg, nMsg, nTimeout, 0);
+      }
 
       STEP_CHAIN(iChainNext, 1);
 
@@ -26978,7 +28978,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
-         char *pszArg  = argx[iDir];
+         char *pszArg = argx[iDir];
          if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(pszArg))
                break; // fall through
@@ -27005,12 +29005,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (!bfrom || !bto)
          return 9+perr("missing from or to value");
 
-      if (!bGlblRandSeeded) {
-         bGlblRandSeeded=1;
-         srand((unsigned)time(NULL));
+      if (bGlblRandSeeded==0) {
+         bGlblRandSeeded = 1;
+         uint nseed = (uint)time(NULL);
+         srand(nseed); // rand, checks seeded
       }
 
-      int irange=(ito-ifrom)+1;
+      int irange = (ito - ifrom) + 1;
       chain.print("%d\n", (rand() % irange) + ifrom);
 
       STEP_CHAIN(iChainNext, 1);
@@ -27023,8 +29024,31 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       ifhelp (nparm < 1)
       printx("<help>$sfk status target[:port] \"status text\"\n"
              "\n"
-             "   send a status to the SFKTray GUI tool for display,\n"
-             "   by UDP to given target host, or \"local\" for own machine.\n"
+             "   send a status to the SFKTray GUI tool for display.\n"
+             "\n"
+             "   this allows to run long scripts in background, like\n"
+             "\n"
+             "   -  a script that produces several output packages\n"
+             "   -  a script that checks test devices if they're up\n"
+             "   -  a compile making binaries for 5 architectures\n"
+             "\n"
+             "   and to see their current state just by small lights\n"
+             "   in the Windows system tray. a typical use is:\n"
+             "\n"
+             "   -  show a yellow blinking light: a task is ongoing\n"
+             "   -  show a green light: task completed successfully\n"
+             "   -  show a red light: task failed\n"
+             "\n"
+             #ifdef _WIN32
+             "   download SFKTray Free Edition now, which can\n"
+             "   display two independent lights, by:\n"
+             " \n"
+             "      #sfk gettray\n"
+             "\n"
+             #endif
+             "   the lights are changed by the sfk status command.\n"
+             "   the status is sent by UDP to the given target host,\n"
+             "   or to \"local\" for your own machine.\n"
              "\n"
              "   $statustext fields\n"
              "      v1         optional protocol version\n"
@@ -29178,7 +31202,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          return 9;
       }
 
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1))) return lRC;
+      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1, &iChainNext))) return lRC;
       if (btest) return 0;
 
       if (!cs.renexp) {
@@ -29277,6 +31301,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (!cs.yes) printx("$[add -yes to execute.]\n");
 
       glblOutFileMap.reset();
+
+      STEP_CHAIN(iChainNext, 0);
 
       bDone = 1;
    }
@@ -29837,6 +31863,1244 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
    }
    #endif // SFKPIC
 
+   #ifdef SFKPACK
+
+   // internal
+   if (   !strcmp(pszCmd, "gzip")
+       || !strcmp(pszCmd, "gunzip")
+      )
+   {
+      ifhelp (chain.usefiles == 0 && nparm < 1)
+      printx("<help>$sfk gzip infile outfile.gz\n"
+             "$sfk gunzip infile.gz outfile\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      cs.icomp = 1; // gzip
+      cs.uname = 1;
+
+      bool bPack = strcmp(pszCmd, "gzip") ? 0 : 1;
+
+      char *pszInFile   = 0;
+      char *pszOutFile  = 0;
+
+      // .
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strcmp(pszArg, "-fast")) {
+            cs.fastcomp = 1;
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (!pszInFile) {
+            pszInFile = pszArg;
+            continue;
+         }
+         if (!pszOutFile) {
+            pszOutFile = pszArg;
+            continue;
+         }
+         return 9+perr("unexpected: %s\n", pszArg);
+      }
+
+      if (!pszInFile)
+         return 9+perr("missing input file\n");
+
+      if (!pszOutFile)
+      {
+         return 9+perr("missing output file\n");
+      }
+      else
+      {
+         // single file to file
+         cs.yes = 1;
+
+         Coi oin(pszInFile, 0);
+         Coi oout(pszOutFile, 0);
+   
+         execPackFile(&oin, &oout, bPack);
+      }
+
+      if (cs.numBadFiles > 0)
+         printx("<err>could not %s %d files.\n", bPack?"pack":"unpack", cs.numBadFiles);
+
+      bDone = 1;
+   }
+
+   bool bcmdzipto = 0;
+   bool bunizip   = 0;
+
+   ifcmd (   !strcmp(pszCmd, "zip")
+          || !strcmp(pszCmd, "zipto")
+          || !strcmp(pszCmd, "zipuni")
+          || !strcmp(pszCmd, "ziptouni")
+         )
+   {
+      bcmdzipto = strstr(pszCmd, "zipto") ? 1 : 0;
+      bunizip   = strstr(pszCmd, "uni")   ? 1 : 0;
+
+      ifhelp (nparm < 1)
+      if (bhelp==1 || bcmdzipto==0)
+      {
+      if (bunizip)
+      {
+      printx("<help>$sfk zipuni out[.zip] [opt] mydir [file1 file2 ...]\n"
+             "$sfk zipuni out[.zip] [opt] -dir mydir -file file1 file2\n"
+             "\n"
+             "   add files and folders to a .zip file, using just\n"
+             "   UTF-8 filenames, to support old zip extraction\n"
+             "   tools on linux systems which are not aware of the\n"
+             "   zip format 0x7075 extension.\n"
+             "\n"
+             );
+      }
+      else
+      {
+      printx("<help>$sfk zip out[.zip] [opt] mydir [file1 file2 ...]\n"
+             "$sfk zip out[.zip] [opt] -dir mydir -file file1 file2\n"
+             "\n"
+             "   add files and folders to a .zip file.\n"
+             "\n"
+             "   $About filename encoding\n"
+             "\n"
+             "   if filenames contain special chars like umlauts\n"
+             "   or accents the following applies:\n"
+             "\n"
+             "   - under windows, sfk zip stores filenames\n"
+             "\n"
+             "     1. in OEM codepage %d of your system,\n"
+             "        to support old extraction tools.\n"
+             "\n"
+             "     2. and as UTF-8, in the zip format 0x7075 extension\n"
+             "        which will be used by up-to-date programs.\n"
+             "\n"
+             "   - under linux, sfk stores only one name, which is\n"
+             "     marked as UTF-8, if such encoding is detected.\n"
+             "     on any other encoding, like accent chars on old file\n"
+             "     systems, sfk zip stores characters as is, and later\n"
+             "     extraction may produce wrong names.\n"
+             "\n"
+             "   - UTF-8 name extensions are supported only by up-to-\n"
+             "     date zip extraction tools, like 7zip, Windows 10\n"
+             "     File Explorer, or sfk unzip.\n"
+             "\n"
+             "   - names with accent chars exchanged between Mac and\n"
+             "     Non-Mac systems may look wrong due to Decomposed\n"
+             "     Unicode used in Mac OS/X.\n"
+             "\n"
+             , zipchars.getocp()
+             );
+      printx("   if you extract files at the receiver, then open\n"
+             "   windows explorer and see unexpected filename\n"
+             "   characters, this means the receiver's unzip tool\n"
+             "   is old and does not understand UTF-8 extensions.\n"
+             "\n"
+             "   - if you just see wrong accent characters\n"
+             "     it means the receiver system uses a different\n"
+             "     OEM codepage then the sender (sfk sysinfo).\n"
+             "\n"
+             "   - if you see ##Uxxxx it means filenames contain\n"
+             "     complex unicode chars, like asian or cyrillic.\n"
+             "     you can google for U+xxxx to see what character\n"
+             "     is actually meant.\n"
+             "\n");
+      printx("   $No update of existing content\n"
+             "     if the output zip file already exists\n"
+             "     then only new files which are not already\n"
+             "     contained can be added. sfk cannot update\n"
+             "     contents and times within existing zip files.\n"
+             "\n"
+             "     sfk zip may fail to compare added filenames\n"
+             "     to existing names in a zip if name encodings\n"
+             "     are mixed or unclear, esp. on linux/mac.\n"
+             "\n"
+             "   $64 bit zip file support\n"
+             "     if contents are larger then 2 gb, sfk zip\n"
+             "     will create a 64 bit zip file automatically.\n"
+             "     not every unzip tool may be able to read this.\n"
+             "     SFK XE cannot read zip file contents over 2 gb.\n"
+             "\n");
+      #ifndef _WIN32
+      printx("   $Linux/Mac output control\n"
+             "     if you get many blank lines, type #sfk ruler<def>,\n"
+             "     then limit the number of output columns like:\n"
+             "     #<exp> SFK_CONFIG=columns:60<def>\n"
+             "\n");
+      #endif
+      printx("   $options\n"
+             "     -force    overwrite existing zip file.\n"
+             "     -asdir x  create a new folder x within the zip\n"
+             "               and add all files into that folder.\n"
+             "               cannot add to an existing folder.\n"
+             "     -big      show a summary of largest files.\n"
+             "     -big=n    show a summary of n largest files.\n"
+             "     -old=n    show a summary of n oldest  files.\n"
+             "     -nosum    show no summary.\n"
+             "     -text     include only ascii text files\n"
+             "               but no binary files.\n"
+             "     -nometa   do not add the os/code comment,\n"
+             "               or <exp> SFK_CONFIG=nozipmeta\n"
+             "     -setexec mask1 mask2 <not>mask3 ...\n"
+             "               mark files as executable with\n"
+             "               linux/mac operating systems.\n"
+             "               must be followed by -dir ...\n"
+             "\n");
+      printx("   $output chaining\n"
+             "     sfk zip supports text output chaining,\n"
+             "     to pass filenames for filtered display.\n"
+             "\n");
+      printx("   $see also\n");
+      #ifdef _WIN32
+      printx("     #sfk zipuni<def>  use just UTF-8 filenames,\n"
+             "                 to support old linux tools.\n");
+      #endif
+      printx("     #sfk unzip<def>   extract a zip file.\n"
+             "     #sfk zipto<def>   zip files selected by a\n"
+             "                 previous command.\n"
+             "\n"
+             "   sfk zip is very flexible and easy to use,\n"
+             "   but if you need high performance or special\n"
+             "   features like direct zip file updating you\n"
+             "   may consider further zipping tools.\n"
+             "   find an overview on: #stahlworks.com/zip\n"
+             "\n"
+             );
+      printx("   $examples\n"
+             "     #sfk zip out mydir <not>.bak\n"
+             "       add all contents of mydir into out.zip,\n"
+             "       except for .bak files, using the short\n"
+             "       file selection syntax.\n"
+             "\n"
+             "     #sfk zip out -dir foo bar -file <not>.bak\n"
+             "       add all contents of folder foo and folder\n"
+             "       bar into out.zip, except for .bak files,\n"
+             "       using the long file selection syntax.\n"
+             "\n");
+      printx("     #sfk zip out -dir mydir -subdir <not>save <not><sla>tmp\n"
+             "      #-file <not>.bak <not>old\n"
+             "       add all of mydir into out.zip, except for\n"
+             "       sub folders having 'save' in their name or\n"
+             "       starting with 'tmp', and except for files\n"
+             "       with .bak extension or 'old' in their name.\n"
+             "\n");
+      printx("     #sfk select mydir .png +zipto out\n"
+             "       add all .png images of mydir to out.zip.\n"
+             "\n"
+             "     #sfk zip out mydir .png\n"
+             "       same as above, in one step.\n"
+             "\n"
+             "     #sfk zip out -since 3d mydir\n"
+             "       add files changed in the last three days.\n"
+             "\n"
+             "     #sfk list -late=5 mydir +zipto out -force\n"
+             "       write the 5 newest files to out.zip,\n"
+             "       overwriting an existing out.zip\n"
+             "\n"
+             "     #sfk zip out -setexec /conf/ .sh -dir mydir\n"
+             "       zip mydir, mark files named exactly conf,\n"
+             "       or being in a folder conf, or having .sh\n"
+             "       in their name as executable on linux.\n"
+             "\n"
+             "     #sfk sel -sincedir proj1 proj2 +zipto out\n"
+             "       if proj2 is a newer copy of proj1,\n"
+             "       collect all files added or changed\n"
+             "       since proj1 into out.zip\n"
+             "\n"
+             "     #sfk zip out mydir +filter -<not>test\n"
+             "       pack mydir to out.zip, but do not print\n"
+             "       any names with \"test\" to terminal.\n"
+             );
+      } // endif zipuni
+      } // endif zip
+      if (bhelp==1 || bcmdzipto==1)
+      {
+      if (bunizip)
+      {
+      printx("<help>$sfk seluni ... +ziptouni outfile\n"
+             "\n"
+             "   zip files selected by a previous command, using\n"
+             "   just UTF-8 filenames, to support old zip extraction\n"
+             "   tools on linux systems which are not aware of the\n"
+             "   zip format 0x7075 extension.\n"
+             "\n"
+             );
+      }
+      else
+      {
+      printx("<help>$sfk sel ... +zipto outfile\n"
+             "$sfk seluni ... +zipto outfile\n"
+             "\n"
+             "   zip files selected by a previous command.\n"
+             "\n"
+             );
+      #ifdef _WIN32
+      printx("   $UTF-8 filename encoding\n"
+             "\n"
+             "   the same applies as with #sfk zip<def>. however,\n"
+             "\n"
+             "   - if you use #sfk sel ... +zipto<def> then only file-\n"
+             "     name characters of your own system codepage\n"
+             "     can be stored, as shown by: #sfk ascii\n"
+             "\n"
+             "     if you use #sfk seluni ... +zipto<def> then any\n"
+             "     unicode filename, including asian and cyrillic,\n"
+             "     can be stored.\n"
+             "\n"
+             );
+      #endif
+      printx("   $options\n"
+             "     -force    overwrite existing zip file.\n"
+             "     -asdir x  create a new folder x within the zip\n"
+             "               and add all files into that folder.\n"
+             "               cannot add to an existing folder.\n"
+             "     -nometa   do not add the os/code comment.\n"
+             "     -setexec mask1 mask2 <not>mask3 ...\n"
+             "               mark files as executable with\n"
+             "               linux/mac operating systems.\n"
+             "               must be followed by -dir ...\n"
+          // #ifdef _WIN32
+          // "     -tocode=n  set zip filename codepage manually.\n"
+          // "               default on this computer is %d.\n"
+          // , zipchars.getocp()
+          // #endif
+             );
+      printx("\n"
+             "   $see also\n"
+             "     #sfk zip<def>       all infos about zip creation.\n"
+             #ifdef _WIN32
+             "     #sfk ziptouni<def>  add just UTF-8 names.\n"
+             #endif
+             "     #sfk unzip<def>     extract zip files.\n"
+             "\n");
+      printx("   $examples\n"
+             "     #sfk sel mydir +zipto out\n"
+             #ifdef _WIN32
+             "       add all files of mydir into out.zip,\n"
+             "       as UTF-8, limited to characters of your\n"
+             "       windows system codepage.\n"
+             #else
+             "       add all files of mydir into out.zip.\n"
+             #endif
+             "\n"
+             "     #sfk seluni mydir +zipto out\n"
+             "       add all files of mydir as UTF-8 filenames,\n"
+             "       supporting filenames of any language, like\n"
+             "       cyrillic, greek or chinese.\n"
+             "\n"
+             "     #sfk seluni mydir +zipto out\n"
+             "       same as above. use seluni only with +zipto\n"
+             "       as other sfk functions will fail to read\n"
+             "       the listed utf-8 filenames.\n"
+             "\n"
+             "     #sfk sel -dir mydir -subdir <not>save <not><sla>tmp\n"
+             "      #-file <not>.bak <not>old +zipto out\n"
+             "       add all of mydir into out.zip, except for\n"
+             "       sub folders having 'save' in their name or\n"
+             "       starting with 'tmp', and except for files\n"
+             "       with .bak extension or 'old' in their name.\n"
+             "\n"
+             "     #sfk sel -text mydir +zipto out\n"
+             "       collect all ascii plain text files,\n"
+             "       but no binaries like .obj .exe .png\n"
+             #ifdef _WIN32
+             "\n"
+             "     #sfk fromclip +zipto out\n"
+             "       if you see filenames in the console,\n"
+             "       mark and copy them to clipboard, then run\n"
+             "       this command to collect them to out.zip.\n"
+             "       for tips how to configure clipboard support\n"
+             "       with CMD.EXE type: sfk help shell\n"
+             "\n"
+             "     #sfk fromclip +filt -tabform <run>col4 +zipto out\n"
+             "       a spreadsheed table contains 4 colums, with\n"
+             "       filenames in the 4th column. copy the table\n"
+             "       to the clipboard, then run this command\n"
+             "       to zip all files listed in the 4th column.\n"
+             #endif
+             "\n"
+             "     #sfk today -nosub . .bat +zipto out -asdir monday\n"
+             "       select all .bat files that were changed today,\n"
+             "       in the current dir but without sub folders,\n"
+             "       and add them to out.zip as a new virtual folder\n"
+             "       named 'monday'.\n"
+             "\n");
+      printx("     #sfk xtext mydir \"/foo*bar/\" -names +zipto out\n"
+             "       search all text files in mydir for phrases\n"
+             "       starting foo and ending bar. pass the list of\n"
+             "       found filenames to zipto, and create out.zip.\n"
+             "\n");
+      } // endif ziptouni
+      } // endif zipto
+
+      ehelp;
+
+      sfkarg;
+
+      cs.uname = 1;
+
+      cs.bzipto   = bcmdzipto;
+      cs.unameout = bunizip;
+
+      cs.withdirs = 1;  // get dir times
+      cs.predir   = 1;  // process dirs before files
+      cs.addmeta  = cs.nozipmeta ? 0 : 1;
+      bool bnew   = 1;  // replace existing
+
+      char szOutFile[SFK_MAX_PATH+100];   szOutFile[0] = '\0';
+      char szOutMask[SFK_MAX_PATH+100];   szOutMask[0] = '\0';
+      char szPat[SFK_MAX_PATH+100];       szPat[0] = '\0';
+      char szComment[200+20];             szComment[0] = '\0';
+
+      bool bAnyDirParms = 0;
+      int  iChainNext = 0;
+
+      int nListBySize=0, nListByTime=0;
+      cs.listBySize = 0;
+      cs.listByTime = 0;
+      char *pszInfoOutArg = 0;
+      char *pszAsDir = 0;
+      int istate = 0;
+      int iAnsiCP = sfkchars.getacp();
+      int iOEMCP  = sfkchars.getocp();
+
+      lRC = 0;
+
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (strBegins(pszArg, "-setexec"))
+            { istate=1; continue; }
+         if (!strncmp(pszArg, "-", 1))
+            istate=0;
+         if (haveParmOption(argx, argc, iDir, "-asdir", &pszParm)) {
+            if (!pszParm) return 9;
+            snprintf(szOutMask, SFK_MAX_PATH, "%s/%cfile", pszParm, glblRunChar);
+            cs.tomask = szOutMask;
+            pszAsDir = pszParm;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-tocode", &pszParm)) { // internal
+            if (!pszParm) return 9;
+            iOEMCP = atoi(pszParm);
+            continue;
+         }
+         if (!strcmp(pszArg, "-noutf"))   // internal, for linux
+            { cs.uname=0; continue; }
+         if (!strcmp(pszArg, "-aname")) 
+            { cs.aname=1; continue; }
+         if (!strcmp(pszArg, "-rawname"))
+            { cs.showrawname=1; continue; }
+         if (!strcmp(pszArg, "-big")) {
+            cs.listBySize = 1;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-big", &pszParm)) {
+            if (!pszParm) return 9;
+            cs.listBySize = 1;
+            nListBySize = atol(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-old", &pszParm)) {
+            if (!pszParm) return 9;
+            cs.listByTime = 1;
+            nListByTime = atol(pszParm);
+            continue;
+         }
+         if (!strcmp(pszArg, "-64"))     { cs.force64 = 1; continue; }
+         if (!strcmp(pszArg, "-meta"))   { cs.addmeta = 1; continue; }
+         if (!strcmp(pszArg, "-nometa")) { cs.addmeta = 0; continue; }
+         if (!strcmp(pszArg, "-bzip2"))  { cs.bzip2 = 1; continue; }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (istate) {
+            strcopy(szPat, pszArg);
+            for (int i=0; szPat[i]; i++)
+               if (szPat[i]=='\\')
+                  szPat[i]='/';
+            glblGrepPat.addString(szPat);
+            continue;
+         }
+         if (szOutFile[0] == '\0') 
+         {
+            if (mystrstri(pszArg, ".zip"))
+               strcopy(szOutFile, pszArg);
+            else {
+               pszInfoOutArg = pszArg;
+               snprintf(szOutFile, SFK_MAX_PATH, "%s.zip", pszArg);
+            }
+            continue;
+         }
+         // zip: must be short dir parm
+         if (bcmdzipto==0)
+            break;
+         // zipto: non option is unexpected
+         return 9+perr("unexpected: %s\n", pszArg);
+      }
+
+      if (bcmdzipto==0) {
+         if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iChainNext, &bAnyDirParms)))
+            return lRC;
+         if (!bAnyDirParms) {
+            perr("missing input directory name.");
+            if (pszInfoOutArg)
+               pinf("to zip a folder %s type %s again.\n", pszInfoOutArg, pszInfoOutArg);
+            return 9;
+         }
+      }
+      if (btest) return 0;
+
+      if (szOutFile[0]==0)
+         return 9+perr("missing output filename\n");
+
+      // optional printx redirect
+      AutoRestoreInt ores(&bGlblCollectHelp);
+      if (chain.coldata)
+         { cs.noprog = 1; bGlblCollectHelp = 1; }
+
+      num nstart = getCurrentTime();
+
+      // ascii mode preparation
+      zipchars.setacp(iAnsiCP);
+      zipchars.setocp(iOEMCP);
+      zipchars.init();
+
+      // even with -uname we need this
+      cs.outcconv = 1;
+
+      cs.zfout = 0;
+      char *pszOutFile = szOutFile;
+
+      if (cs.force==0 && fileExists(pszOutFile)!=0)
+      {
+         // pass 1: list zip   into glblZipList
+         //         list files into glblFileList
+         glblZipList.resetEntries();
+         cs.toziplist = 1;
+         cs.tozipname = pszOutFile;
+         cs.nzipredundant = 0;
+         bool byes = cs.yes;
+         bool bnowarn = cs.nowarn;
+         cs.yes = 0; cs.sim = 1;
+         cs.nowarn = 1; // quiet prescan
+
+         if (execUnzip(pszOutFile) >= 9)
+            return 9;
+
+         if (walkAllTrees(eFunc_ZipTo, lFiles, lDirs, nBytes) >= 9)
+            return 9;
+
+         cs.toziplist = 0;
+         cs.totaloutbytes = 0;
+         cs.filesChg = 0;
+         lFiles = lDirs = nBytes = 0;
+
+         if (cs.nzipredundant > 0)
+         {
+            printx("<warn>sfk can add to, but not update existing zip files.\n");
+            pinf("[nopre] add option -force to overwrite the existing zip file.\n");
+            return 9;
+         }
+
+         // all checked, we can append to existing.
+         bnew = 0;
+         cs.yes = byes;
+         cs.nowarn = bnowarn;
+      }
+
+      cs.sim = !cs.yes;
+
+      int iAppend=0;
+
+      if (cs.sim==1 && cs.nohead==0 && cs.quiet==0)
+         printx("$[simulating:]\n");
+
+      if (fileExists(szOutFile)) {
+         if (bnew == 0)
+            iAppend=2;
+      }
+
+      if (cs.yes)
+      {
+         cs.zfout = zipOpen64(szOutFile, iAppend);
+         if (!cs.zfout) return 9+perr("cannot write %s\n", szOutFile);
+      }
+
+      if (pszAsDir) {
+         // add new virtual dir entry.
+         Coi ovdir(pszAsDir, 0);
+         ovdir.setSize(0);
+         ovdir.setTime(time(0), time(0));
+         // this will fail if such a dir exists already.
+         if (execZipFile(&ovdir, 2, 0)) {
+            pinf("option -asdir can only add new folders.\n");
+            return 9;
+         }
+         // because we add into a new dir, all existing
+         // zip entries can no longer match, therefore:
+         glblZipList.resetEntries();
+      }
+
+      lRC = walkAllTrees(eFunc_ZipTo, lFiles, lDirs, nBytes);
+
+      if (cs.yes == 0 && glblZipSortSize.numberOfEntries() > 0)
+      {
+         info.clear();
+         int nCnt  = glblZipSortSize.numberOfEntries();
+         int iFrom = 0, nTell = nCnt;
+         if (nListBySize > 0)
+            cs.listBySize = nListBySize;
+         else
+            cs.listBySize = mymin(10, mymax(3,nCnt/10));
+         if (nCnt > abs(cs.listBySize)) {
+            nTell = cs.listBySize;
+            iFrom = nCnt - abs(cs.listBySize);
+         }
+         printx("$[summary of %d largest files:]\n", nTell);
+         for (int i=iFrom; i<nCnt; i++) {
+            Coi *pin = glblZipSortSize.getEntry(i, __LINE__);
+            printFile(timeAsString(pin->getTime()), pin->getExtStr(), pin->getSize(), 0, 1);
+         }
+      }
+      if (cs.yes == 0 && glblZipSortTime.numberOfEntries() > 0)
+      {
+         info.clear();
+         int nCnt  = glblZipSortTime.numberOfEntries();
+         int iFrom = 0, nTell = nCnt;
+         if (nListByTime > 0)
+            cs.listByTime = nListByTime;
+         else
+            cs.listByTime = mymin(5, mymax(3,nCnt/10));
+         if (nCnt > abs(cs.listByTime)) {
+            nTell = cs.listByTime;
+            iFrom = nCnt - abs(cs.listByTime);
+         }
+         printx("$[summary of %d oldest files:]\n", nTell);
+         for (int i=iFrom; i<nCnt; i++) {
+            Coi *pin = glblZipSortTime.getEntry(i, __LINE__);
+            printFile(timeAsString(pin->getTime()), pin->getExtStr(), pin->getSize(), 0, 1);
+         }
+      }
+
+      glblZipList.resetEntries();
+      glblZipDirs.resetEntries();
+      glblZipSortSize.resetEntries();
+      glblZipSortTime.resetEntries();
+
+      if (!cs.uname && cs.ifailedchars) {
+         perr("%d filename characters failed to convert to codepage %d.\n",cs.ifailedchars,zipchars.getocp());
+         pinf("use zipuni to store unicode UTF-8 filenames.\n");
+      }
+
+      if (cs.addmeta)
+      {
+         char szEncoding[100]; szEncoding[0]='\0';
+
+         #ifdef _WIN32
+         sprintf(szEncoding, "%u,utf", zipchars.getocp());
+         #else
+         sprintf(szEncoding, "%sutf", cs.inonutfhicodes ? "any," : "");
+         #endif
+
+         snprintf(szComment, sizeof(szComment)-10,
+            "meta: os=%s; code=%s; agent=sfk %s",
+               getShortOSName(), szEncoding, getPureSFKVersion()
+            );
+      }
+
+      if (cs.sim)
+      {
+         if (!cs.nohead)
+            printx("$[add -yes to execute.]\n");
+
+         if (cs.iutfnames)
+            pinf("[nopre] would pack %d UTF-8 unicode names.\n", cs.iutfnames);
+
+         if (fileExists(szOutFile)) {
+            if (bnew)
+               printx("<warn>will replace existing archive.\n");
+            else
+               printx("<warn>will append to existing archive.\n");
+         }
+
+         if (cs.totaloutbytes < 1000000)
+            printx("would pack $%d files<def> with $%s kb<def> into %s\n",
+               cs.filesChg,
+               numtoa(cs.totaloutbytes/1000),
+               szOutFile[0] ? szOutFile : "archive.");
+         else
+            printx("would pack $%d files<def> with #%1.0f mb<def> into %s\n",
+               cs.filesChg,
+               (cs.totaloutbytes/1000000.0),
+               szOutFile[0] ? szOutFile : "archive.");
+      }
+      else
+      {
+        int errclose = zipClose(cs.zfout, szComment[0] ? szComment : NULL);
+        if (errclose != 0) // ZIP_OK
+            printf("error in closing %s\n",szOutFile);
+         cs.zfout = 0;
+
+         if (lRC)
+            pinf("[nopre] archive is incomplete: %s\n", szOutFile);
+         else if (cs.quiet < 2)
+         {
+            char szElap[50];
+
+            // num nOutSize  = getFileSize(szOutFile);
+            num nOutSize  = cs.totaloutbytes;
+            num nElapDSec = (getCurrentTime() - nstart) / 100;
+            num nElapDMin = nElapDSec / 60;
+
+            if (nElapDMin >= 20)
+               sprintf(szElap, "%1.0f min", nElapDMin/10.0);
+            else
+               sprintf(szElap, "%1.0f sec", nElapDSec/10.0);
+
+            if (nOutSize < 1000000)
+               printx("%s $%d files<def> with $%s kb<def> in %s.\n",
+                  iAppend ? "added " : "packed",
+                  cs.filesChg, numtoa(nOutSize/1000), szElap);
+            else
+               printx("%s $%d files<def> with #%1.0f mb<def> in %s.\n",
+                  iAppend ? "added " : "packed",
+                  cs.filesChg, (nOutSize/1000000.0), szElap); 
+         }
+      }
+
+      if (cs.numBadFileNames) {
+         printx("<err>found %d unicode filenames which cannot be read.\n", cs.numBadFileNames);
+         printx("<time>use sfk zip to read and store them as UTF-8.\n");
+      }
+
+      if (iChainNext) {
+         STEP_CHAIN(iChainNext, 1);
+      }
+
+      bDone = 1;
+   }
+
+   int iunzcmd = 0;
+
+   ifcmd (   !strcmp(pszCmd, "unzip")
+          || !strcmp(pszCmd, "unzipuni")
+          || !strcmp(pszCmd, "checkzip")
+          || !strcmp(pszCmd, "catzip")    // internal
+         )
+   {
+           if (!strcmp(pszCmd, "unzip"))    iunzcmd = 1;
+      else if (!strcmp(pszCmd, "unzipuni")) iunzcmd = 2;
+      else if (!strcmp(pszCmd, "checkzip")) iunzcmd = 3;
+
+      ifhelp (chain.usefiles == 0 && (nparm < 1 || strcmp(argv[iDir],"-full")==0))
+      if (bhelp==1 || iunzcmd==1)
+      {
+      printx("$sfk unzip in.zip [-pat mask1 !mask2 ...]\n"
+             "\n"
+             "   extract .zip file contents.\n"
+             "\n"
+             "   $Unicode marked filename support\n"
+             "\n"
+             "   sfk unzip supports UTF-8 unicode filenames\n"
+             "   if they are marked as such, according to the\n"
+             "   zip format standard, or if they are provided\n"
+             "   as a zip format UTF-8 name extension.\n"
+             "   UTF-8 names are listed with 'u' on extraction.\n"
+             "\n"
+             #ifdef _WIN32
+             "   if foreign language names are extracted,\n"
+             "\n"
+             "   - they may just show ??? for many characters,\n"
+             "     because the console cannot print them. just\n"
+             "     ignore this and extract it onto an NTFS file\n"
+             "     system, then open the output folder in Windows\n"
+             "     file explorer, to see the correct names.\n"
+             "\n"
+             "   - other sfk functions may not be able to read\n"
+             "     the extracted files, if they use characters\n"
+             "     outside of your windows codepage.\n"
+             "     i.e. you may be able to extract chinese files\n"
+             "     on a west european windows, but other functions\n"
+             "     like sfk find will then fail to read them.\n"
+             "\n"
+             #endif
+             "   $Unicode unmarked filenames\n"
+             "\n"
+             "   some old non-standard tools under linux/mac\n"
+             "   may produce zip files with unmarked UTF-8 names,\n"
+             "   which show no 'u' flag on extraction.\n"
+             "   to force extraction as UTF-8, use: #sfk unzipuni\n"
+             "\n"
+             "   $Codepage filename support\n"
+             "\n"
+             "   filenames which are not marked as 'u' UTF-8,\n"
+             "   but contain hicodes like umlauts or accents,\n"
+             "   are considered to use codepage 850, the system\n"
+             "   codepage of your computer. this can be wrong if\n"
+             "   the file was created with a different codepage.\n"
+             "   you may then try option -fromcode=n with n like\n"
+             #ifdef _WIN32
+             "   1252 850 852 866 1250 1251 or any other codepage.\n"
+             #else
+             "   1252 850 852 866 1250 1251.\n"
+             #endif
+             "\n"
+             );
+      printx("   $64 bit zip file support\n"
+             "\n"
+             "   sfk unzip can extract 64 bit zip files with sizes\n"
+             "   over 2 gb. sfk xe search in zip file contents is\n"
+             "   limited to smaller files, for details: sfk help xe\n"
+             "\n");
+      #ifndef _WIN32
+      printx("   $Linux/Mac output control\n"
+             "\n"
+             "   if you get many blank lines, type #sfk ruler<def>,\n"
+             "   then limit the number of output columns like:\n"
+             "   #<exp> SFK_CONFIG=columns:60<def>\n"
+             "\n");
+      #endif
+      printx("   $options\n"
+             "   -pat mask   extract only files having mask in their\n"
+             "               path or filename. use -pat <not>mask\n"
+             "               to exclude paths or filenames.\n"
+             "               -pat <sla>mask<sla> says the path or file\n"
+             "               must start and end with mask.\n"
+             "   -test       check the archive content integrity\n"
+             "               without writing any files.\n"
+             "   -verbose    list full details for every file while\n"
+             "               in simulation. prints raw utf-8 or\n"
+             "               codepage filenames from the zip,\n"
+             "               allowing output redirect to file.\n");
+      if (nparm>0 && strcmp(argv[iDir],"-full")==0)
+      printx("               $verbose fields listed are:\n"
+             "               size, time, creator operating system,\n"
+             "               required zip format version to extract,\n"
+             "               unix file attributes or ----,\n"
+             "               codepage of filename or utf8 format,\n"
+             "               32 or 64 bit size given, time format,\n"
+             "               compression method, crc, raw name.\n");
+      else
+      printx("               add -full now for more details.\n");
+      printx("   -todir x    write output to folder x\n"
+             "   -uauto      detect UTF-8 filenames just by looking\n"
+             "               at their characters. this is not fully\n"
+             "               safe, and should be used only to fix\n"
+             "               bad names from zip files created with\n"
+             "               old non-standard tools.\n"
+             "   -noextutf   do not use utf extension field,\n"
+             "               to see the contained oem names.\n"
+             "   -keep       keep bad output file even if\n"
+             "               crc check failed.\n");
+      #ifdef _WIN32
+      printx("   -fromcode=n  set zip filename codepage manually.\n"
+             "               default on this computer is %d.\n"
+             "\n", zipchars.getocp());
+      #else
+      printx("   -fromcode=n  extract filenames as non-utf names\n"
+             "               using codepage n. possible values are:\n"
+             "               1252 850 852 866 1250 1251\n"
+             "\n");
+      #endif
+      printx("   $output chaining\n"
+             "     sfk unzip supports text output chaining.\n"
+             "\n");
+      printx("   $see also\n"
+             "     #sfk zip<def>       create a zip file\n"
+             "     #sfk space<def>     show free disk space\n"
+             "     #sfk unzipuni<def>  extract all as UTF-8\n"
+             "     #sfk checkzip<def>  test zip integrity\n"
+             "\n");
+      #ifdef _WIN32
+      printx("   - #Depeche View Pro<def> can directly view the content\n"
+             "     of #.zip, .tar.gz and .tar.bz2 files,<def> for quick\n"
+             "     analysis of source packages without extraction.\n"
+             "\n"
+             "     $stahlworks.com/dv\n"
+             "\n");
+      printx("   - #SFK XE<def> can search in .zip, .tar.gz and .tar.bz2\n"
+             "     archive contents directly like:\n"
+             "\n"
+             "     #sfk xfind -arc in.zip \"/foo*bar/\"\n"
+             "       search in all files within in.zip\n"
+             "\n"
+             "     #sfk xfind -arc mydir \"/foo*bar/\"\n"
+             "       search in all .zip, .tar.gz etc. files\n"
+             "       within folder mydir\n"
+             "\n"
+             "     $stahlworks.com/xe\n"
+             "\n");
+      #endif
+      printx("   - an overview of #further zip/unzip tools<def>\n"
+             "     for the command line is available under:\n"
+             "\n"
+             "     $stahlworks.com/zip\n"
+             "\n");
+      printx("   $examples\n"
+             "     #sfk unzip in.zip\n"
+             "       extract whole content of in.zip\n"
+             "\n"
+             "     #sfk unzip in.zip -pat mydir .txt\n"
+             "       extract only files with mydir and .txt\n"
+             "       in their path, no matter in which order.\n"
+             "\n"
+             "     #sfk unzip in.zip -pat \"foo*bar\"\n"
+             "       extract foo1bar, foo2bar but not barfoo.\n"
+             "\n"
+             "     #sfk unzip in.zip -pat <sla>mydir<sla> <not>.obj\n"
+             "       extract mydir but not mydir2 or oldmydir\n"
+             "       and exclude all .obj files.\n"
+             "\n"
+             "     #sfk unzip in.zip -verbose >mylist.txt\n"
+             "       write file list with details and raw names\n"
+             "       to mylist.txt, allowing to view this in\n"
+             "       utf-8 capable editors like Notepad++.\n"
+             "\n"
+             "     #sfk unzip in.zip +filter -<not>test\n"
+             "       extract all from in.zip, but do not print\n"
+             "       any names with \"test\" to terminal.\n"
+             "\n"
+             );
+      }
+      if (bhelp==1 || iunzcmd==2)
+      {
+      printx("$sfk unzipuni in.zip [-pat mask1 !mask2 ...]\n"
+             "\n"
+             "   extract .zip file contents, treating all\n"
+             "   contained names as UTF-8.\n"
+             "\n"
+             "   this should be used only with files created\n"
+             "   by old linux zip tools which pack UTF-8 names\n"
+             "   into a .zip without proper marking.\n"
+             "\n"
+             );
+      }
+      if (bhelp==1 || iunzcmd==3)
+      {
+      printx("$sfk checkzip in.zip\n"
+             "\n"
+             "   check zip file content integrity.\n"
+             "   extracts all contents to verify checksums,\n"
+             "   without writing anything to disk.\n"
+             "\n"
+             );
+      }
+      ehelp;
+
+      sfkarg;
+
+      int istate = 0;
+      bool boemset = 0;
+
+      char szInFile[SFK_MAX_PATH+100];    szInFile[0] = '\0'; 
+      char szOutMask[SFK_MAX_PATH+100];   szOutMask[0] = '\0';
+      char szPat[SFK_MAX_PATH+100];       szPat[0] = '\0';
+      char *pszToDir = 0;
+
+      int iAnsiCP = sfkchars.getacp();
+      int iOEMCP  = sfkchars.getocp();
+
+      if (!strcmp(pszCmd, "unzipuni")) cs.uname  = 1;
+      if (!strcmp(pszCmd, "checkzip")) cs.test   = 1;
+      if (!strcmp(pszCmd, "catzip"))   cs.catzip = 1;
+
+      int iChainNext  = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-todir", &pszParm)) {
+            if (!pszParm) return 9;
+            #if 1
+            cs.todir = pszParm;
+            #else
+            snprintf(szOutMask, SFK_MAX_PATH, "%s%c%cfile",
+               pszParm, glblPathChar, glblRunChar);
+            cs.tomask = szOutMask;
+            #endif
+            pszToDir = pszParm;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-fromcode", &pszParm)) {
+            if (!pszParm) return 9;
+            iOEMCP = atoi(pszParm);
+            boemset = 1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-noextutf"))
+            { cs.bnoextutf=1; continue; }
+         if (!strcmp(pszArg, "-uauto"))
+            { cs.unameauto=1; continue; }
+         if (!strcmp(pszArg, "-test"))
+            { cs.test=1; continue; }
+         if (!strcmp(pszArg, "-keep"))
+            { cs.keepbadout=1; continue; }
+         if (!strcmp(pszArg, "-toterm") || !strcmp(pszArg, "-cat")) {
+            cs.catzip = 1;
+            continue;
+         }
+         if (strBegins(pszArg, "-pat"))
+            { istate=1; continue; }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!szInFile[0]) {
+            if (fileExists(pszArg))
+               strcopy(szInFile, pszArg);
+            else
+               snprintf(szInFile, SFK_MAX_PATH, "%s.zip", pszArg);
+            continue;
+         }
+         #if 1
+         if (istate) {
+            strcopy(szPat, pszArg);
+            fixPathChars(szPat);
+            glblGrepPat.addString(szPat);
+            continue;
+         }
+         perr("unexpected: %s",pszArg);
+         pinf("use -pat %s to extract just files with this name.\n",pszArg);
+         return 9;
+         #else
+         if (istate == 0) {
+            istate++;
+            if (glblFileSet.beginLayer(false, __LINE__)) return 9;
+            if (glblFileSet.addRootDir(str("."), __LINE__, false)) return 9;
+            glblFileSet.addDirMask(pszArg);
+            continue;
+         }
+         glblFileSet.addFileMask(pszArg);
+         #endif
+      }
+
+      int iDirNext = 0;
+      bool bAnyDirParms = 0;
+      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iChainNext, &bAnyDirParms))) return lRC;
+      if (btest) return 0;
+
+      if (!szInFile[0])
+         return 9+perr("missing input file\n");
+
+      if (!fileExists(szInFile))
+         return 9+perr("no such file: %s\n", szInFile);
+
+      // optional printx redirect
+      AutoRestoreInt ores(&bGlblCollectHelp);
+      if (chain.coldata)
+         { cs.noprog = 1; bGlblCollectHelp = 1; }
+
+      num nstart = getCurrentTime();
+
+      zipchars.banycp = 1;
+      zipchars.setacp(iAnsiCP);
+      if (zipchars.setocp(iOEMCP))
+         return 9+perr("unsupported codepage: %d\n", iOEMCP);
+      if (zipchars.init())
+         return 9+perr("unsupported codepage: %d\n", iOEMCP);
+
+      if (cs.test)
+         cs.yes = 1;
+
+      cs.sim = !cs.yes;
+
+      if (cs.sim && !cs.nohead && !cs.catzip && !cs.quiet)
+         printx("$[simulating:]\n");
+
+      if (cs.yes!=0 && pszToDir!=0 && fileExists(pszToDir,1)==0)
+      {
+         sfkmkdir(pszToDir, 1); // cannot be utf
+      }
+
+      glblUnzipDirs.resetEntries();
+
+      int isubrc = execUnzip(szInFile);
+
+      glblUnzipDirs.resetEntries();
+
+      if (!cs.quiet && !cs.nowarn) {
+         if (!cs.uname && cs.iinvalidutfmarks) {
+            if (cs.inonutfhicodes) {
+               if (cs.yes)
+                  pinf("possible mixed encodings.\n");
+               else {
+                  pwarn("filenames seem to be a mixture of %dx some codepage\n", cs.inonutfhicodes);
+                  printx("<warn>       and %dx UTF-8 names without proper UTF marking.\n", cs.iinvalidutfmarks);
+                  printx("<warn>warn : extraction may produce wrong filename characters.\n");
+                  pinf("use -uauto to detect UTF-8 names just by their characters.\n");
+               }
+            } else {
+               if (cs.yes)
+                  pinf("possible unmarked encodings.\n");
+               else {
+                  pwarn("%d filenames seem to be UTF-8, but are not marked as such.\n", cs.iinvalidutfmarks);
+                  printx("<warn>warn : extraction may produce unreadable filenames.\n");
+                  pinf("use sfk unzipuni, or sfk unzip -uauto.\n");
+               }
+            }
+         }
+         #ifndef _WIN32
+         if (cs.sim==1 && boemset==0 && cs.inonutfhicodes>0) {
+            pwarn("%d filenames seem to use a codepage instead of UTF-8.\n", cs.inonutfhicodes);
+            pinf("if names look wrong try -fromcode=n\n");
+         }
+         #endif
+      }
+
+      if (cs.sim==1 && cs.filesExisting>0) {
+         pwarn("%d existing files will be replaced.\n", cs.filesExisting);
+         pinf("use -todir x to extract to folder x.\n");
+      }
+
+      if (cs.sim==1) {
+         char *pszOutPath = pszToDir ? pszToDir : str(".");
+         num nFreeSpace = getFreeSpace(pszOutPath);
+         uint nFreeMB   = (uint)(nFreeSpace/1000000);
+         if (nFreeSpace >= 0 && cs.totaloutbytes > nFreeSpace) {
+            if (pszToDir)
+               pwarn("not enough disk space (%u mb) on %s\n", nFreeMB, pszOutPath);
+            else
+               pwarn("not enough disk space (%u mb) to extract.\n", nFreeMB);
+         }
+      }
+
+      if (isubrc == 0)
+      {
+         cchar *pszVerb = 0;
+   
+         if (cs.test)
+            pszVerb = "tested";
+         else if (cs.sim == 0)
+            pszVerb = "extracted";
+         else if (!cs.nohead && !cs.catzip)
+         {
+            printx("$[add -yes to extract.]\n");
+
+            if (cs.iutfnames)
+               pinf("[nopre] found %d UTF-8 unicode names.\n", cs.iutfnames);
+
+            if (pszToDir!=0 && fileExists(pszToDir,1)==0)
+               printx("#would create folder: %s\n", pszToDir);
+   
+            pszVerb = "would extract";
+         }
+         if (pszVerb!=0 && cs.quiet<2) {
+            char szElap[50];
+            num nElapDSec = (getCurrentTime() - nstart) / 100;
+            num nElapDMin = nElapDSec / 60;
+            cchar *pszPre = "";
+            if (cs.sim)
+               szElap[0]='\0';
+            else if (cs.test) {
+               szElap[0]='\0';
+               pszPre = "OK. ";
+            }
+            else {
+               if (nElapDMin >= 20)
+                  sprintf(szElap, " in %1.0f min", nElapDMin/10.0);
+               else
+                  sprintf(szElap, " in %1.0f sec", nElapDSec/10.0);
+            }
+            if (cs.totaloutbytes < 1000000)
+               printx("%s%s $%d files<def> with $%s kb<def>%s.\n",
+                  pszPre, pszVerb, cs.filesChg, numtoa(cs.totaloutbytes/1000), szElap);
+            else
+               printx("%s%s $%d files<def> with #%1.0f mb<def>%s.\n",
+                  pszPre, pszVerb, cs.filesChg, (cs.totaloutbytes/1000000.0), szElap);
+         }
+      }
+
+      // do not stop the chain
+      lRC = isubrc ? 7 : 0;
+
+      if (iChainNext) {
+         STEP_CHAIN(iChainNext, 1);
+      }
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "mask"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk cmd ...\n");
+      ehelp;
+
+      sfkarg;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         break;
+      }
+
+      int iDirNext = 0;
+      bool bAnyDirParms = 0;
+      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iDirNext, &bAnyDirParms))) return lRC;
+      if (btest) return 0;
+
+      char *proot = glblFileSet.setCurrentRoot(0); // if any
+      printf("root: %s\n",proot);
+
+      for (int i=0; i<3; i++)
+      {
+         cchar *p="";
+         switch (i) {
+            case 0: p="foo\\bar1\\first.txt"; break;
+            case 1: p="foo\\bar2\\second.dat"; break;
+            case 2: p="foo\\bar3\\third.csv"; break;
+         }
+         Coi ocoi((char*)p, 0);
+         bool b1=matchesDirMask(ocoi.name(),0,1);
+         bool b2=matchesFileMask(ocoi.relName(),ocoi.name());
+         printf("dir %d file %d for %s\n",b1,b2,ocoi.name());
+      }
+
+      bDone = 1;
+   }
+
+   #endif // SFKPACK
 
    bool bcmdwtoa = 0;
    bool bcmdatow = 0;
@@ -30771,6 +34035,22 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // --- xfind ose begin ---
 #if defined(SFK_JUST_OSE)
 
@@ -31293,7 +34573,9 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
             {
                if (!bFileTold) {
                   bFileTold = 1;
-                  if (chain.coldata) {
+                  if (chain.colfiles)
+                     { } 
+                  else if (chain.coldata) {
                      sprintf(szLineBuf3, "%s", pcoi->name());
                      setattr(szAttrBuf3, 'f', strlen(szLineBuf3)+2, MAX_LINE_LEN);
                      chain.addLine(szLineBuf3, szAttrBuf3);
