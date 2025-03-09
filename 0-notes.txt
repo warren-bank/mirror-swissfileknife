@@ -1,0 +1,61 @@
+https://sourceforge.net/projects/swissfileknife/files/1-swissfileknife/
+
+JS console script to generate data:
+===================================
+
+{
+  const rows = []
+  const wget = []
+  const data = []
+  const wget_opt = '--no-check-certificate -nv -nc'
+  const data_dir = 'data/'
+
+  let $rows = document.querySelectorAll('table#files_list > tbody > tr.folder')
+  for (let $row of $rows) {
+    const version = $row.querySelector(':scope > th[headers="files_name_h"] > a > span.name').textContent.trim()
+    const date    = $row.querySelector(':scope > td[headers="files_date_h"] > abbr').textContent.trim()
+    if (!version || !date) continue
+
+    rows.push({version, date})
+  }
+  $rows = null
+
+  rows.sort(function(a, b) {
+    return a.date.localeCompare(b.date) || a.version.localeCompare(b.version)
+  })
+
+  wget.push('#!/usr/bin/env bash')
+  wget.push('')
+  wget.push(`[ -d '${data_dir}' ] || mkdir '${data_dir}'`)
+  wget.push('')
+
+  for (let {version, date} of rows) {
+    const fname = {
+      local:  `sfk${version.replace(/[^\d]/g, '')}.zip`,
+      remote: `sfk${version.replace(/^(\d+\.\d+\.\d+)(?:\.\d+)+$/, '$1').replace(/[^\d]/g, '')}.zip`,
+    }
+    const url = `https://master.dl.sourceforge.net/project/swissfileknife/1-swissfileknife/${version}/${fname.remote}?viasf=1`
+
+    wget.push(
+      `wget ${wget_opt} -O "${data_dir}${fname.local}" "${url}"`
+    )
+
+    data.push(
+      `${date} ${version} ${fname.local}`
+    )
+  }
+
+  console.log()
+  console.log('download_files.sh')
+  console.log('-----------------')
+  console.log(
+    wget.join("\n")
+  )
+
+  console.log()
+  console.log('data.txt')
+  console.log('--------')
+  console.log(
+    data.join("\n")
+  )
+}
