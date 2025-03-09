@@ -133,6 +133,12 @@ bool isEmpty(char *psz);
 bool  strbeg(char *pszStr, cchar *pszPat);
 bool  stribeg(char *psz, cchar *pstart);
 
+#ifdef SFKWINST
+int makeDeskIcon(HWND hwnd, char *pszTarget, char *pszShortCutName,
+   char *pszWorkDir, char *pszArgs, bool bDelete);
+int installSFK(char *pszFolder, bool byes);
+#endif // SFKWINST
+
 extern CoiTable glblFileListCache;
 
 extern bool bGlblHaveInteractiveConsole;
@@ -161,6 +167,7 @@ extern num    nGlblWorkBufSize  ;
 extern int   nGlblCopyStyle     ;
 extern int   nGlblCopyShadows   ;
 extern int   nGlblConsRows      ;
+extern int   nGlblConsColumns   ;
 extern num   nGlblShadowSizeLimit;
 extern bool  bGlblUseCopyCache  ;
 extern bool  bGlblShowSyncDiff  ;
@@ -373,6 +380,8 @@ int sfksetvar(char *pname, uchar *pDataIn, int iDataIn, int badd)
 
 uchar *sfkgetvar(char *pname, int *plen)
 {
+   static char szBuf[30];
+
    struct SFKVarHead ohead;
    int iHeadSize = sizeof(struct SFKVarHead);
 
@@ -386,13 +395,22 @@ uchar *sfkgetvar(char *pname, int *plen)
          *plen = strlen(psz);
       return (uchar*)psz;
    }
-   if (!strcmp(pname, "sys.slash")) // sfk191 #(sys.slash)
+   if (strBegins(pname, "sys.")) 
    {
-      #ifdef _WIN32
-      return (uchar*)"\\";
-      #else
-      return (uchar*)"/";
-      #endif
+      char *psz = 0;
+      if (!strcmp(pname, "sys.slash")) // sfk191 #(sys.slash)
+         psz = str(glblPathStr);
+      else if (!strcmp(pname, "sys.sfkver")) // sfk1932 #(sys.sfkver)
+         psz = str(getPureSFKVersion());
+      else if (!strcmp(pname, "sys.numcols")) { // sfk1932 #(sys.numcols)
+         sprintf(szBuf, "%d", nGlblConsColumns);
+         psz = szBuf;
+      }
+      if (psz) {
+         if (plen)
+            *plen = strlen(psz);
+         return (uchar*)psz;
+      }
    }
 
    uchar *pres = (uchar*)glblSFKVar.get(pname);
@@ -22982,6 +23000,10 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
   printx("   $sfk predefined variables\n"
          "\n"
          "      <examp>##(sys.slash)<def>    produces \\ under windows, / under linux.\n"
+         "      <examp>##(sys.sfkver)<def>   current sfk version.\n"
+         #ifdef _WIN32
+         "      <examp>##(sys.numcols)<def>  number of console columns.\n"
+         #endif
          "\n");
   printx("   $environment variable access\n"
          "\n"
@@ -23092,24 +23114,27 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
       printx(
          "$Configure the windows Command Prompt this way:\n"
          "\n"
-         "  1. create a shell shortcut on your desktop:\n"
+         "  1. if you don't have an 'sfk shell' icon already\n"
+         "     create a shell shortcut on your desktop:\n"
          "     - Start/Programs/Accessories/Command Prompt,\n"
          "       right mouse button, select Copy.\n"
          "     - go to an empty place on the desktop.\n"
          "     - select Paste.\n"
          "\n"
          "  2. on the new desktop shortcut,\n"
-         "     - right mouse button, select Properties.\n"
+         "     - press right mouse button, select Properties.\n"
          "\n"
          "  3. in the Command Prompt Properties, set\n"
-         "     - #Options: activate QuickEdit and Insert mode\n"
-         "     - #Font   : select 8 x 12\n"
+         "     - #Options: activate QuickEdit and Insert mode.\n"
+         "                disable line wrapping selection, if set,\n"
+         "                to allow vertical text selection.\n"
+      // "     - #Font   : select 8 x 12\n"
          "     - #Layout : Screen buffer size: Width 160, Height 3000\n"
          "       #         Window size       : Width 160, Height   30\n"
          "\n"
          "  4. close Properties by clicking OK.\n"
          "\n"
-         "  5. double-click on the Command Prompt icon to open a shell.\n"
+         "  5. double-click on the icon to open a new shell.\n"
          "\n"
          "$Now you have a well configured power shell:\n"
          "\n"
@@ -27220,6 +27245,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "     %s\n"
              "     and then lists all file names from those indexes\n"
              "     having the given words in their name or path.\n"
+             #ifdef _WIN32
+             "     Under windows, instead of C:\\zz-index.txt\n"
+             "     it will read C:\\zz-index\\zz-index.txt\n"
+             #endif
              "\n"
              , sfkhome.szClDir
              );
@@ -27316,6 +27345,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       int iOutMask=1+2; // name is always included
       int idig=12;
       char *pszIdxFile1=0, *pszIdxFile2=0;
+      bool bold=0,btold=0;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
@@ -27327,23 +27357,21 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             pszIdxFile1 = pszParm;
             continue;
          }
-         else
          if (strBegins(pszArg, "-tab")) {
             bKeepTabs = 1;
             continue;
          }
-         else
          if (strBegins(pszArg, "-size=")) {
             iOutMask += 4;
             idig = atoi(pszArg+6);
             continue;
          }
-         else
          if (strBegins(pszArg, "-size")) {
             iOutMask += 4;
             continue;
          }
-         else
+         if (!strcmp(pszArg, "-useold"))
+            { bold=1; continue; }
          if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(pszArg))
                break; // fall through
@@ -27380,6 +27408,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       char szPathBuf1[SFK_MAX_PATH+10];
       char szPathBuf2[SFK_MAX_PATH+10];
+      char szPathBuf3[SFK_MAX_PATH+10];
       char szHeadBuf[1024+100];
 
       char aInFile[10][SFK_MAX_PATH+10];
@@ -27433,6 +27462,22 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                strcopy(szPathBuf2, psz);
             }
 
+            // keep unmodified input name in PathBuf3
+            strcopy(szPathBuf3, szPathBuf2);
+
+            #ifdef _WIN32
+            if (!bold && !mystricmp(szPathBuf2, "C:\\zz-index.txt")) {
+               if (!btold) {
+                  btold=1;
+                  if (!getFileStat(szPathBuf2, bIsDir,b2,b3, nFileTime,nFileSize)) {
+                     pinf("old C:\\zz-index.txt is ignored. delete as admin, or check folder:\n");
+                     pinf("C:\\Users\\yourUserName\\AppData\\Local\\VirtualStore\n");
+                  }
+               }
+               strcpy(szPathBuf2, "C:\\zz-index\\zz-index.txt"); // sfk1932 name
+            }
+            #endif
+
             // check if current filename exists
             if (getFileStat(szPathBuf2, bIsDir,b2,b3, nFileTime,nFileSize))
             {
@@ -27464,7 +27509,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                if (ipass < 2)
                {
                   // remember path and memory offset
-                  strcopy(aInFile[nInFiles], szPathBuf2);
+                  strcopy(aInFile[nInFiles], szPathBuf3);
                   reduceToPath(aInFile[nInFiles]);
                   aMaxOff[nInFiles] = nCurOff+nFileSize;
                   nCurOff += nFileSize;
@@ -35619,24 +35664,285 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   #ifdef SFKWINST
+   // .
+   if (!strcmp(pszCmd, "install")) // internal
+   {
+      ifhelp (argc >= 3 && isHelpOpt(argv[2]))
+      printx("<help>$sfk install [path]\n"
+             "\n"
+             "   install sfk.exe in a folder,\n"
+             "   creating a desktop shell icon.\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      char *pszFolder = str("C:\\tools");
+      bool  bAltFolder = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!bAltFolder) {
+            bAltFolder=1;
+            pszFolder=pszArg;
+            continue;
+         }
+         return 9+perr("unexpected: %s",pszArg);
+      }
+
+      if (!cs.yes)
+         printx("$[simulating:]\n");
+
+      int isubrc = installSFK(pszFolder, cs.yes);
+
+      if (cs.yes)
+         printx("\n[green]Installation %s.[def]\n",isubrc?"failed":"done");
+      else
+         printx("$[add -yes to execute.]\n");
+
+      bDone = 1;
+   }
+   #endif // SFKWINST
+
    return 0;
 }
 // extmain.end
 
+#ifdef SFKWINST
+int installSFK(char *pszFolder, bool byes)
+{
+   TCHAR szOwnPath[SFK_MAX_PATH + 10];
+   mclear(szOwnPath);
+   ::GetModuleFileName(NULL, szOwnPath, SFK_MAX_PATH + 2);
+
+   char szTarg[SFK_MAX_PATH + 10];
+   snprintf(szTarg,SFK_MAX_PATH, "%s\\sfk.exe", pszFolder);
+
+   if (byes)
+      printx("\n$Installing SFK ...\n");
+
+   // copy to folder
+   if (fileExists(pszFolder, 1)) {
+      printx("#found :<def><nocol> dir  %s\n", pszFolder);
+   } else {
+      printx("#create:<def><nocol> dir  %s\n", pszFolder);
+      if (byes)
+         if (createOutDirTree(pszFolder, 0, 1))
+            return 9+perr("cannot create folder: %s",pszFolder);
+   }
+
+   printx("#copy  :<def><nocol> from %s\n", szOwnPath);
+   printf("        to   %s\n", szTarg);
+
+   if (byes) {
+      cs.quiet = 2;
+      if (copyFileWin(szOwnPath, szTarg, 0, abBuf, sizeof(abBuf)-100, 0))
+         return 9+perr("copy failed");
+      cs.quiet = 0;
+   }
+
+   char szInit[500];
+   snprintf(szInit,sizeof(szInit)-10,
+      "@echo off\n"
+      "SET PATH=%s;%%PATH%%\n"
+      "sfk tell -var \"[green]sfk #(sys.sfkver) is ready for use.[def]\"\n"
+      "sfk tell -spat \"\\ntype [green]sfk help shell[def] for infos how to optimize copy/paste of text\\n"
+      "and how to change the number of display columns.\\n\"\n"
+      "sfk tell \"type [green]sfk[def] for the main help.[def]\"\n"
+      , pszFolder);
+
+   snprintf(szTarg,SFK_MAX_PATH, "%s\\initsfk.bat", pszFolder);
+
+   printx("#create:<def><nocol> file %s\n", szTarg);
+
+   if (byes)
+      if (saveFile(szTarg, (uchar*)szInit, strlen(szInit), "w"))
+         return 9+perr("cannot write %s", szTarg);
+
+   // create shell icon
+   if (byes)
+      if (OleInitialize(0) != S_OK)
+         return 10+perr("cannot OleInitialize()");
+
+   char szParms[SFK_MAX_PATH + 10];
+   snprintf(szParms,SFK_MAX_PATH, "/K %s", szTarg);
+
+   printx("#create:<def> desktop icon 'sfk shell' using\n");
+   printf("        cmd %s\n", szParms);
+
+   if (byes)
+   {
+      if (!makeDeskIcon(GetDesktopWindow(),
+         "cmd.exe",
+         "sfk shell",
+         pszFolder,
+         szParms,
+         0))
+      {
+         // printf("$Installation done.\n");
+      }
+   
+      OleUninitialize();
+   }
+
+   return 0;
+}
+
+int makeDeskIcon(HWND hwnd, char *pszTarget, char *pszShortCutName,
+   char *pszWorkDir, char *pszArgs, bool bDelete)
+{
+   char *pszIconLoc = 0;
+   int IconIndex = 0;
+   char szBuf[1024];
+
+   int nFolder = CSIDL_DESKTOP;
+
+   // create shortcut on current user desktop,
+   // or on all desktops of all users?
+   //   nFolder = CSIDL_COMMON_DESKTOPDIRECTORY;
+
+   HRESULT hres = 0;
+
+   // get access to shell memory mgment
+   LPMALLOC g_pMalloc = 0;
+   SHGetMalloc(&g_pMalloc);
+
+   // get C:\Documents and Settings\username\Desktop:
+   LPITEMIDLIST pidl = 0;
+   SHGetSpecialFolderLocation(NULL,nFolder,&pidl);
+   char FolderPath[SFK_MAX_PATH];
+   FolderPath[0] = '\0';
+   SHGetPathFromIDList(pidl,FolderPath);
+
+   WCHAR wFolderPath[SFK_MAX_PATH];
+   MultiByteToWideChar(CP_ACP,0,FolderPath,-1,wFolderPath,SFK_MAX_PATH);
+
+   // init resulting link path, in case it is used
+   WCHAR wLinkPath[SFK_MAX_PATH];
+   wcscpy(wLinkPath,L"");
+   WCHAR wShortcutName[SFK_MAX_PATH];
+   MultiByteToWideChar(CP_ACP,0,pszShortCutName,-1,wShortcutName,SFK_MAX_PATH);
+   BOOL bFoundExisting = FALSE;
+
+   // check if shortcut already exists
+   LPSHELLFOLDER pDeskFolder = 0;
+   LPSHELLFOLDER DestFolder = 0;
+   hres = SHGetDesktopFolder(&pDeskFolder);
+
+   if (SUCCEEDED(hres) && pDeskFolder!=NULL)
+   {
+       // scan destination folder
+       LPENUMIDLIST ppenumIDList;
+       hres=pDeskFolder->EnumObjects(hwnd,SHCONTF_NONFOLDERS,&ppenumIDList);
+       if (SUCCEEDED(hres) && ppenumIDList!=NULL)
+       {
+         LPITEMIDLIST pidlist[1];
+         hres=ppenumIDList->Next(1,pidlist,NULL);
+         while (hres==NOERROR)
+         {
+           STRRET str;
+           hres=pDeskFolder->GetDisplayNameOf(pidlist[0],SHGDN_INFOLDER,&str);
+           if (SUCCEEDED(hres))
+           {
+             WCHAR c[200]; wcscpy(c,L"");
+             switch (str.uType)
+             {
+               case STRRET_CSTR: MultiByteToWideChar(CP_ACP,0,str.cStr, -1,c,200); break;
+               case STRRET_OFFSET: {char *d=(char *)pidlist[0];MultiByteToWideChar(CP_ACP,0,d+str.uOffset,-1,c,200);} break;
+               case STRRET_WSTR: wcscpy(c,str.pOleStr); break;
+             }
+
+             mclear(szBuf); // sfk189
+             WideCharToMultiByte(CP_ACP,0,c,200,szBuf,200,NULL,NULL);
+
+             if (wcscmp(c,wShortcutName)==0)
+             {
+               hres = pDeskFolder->GetDisplayNameOf(pidlist[0],SHGDN_FORPARSING,&str);
+               if (SUCCEEDED(hres))
+               {
+                 switch (str.uType)
+                 { case STRRET_CSTR: MultiByteToWideChar(CP_ACP,0,str.cStr,-1,wLinkPath,SFK_MAX_PATH); break;
+                   case STRRET_OFFSET: {char *d=(char *)pidlist[0];MultiByteToWideChar(CP_ACP,0,d+str.uOffset,-1,wLinkPath,SFK_MAX_PATH);} break;
+                   case STRRET_WSTR: wcscpy(wLinkPath,str.pOleStr); break;
+                 }
+                 if (wcscmp(wLinkPath,L"")!=0) {
+                    bFoundExisting = TRUE;
+                 }
+               }
+             }
+             g_pMalloc->Free(pidlist[0]);
+             hres=ppenumIDList->Next(1,pidlist,NULL);
+           }
+         }
+         ppenumIDList->Release();
+     }
+     pDeskFolder->Release();
+   }
+   g_pMalloc->Free(pidl);
+   g_pMalloc->Release();
+
+   if (bFoundExisting) {
+     // shortcut already exists
+     printx("#change:<def> updating existing shortcut.\n");
+     DeleteFileW(wLinkPath);
+   }
+
+   // create shortcut
+   wcscpy(wLinkPath,wFolderPath);
+   WCHAR wc[SFK_MAX_PATH];
+   MultiByteToWideChar(CP_ACP,0,pszShortCutName,-1,wc,SFK_MAX_PATH);
+   wcscat(wLinkPath,L"\\");
+   wcscat(wLinkPath,wc);
+   wcscat(wLinkPath,L".lnk");
+
+   IShellLink* psl;
+   hres=CoCreateInstance(CLSID_ShellLink,NULL,CLSCTX_INPROC_SERVER,IID_IShellLink,(LPVOID*)&psl);
+   if (!SUCCEEDED(hres) || psl==NULL) {
+     // Unable to create shortcut file
+     perr("Cannot create desktop icon.");
+     return 9;
+   }
+
+   if (pszTarget!=0) psl->SetPath(pszTarget);
+   psl->SetDescription("");
+   if (pszArgs!=0) psl->SetArguments(pszArgs);
+   if (pszIconLoc!=0) psl->SetIconLocation(pszIconLoc,IconIndex);
+   if (pszWorkDir != 0) psl->SetWorkingDirectory(pszWorkDir);
+
+   IPersistFile* ppf;
+   hres=psl->QueryInterface(IID_IPersistFile,(LPVOID*)&ppf);
+   if (!SUCCEEDED(hres) || ppf==NULL) {
+     // Unable to get IPersistFile interface on shortcut just created
+     psl->Release();
+     perr("Cannot create desktop icon (2).");
+     return 10;
+   }
+
+   ppf->Save(wLinkPath, FALSE);
+   ppf->Release();
+   psl->Release();
+
+   return 0; // OK
+}
+#endif // SFKWINST
+
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
-
-
-
-
-
-
-
-
-
-
-
 
 
 

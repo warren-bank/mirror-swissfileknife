@@ -8,6 +8,29 @@
    the world's fastest source code browser and editor.
 
    1.9.3
+   Revision 2:
+   -  rel: 03.10.2018, Major Update
+   -  sum: added easy installation under windows
+           by a double click on sfk.exe, then key 1. 
+           this copies sfk.exe to a folder c:\tools 
+           and creates a shell icon on the desktop.
+   -  add: sfk base: optional installation when running sfk
+           by double click from windows explorer.
+   -  CHG: Data Change: sfk index, name under windows
+           no longer use files directly within C:\ 
+           but only in a folder C:\zz-index, to avoid 
+           user local storage in a VirtualStore folder.
+           use sfk name -useold to read old index files.
+           the new behaviour allows one C:\\ index file for
+           all users on the same windows machine.
+   -  add: predefined variable: sys.sfkver for sfk version
+   -  add: predefined variable: sys.numcols for number of
+           columns available in console
+   -  fix: getcol, tabcol: caused unexpected double execution
+           of following chain commands.
+   -  add: clipsrc: -h help option
+   -  del: clipxml: does not work, no longer documented.
+   Initial Release:
    -  rel: 18.09.2018, Major Update
    -  sum: added sfk addtovar to collect text lines 
            in a variable, sfk crc to create crc-32 checksums,
@@ -1220,7 +1243,7 @@
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
 #define SFK_VERSION  "1.9.3" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  ""
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1492,6 +1515,7 @@ int execToHtml(int imode, int iaspect, char *plist, char *pszOutFile);
 int execPhraser(char *pszAll, char *pszSrc, int iNumRec);
 extern const char *szGlblPhraseData;
 int mySetFileTime(char *pszFile, num nTime);
+int installSFK(char *pszFolder, bool byes);
 
 bool bGlblRandSeeded = 0;
 
@@ -39462,11 +39486,11 @@ private:
       char *pClOldVal;
 };
 
-void dumpConsoleHelp(bool bMin)
+int dumpConsoleHelp(bool bMin)
 {
    if (!bMin)
-   printx("$Swiss File Knife is a program for the command line.<def>\n"
-          "It cannot be used by double clicking on the 'sfk' icon.\n"
+   printx("\n$Swiss File Knife is a program for the command line.<def>\n"
+       // "It cannot be used by double clicking on the 'sfk' icon.\n"
           "\n"
           );
 
@@ -39476,6 +39500,25 @@ void dumpConsoleHelp(bool bMin)
    mclear(szOwnPath);
    ::GetModuleFileName(NULL, szOwnPath, SFK_MAX_PATH + 2);
 
+   #if 1
+   printx("It can be used like this:\n"
+          "\n"
+          "- create a folder like C:\\tools\n"
+          "\n"
+          "- copy %s\n"
+          "  to C:\\tools\n"
+          "\n"
+          "- run the \"cmd\" application to open a command line window.\n"
+          "\n"
+          "- then type c:\\tools\\sfk and read the help text shown.\n"
+          "\n"
+          "- to use sfk just by typing 'sfk', extend the PATH like:\n"
+          "  SET PATH=%cPATH%c;c:\\tools\n"
+          "\n"
+          , szOwnPath
+          , '%', '%'
+          );
+   #else
    printx("- create a folder like C:\\tools\n"
           "\n"
           "- copy sfk.exe from it's current location\n"
@@ -39497,9 +39540,7 @@ void dumpConsoleHelp(bool bMin)
           , szOwnPath
           , '%', '%'
           );
-
-   if (!bMin)
-   printx("Press Enter to close this window now.\n");
+   #endif
 
    #else
 
@@ -39518,12 +39559,10 @@ void dumpConsoleHelp(bool bMin)
           "  will list folder tree sizes.\n"
           "\n"
           );
-   printx("Press Enter to continue.\n");
 
    #endif
 
-   // wait for user input:
-   getchar(); // requires enter
+   return 0;
 }
 
 static const char *szGlblBookSamp =
@@ -39828,6 +39867,46 @@ int dumpOutput(uchar *pOutText, char *pOutAttr, num nOutSize, bool bHexDump)
    return 0;
 }
 
+#ifdef SFKWINST
+int getWinSystemPath(int nid, char *pOutPath, long nPathMax, cchar *pappend)
+{
+   *pOutPath = '\0';
+
+   if (nPathMax < _MAX_PATH)
+      return 10;
+
+   LPITEMIDLIST pidl;
+   HRESULT hr = SHGetSpecialFolderLocation(NULL, nid, &pidl);
+   if (hr != S_OK)
+      return 11;
+
+   if (!SHGetPathFromIDList(pidl, pOutPath))
+      return 12;
+
+   LPMALLOC pMalloc = 0;
+
+   hr = SHGetMalloc(&pMalloc);
+   if (hr != S_OK)
+      return 13;
+
+   if (pMalloc)
+   {
+      pMalloc->Free(pidl);
+      pMalloc->Release();
+   }
+
+   if (pappend) {
+      if (strlen(pOutPath)+2+strlen(pappend) >= nPathMax)
+         return 14;
+      if (!endsWithPathChar(pOutPath))
+         strcat(pOutPath,glblPathStr);
+      strcat(pOutPath,pappend);
+   }
+
+   return 0;
+}
+#endif // SFKWINST
+
 // block all trivial signals like SIGPIPE.
 
 #ifndef SIGPIPE
@@ -40114,6 +40193,46 @@ int main(int argc, char *argv[], char *penv[])
       // no parms: show help
       if (bGlblStartedInEmptyConsole) {
          dumpConsoleHelp(0);
+         bool bwait = 0;
+         int isubrc = 0;
+         #ifdef SFKWINST
+         char *psztarg1=str("C:\\tools");
+         char *psztarg2=str("D:\\tools");
+         char *psztarg3=0;
+         // CSIDL_PROFILE or CSIDL_PERSONAL
+         if (!getWinSystemPath(CSIDL_PERSONAL,szLineBuf3,MAX_LINE_LEN,"tools"))
+               psztarg3=szLineBuf3;
+         printx("$Press '1' now to install SFK<def>, doing the above steps.\n");
+         printx("Press $'2'<def> to install to $D:\\tools<def> instead of C:\\tools.\n");
+         if (psztarg3)
+            printx("Press $'3'<def> to install to $%s<def>.\n",szLineBuf3);
+         printx("Press Enter to close this window.\n");
+         int ikey=0;
+         while (1) {
+            ikey = getKeyPress(); // 49 50 13
+            if (ikey != -1) break;
+            doSleep(100);
+         }
+         switch (ikey) {
+            case '1': isubrc = installSFK(psztarg1, 1); bwait=1; break;
+            case '2': isubrc = installSFK(psztarg2, 1); bwait=1; break;
+            case '3': if (!psztarg3) break;
+                      isubrc = installSFK(psztarg3, 1); bwait=1; break;
+         }
+         #else
+         printx("$Press Enter to close this window.<def>\n");
+         getchar();
+         #endif // SFKWINST
+         if (bwait) {
+            printx("[green]Installation %s.[def]\n",isubrc?"failed":"done");
+            if (isubrc)
+               printf("\nPress Enter to close this window.\n");
+            else
+               printx("\n==> look for $sfk shell<def> on your desktop.\n"
+                      "\nPress Enter to close this window.\n"
+                     );
+            getchar();
+         }
          return 9;
       } else {
          pszCmd = str("dump-main-help");
@@ -40991,8 +41110,9 @@ void printMainHelp(bool bhelp, char *penv[])
           "\n");
    #endif
    printx("   $WRONG COLORS? Use one of:\n"
-          "      <exp> SFK_COLORS=theme:black    for DARK   backgrounds\n"
-          "      <exp> SFK_COLORS=theme:white    for BRIGHT backgrounds\n"
+          "      <exp> SFK_COLORS=on             for generic colors\n"
+          "      <exp> SFK_COLORS=theme:black    for DARK    backgrounds\n"
+          "      <exp> SFK_COLORS=theme:white    for BRIGHT  backgrounds\n"
           "      see also \"sfk help colors\"\n");
    bool bFirstEnv=1;
    for (int i=0; penv[i]; i++) {
@@ -42083,7 +42203,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "    to create a $local index of the current directory tree<def>, use\n"
              "      #sfk index .\n"
-             "         which writes a local file $zz-index.txt<def>\n"
+             "         which writes a local file $zz-index.txt<def>.\n"
+             #ifdef _WIN32
+             "         Under windows, no files are written to C:\\\n"
+             "         directly, but only to a folder C:\\zz-index\\\n"
+             "         to avoid storage in a special system folder\n"
+             "         C:\\Users\\name\\AppData\\Local\\VirtualStore\n"
+             #endif
              "\n"
              "    to create a $global index of the current machine<def>, use\n"
              "      #sfk gindex -dir C:\\ D:\\\n"
@@ -42282,6 +42408,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (btest) return 0;
 
       char szRelName[SFK_MAX_PATH+10];
+      char szPathBuf1[SFK_MAX_PATH+10];
+      char szPathBuf2[SFK_MAX_PATH+10];
+      char *toMakeDir = 0;
 
       if (bGlobal) {
          sprintf(szRelName, "data%czz-index%s.txt", glblPathChar, bExt ? "-ext" : "");
@@ -42310,6 +42439,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                "zz-index-%s.txt", pszFirstRoot);
                toFileName = szRelName;
          }
+         #ifdef _WIN32
+         if (!getcwd(szPathBuf1,sizeof(szPathBuf1)-10))
+            return 9+perr("cannot get work dir.");
+         if (!mystricmp(szPathBuf1, "C:\\")
+             && strBegins(toFileName, "zz-index"))
+         {
+            snprintf(szPathBuf2,SFK_MAX_PATH, "C:\\zz-index\\%s", toFileName); // sfk1932 index
+            toFileName = szPathBuf2;
+            toMakeDir  = str("C:\\zz-index");
+         }
+         #endif
       }
 
       if (!toFileName)
@@ -42317,6 +42457,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       if (!cs.quiet && !cs.tomaskfile)
          printx("$making<def> %s\n", toFileName);
+
+      #ifdef _WIN32
+      if (toMakeDir)
+         if (createOutDirTree(toMakeDir,0,1))
+            return 9+perr("cannot create target folder: %s", toMakeDir);
+      #endif
 
       if (!(cs.outfile = fopen(toFileName, "w")))
          return 9+perr("cannot open index file for writing: %s", toFileName);
@@ -45283,7 +45429,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk clipsrc<def>   convert clipboard text to C    style source code\n"
              "      #sfk clipphp<def>   convert clipboard text to PHP  style source code\n"
              "      #sfk clipjava<def>  convert clipboard text to Java style source code\n"
-             "      #sfk clipxml<def>   convert clipboard text to XML  style source code\n"
+          // "      #sfk clipxml<def>   convert clipboard text to XML  style source code\n"
              "      ... add #+toclip<def> to copy converted result back to clipboard.\n"
              "\n");
       #endif
@@ -49226,7 +49372,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printf("\n=== Depeche View Lite download ===\n\n");
       printx("$sfk will open a web browser, with URL:\n\n");
       printf("   http://stahlworks.com/dview.exe\n");
-      char *pszsfk = findPathLocation("sfk" EXE_EXT, 1); // 1: exclude work dir
+      char *pszsfk = findPathLocation("sfk" EXE_EXT, 1); // for getdv. 1=nocwd
       if (pszsfk) {
          char *psz=strrchr(pszsfk, '\\');
          if (psz) *psz='\0';
@@ -52171,7 +52317,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       char *pszAlias = argx[2];
 
       // find ourselves, result in szLineBuf
-      char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // 1: exclude work dir
+      char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // for mkcd. 1=nocwd
       if (!pszSFKCmd) return 9+perr("cannot find location of sfk" EXE_EXT " within PATH.\n");
       // create batch filename parallel to sfk.exe
       szRefNameBuf[0] = '\0';
@@ -52352,7 +52498,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       sfkarg;
 
       // find ourselves, result in szLineBuf
-      char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // 1: exclude work dir
+      char *pszSFKCmd = findPathLocation("sfk" EXE_EXT, 1); // for alias. 1=nocwd
       if (!pszSFKCmd) return 9+perr("cannot find location of sfk" EXE_EXT " within PATH.\n");
 
       if (cs.debug) printf("found sfk : %s\n", pszSFKCmd);
@@ -60022,25 +60168,81 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    }
 
    // since sfk180: documented by bin-to-src. no own help text.
-   if (   !strcmp(pszCmd, "clipsrc")
+   ifcmd (   !strcmp(pszCmd, "clipsrc")
        || !strcmp(pszCmd, "clipxml")
        || !strcmp(pszCmd, "clipphp")
        || !strcmp(pszCmd, "clipjava")
       )
    {
+      ifhelp (nparm >= 1 && isHelpOpt(argv[iDir]))
+      printx("<help>$sfk [-cmd] clipsrc [-h]\n"
+             "\n"
+             "   convert clipboard text to source code.\n"
+             "\n"
+             "   $limited chaining support\n"
+             "      this command is for interactive use only.\n"
+             "      within scripts use instead the internal\n"
+             "      command sequence as shown by -cmd\n"
+             "\n"
+             "   $options\n"
+             "      -cmd   just print the internally executed\n"
+             "             command sequence. you may have to add\n"
+             "             some quotes \"\", depending on your\n"
+             "             environment.\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk clipsrc\n"
+             "         create C compatible source\n"
+             "         and print to terminal.\n"
+             "      #sfk clipphp\n"
+             "         create PHP compatible source\n"
+             "      #sfk clipjava +toclip\n"
+             "         create Java compatible source\n"
+             "         and copy back to clipboard.\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool bprintcmd=0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strcmp(pszArg, "-cmd"))
+            { bprintcmd=1; continue; }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         return 9+perr("unexpected: %s",pszArg);
+      }
+
       char szBuf[1024];
 
+      cchar *pext = bprintcmd ? "\"" : "";
+
       if (!strcmp(pszCmd, "clipsrc"))
-         sprintf(szBuf, "fromclip +filter -rep _\\_\\\\\\_ -srep _\\q_\\\\" "\\q_ -sform \\q%ccol1\\\\" "n\\q", glblRunChar);
+         sprintf(szBuf, "fromclip +filter -rep _\\_\\\\\\_ -srep _\\q_\\\\" "\\q_ -sform %s\\q%ccol1\\\\" "n\\q%s", pext, glblRunChar, pext);
       else
       if (!strcmp(pszCmd, "clipxml"))
          sprintf(szBuf, "fromclip +xmlform");
       else
       if (!strcmp(pszCmd, "clipphp"))
-         sprintf(szBuf, "fromclip +filter -rep _\\_\\\\\\_ -srep _\\q_\\\\" "\\q_ -sform .\\q%ccol1\\\\" "n\\q", glblRunChar);
+         sprintf(szBuf, "fromclip +filter -rep _\\_\\\\\\_ -srep _\\q_\\\\" "\\q_ -sform %s.\\q%ccol1\\\\" "n\\q%s", pext, glblRunChar, pext);
       else
       if (!strcmp(pszCmd, "clipjava"))
-         sprintf(szBuf, "fromclip +filter -rep _\\_\\\\\\_ -srep _\\q_\\\\" "\\q_ -sform +\\q%ccol1\\\\" "n\\q", glblRunChar);
+         sprintf(szBuf, "fromclip +filter -rep _\\_\\\\\\_ -srep _\\q_\\\\" "\\q_ -sform %s+\\q%ccol1\\\\" "n\\q%s", pext, glblRunChar, pext);
+
+      if (bprintcmd)
+         { printf("sfk %s\n", szBuf); return 0; }
 
       char *asubarg[100];
       int   isubarg = 0;
@@ -60056,10 +60258,14 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          }
       }
 
+      // +toclip is appended HERE.
+      // Full chaining is NOT supported.
       for (; iDir<argc; iDir++)
          asubarg[isubarg++] = argv[iDir];
 
-      lRC = submain(isubarg, asubarg, penv, asubarg[0], 1, bFatal); // clipxml
+      lRC = submain(isubarg, asubarg, penv, asubarg[0], 1, bFatal); // clipsrc
+
+      // NO step_chain supported.
 
       bDone = 1;
    }
@@ -60124,13 +60330,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                *psz=' ';
          }
       }
-      for (; iDir<argc; iDir++)
-         asubarg[isubarg++] = argv[iDir];
+      // fix sfk1932: do NOT copy rest of argv here!
 
       lRC = submain(isubarg, asubarg, penv, asubarg[0], 1, bFatal); // getcol
 
-      if (iChainNext)
-         { STEP_CHAIN(iChainNext, chain.coldata); }
+      STEP_CHAIN(iChainNext, 1); // sfk1932 getcol: producing command
 
       bDone = 1;
    }

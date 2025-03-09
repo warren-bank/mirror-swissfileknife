@@ -38,6 +38,14 @@
 
 #ifdef _WIN32
   #define FD_SETSIZE 300
+  #ifdef _MSC_VER
+   #ifndef SFKPRO
+    #define SFKWINST
+   #endif
+   #include <comdef.h>
+   #include <ShlObj.h>
+   #include <Shlwapi.h>
+  #endif
   #include <windows.h>
   #ifndef _MSC_VER
    #include <ws2tcpip.h>
