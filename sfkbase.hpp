@@ -1660,7 +1660,8 @@ public:
    bool cachestat;         // cache statistics at program end
    bool travelHttp;        // decided per command, esp. list
    #endif // VFILEBASE
-   bool subdirs;           // process subdirs
+   bool subdirs;           // recurse into subdirs
+   bool hidesubdirs;       // do not process subdir names at all
    bool utf8dec;           // utf-8  detect and decode (not yet impl.)
    bool wchardec;          // utf-16 detect and decode
    int utf16found;         // statistic for post-command info

@@ -9,7 +9,7 @@ echo Then re-run this batch file.
 GOTO done
 
 :havedview
-start dview -wrap .
+start dview -wrap -dir . !testfiles -dir testfiles\Formats
 GOTO done
 
 :done

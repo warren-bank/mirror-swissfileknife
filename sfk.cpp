@@ -8,10 +8,21 @@
    the world's fastest source code browser and editor.
 
    1.9.1
+   Revision 2:
+   -  rel: 17.04.2018, Minor Update
+   -  sum: Better support for folder zipping if no sub folder
+           contents are needed. Added script command ifexist
+           to check if a file or folder exists.
+   -  fix: sfk zip: created empty subdir entries with -nosub.
+   -  add: sfk ifexist to check if a file or folder exists.
+   -  fix: sfk getvar +tofile produced unwanted empty lines.
+   -  doc: sfk zip: option -nosub
+   -  doc: sfk list: option -nosub
+   Initial Release:
    -  rel: 12.04.2018, Major Update
    -  sum: The Swiss File Knife can now create zip files
-           and extract zip files, supporting 64 bit files
-           with sizes over 2 gb, and unicode UTF-8 filenames.
+           and extract zip files, supporting UTF-8 unicode
+           filenames and 64 bit contents with sizes over 2 gb.
            This allows highly flexible file selection with
            the full SFK syntax, like selecting all files
            changed today, or all files containing a searched
@@ -50,6 +61,11 @@
    -  doc: xed: example to swap char groups.
    -  doc: run: time measurement example.
    internal:
+   revision 2:
+   -  add: general option -nosub2 to exclude subfolders
+           and also hide subfolder names like in:
+           sfk list -withdirs -nosub2 mydir5
+   initial:
    -  chg: rework of tcpsend client.
 
    1.9.0
@@ -971,7 +987,7 @@
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
 #define SFK_VERSION  "1.9.1" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  ""
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -11757,6 +11773,7 @@ int CommandChaining::addStreamAsLines(int iCmd, char *pData, int iData)
          if (c=='\n') {
             // regular line end
             aCache[iCache]='\0';
+            removeCRLF(aCache); // fix sfk1912
             addLine(aCache,str(""),0);
             iCache=0;
             continue;
@@ -14918,6 +14935,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (!strncmp(psz1, "-noind", 6)) { pcs->noind = 1; return true; }
    if (!strcmp(psz1, "-sim"))       { pcs->sim = 1; return true; }
    if (!strcmp(psz1, "-norec"))     { pcs->subdirs = 0; return true; }
+   if (!strcmp(psz1, "-nosub2"))    { pcs->subdirs = 0; pcs->hidesubdirs = 1; return true; } // sfk1912
    if (!strncmp(psz1, "-nosub", 6)) { pcs->subdirs = 0; return true; }
    if (!strcmp(psz1, "-withsub"))   { pcs->subdirs = 1; return true; }
    if (!strcmp(psz1, "-i"))         { bGlblStdInAny = 1; return true; }
@@ -21964,7 +21982,10 @@ int walkFiles(
                bMatch = 0;
          }
          #endif // USE_SFK_BASE
- 
+
+         if (cs.hidesubdirs)
+            bMatch = 0; // sfk1912: pure -nosub with zip
+         else
          if (bMatch)
          {
             bMatch = matchesDirMask(psub->name(), 1, 0); // on subdir
@@ -44799,8 +44820,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      text input from the command chain.\n"
              "\n"
              "   $see also\n"
-             "      #sfk call<def>  call sub functions in a script.\n"
-             "      #sfk goto<def>  jump to a local label.\n"
+             "      #sfk ifexist<def>  check if a file or folder exists.\n"
+             "      #sfk call<def>     call sub functions in a script.\n"
+             "      #sfk goto<def>     jump to a local label.\n"
              "\n"
              "   $examples\n"
              "      #sfk filter in.txt -+err +if \"rc>0\" run -yes \"x.bat\" +echo done\n"
@@ -44997,6 +45019,112 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          iChainNext = iThenCmd;
 
       STEP_CHAIN(iChainNext, 0); // if, fix sfk181 instead of ,1
+
+      bDone = 1;
+   }
+
+   ifcmd (   !strcmp(pszCmd, "ifexist")   // sfk1912
+          || !strcmp(pszCmd, "ifexists")
+         )
+   {
+      ifhelp (!chain.usefiles && (nparm < 1))
+      printx("<help>$sfk ifexist [opts] file command1 ... +command2\n"
+             "\n"
+             "   execute command1 if a file or folders exists with the\n"
+             "   given name, then continue to command2. if no file or\n"
+             "   folder exists skip directly to command2.\n"
+             "\n"
+             "   use \"+ifexist file begin ... +endif\" to run multiple\n"
+             "   commands as one block, if a file or folder exists.\n"
+             "\n"
+             "   $options\n"
+             "      -var      use sfk variables, must be first option.\n"
+             "\n"
+             "   $return code\n"
+             "      rc=0      nothing exists\n"
+             "      rc=1      exists and is a file\n"
+             "      rc=2      exists and is a dir\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk call<def>  call sub functions in a script.\n"
+             "      #sfk goto<def>  jump to a local label.\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk ifexist in.txt begin load in.txt +appendto out.txt +endif\n"
+             "         if in.txt exists append it's content to out.txt\n"
+             "      #sfk ifexist foo begin +if \"rc=2\" stop -all nofile +endif\n"
+             "         if foo exists, but is a folder, stop with message \"nofile\".\n"
+            );
+      ehelp;
+
+      sfkarg;
+
+      int iChainNext = 0;
+      char *pexpr    = 0;
+      int iThenCmd   = 0;
+      int iMode      = 0;
+      bool bOrDir    = 1;
+      bool bJustDir  = 0;
+
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argx[iDir]);
+            continue;
+         }
+         if (   !strcmp(argv[iDir], "begin")
+             || !strcmp(argv[iDir], "+begin"))
+         {
+            if (iDir+1<argc)
+               iThenCmd = iDir+1;
+            while (iDir<argc && strcmp(argv[iDir],"+endif")!=0)
+               iDir++;
+            if (iDir>=argc)
+               return 9+perr("missing +endif after if \"%s\" begin", pexpr?pexpr:"");
+            continue;
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // non-option parms
+         if (!pexpr) {
+            pexpr = argx[iDir];
+            continue;
+         }
+         if (!iThenCmd)
+            { iThenCmd = iDir; continue; }
+         // ignore all other parms as they belong to thenCmd.
+      }
+
+      if (!pexpr)    return 9+perr("need an expression after if.");
+      if (!iThenCmd) return 9+perr("need a command after \"if expression\", without \"+\".");
+
+      // evaluate expression
+      bool btrue = 0;
+      int  bIsDir = 0;
+
+      Coi ocoi(pexpr, str(""));
+      int bExistsAny = ocoi.existsFile(bOrDir, &bIsDir);
+
+      if (bJustDir && bIsDir)
+         btrue = 1;
+      else
+      if (bExistsAny)
+         btrue = 1;
+
+      lRC = 0;
+      if (btrue==1 && bIsDir==0)
+         lRC = 1;
+      if (btrue==1 && bIsDir==1)
+         lRC = 2;
+
+      if (btrue)
+         iChainNext = iThenCmd;
+
+      STEP_CHAIN(iChainNext, 0);
 
       bDone = 1;
    }

@@ -20958,6 +20958,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "   select is the same, but it ignores command chaining input.\n"
              "\n"
              "   $options\n"
+             "      -nosub     do not list sub folder contents\n"
              "      -time      show date and modification time\n"
              "      -flattime  show date and time in a more compact format\n"
              "      -tab       separate columns by tab characters, not blanks\n"
@@ -21151,12 +21152,18 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "       #\"ren <run>qcol3 \\q<run>col1<run>col2-<run>col3\\q\" +run \"<run>text\"\n"
              "         rename all .jpg files in current folder to be prefixed by\n"
              "         their modification time (type whole command in one line). [27]\n"
+          // "      #sfk list -withdirs -nosub mydir\n"
+          // "         list mydir without going through sub folders,\n"
+          // "         but show the contained sub folder names within mydir.\n"
+          // "      #sfk list -withdirs -nosub2 mydir\n"
+          // "         same as above, but hide all sub folder names.\n"
              #ifdef VFILEBASE
              "      #sfk larc src.zip +view\n"
              "         show content listing of zip file src.zip in Depeche View,\n"
              "         to search filenames interactively (\"sfk view\" for details).\n"
              #endif // VFILEBASE
-             "      #sfk list <nofo>. >lslr\n"
+             );
+      printx("      #sfk list <nofo>. >lslr\n"
              "         list files of the current directory and all subdirectories into\n"
              "         an index text file \"lslr\" (named after the unix command \"ls -lR\").\n"
              "         doing this in a root directory may take some while, but afterwards\n"
@@ -21651,6 +21658,8 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "   $-nosub<def>     or -norec does not include subdirectories (subfolders).\n"
          "              processing of subdirs is DEFAULT with most commands,\n"
          "              therefore you must specify -nosub to switch it off.\n"
+      // "   $-nosub2<def>    do not include subfolders, and hide subdir names,\n"
+      // "              e.g. like sfk list -withdirs -nosub2 mydir\n"
          "   $-withsub<def>   include subdirs. is DEFAULT with most commands.\n"
          /*
          "   $-strict<def>    with run, perline, -to: produce an error if unknown\n"
@@ -32042,6 +32051,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n");
       #endif
       printx("   $options\n"
+             "     -nosub    do not include sub folders.\n"
              "     -force    overwrite existing zip file.\n"
              "     -asdir x  create a new folder x within the zip\n"
              "               and add all files into that folder.\n"
@@ -32073,10 +32083,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "                 previous command.\n"
              "\n"
              "   sfk zip is very flexible and easy to use,\n"
-             "   but if you need high performance or special\n"
-             "   features like direct zip file updating you\n"
-             "   may consider further zipping tools.\n"
-             "   find an overview on: #stahlworks.com/zip\n"
+             "   but if you need special features like\n"
+             "   direct zip file updating you may consider\n"
+             "   further zipping tools. find an overview on:\n"
+             "   #stahlworks.com/zip\n"
              "\n"
              );
       printx("   $examples\n"
@@ -32375,6 +32385,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       if (szOutFile[0]==0)
          return 9+perr("missing output filename\n");
+
+      // with -nosub subdir names should not appear
+      if (!cs.subdirs)
+         cs.hidesubdirs = 1;
 
       // optional printx redirect
       AutoRestoreInt ores(&bGlblCollectHelp);
@@ -34022,6 +34036,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
 
 
 
