@@ -4637,8 +4637,13 @@ int UDPIO::initSendReceive
    bool bReuse  = (uiFlags & 2) ? 1 : 0;
    bool bRetry  = (uiFlags & 4) ? 1 : 0;
 
-   if (pszTargetAddress && !strncmp(pszTargetAddress, "224.", 4))
-      bClMulticast = true;
+   if (pszTargetAddress && strchr(pszTargetAddress, '.'))
+   {
+      // check for multicast addresses "224.x" to "239.x"
+      int iFirstPart = atoi(pszTargetAddress);
+      if (iFirstPart >= 224 && iFirstPart <= 239)
+         bClMulticast = true;
+   }
 
    int fdTmp = socket(AF_INET, SOCK_DGRAM, 0);
 

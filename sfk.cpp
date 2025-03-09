@@ -4,6 +4,55 @@
    StahlWorks Technologies, http://stahlworks.com/
    Provided under the BSD license.
 
+   1.7.1
+   Revision 2:
+   -  add: base+xd and xe: sfk xfind, search in text and
+           binary files using wildcards and sfk expressions,
+           with colored text output to terminal.
+   -  dep: deprecated: sfk find -text should no longer
+           be used to read only text files, as the option
+           interferes with xfind -text patterns.
+           use sfk ftext to read only text files.
+   -  fix: compile warnings: unsequenced access
+   Initial Release:
+   -  CHG: sfk find: no longer applying soft word wrap
+           at characters .,; by default. 
+           use option -delim=.,; for old behaviour.
+   -  chg: sfk find: search within binary files: no longer
+           lists a previous and current line but joins
+           them automatically for output.
+   -  add: sfk find: option -delim to specify delimiters
+           for soft word wrapping.
+   -  add: sfk split: option -text to split text files
+           at line boundaries.
+   -  fix: sfk ftpserv: handling of ALLO command.
+           this now produces a normal 200 OK reply.
+   -  fix: sfk find: search for long strings failed
+           even with -wrap(bin)=n change due to limited
+           internal buffer sizes. now result strings
+           can be up to 800 characters approx.
+   -  fix: sfk find singleFile pattern +command
+           chaining did not work.
+   -  chg: sfk xhexfind: -quiet now also disables the
+           files checked info.
+   -  add: sfk filter: -toutf to convert iso-8859-1
+           text to utf-8.
+   -  add: sfk runloop: now accepts $$ to print the
+           character $ in output text.
+   -  chg: sfk runloop: no longer tells "error" on
+           non zero rc from called program.
+   -  fix: sfk entab did not show help text.
+   -  chg: sfk entab: complete rework, now writing
+           only files containing changes.
+   -  fix: fixed some compile warnings.
+   internal:
+   -  fix: group addresses 225. to 239. not detected
+           as multicast in some cases.
+   -  fix: xe replace: possible memcpy/memmove issue.
+   -  add: sfk echo: [white] color support,
+           inofficial as it does not work
+           with some shell backgrounds.
+
    1.7.0
    Revision 2:
    -  fix: sfk fromnet +filter +loop did not work
@@ -1884,7 +1933,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.7.0" // ver_ and check the _PRE definition
+#define SFK_VERSION  "1.7.1" // ver_ and check the _PRE definition
 #define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
@@ -2167,12 +2216,14 @@ char *ownIPList(int &rhowmany, uint nPort=0, const char *psep=" or ");
 
 #if (defined(WITH_TCP) || defined(VFILENET) || defined(DV_TCP))
 
+bool bGlblTCPInitialized = 0;
+
 int prepareTCP()
 {
-   static bool bDone = 0;
-   if (!bDone)
+   if (!bGlblTCPInitialized)
    {
-      bDone = 1;
+      bGlblTCPInitialized = 1;
+
       #ifdef _WIN32
       WORD wVersionRequested = MAKEWORD(1,1);
       WSADATA wsaData;
@@ -2181,6 +2232,19 @@ int prepareTCP()
       #endif
    }
    return 0;
+}
+
+void shutdownTCP()
+{
+   if (!bGlblTCPInitialized)
+      return;
+
+   bGlblTCPInitialized = 0;
+
+   // not yet done central due to side effects
+   // #ifdef _WIN32
+   // WSACleanup();
+   // #endif
 }
 
 // all closesocket calls are redirected to:
@@ -2391,16 +2455,22 @@ uchar *newBitField(int iTotalEntries)
         ...
     }
 */
-class UTF8Decoder
+class UTF8Codec
 {
 public:
-   UTF8Decoder  (char *pOptInData=0, int iOptionalInputLength=-1);
+   UTF8Codec   (char *pOptInData=0, int iOptionalInputLength=-1);
 
    void  init  (char *pInputData, int iOptionalInputLength=-1);
+
+   static int toutf8 (char *pszOut, int iMaxOut, uint ch);
+   static int toutf8 (char *pszOut, int iMaxOut, char *pszIsoText, bool bSafe=0);
 
    bool  hasChar();
    uint  nextChar();
    bool  eod();
+
+   static int  validSeqLen    (char *pszSrc, int iMaxSrc);
+          int  validSeqLenInt (char *pszSrc, int iMaxSrc);
 
 private:
    int   readRaw();
@@ -2409,7 +2479,7 @@ private:
    uchar *psrc;
 };
 
-UTF8Decoder::UTF8Decoder(char *pOptInData, int iOptionalInputLength)
+UTF8Codec::UTF8Codec(char *pOptInData, int iOptionalInputLength)
 {
    memset(this, 0, sizeof(*this));
 
@@ -2417,7 +2487,7 @@ UTF8Decoder::UTF8Decoder(char *pOptInData, int iOptionalInputLength)
       init(pOptInData, iOptionalInputLength);
 }
 
-void UTF8Decoder::init(char *p, int ilen)
+void UTF8Codec::init(char *p, int ilen)
 {
    icur = 0;
    psrc = (uchar*)p;
@@ -2428,24 +2498,78 @@ void UTF8Decoder::init(char *p, int ilen)
       imax = ilen;
 }
 
-int UTF8Decoder::readRaw()
+int UTF8Codec::readRaw()
 {
    if (icur >= imax)
       return 0;
    return psrc[icur++] & 0xFF;
 }
 
-int UTF8Decoder::readSeq()
+int UTF8Codec::readSeq()
 {
    int c = readRaw();
    return ((c & 0xC0) == 0x80) ? (c & 0x3F) : -1;
 }
 
-bool UTF8Decoder::hasChar() { return (icur < imax) ? 1 : 0; }
+bool UTF8Codec::hasChar() { return (icur < imax) ? 1 : 0; }
 
-bool UTF8Decoder::eod() { return (icur >= imax) ? 1 : 0; }
+bool UTF8Codec::eod() { return (icur >= imax) ? 1 : 0; }
 
-uint UTF8Decoder::nextChar() 
+int  UTF8Codec::validSeqLen(char *pszSrc, int iMaxSrc)
+{
+   UTF8Codec obj;
+   return obj.validSeqLenInt(pszSrc, iMaxSrc);
+}
+
+int  UTF8Codec::validSeqLenInt(char *pszSrc, int iMaxSrc)
+{
+   if (iMaxSrc < 2)
+      return 0;
+
+   init(pszSrc, iMaxSrc);
+
+   if (icur >= imax)
+        return 0;
+
+   int c = readRaw();
+
+   int iold = icur;
+
+   if ((c & 0x80) == 0)
+      return 0;
+
+   int c1,c2,c3,n;
+
+   if ((c & 0xE0) == 0xC0) {
+      if ((c1 = readSeq()) < 0)
+         return 0;
+      n = ((c & 0x1F) << 6) | c1;
+      if (n >= 128)
+         return 2;
+      return 0;
+   } else if ((c & 0xF0) == 0xE0) {
+      if ((c1 = readSeq()) < 0)
+         return 0;
+      if ((c2 = readSeq()) < 0)
+         return 0;
+      n = ((c & 0x0F) << 12) | (c1 << 6) | c2;
+      if (n >= 0x800 && (n < 0xD800 || n > 0xDFFF))
+         return 3;
+      return 0;
+   } else if ((c & 0xF8) == 0xF0) {
+      if ((c1 = readSeq()) < 0)
+         return 0;
+      if ((c2 = readSeq()) < 0)
+         return 0;
+      if ((c3 = readSeq()) < 0)
+         return 0;
+      return 4;
+   }
+
+   return 0;
+}
+
+uint UTF8Codec::nextChar() 
 {
    if (icur >= imax)
         return 0;
@@ -2490,6 +2614,98 @@ uint UTF8Decoder::nextChar()
    icur = iold;
 
    return c;
+}
+
+int UTF8Codec::toutf8(char *pszOut, int iMaxOut, uint ch)
+{
+   uint c = ch;
+   int len = 0;
+   uint first = 0;
+   
+   if (c < 0x80) {
+      first = 0;
+      len = 1;
+   }
+   else if (c < 0x800) {
+      first = 0xc0;
+      len = 2;
+   } else if (c < 0x10000) {
+      first = 0xe0;
+      len = 3;
+   } else if (c < 0x200000) {
+      first = 0xf0;
+      len = 4;
+   } else if (c < 0x4000000) {
+      first = 0xf8;
+      len = 5;
+   } else {
+      first = 0xfc;
+      len = 6;
+   }
+
+   if (len >= iMaxOut)
+      return 0;
+
+   if (!pszOut)
+      return 0;
+
+   for (int i = len - 1; i > 0; i--)
+   {
+      pszOut[i] = (char)((c & 0x3f) | 0x80);
+      c >>= 6;
+   }
+   pszOut[0] = c | first;
+   
+   return len;
+}
+
+int UTF8Codec::toutf8(char *pszOut, int iMaxOut, char *pszSrc, bool bSafe)
+{
+   if (iMaxOut < 2)
+      return 0;
+
+   *pszOut = '\0';
+
+   char *pDstCur = pszOut;
+   char *pDstMax = pszOut+iMaxOut;
+   int   iSrcLen = strlen(pszSrc);
+
+   uchar *pSrcCur = (uchar*)pszSrc;
+   uchar *pSrcMax = pSrcCur + iSrcLen;
+
+   UTF8Codec obj;
+
+   while (pSrcCur<pSrcMax && *pSrcCur != 0)
+   {
+      if (bSafe) {
+         // skip existing utf8 sequences in mixed text
+         int l = obj.validSeqLenInt((char*)pSrcCur, pSrcMax-pSrcCur);
+         if (l > 0) {
+            if (pDstCur+l >= pDstMax)
+               break;
+            memcpy(pDstCur, pSrcCur, l);
+            pDstCur += l;
+            pSrcCur += l;
+            continue;
+         }
+      }
+
+      uint c = *pSrcCur;
+      int  n = toutf8(pDstCur, pDstMax-pDstCur, c);
+      if (n < 1)
+         break;
+      if (pDstCur >= pDstMax)
+         break;
+      pDstCur += n;
+      pSrcCur++;
+   }
+
+   if (pDstCur >= pDstMax)
+      pDstCur = pDstMax-1;
+
+   *pDstCur = '\0';
+
+   return pDstCur - pszOut;
 }
 
 // ====== SFK primitive function library end   ========
@@ -3070,6 +3286,7 @@ public:
    bool syncFiles;   // sync files instead of copy
    bool syncOlder;   // with sync, copy older over newer files
    bool nonames;     // do NOT print/pass :file records
+   bool noind;       // no indentation
    char *runCmd;     // default: "" if not set.
    bool printcmd;    // run: print raw command
    int stoprc;      // run: stop on rc >= stoprc
@@ -3230,6 +3447,14 @@ public:
    char szeol[10];         // crlf or lf
    bool toiso;             // utf8 to iso conversion
    char toisodef;          // default character '.'
+   bool toutf;             // iso to utf8 conversion
+   char *delim;            // list of delimiters for soft word wrapping
+   bool astext;            // with xhexdump
+   bool joinlines;         // with find
+   int  rtrim;             // with find
+   bool nostat;            // xhexfind: no no. of hits statistics
+   char litattr;           // literal highlight attribute, or 0 for none
+   char leattr;            // line end attribute, or 0 for none
 };
 
 struct CommandStats gs; // global settings accross whole chain
@@ -3919,7 +4144,6 @@ int nGlblMatchingRefDirs = 0;
 int nGlblSinceMode       = 0; // b0:add b1:dif
 bool bGlblIgnoreTime     = 0;
 bool bGlblIgnore3600     = 0;
-bool bGlblHexdumpShowLE  = 0;
 bool bGlblHexDumpWide    = 0;
 int nGlblHexDumpForm     = 0;
 num  nGlblHexDumpOff     = 0;
@@ -3993,7 +4217,7 @@ class Coi;
 
 int decodeUrl       (char *pszInOut);
 int execDetab       (char *pszFile, char *pszOutFile);
-int execEntab       (char *pszFile);
+int execEntab       (char *pszFile, char *pszOutFile);
 int execScantab     (char *pszFile);
 int execDirMirror   (char *pszName, int  lLevel, FileList &oDirFiles, num &ntime1, num &ntime2);
 int execFileMirror  (char *pszFile, num &ntime1, num &ntime2, int nDirFileCnt);
@@ -4690,8 +4914,8 @@ char oemCharToAnsi(char c) {
    return c;
 }
 
-void ansiToDos(char *psz) { while (*psz) *psz++ = ansiCharToOEM(*psz); }
-void dosToAnsi(char *psz) { while (*psz) *psz++ = oemCharToAnsi(*psz); }
+void ansiToDos(char *psz) { for (;*psz;psz++) *psz = ansiCharToOEM(*psz); }
+void dosToAnsi(char *psz) { for (;*psz;psz++) *psz = oemCharToAnsi(*psz); }
 void oprintf(cchar *pszFormat, ...);
 void oprintf(StringPipe *pOutData, cchar *pszFormat, ...);
 
@@ -4714,7 +4938,7 @@ uchar unicodeToIso(uint ucode)
 
 void utf8ToIso(char *psz)
 {
-   UTF8Decoder utf(psz);
+   UTF8Codec utf(psz);
    char *pDstCur = psz;
    char *pDstMax = psz+strlen(psz);
    uint ucode = 0;
@@ -4730,10 +4954,10 @@ void changeLineCase(char *psz, int iMode)
 { 
    switch (iMode) {
       case 1:
-         while (*psz) *psz++ = toupper(*psz); 
+         for (;*psz;psz++) *psz = toupper(*psz); 
          break;
       case 2:
-         while (*psz) *psz++ = tolower(*psz);
+         for (;*psz;psz++) *psz = tolower(*psz);
          break;
    }
 }
@@ -8371,9 +8595,11 @@ void initConsole()
    #endif
 }
 
-int autoCalcWrapColumns() {
+int autoCalcWrapColumns()
+{
    int ncols = 80;
-   if (bGlblConsColumnsSet) {
+   if (bGlblConsColumnsSet) 
+   {
       if (cs.verbose >= 2) printf("ConsoleColumns=%d\n",nGlblConsColumns);
       return nGlblConsColumns-2;
    }
@@ -10705,6 +10931,8 @@ int printEcho(bool bAddToCurLine, const char *pszFormat, ...)
       if (!mystrncmp(pszSrc, "[yellow]" , 8)) { nAttr = pszSrc[1]; pszSrc += 8; } else
       if (!mystrncmp(pszSrc, "[cyan]"   , 6)) { nAttr = pszSrc[1]; pszSrc += 6; } else
       if (!mystrncmp(pszSrc, "[magenta]", 9)) { nAttr = pszSrc[1]; pszSrc += 9; } else
+      // inofficial: does not work with a white background under Windows
+      if (!mystrncmp(pszSrc, "[white]"  , 7)) { nAttr = 'v';       pszSrc += 7; } else
 
       if (!strncmp(pszSrc, "[def]"    , 5)) { pszSrc += 5; nAttr = ' '; }
 
@@ -12643,7 +12871,8 @@ void FileSet::setBaseLayer()
 
 // find: BinTexter remembers so many chars from previous line
 //       to detect AND patterns spawning across soft-wraps.
-#define BT_LASTLINE_LEN 80
+#define BINTEXT_RECSIZE 3000
+// 600 * 2 = 1200, 1200 * 2 = 2400
 
 class BinTexter
 {
@@ -12663,10 +12892,10 @@ public:
 
 private:
    Coi  *pClCoi;
-   char  szClLastLine[BT_LASTLINE_LEN+40];
-   char  szClPreBuf[80];
-   char  szClOutBuf[200];
-   char  szClAttBuf[200];
+   char  szClPreBuf[80];   // just a short per line prefix
+   char  szClOutBuf[BINTEXT_RECSIZE+100]; // fix: 1703: buffer too small.
+   char  szClAttBuf[BINTEXT_RECSIZE+100]; // fix: 1703: buffer too small
+   char  szClLastLine[BINTEXT_RECSIZE+100];
    bool  bClDumpedFileName;
 };
 
@@ -12735,7 +12964,6 @@ int BinTexter::process(int nDoWhat)
    bool bbail = 0;
    while (!bbail)
    {
-      // int nRead = pClCoi->readLine(szLineBuf, sizeof(szLineBuf)-10);
       int nRead = pClCoi->read(szLineBuf, sizeof(szLineBuf)-10);
 
       if (nRead <= 0) {
@@ -12798,7 +13026,9 @@ int BinTexter::process(int nDoWhat)
             // continue collecting current word,
             // reduce multi-whitespace sequences.
             bisws    = (c==' ' || c=='\t');
-            bispunct = (c=='.' || c==',' || c==';');
+            bispunct = 0;
+            if (cs.delim && strchr(cs.delim, c)) // CHG: 1703: instead of (c=='.' || c==',' || c==';');
+               bispunct = 1;
             if (!(bisws && bwasws)) {
                szLineBuf2[iword++] = c;
                if (bishi)
@@ -12848,6 +13078,9 @@ int BinTexter::process(int nDoWhat)
 
                if (strlen(szClOutBuf) + strlen(szLineBuf2) < sizeof(szClOutBuf)-10)
                   strcat(szClOutBuf, szLineBuf2);
+               // else
+               //    pwarn("buffer overflow (%d/%d/%d)\n",
+               //       (int)strlen(szClOutBuf), (int)strlen(szLineBuf2), (int)sizeof(szClOutBuf)-10);
 
                icol += (iword+1);
 
@@ -12941,14 +13174,21 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
       // 1. count no. of hits across current AND last line
       int nMatchCur = 0;
       int nMatchPre = 0;
-      int nGrepPat = glblGrepPat.numberOfEntries();
+      int nGrepPat  = glblGrepPat.numberOfEntries();
+      int iHitOff   = 0;
       for (int i=0; ((nMatchCur+nMatchPre) < nGrepPat) && (i<nGrepPat); i++) 
       {
-         if (mystrhit((char*)pszBuf, glblGrepPat.getString(i), cs.usecase, 0))
-            nMatchCur++;
-         else
-         if (szClLastLine[0] && 
-             mystrhit(szClLastLine, glblGrepPat.getString(i), cs.usecase, 0))
+         if (mystrhit((char*)pszBuf, glblGrepPat.getString(i), cs.usecase, &iHitOff)) {
+            // FIX: 1703: accept hit in current line only if in front halve,
+            // otherwise truncation costs are too high. hits in rear halve
+            // are moved to previous record.
+            if (cs.joinlines == 0 || iHitOff < cs.wrapbincol/2) {
+               nMatchCur++;
+               continue;
+            }
+            // else fall through and check previous record
+         }
+         if (szClLastLine[0] && mystrhit(szClLastLine, glblGrepPat.getString(i), cs.usecase, 0))
             nMatchPre++;
       }
 
@@ -12999,20 +13239,38 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
          }
 
          // create coloured display of hits of PREVIOUS line
+         bool bskipcur = 0;
          if (!cs.justrc && nMatchPre)
          {
+            // 1703: auto join of split result
+            if (cs.joinlines)
+            {
+               int icur = strlen(szClLastLine);
+               int irem = ((int)sizeof(szClLastLine)) - icur;
+               int iadd = strlen(pszBuf);
+               if (iadd < irem) 
+               {
+                  memcpy(szClLastLine+icur, pszBuf, iadd);
+                  szClLastLine[icur+iadd] = '\0';
+                  bskipcur = 1;
+               }
+            }
+
             char *pszTmp = szClLastLine;
             bool bPrefixed = 0;
 
             memset(szClAttBuf, ' ', sizeof(szClAttBuf));
             szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
+            char csla = cs.joinlines ? ' ' : '/';
+            char asla = cs.joinlines ? ' ' : 'p';
             if (bGlblGrepLineNum)
-               sprintf(szClPreBuf, " / %04u ", (nLine > 0) ? (nLine-1) : nLine);
+               sprintf(szClPreBuf, " %c %04u ", csla, (nLine > 0) ? (nLine-1) : nLine);
             else
-               sprintf(szClPreBuf, " / ");
-            szClAttBuf[1] = 'p';
+               sprintf(szClPreBuf, " %c ", csla);
+            szClAttBuf[1] = asla;
             
-            if (!cs.pure) {
+            int iMargin = 1;
+            if (!cs.pure && !cs.noind) {
                if (chain.coldata) {
                   // FIX: 163: create new record here
                   chain.addLine(szClPreBuf, szClAttBuf);
@@ -13020,7 +13278,11 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                } else {
                   printColorText(szClPreBuf, szClAttBuf, 0); // w/o LF
                }
+               iMargin += strlen(szClPreBuf);
             }
+
+            int iMinHitOff = -1;
+            int iMaxHitOff = -1;
 
             memset(szClAttBuf, ' ', sizeof(szClAttBuf));
             szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
@@ -13032,6 +13294,11 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                int nCur = 0, nRel = 0;
                while (mystrhit(pszTmp+nCur, pszPat, cs.usecase, &nRel))
                {
+                  if (iMinHitOff < 0 || nRel < iMinHitOff)
+                     iMinHitOff = nRel;
+                  int iMaxOff = nRel+nPatLen;
+                  if (iMaxHitOff < 0 || iMaxOff > iMaxHitOff)
+                     iMaxHitOff = iMaxOff;
                   if (nCur+nRel+nPatLen < (int)sizeof(szClAttBuf)-10)
                      memset(&szClAttBuf[nCur+nRel], 'i', nPatLen);
                   nCur += nRel+nPatLen;
@@ -13039,19 +13306,44 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                      break;
                }
             }
+            if (iMinHitOff < 0 || cs.joinlines == 0)
+               iMinHitOff = 0;
+            if (cs.rtrim) {
+               // trim line to result range
+               int itrim = cs.rtrim-1;
+               if (iMaxHitOff + itrim > BINTEXT_RECSIZE)
+                   itrim = 0;
+               pszTmp[iMaxHitOff+itrim] = '\0';
+               szClAttBuf[iMaxHitOff+itrim] = '\0';
+            } else {
+               // trim joined line to normal wrap width
+               int iMaxHitLen = iMaxHitOff - iMinHitOff;
+               int iPrintLen  = strlen(pszTmp) - iMinHitOff;
+               int iBestLen   = cs.wrapbincol/2-iMargin;
+               if (   iPrintLen > 0
+                   && iMinHitOff+iPrintLen < BINTEXT_RECSIZE
+                   && iPrintLen > iBestLen
+                   && iMaxHitLen < iBestLen
+                   )
+               {
+                  iPrintLen = iBestLen;
+                  pszTmp[iMinHitOff+iPrintLen] = '\0';
+                  szClAttBuf[iMinHitOff+iPrintLen] = '\0';
+               }
+            }
             if (chain.coldata) {
                // FIX: 163: if prefix, append after that
                if (bPrefixed)
-                  chain.addToCurLine(pszTmp, szClAttBuf, 0);
+                  chain.addToCurLine(pszTmp+iMinHitOff, szClAttBuf+iMinHitOff, 0);
                else
-                  chain.addLine(pszTmp, szClAttBuf);
+                  chain.addLine(pszTmp+iMinHitOff, szClAttBuf+iMinHitOff);
             } else {
-               printColorText(pszTmp, szClAttBuf);
+               printColorText(pszTmp+iMinHitOff, szClAttBuf+iMinHitOff);
             }
          }
  
          // create coloured display of hits of CURRENT line
-         if (!cs.justrc && nMatchCur)
+         if (!cs.justrc && !bskipcur && nMatchCur)
          {
             char *pszTmp = pszBuf;
             bool bPrefixed = 0;
@@ -13066,8 +13358,9 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                szClPreBuf[1] = '\\';
                szClAttBuf[1] = 'p';
             }
-            
-            if (!cs.pure) {
+
+            int iMargin = 1;
+            if (!cs.pure && !cs.noind) {
                if (chain.coldata) {
                   // FIX: 163: create new record here
                   chain.addLine(szClPreBuf, szClAttBuf, 0);
@@ -13075,7 +13368,11 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                } else {
                    printColorText(szClPreBuf, szClAttBuf, 0); // w/o LF
                }
+               iMargin += strlen(szClPreBuf);
             }
+
+            int iMinHitOff = -1;
+            int iMaxHitOff = -1;
 
             memset(szClAttBuf, ' ', sizeof(szClAttBuf));
             szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
@@ -13087,7 +13384,11 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                int nCur = 0, nRel = 0;
                while (mystrhit(pszTmp+nCur, pszPat, cs.usecase, &nRel)) 
                {
-                  // printf("%d.%d ",nCur,nRel);
+                  if (iMinHitOff < 0 || nRel < iMinHitOff)
+                     iMinHitOff = nRel;
+                  int iMaxOff = nRel+nPatLen;
+                  if (iMaxHitOff < 0 || iMaxOff > iMaxHitOff)
+                     iMaxHitOff = iMaxOff;
                   if (nCur+nRel+nPatLen < (int)sizeof(szClAttBuf)-10)
                      memset(&szClAttBuf[nCur+nRel], 'i', nPatLen);
                   nCur += nRel+nPatLen;
@@ -13095,14 +13396,39 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
                      break;
                }
             }
+            if (iMinHitOff < 0 || cs.joinlines == 0)
+               iMinHitOff = 0;
+            if (cs.rtrim) {
+               // trim line to result range
+               int itrim = cs.rtrim-1;
+               if (iMaxHitOff + itrim > BINTEXT_RECSIZE)
+                   itrim = 0;
+               pszTmp[iMaxHitOff+itrim] = '\0';
+               szClAttBuf[iMaxHitOff+itrim] = '\0';
+            } else {
+               // trim current line to normal wrap width
+               int iMaxHitLen = iMaxHitOff - iMinHitOff;
+               int iPrintLen  = strlen(pszTmp) - iMinHitOff;
+               int iBestLen   = cs.wrapbincol/2-iMargin;
+               if (   iPrintLen > 0
+                   && iMinHitOff+iPrintLen < BINTEXT_RECSIZE
+                   && iPrintLen > iBestLen
+                   && iMaxHitLen < iBestLen
+                   )
+               {
+                  iPrintLen = iBestLen;
+                  pszTmp[iMinHitOff+iPrintLen] = '\0';
+                  szClAttBuf[iMinHitOff+iPrintLen] = '\0';
+               }
+            }
             if (chain.coldata) {
                // FIX: 163: if prefix, append after that
                if (bPrefixed)
-                  chain.addToCurLine(pszTmp, szClAttBuf, 0);
+                  chain.addToCurLine(pszTmp+iMinHitOff, szClAttBuf+iMinHitOff, 0);
                else
-                  chain.addLine(pszTmp, szClAttBuf);
+                  chain.addLine(pszTmp+iMinHitOff, szClAttBuf+iMinHitOff);
             } else {
-               printColorText(pszTmp, szClAttBuf);
+               printColorText(pszTmp+iMinHitOff, szClAttBuf+iMinHitOff);
             }
          }
 
@@ -13116,13 +13442,14 @@ int BinTexter::processLine(char *pszBuf, int nDoWhat, int nLine, bool bHardWrap)
       {
          // line was NOT listed
          szClLastLine[0] = '\0';
-         if (!bHardWrap) {
-            // and it's a soft-wrap line (no LF), so remember it.
+         // FIX: 1703: ALWAYS take over current line to lastline no matter if hardwrap
+         // if (!bHardWrap) 
+         {
             int nCurLen = strlen(pszBuf);
             int nCopyIndex = 0;
-            if (nCurLen > BT_LASTLINE_LEN) {
-               nCopyIndex = nCurLen - BT_LASTLINE_LEN;
-               nCurLen    = BT_LASTLINE_LEN;
+            if (nCurLen > BINTEXT_RECSIZE) {
+               nCopyIndex = nCurLen - BINTEXT_RECSIZE;
+               nCurLen    = BINTEXT_RECSIZE;
             }
             // mystrcopy guarantees a zero terminator if nCurLen > 0.
             mystrcopy(szClLastLine, pszBuf+nCopyIndex, nCurLen+1);
@@ -13188,6 +13515,7 @@ char
        // for readonly access.
        // returns NULL on any error.
 
+bool  bClTold;
 char  szClDir     [SFK_MAX_PATH+10];
 char  szClPathBuf [SFK_MAX_PATH+10];
 };
@@ -13197,6 +13525,7 @@ SFKHome sfkhome;
 SFKHome::SFKHome( )
 {
    mclear(szClDir);
+   bClTold = 0;
 
    #ifdef _WIN32
 
@@ -13223,12 +13552,17 @@ bool SFKHome::noHomeDir()
    if (szClDir[0])
       return 0;
 
-   perr("no SFK Home Dir exists to store or read data.");
+   if (!bClTold)
+   {
+      bClTold = 1;
 
-   #ifdef _WIN32
-   pinf("you may SET \"SFK_HOME=anyfolder\" to define it directly.\n");
-   pinf("you may SET \"LOCALAPPDATA=anyfolder\" to define it's parent folder.\n");
-   #endif
+      perr("no SFK Home Dir exists to store or read data.");
+   
+      #ifdef _WIN32
+      pinf("you may SET \"SFK_HOME=anyfolder\" to define it directly.\n");
+      pinf("you may SET \"LOCALAPPDATA=anyfolder\" to define it's parent folder.\n");
+      #endif
+   }
 
    return 1;
 }
@@ -13401,6 +13735,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strncmp(psz1, "-noinf", 6)) { pcs->noinfo = 1; return true; }
    if (!strncmp(psz1, "-nofile", 7)){ pcs->nonames = 1; return true; }
    if (!strncmp(psz1, "-noname", 7)){ pcs->nonames = 1; return true; }
+   if (!strncmp(psz1, "-noind", 6)) { pcs->noind = 1; return true; }
    if (!strcmp(psz1, "-sim"))       { pcs->sim = 1; return true; }
    if (!strcmp(psz1, "-norec"))     { pcs->subdirs = 0; return true; }
    if (!strncmp(psz1, "-nosub", 6)) { pcs->subdirs = 0; return true; }
@@ -13810,6 +14145,9 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (strBegins(psz1,"-toiso="))   {  pcs->toiso = 1; pcs->toisodef = psz1[strlen("-toiso=")]; return true; }
    if (!strcmp(psz1,"-toiso"))      {  pcs->toiso = 1; return true; }
    if (!strcmp(psz1,"-iso"))        {  pcs->toiso = 1; return true; }
+   if (!strcmp(psz1,"-toutf"))      {  pcs->toutf = 1; return true; }
+   if (!strcmp(psz1,"-toutfsafe"))  {  pcs->toutf = 2; return true; }
+   // TODO: -utf name conflict with experimental utf16 decode
    #ifdef VFILEBASE
    if (strBegins(psz1,"-useragent="))
    {
@@ -24032,7 +24370,7 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
       case eFunc_CallBack  : return execCallFileDir(pcoi);  break;
       case eFunc_Detab     : return execDetab(pszFile, pszOutFile); break;
       case eFunc_Scantab   : return execScantab(pszFile);    break;
-      case eFunc_Entab     : return execEntab(pszFile);      break;
+      case eFunc_Entab     : return execEntab(pszFile, pszOutFile); break;
       case eFunc_JamIndex  : return execJamIndex(pszFile);   break;
       case eFunc_FileStat  : return execFileStat(pcoi, lLevel, lFiles, lDirs, lBytes, nLocalMaxTime, ntime2, nSinceReason);  break;
       case eFunc_FileTime  : return execFileTime(pszFile);   break;
@@ -26210,77 +26548,143 @@ int execDetab(char *pszFile, char *pszOutFile)
    return 0;
 }
 
-int execEntab(char *pszFile)
+int execEntab(char *pszFile, char *pszOutFile)
 {__
-   char *pInFile = loadFile(pszFile);
-   if (!pInFile) return 9;
+   bool bHaveOut = (pszOutFile != 0);
+   if (!bHaveOut) pszOutFile = pszFile;
 
-   cs.files++;
-   cs.tabFiles++;
-
-   printf("entab: %s\n", pszFile);
-
-   FILE *fOut = 0;
-   if (cs.yes)
-      if (!(fOut = fopen(pszFile, "w")))
-         return 9+perr("cannot overwrite %s\n", pszFile);
-
-   char *pCur   = pInFile;
-   int bBail    = 0;
-   while (!bBail && *pCur)
-   {
-      char *pNext = strchr(pCur, '\n');
-
-      if (pNext)
-         *pNext++ = 0; // remove LF on current line
-      else
-          bBail   = 1; // last line
-
-      // truncate CR on current line, if any
-      char *psz   = strchr(pCur, '\r');
-      if (psz) *psz = 0;
-
-      // entab a single line
-      int i=0;
-      for (int icol=0; pCur[icol]; icol++)
-      {
-         char c1 = pCur[icol];
-         if (c1 != ' ') {
-            if (cs.yes) fputc(c1, fOut);
-            continue;
-         }
-         // calc posn of next tab stop
-         int itab  = ((icol / cs.tabSize) + 1) * cs.tabSize;
-         // calc distance to this next tab stop
-         int ndist = itab-icol;
-         // if this distance is >= 2 chars
-         if (ndist >= 1)
-         {
-            // and completely filled with blanks
-            for (i=0; i<ndist; i++)
-               if (!pCur[icol+i] || pCur[icol+i]!=' ')
-                  break;
-            if (i==ndist) {
-               // then replace blanks by tab
-               if (cs.yes) fputc('\t', fOut);
-               icol += ndist-1; // MIND icol++
-               cs.tabsDone++;
-               continue;
-            }
-            // else fall through
-         }
-         // else copy-through current char
-         if (cs.yes) fputc(c1, fOut);
-      }
-
-      if (cs.yes) fputc('\n', fOut);
-
-      pCur = pNext;
+   // load file, take care of global mem limit
+   num nFileSize = getFileSize(pszFile);
+   if (nFileSize <= 0)
+      return 5;
+   if (nFileSize >= nGlblMemLimit) {
+      pwarn("[nopre] skip: %s - file too large\n", pszFile);
+      cs.anyFileTooLarge = 1;
+      return 5;
    }
 
-   if (cs.yes) fclose(fOut);
+   char *pInFile = new char[nFileSize+10];
 
-   delete [] pInFile;
+   // NO RETURN W/O DELETE FROM HERE
+
+   FILE *fin = fopen(pszFile, "rb");
+   if (!fin) {
+      pwarn("cannot read: %s\n", pszFile);
+      delete [] pInFile;
+      return 5;
+   }
+   num nRead = (num)fread(pInFile, 1, nFileSize, fin);
+   fclose(fin);
+   if (nRead != nFileSize) {
+      pwarn("cannot read: %s (%d %d)\n", pszFile, nRead, nFileSize);
+      delete [] pInFile;
+      return 5;
+   }
+   pInFile[nFileSize] = '\0';
+
+   // scan for unexpected NULL bytes
+   if (memchr(pInFile, 0, nFileSize) != 0) {
+      pwarn("[nopre] skip: %s - text contains null byte(s)\n", pszFile);
+      delete [] pInFile;
+      return 5;
+   }
+
+   CharAutoDel odel(pInFile);
+
+   cs.files++;
+
+   int nTabsDone = 0;
+
+   FILE *fout = 0;
+
+   for (int ipass=0; ipass<2; ipass++)
+   {
+      if (ipass)
+      {
+         // count files that would be changed
+         if (nTabsDone > 0)
+            cs.tabFiles++; 
+
+         // run a write pass?
+         if (!nTabsDone)
+            break;   // nothing to do
+
+         // write output file:
+         //   if different output is specified, also create directory structure.
+         if (bHaveOut) {
+            if (cs.yes && createOutDirTree(pszOutFile))
+               return 9;
+            info.setStatus("entab", pszOutFile);
+         } else {
+            info.setStatus("entab", pszOutFile);
+         }
+
+         if (!cs.yes)
+            break;   // write not allowed
+
+         if (!(fout = fopen(pszOutFile, "w")))
+            return 9+perr("cannot overwrite %s\n", pszOutFile);
+      }
+   
+      char *pCur = pInFile;
+
+      while (*pCur)
+      {
+         // entab a single line
+         int i=0,icol=0;
+         for (; pCur[icol]!=0 && pCur[icol]!='\r' && pCur[icol]!='\n'; icol++)
+         {
+            char c1 = pCur[icol];
+            if (c1 != ' ') {
+               if (fout) fputc(c1, fout);
+               continue;
+            }
+            // calc posn of next tab stop
+            int itab  = ((icol / cs.tabSize) + 1) * cs.tabSize;
+            // calc distance to this next tab stop
+            int ndist = itab-icol;
+            // if this distance is >= 2 chars
+            if (ndist >= 1)
+            {
+               // and completely filled with blanks
+               for (i=0; i<ndist; i++)
+                  if (!pCur[icol+i] || pCur[icol+i]!=' ')
+                     break;
+               if (i==ndist) {
+                  // then replace blanks by tab
+                  if (fout) fputc('\t', fout);
+                  icol += ndist-1; // MIND icol++
+                  nTabsDone++;
+                  if (!ipass) cs.tabsDone++;
+                  continue;
+               }
+               // else fall through
+            }
+            // else copy-through current char
+            if (fout) fputc(c1, fout);
+         }
+         if (pCur[icol]=='\r')
+            icol++;
+         if (pCur[icol]=='\n')
+            icol++;
+   
+         if (fout) fputc('\n', fout);
+   
+         pCur = pCur+icol;
+      }
+   
+      if (fout) 
+      {
+         fclose(fout);
+         fout = 0;
+      }
+   }
+
+   if (nTabsDone)
+   {
+      info.setAddInfo("%5d tabs", nTabsDone);
+      info.printLine(1<<2);
+   }
 
    return 0;
 }
@@ -26631,11 +27035,11 @@ int execHexdump(Coi *pcoi, uchar *pBuf, uint nBufSize, int iHighOff, int iHighLe
             sprintf(szLineBuf + lIndex, "%02X ", (unsigned short)ucTmp);
    
             // optional: highlight CR and LF characters
-            if (bGlblHexdumpShowLE)
+            if (cs.leattr)
                if (ucTmp == '\r' || ucTmp == '\n') {
-                  szAttrBuf[lIndex+0] = 'e';
-                  szAttrBuf[lIndex+1] = 'e';
-                  szAttrBuf[lIndex2 ] = 'e';
+                  szAttrBuf[lIndex+0] = cs.leattr;
+                  szAttrBuf[lIndex+1] = cs.leattr;
+                  szAttrBuf[lIndex2 ] = cs.leattr;
                }
 
             if(isprint(ucTmp))
@@ -32321,7 +32725,11 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2)
             continue;
          }
          else
-         if (stricase(szLineBuf, "NOOP")) { nbail=0;
+         if (   stricase(szLineBuf, "NOOP")
+             || stribeg(szLineBuf, "ALLO ")
+            )
+         { 
+            nbail=0;
             reply("200 OK");
             continue;
          }
@@ -34658,7 +35066,8 @@ int setFilterParms(
       "-encode-", "-decode-",
       "-ansitodos", "-todos", "-dostoansi",
       "-toupper", "-tolower",
-      "-toiso", "-iso"
+      "-toiso", "-iso",
+      "-toutf" // 1703
    };
 
    // valid processing options with one parameter
@@ -35666,6 +36075,13 @@ int processTextLine(char *argv[], int iPat, int nPat,
       if (   isopt(pszPat, str("-toiso"))
           || isopt(pszPat, str("-iso"))) {
          utf8ToIso(szLineBuf);
+      }
+      else
+      if (   isopt(pszPat, str("-toutf"))
+          || isopt(pszPat, str("-utf"))) {
+         bool bSafe = strcmp(pszPat, "-toutfsafe") ? 0 : 1;
+         UTF8Codec::toutf8(szLineBuf2, MAX_LINE_LEN, szLineBuf, bSafe);
+         strcopy(szLineBuf, szLineBuf2);
       }
    }
    return 0;
@@ -37656,6 +38072,10 @@ void shutdownAllGlobalData()
    // in case any tcp was used
    TCPCore::sysCleanup();
    #endif // VFILEBASE
+
+   #if (defined(WITH_TCP) || defined(VFILENET) || defined(DV_TCP))
+   shutdownTCP();
+   #endif
 }
 
 void cleanupTmpCmdData()
@@ -38466,11 +38886,11 @@ printx("   $bad examples with corrections\n"
        "      #if input text contains:\n"
        "         bool bClFoo;\n"
        "         bool bClBar   ;\n"
-       "      #sfk xtext in.txt \"/bool[xwhite]bCl*[xwhite];/\"\n"
+       "      #sfk xfind in.txt \"/bool[xwhite]bCl*[xwhite];/\"\n"
        "         does NOT match \"bool bClFoo;\" because * eats the\n"
        "         whole input line including \";\" so no input is left\n"
        "         for \"[xwhite];\" and the whole expression fails.\n"
-       "      #sfk xtext in.txt \"/bool[xwhite]bCl[* not ;][xwhite];/\"\n"
+       "      #sfk xfind in.txt \"/bool[xwhite]bCl[* not ;][xwhite];/\"\n"
        "         does both match \"bool bClFoo;\" and \"bool bClBar   ;\".\n"
        "         this means whenever your search fails to work write\n"
        "         in detail which characters (not) to collect where.\n"
@@ -38498,8 +38918,10 @@ printx("      #sfk xrep -text \"/class*CFoo/\"\n"
        "         CRLF or just LF or just CR matches (-> wide][eol]). note that using\n"
        "         \\n instead of eol will not work as it stops on the first LFCRLF text.\n" 
    */
+       "      #sfk xrep io.txt \"/[lstart][20 chars]*/[part3]/\"\n"
+       "         cut first 20 characters in every line of io.txt.\n"
        );
-printx("      #sfk xrep in.txt \"/[lstart][9 bytes]1001*/[part2]9009[part4]/\"\n"
+printx("      #sfk xrep io.txt \"/[lstart][9 bytes]1001*/[part2]9009[part4]/\"\n"
        "         in fixed position text file data like:\n"
        "            rec. 001:5318 aef3 2751 1001\n"
        "            rec. 002:1001 aef5 275a 1001\n"
@@ -38523,7 +38945,7 @@ printx("      #sfk xrep in.txt \"/[lstart][9 bytes]1001*/[part2]9009[part4]/\"\n
        "         writing results without :file headers to versions.txt\n"
        ,'$','$','$','$'
        );
-printx("      #sfk xtext -text \"/class [bytes]{[bytes]}/[all]\\n\\n/\"\n"
+printx("      #sfk xfind -text \"/class [bytes]{[bytes]}/[all]\\n\\n/\"\n"
        "         #-dir mydir -file .hpp +tofile out.txt\n"
        "         collect class definitions from mydir and write output\n"
        "         indirectly (via command chaining) to out.txt\n");
@@ -38533,7 +38955,7 @@ printx("      #sfk %s in.txt -text \"/foo*bar/\"\n"
        "      #sfk xhex -text \"/foo[0.100000 bytes]bar/\" -dir mydir\n"
        "         search all text and binary files of mydir for patterns of\n"
        "         foo and bar with 0 to 100000 bytes (including NULL, CR\n"
-       "         and LF) inbetween.\n"
+       "         and LF) inbetween and print output as hex dump.\n"
        "      #sfk %s -text \"/printf(**);/\" -dir mydir -file .cpp\n"
        "         find all printf statements in source code, including statements\n"
        "         across multiple lines.\n"
@@ -41399,9 +41821,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                printf("CMD : %s\n", pCommand);
             if (cs.quiet && !strstr(pCommand, " >")) {
                snprintf(szLineBuf, MAX_LINE_LEN, "%s >nul 2>&1", pCommand);
-               system(szLineBuf);
+               if (system(szLineBuf)) { }
             } else {
-               system(pCommand);
+               if (system(pCommand)) { }
             }
             if (!cs.quiet)
                printf("NEED: %s\n", dataAsTrace(pToStart, pToEnd-pToStart));
@@ -42053,21 +42475,42 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    regtest("entab=3 xfile");
    regtest("list xdir .java +entab=4");
 
-   ifcmd (!strncmp(pszCmd, "entab=", strlen("entab=")))  // +chaining (alpha)
+   ifcmd (!strcmp(pszCmd, "entab") || !strncmp(pszCmd, "entab=", 6))  // +chaining (alpha)
    {
-      ifhelp (!chain.usefiles && (nparm < 1))
+      ifhelp (!strcmp(pszCmd, "entab") || (!chain.usefiles && (nparm < 1)))
       printx("<help>$sfk entab=tabsize dir ext1 [ext2 ...]\n"
              "\n"
              "   replace groups of spaces by tabs within file(s).\n"
              "\n"
-             "      #sfk entab=3 sources .cpp .hpp\n"
-             "      #sfk entab=3 singleFileName.txt\n"
+             "   $options\n"
+             "      -to outmask   do not overwrite original files, but write\n"
+             "                    to output files according to outmask, e.g.\n"
+             "                    #-to tmp<sla><run>path<sla><run>base.<run>ext<def> or #-to tmp<sla><run>file\n"
+             "      -yes          if files are selected, really (re)write them.\n"
+             "                    without -yes, entab is only simulated.\n"
+             "      -memlimit=n   process files with up to n mbytes (default=300).\n"
+             "      -nowarn       do not tell about skipped or unreadable files.\n"
              "\n"
-             "   $experimental!\n"
-             "   so far, this command rewrites every selected file,\n"
-             "   no matter if blanks would be replaced by tabs or not.\n"
+             "   $see also\n"
+             "      #sfk scantab<def>   list files containing TAB characters.\n"
+             "      #sfk help opt<def>  how to change the memlimit permanently.\n"
+             #ifdef _WIN32
+             "      #sfk view<def>      a text file viewer that can show all TAB\n"
+             "                    characters in blue by pressing CTRL+T.\n"
+             #endif
+             "\n"
+             "   $examples\n"
+             "      #sfk entab=3 sources .cpp .hpp\n"
+             "         replace 3 spaces each by a TAB character in all .cpp\n"
+             "         and .hpp files within folder sources.\n"
+             "\n"
+             "      #sfk entab=3 singleFileName.txt\n"
+             "         the same, but only in a single file.\n"
             );
       ehelp;
+
+      if (chain.usedata)
+         return 9+perr("entab does not support chain text input.");
 
       char *pszTabSize = pszCmd+strlen("entab=");
       if (!(cs.tabSize = atol(pszTabSize))) return 9+perr("invalid tab size\n");
@@ -42358,35 +42801,50 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "    case-insensitive pattern search for text and binary. if multiple\n"
              "    patterns are given, then only areas containing ALL are listed.\n"
              "    by default, find tries to autodetect if a file is text or binary.\n"
-             "    with binary files, the distance between patterns found must be <80\n"
-             "    chars to be listed as a hit.\n"
              "\n"
              "    $options\n");
-      printx("    -text     process only text files, skip all binary files.\n"
-             "              finds patterns also over long lines, avoiding line breaks.\n" 
-             "    -bin      do not autodetect file content, process all as binary.\n"
-             "              can also be used for floating text files (one linefeed per\n"
-             "              paragraph, not per line). may produce unwanted line breaks\n"
-             "              with short-lined text.\n"
+      printx(
+         //  "    -text      process only text files, skip all binary files.\n"
+         //  "               finds patterns also over long lines, avoiding line breaks.\n" 
+             "    -bin       do not autodetect file content, process all as binary.\n"
+             "               can also be used for floating text files (one linefeed per\n"
+             "               paragraph, not per line). may produce unwanted line breaks\n"
+             "               with short-lined text.\n"
+             "    -len=n     increase the line length for text extracted from binary\n"
+             "               to find longer strings. maximum is 600 approx.\n"
+             "    -wide      same as -len=300\n"
+         //  "    -nojoin    do not auto join records extracted from binary\n"
+         //  "               if result hits are spread across them\n"
+             "    -delim=.,; set delimiters to enable soft word wrapping.\n"
+             "               default is to soft wrap only on white space.\n"
+         //  "    -noind     with binary data: no not indentate output text.\n"
+         //  "    -rtrim[=n] trim results after right side hit, and optionally\n"
+         //  "               keep n characters after that.\n"
              #ifdef _WIN32
-             "    -hidden   include hidden and system files.\n"
+             "    -hidden    include hidden and system files.\n"
              #endif
-             "    -c        case-sensitive search (not default).\n"
-             "    -lnum     list line numbers of hits.\n"
-             "    -nocol    disable color highlighting of output (sfk help colors).\n"
-             "    -names    list only names of files containing at least one hit.\n"
-             "    -count    list no. of matching lines per file. implies -names.\n"
-             "              requires -text option, cannot be used with binary files.\n"
-             "    -quiet    do not show \"scan\" progress info.\n"
-             "    -pure     do not list filenames, list only text hits without indent.\n"
-             "              default when specifying a single file as first parameter.\n"
-             "    -verbose  tells in detail what find is actually searching for.\n"
+             "    -c         case-sensitive search (not default).\n"
+             "    -lnum      list line numbers of hits.\n"
+             "    -nocol     disable color highlighting of output (sfk help colors).\n"
+             "    -names     list only names of files containing at least one hit.\n"
+             "    -count     list no. of matching lines per file. implies -names.\n"
+             "               requires -text option, cannot be used with binary files.\n"
+             "    -quiet     do not show \"scan\" progress info.\n"
+             "    -pure      do not list filenames, list only text hits without indent.\n"
+             "               default when specifying a single file as first parameter.\n"
+             "    -verbose   tells in detail what find is actually searching for.\n"
              #ifdef _WIN32
-             "    -nocconv  disable umlaut and accent character conversions during\n"
-             "              output to console. \"sfk help opt\" for details.\n"
+             "    -nocconv   disable umlaut and accent character conversions during\n"
+             "               output to console. \"sfk help opt\" for details.\n"
              #endif
-             "    -firsthit show only first matching result per file.\n"
-             "    -justrc   print nothing to terminal, just set return code.\n"
+             "    -firsthit  show only first matching result per file.\n"
+             "    -justrc    print nothing to terminal, just set return code.\n"
+             );
+      printx("\n"
+             "    $search limitations within binary data\n"
+             "       by default, only lines up to 80 characters are extracted\n"
+             "       from binary data, so strings longer than this may not be found.\n"
+             "       this can be changed by option -len=n or -wide.\n"
              );
       printx("\n"
              "    $pattern support:\n"
@@ -42399,7 +42857,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "       see also \"sfk help opt\" on how to influence error processing.\n"
              "\n"
              "    $aliases\n"
-             "       \"sfk ftext\" is the same as \"sfk find -text\".\n"
+             "       #sfk ftext<def>    same as sfk find but reads only text files.\n"
              "\n"
              "    $see also\n"
              "       #sfk filter<def>   flexible pattern finding, for text files only.\n"
@@ -42421,6 +42879,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "       #sfk find -pat text1 text2 -dir src1 src2 -file .cpp .hpp\n"
              "          searches within the specified directories and file masks.\n"
+             "\n"
+             "       #sfk find -wide -pat http:// .html -dir mydir -file .dat\n"
+             "          #+filter -rep \"_*http://_http://_\" -rep \"_.html*_.html_\"\n"
+             "          find all http://*.hml references in binary .dat files,\n"
+             "          using -wide to find links beyond 80 characters,\n"
+             "          then reduce the output to just the link text.\n"
              "\n"
              "       #sfk list src +find -verbose \\-pat \\\\-foo \\+list\n" 
              "          find lines containing words \"-pat\", \"\\-foo\" and \"+list\"\n"
@@ -42462,8 +42926,50 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (!bGlblConsColumnsSet)
          cs.quiet = true;
 
+      // since 1703: always join extracted records from binary
+      cs.joinlines = 1;
+      // and set binary wrap as twice of console width, by default 160.
+      cs.wrapbincol = autoCalcWrapColumns() * 2;
+
+      int iDirNext=0;
+
       for (; iDir < argc; iDir++) 
       {
+         char *pszArg  = argv[iDir];
+         char *pszParm = 0;
+         if (!bcolpat && haveParmOption(argv, argc, iDir, "-delim", &pszParm)) {
+            if (!pszParm) return 9;
+            cs.delim = pszParm;
+            continue;
+         }
+         else
+         if (    !bcolpat 
+             && (   haveParmOption(argv, argc, iDir, "-len", &pszParm)
+                 || haveParmOption(argv, argc, iDir, "-length", &pszParm)
+                )
+            )
+         {
+            if (!pszParm) return 9;
+            int iWrap = atoi(pszParm);
+            if (iWrap < 40) return 9+perr("specify 80 or higher for -len");
+            cs.wrapbincol = iWrap * 2;
+            continue;
+         }
+         else
+         if (!bcolpat && strBegins(argv[iDir], "-rtrim=")) {
+            cs.rtrim = atoi(argv[iDir]+7)+1;
+            continue;
+         }
+         else
+         if (!bcolpat && !strcmp(argv[iDir], "-rtrim")) {
+            cs.rtrim = 1;
+            continue;
+         }
+         else
+         if (!bcolpat && !strcmp(argv[iDir], "-wide")) {
+            cs.wrapbincol = 300 * 2;
+         }
+         else
          if (!bcolpat && !strcmp(argv[iDir], "-text")) {
             bGlblBinGrep = 0;
             bGlblBinGrepAutoDetect = 0;
@@ -42476,6 +42982,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          else
          if (!bcolpat && !strcmp(argv[iDir], "-lnum"))
             bGlblGrepLineNum = 1;
+         else
+         if (!bcolpat && !strcmp(argv[iDir], "-nojoin"))
+            cs.joinlines = 0;
          else
          if (!bcolpat && !strcmp(argv[iDir], "-c"))
             cs.usecase = 1;
@@ -42516,7 +43025,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                iDir++; // then skip this
          }
          else
-         if (isChainStart(pszCmd, argv, argc, iDir, 0)) {
+         if (isChainStart(pszCmd, argv, argc, iDir, &iDirNext)) {
             break; // fall thru, let pdp set iDirNext
          }
          else {
@@ -42539,10 +43048,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          cs.nonames = 1;
       }
 
-      int iDirNext=0;
       if (iDir < argc) {
-         if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)))
-            return lRC;
+         if (!bGotFileDir && !iDirNext)
+            if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iDirNext)))
+               return lRC;
       } else {
          if (!chain.usefiles && !bGotFileDir)
             return 9+perr("please specify a directory or file name.\n");
@@ -43340,9 +43849,14 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -join[lines] join output lines, do not print linefeeds.\n"
              "      -wrap[=n]    wrap output lines near console width [or at column n].\n"
              "                   set SFK_CONFIG=columns:n to define or override the console width.\n"
-             "      -toiso[=c]   or just -iso converts UTF8 text to ISO-8859-1. some chars beyond\n"
+             "      -toiso[=c]   or just -iso converts UTF-8 text to ISO-8859-1. some chars beyond\n"
              "                   the 8 bit code range will be reduced to something similar, but\n"
              "                   most of them are changed to a dot '.', or character c.\n"
+             "      -toutf       converts ISO-8859-1 text to UTF-8. if this is done with UTF-8\n"
+             "                   input text then existing UTF-8 sequences will be destroyed!\n"
+          // "      -toutfsafe   in mixed ISO/UFT-8 text: keep all valid UTF-8 sequences and\n"
+          // "                   convert only remaining ISO characters to UTF-8. conversion may\n"
+          // "                   not work if multiple ISO characters (accents) appear grouped.\n"
              "\n");
       printx("   $conditional text processing\n"
              "      -[ls/le]where pattern -replace | -highlight | -sep ... -form\n"
@@ -44794,6 +45308,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "       -nohead   does not display the [simulating:] info text.\n"
              "                 printloop is the same as runloop -nohead.\n"
              "       -quiet    does not echo the commands before execution.\n"
+             "       -quietrc  do not print rc status message per command.\n"
              "\n"
              "    $command string format\n"
              "       the command string may contain <run>i which is replaced by the\n"
@@ -44805,7 +45320,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "          <run>5i    print 5 digits, right justified, filled with blanks.\n"
              "          <run>05i   print 5 digits, right justified, filled with zeros.\n"
              "          <run>-5i   print 5 digits, left  justified, filled with blanks.\n"
+             "       to print the <run> char itself in output use <run><run>\n"
              "\n"
+             "    $see also\n"
+             "       sfk run - run self-defined command on filenames.\n"
+             "\n"
+             "    $examples\n"
              "       #sfk runloop 1 100 \"copy mytest.dat testfile_<run>03i.dat\" -yes\n"
              "          creates 100 copies of mytest.dat named testfile_001.dat,\n"
              "          testfile_002.dat, testfile_003.dat etc.\n"
@@ -44815,15 +45335,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "          instead of \\\", as '&' may create problems when combined with \\\"\n"
              "          (a syntax mess produced by the command shell, not by sfk itself.)\n"
              "          and to enable slash patterns like \\q, -spat had to be added.\n"
-             "\n"
-             "    $see also\n"
-             "       sfk run - run self-defined command on filenames.\n"
              );
       ehelp;
 
       bool bisprint = !strcmp(pszCmd, "printloop");
 
-      bool bHaveFrom=0, bHaveTo=0;
+      bool bHaveFrom=0, bHaveTo=0, bNoRC=0;
       int nfrom = 0;
       int nto   = 0;
       int ninc  = 1;
@@ -44852,6 +45369,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
          if (strBegins(argv[iDir], "-int")) {
             cs.intrun = 1;
+            continue;
+         }
+
+         if (strBegins(argv[iDir], "-quietrc")) {
+            bNoRC = 1;
             continue;
          }
 
@@ -44928,10 +45450,20 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          while (1) 
          {
             char *pszTok = strchr(pszCur, glblRunChar);
-            if (!pszTok) break;
-            // copy left
+            if (!pszTok)
+               break;
+            // copy left part before $
             int nBufLen = strlen(szLineBuf);
             sprintf(&szLineBuf[nBufLen], "%.*s", (int)(pszTok-pszCur), pszCur);
+            // special case: $$ means $
+            if (pszTok[1] == glblRunChar)
+            {
+               nBufLen = strlen(szLineBuf);
+               szLineBuf[nBufLen+0] = glblRunChar;
+               szLineBuf[nBufLen+1] = '\0';
+               pszCur = pszTok+2;
+               continue;
+            }
             // isolate token until 'i'
             char *pszTok2 = pszTok;
             while (*pszTok2 && *pszTok2 != 'i')
@@ -44971,9 +45503,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                iRC = system(szLineBuf);
          }
       
-         if (!cs.quiet && !cs.sim) {
+         if (!cs.quiet && !bNoRC && !cs.sim) {
             if (iRC) {
-               printf("... error, rc %d\n", iRC);
+               printf("... rc %d\n", iRC);
                fflush(stdout);
             }
          }
@@ -47507,7 +48039,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       // internal: hexdumple as alias for hexdump -showle
       if (strstr(pszCmd, "le"))
-         bGlblHexdumpShowLE = 1;
+         cs.leattr = 'e';
 
       // autoselect hex dump width by console width
       if (bGlblConsColumnsSet && (nGlblConsColumns >= 120))
@@ -47539,7 +48071,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              || !strcmp(argv[iDir], "-showle")
             )
          {
-            bGlblHexdumpShowLE = 1;
+            cs.leattr = 'e';
             continue;
          }
          else
@@ -48126,7 +48658,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              || !strcmp(argv[iDir], "-showle")
             )
          {
-            bGlblHexdumpShowLE = 1;
+            cs.leattr = 'e';
             continue;
          }
          else
@@ -48699,6 +49231,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
             if (cs.toiso)
                utf8ToIso(szLineBuf);
+            if (cs.toutf) {
+               bool bSafe = (cs.toutf > 1) ? 1 : 0;
+               UTF8Codec::toutf8(szLineBuf2, MAX_LINE_LEN, szLineBuf, bSafe);
+               strcopy(szLineBuf, szLineBuf2);
+            }
 
             if (bToTerm)
                printColorText(szLineBuf, pAttr, 1);
@@ -48711,6 +49248,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
             if (cs.toiso)
                utf8ToIso(szLineBuf);
+            if (cs.toutf) {
+               bool bSafe = (cs.toutf > 1) ? 1 : 0;
+               UTF8Codec::toutf8(szLineBuf2, MAX_LINE_LEN, szLineBuf, bSafe);
+               strcopy(szLineBuf, szLineBuf2);
+            }
 
             if (bToTerm)
                fwrite(szLineBuf, 1, strlen(szLineBuf), stdout);
@@ -48853,6 +49395,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                   will autodetect the number of digits.\n"
              "                   if output will be joined with older versions\n"
              "                   of sfk then -digits must stay default (1).\n"
+             "      -text        split at line boundaries if possible.\n"
+             "                   cannot be combined with -update.\n"
              "\n"
              "   $examples\n"
              "      #sfk split 2g c:\\bigfish.avi d:\\transfer\\easy.avi\n"
@@ -48875,7 +49419,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       int   iGetSizeDelay=100;
       int   iAltSize     = 0; // use fseek
       bool  bUpdate      = 0;
-      int   iDigits      = 1;      
+      int   iDigits      = 1;
+      bool  bTextMode    = 0;
 
       for (; iDir<argc; iDir++) 
       {
@@ -48924,6 +49469,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             continue;
          }
          else
+         if (!strcmp(argv[iDir], "-text")) {
+            bTextMode = 1;
+            continue;
+         }
+         else
          if (!strncmp(argv[iDir], "-", 1)) {
             if (setGeneralOption(argv, argc, iDir))
                continue;
@@ -48950,6 +49500,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       num nSplitSize = numFromSizeStr(pszSplitSize);
       if (nSplitSize <= 0)
          return 9+perr("supply a size info like 1048100b 500k 2000m or 2g and a filename.\n");
+
+      if (bTextMode && bUpdate) return 9+perr("-text cannot be combined with -update\n");
 
       printf("splitting into files of %s bytes each.\n", numtoa(nSplitSize));
 
@@ -48991,6 +49543,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       UCharAutoDel odel(pWorkBuf);
       char szAddInfo[200];
+
+      char *pTextBuf    = (char*)abBuf;
+      int   iTextBufMax = (int)sizeof(abBuf)-100;
+      int   iTextBufCur = 0;
 
       FILE *fin = fopen(pszSrc, "rb");
       if (!fin)
@@ -49062,10 +49618,14 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             fclose(fin); 
             return 9+perr("unable to write: %s\n", pszDst); 
          }
+         if (cs.debug)
+            printf("file: %s\n", pszDst);
           
          // copy binary part until splitsize is reached
-         num nLocRemain = nSplitSize;
-         while (nLocRemain > 0) 
+         num nLocRemain  = nSplitSize;
+         num nLocTotalIn = 0;
+         bool bBlockBail = 0;
+         while (bBlockBail == 0 && nLocRemain > 0) 
          {
             num nTotalMB = ntotal / 1000000;
             
@@ -49076,7 +49636,46 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             int nMaxRead = nWorkBufSize;
             if (nMaxRead > nLocRemain)
                 nMaxRead = (int)nLocRemain;
-            int nread = myfread(pWorkBuf, nMaxRead, fin);
+            int nread = 0;
+            if (iTextBufCur) {
+               // take over remainder from previous block
+               if (iTextBufCur > nWorkBufSize)
+                  return 9+perr("buffer overflow 1 (%d/%d)", (int)iTextBufCur, (int)nWorkBufSize);
+               memcpy(pWorkBuf, pTextBuf, iTextBufCur);
+               nread = iTextBufCur;
+               iTextBufCur = 0;
+               if (cs.debug)
+                  printf("use :  takeover %d\n", nread);
+            } else {
+               nread = myfread(pWorkBuf, nMaxRead, fin);
+               if (nread+nLocTotalIn >= nLocRemain && bTextMode != 0) 
+               {
+                  // completed read of a full intermediate block.
+                  // isolate full line at block end.
+                  char *pstart = (char*)pWorkBuf;
+                  char *pend   = pstart+nread;
+                  char *plend  = pend;
+                  char *pmin   = pstart;
+                  if (nread > iTextBufMax)
+                        pmin   = plend - nread;
+                  while (plend > pmin && plend[-1] != '\n')
+                     plend--;
+                  if (plend > pmin) {
+                     // split block, take over incomplete line
+                     int inow   = plend - pstart;
+                     int ilater = pend - plend;
+                     if (ilater > iTextBufMax)
+                        return 9+perr("buffer overflow 2 (%d/%d)", (int)inow, (int)iTextBufMax);
+                     memcpy(pTextBuf, plend, ilater);
+                     iTextBufCur = ilater;
+                     nread = inow;
+                     if (cs.debug)
+                        printf("cach:  takeover %d: \"%.*s\"\n", ilater, ilater, pTextBuf);
+                     // must stop on this part now
+                     bBlockBail = 1;
+                  }
+               }
+            }
             if (nread <= 0) {
                bbail = 1;
                break; // EOF on input
@@ -49090,10 +49689,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
             md5.update(pWorkBuf, nread);
 
+            nLocTotalIn += nread;
             nLocRemain -= nread;
             nRemain -= nread;
             ntotal += nread;
-         }
+
+         }  // endwhile locremain
  
          // close output file
          fclose(fout);
@@ -53178,13 +53779,15 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    regtest("rep -dump -wide -context=20 -bylist xreplist.txt -dir . -file xfile1 xfile2");
    regtest("list xdir .txt +rep /foo/bar/");
 
-   bool bIsHexFind = 0;
-   bool bIsAnyFind = 0;
-   bool bIsXText   = 0;
-   bool bIsXPat    = 0;
-   bool bExtract   = 0;
-   bool bFullHelp  = 0;
-   bool bIsReplace = 0;
+   bool bIsHexFind  = 0;
+   bool bIsXHexFind = 0;
+   bool bIsAnyFind  = 0;
+   bool bIsXText    = 0;
+   bool bIsXPat     = 0;
+   bool bExtract    = 0;
+   bool bFullHelp   = 0;
+   bool bIsReplace  = 0;
+   bool bIsXFind    = 0;
 
    bool bXdXe = 0;
 
@@ -53196,15 +53799,18 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
           || (bXdXe && !strcmp(pszCmd, "xhexfind"))
           || (bXdXe && !strcmp(pszCmd, "extract"))
           || (bXdXe && !strcmp(pszCmd, "xtext"))
+          || (bXdXe && !strcmp(pszCmd, "xfind"))
          )
    {
-      bIsXText   = !strcmp(pszCmd, "xtext");
-      bIsHexFind = !strcmp(pszCmd, "hexfind") || strBegins(pszCmd, "xhex");
-      bExtract   = bIsXText || !strcmp(pszCmd, "extract");
-      bIsAnyFind = bIsXText || bIsHexFind;
-      bIsXPat    = strBegins(pszCmd, "x") || bExtract;
-      bFullHelp  = (nparm >= 1 && !strcmp(argv[iDir], "-full"));
-      bIsReplace = strstr(pszCmd, "rep") ? 1 : 0;
+      bIsXText    = !strcmp(pszCmd, "xtext"); // read text files only
+      bIsXFind    = !strcmp(pszCmd, "xfind") || bIsXText;
+      bIsXHexFind = strBegins(pszCmd, "xhex");
+      bIsHexFind  = !strcmp(pszCmd, "hexfind") || bIsXHexFind;
+      bExtract    = bIsXText || bIsXFind || !strcmp(pszCmd, "extract");
+      bIsAnyFind  = bIsXText || bIsHexFind || bIsXFind;
+      bIsXPat     = strBegins(pszCmd, "x") || bExtract;
+      bFullHelp   = (nparm >= 1 && !strcmp(argv[iDir], "-full"));
+      bIsReplace  = strstr(pszCmd, "rep") ? 1 : 0;
 
       #ifndef SFKXEREP
       if (strBegins(pszCmd, "xrep"))
@@ -53234,12 +53840,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      search performance tests for users interested in sfk xreplace.\n"
              "\n"
              );
-      if (strBegins(pszCmd, "xtext"))
+      if (bIsXFind || bIsXText)
       printx("   $demo notice\n"
-             "      this is a demo of the commercial sfk xtext command, provided\n"
-             "      for free. compared to the full sfk xtext command it cannot\n"
-             "      reformat the output (does not accept /to/ text).\n"
+             "      this is a demo of the commercial sfk %s command, provided\n"
+             "      for free. compared to the full sfk %s command it cannot\n"
+             "      reformat the output (accepts only [all] within /totext/).\n"
              "\n"
+             , pszCmd, pszCmd
              );
       #endif
       printx("   $basic syntax:\n");
@@ -53264,15 +53871,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                 "         replaces text matching \"foo*bar\" by \"other\" in all files\n"
                 "         ending .ext1 or .ext2 in a folder mydir.\n");
 
-      if (strBegins(pszCmd, "xhex"))
-         printx("      #sfk xhexfind in.dat \"/foo[0.100 bytes of (a-z0-9_@ )]bar/\"\n"
+      if (bIsXFind || strBegins(pszCmd, "xhex"))
+         printx("      #sfk %s in.dat \"/foo[0.100 bytes of (a-z0-9_@ )]bar/\"\n"
                 "         searches a single input file in.dat for all phrases\n"
                 "         starting foo and ending bar, with 0 to 100 characters\n"
                 "         inbetween being alphanumeric, @ or _ or space.\n"
-                "      #sfk xhexfind -text \"/foo*bar/\" -dir mydir -file .ext1 .ext2\n"
+                "      #sfk %s -text \"/foo*bar/\" -dir mydir -file .ext1 .ext2\n"
                 "         finds text having foo and bar in the same line, with any\n"
                 "         characters inbetween, from all files ending .ext1 or .ext\n"
-                "         within a folder mydir and all sub folders.\n");
+                "         within a folder mydir and all sub folders.\n"
+                , pszCmd, pszCmd
+                );
 
       if (strBegins(pszCmd, "extract"))
          printx("      #sfk extract in.txt \"/foo[0.100 chars of (a-z0-9_@ )]bar/\"\n"
@@ -53325,27 +53934,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              );
       #endif
 
-      printx("   $subdirectories are included by default!\n"
+      printx("   $subdirectories are included by default\n"
              "      the sfk default for most commands is to process the given directories,\n"
              "      #as well as all subdirs within them<def>. specify -nosub to disable this.\n"
              "\n");
       printx("   $options:\n"
-             "      -full         print full help text telling about -bylist pattern files,\n"
-             "                    batch file return codes, special character case sensi-\n"
-             "                    tivity and nested or repeated replace behaviour.\n"
-             );
-      printx("      -nosub        do not include files in subdirectories. this is default\n"
+             "      -nosub        do not include files in subdirectories. this is default\n"
              "                    when specifying a single input filename.\n");
-
-             #ifndef SFKXEREP
-      if (bIsReplace)
-      printx("      -recsize      with same length replacements: set input record size\n"
-             "                    for processing (default=100k)\n");
-             #endif
-      printx("      -quiet        do not print progress status and total hits statistics.\n"
-             "      -quiet=2      also do not print the files checked / changed message.\n"
-             "      -perf         show performance statistics.\n"
-             );
       if (bIsXPat)
       printx("      -case         case-sensitive text comparison. default is insensitive.\n");
       else
@@ -53361,11 +53956,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                    -pat is not required if a singleFile name is given.\n"
              "      -text         the same as -pat, starting a text pattern list.\n"
              );
-      if (bIsXPat)
-      printx("      -spat         slash patterns are always active with xreplace, xhexhfind\n"
-             "                    and extract, and cannot be deactivated. -spat is ignored.\n"
-             );
-      else
+      if (!bIsXPat)
       printx("      -spat         the same, but also activates slash patterns like \\t .\n"
              "                    type \"sfk help pat\" for the list of possible patterns.\n"
              "      -spats[trict] same as -spat, but stops with error on undefined\n"
@@ -53375,7 +53966,28 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (!bIsXPat)
       printx("      -bin[ary]     starts a list of binary replace patterns, specified\n"
              "                    as hexcode like /0A0D/2020/\n");
-      if (!bIsXText)
+
+      if (bFullHelp)
+      printx("      -bylist x.txt read search/replace patterns from a file (see below).\n");
+      else
+      printx("      -bylist x.txt read search patterns from a file (add -full for more.)\n");
+      printx("      -enddir       to use -dir ... -file ... as first parameters, type:\n"
+             "                    sfk %s -dir ... -file ... -enddir -pat ...\n"
+             , pszCmd);
+      if (bIsXFind)
+      printx("      -hex          print output as hex dump instead of plain text.\n");
+
+             #ifndef SFKXEREP
+      if (bIsReplace)
+      printx("      -recsize      with same length replacements: set input record size\n"
+             "                    for processing (default=100k)\n");
+             #endif
+      printx("      -firsthit     %s only first found pattern match per file.\n"
+             , bIsXFind ? "show":"process");
+      printx("      -quiet        do not print progress, total hits, files checked infos.\n");
+      if (!bIsXFind)
+      printx("      -perf         show performance statistics.\n");
+      if (!bIsXText && !bIsXFind && !bIsXHexFind)
       printx("      -dump [-lean] create hexdump of hits, listing  8 bytes per line.\n"
              "                    also previews changes on replacements of same length.\n"
              "      -dump -wide   create hexdump of hits, listing 16 bytes per line;\n"
@@ -53383,24 +53995,20 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -nodump       hexfind shows a data dump by default. specify -nodump\n"
              "                    to just list the names of files containing matches.\n"
              );
-      if (bIsHexFind)
-      printx("      -justrc       print nothing with hexfind. same as -nodump -quiet=2.\n"
-             );
-      printx("      -reldist      for each hit, tell relative distance to previous hit.\n"
-             "      -context=n    with -dump, show additional n bytes of context.\n");
-      if (bFullHelp)
-      printx("      -bylist x.txt read search/replace patterns from a file (see below).\n");
-      else
-      printx("      -bylist x.txt read search patterns from a file (add -full for more.)\n");
+  //  if (bIsHexFind)
+  //  printx("      -justrc       print nothing with hexfind. same as -nodump -quiet=2.\n");
+      if (bIsXFind)
+      printx("      -justrc       print no search results, just set return code on hits.\n"
+             "      -showrc       show return code at end of command.\n");
+      if (!bIsXFind)
+      printx("      -context=n    with hexdump: show additional n bytes of context.\n"
+             "      -reldist      with hexdump: tell relative distances to previous hits.\n");
              #ifndef SFKXEREP
       if (bIsReplace)
       printx("      -memlimit=nm  with different-length replacements, files must be loaded\n"
              "                    into memory for processing. the default limit for memory\n"
              "                    use is 300 MB. set -memlimit=500m to select 500 MB.\n");
              #endif
-      printx("      -enddir       to use -dir ... -file ... as first parameters, type:\n"
-             "                    sfk rep -dir ... -file ... -enddir myfile.dat -pat ...\n"
-             "      -firsthit     process only first found pattern match per file.\n");
       if (bExtract)
       printx("      -nofile       do not insert :file header lines in output.\n"
              "      -crlf, -lf    for file headers and default totext: force crlf or lf\n"
@@ -53417,6 +54025,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                    within your search/replace patterns.\n"
              );
       #endif // WITH_REPEAT
+      printx("      -full         print full help text telling about -bylist pattern files,\n"
+             "                    batch file return codes, special character case sensi-\n"
+             "                    tivity and nested or repeated replace behaviour.\n");
       printx("\n");
       if (bFullHelp)
       printx("   $return codes for batch files\n"
@@ -53527,15 +54138,18 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              #endif
              "\n");
       }
+      printx("   $aliases\n"
+             "      #sfk xtext<def>    same as xfind but reads only text files\n"
+             "      #sfk xhex<def>     same as xfind -hex with hexdump output\n"
+             "\n"
+             );
       printx("   $see also\n"
-             "      #sfk hexfind<def>  search  fixed    text in   text/binary files\n"
+             "      #sfk hexfind<def>  search  fixed    text in        binary files\n"
              "      #sfk replace<def>  replace fixed    text in   text/binary files\n"
              "      #sfk filter<def>   filter and edit text lines with simple wild-\n"
              "                   cards but many formatting options\n"
              "      #sfk view<def>     a realtime GUI based text filter tool\n"
-             // #if def SFKXD
              "      #sfk help xe<def>  about SFK XE and xreplace with SFK Expressions.\n"
-             // #end if // SFKXD
              "\n"
              );
       printBewareLean();
@@ -53557,7 +54171,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              , pszCmd
              );
       }
-      if (!bIsXText)
+      if (!bIsXText && !bIsXFind)
       printx("   $common usage errors\n"
              "      #sfk hexfind in.txt \"/foo\\r\\n/\"\n"
              "         will not find \"foo\" at line ends, but searches literal\n"
@@ -53665,21 +54279,29 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (bGlblConsColumnsSet && (nGlblConsColumns >= 120))
          bGlblHexDumpWide = 1;
 
-      // autoselect dump with binfind
+      // autoselect dump per command
+      if (bIsXFind) { // init
+         cs.repDump = 1;
+         bforcedump = 1;
+         cs.astext  = 1;
+         cs.nostat  = 1;
+         cs.noind   = 1;
+         cs.xtext   = 1;
+         cs.quiet   = 1;
+         cs.litattr = 'e'; // literal highlight attribute
+      }
       if (bIsHexFind) {
          cs.repDump = 1;
          bGlblHexDumpWide = 1;
+      }
+      if (bIsXText) {
+         cs.textfiles = 1;
       }
       // changed later in case of -justrc
 
       cs.xpat    = bIsXPat;
       cs.extract = bExtract;
       cs.hexfind = bIsHexFind;
-
-      if ((cs.xtext = bIsXText))
-      {
-         cs.quiet = 1;
-      }
 
       char szDefaultTo[100];
       szDefaultTo[0] = '\0';
@@ -53848,6 +54470,28 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             sprintf(szDefaultTo, "[all]%s%s", cs.szeol, cs.szeol);
             continue;
          }
+         if (!strcmp(argv[iDir], "-astext")) {
+            cs.astext = 1;
+            cs.nostat = 1;
+            continue;
+         }
+         if (strBegins(argv[iDir], "-hex")) {
+            cs.astext   = 0;
+            cs.xtext    = 0;
+            cs.hexfind  = 1;
+            cs.leattr   = 'x';   // xfind -hex
+            if (!strcmp(argv[iDir], "-hexpure"))
+               cs.leattr = 0;
+            continue;
+         }
+         if (strBegins(argv[iDir], "-nole")) {
+            cs.leattr   = 0;
+            continue;
+         }
+         if (!strcmp(argv[iDir], "-stat")) {
+            cs.nostat = 0;
+            continue;
+         }
          if (!strncmp(argv[iDir], "-", 1)) {
             if (isDirParm(argv[iDir])) {
                break; // fall through
@@ -53884,7 +54528,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                   pinf("if this is a pattern, say -pat %s\n", argv[iDir]);
                   return 9;
                }
-               if (bIsXText && ocoi.isBinaryFile()) {
+               if (cs.textfiles && ocoi.isBinaryFile()) {
                   if (cs.quiet < 2)
                      pwarn("skipping binary: %s", ocoi.name());
                   return 9;
@@ -53934,6 +54578,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       if (cs.nohead || cs.nonames)
          cs.usefilehead = 0;
+
+      if (cs.nonames)
+         cs.noind = 1;
 
       char *pszRepList = 0;
 
@@ -54225,7 +54872,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       if (!cs.quiet && !chain.coldata)
       {
-         chain.print('h', 0, "[total hits/matching patterns/non-matching patterns]\n");
+         if (!cs.nostat)
+            chain.print('h', 0, "[total hits/matching patterns/non-matching patterns]\n");
       }
 
       if (bVarMode && cs.sim && cs.repDump) {
@@ -54254,7 +54902,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (cs.extract && chain.coldata)
          { }
       else
-      if (!chain.colfiles && (cs.quiet < 2)) {
+      if (!chain.colfiles && (cs.quiet < 1)) {
          if (bIsAnyFind || cs.extract)
             chain.print("%d files checked, %d files matched.\n", cs.files, cs.filesChg);
          else
@@ -55115,7 +55763,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                if (!pcoi) return 9;
                pszFile = pcoi->name();
             } else {
-               const char *pcmd = bIsTail ? "tail" : "head";
+               cchar *pcmd = bIsTail ? "tail" : "head";
                perr("too many input filenames for %s (%d)",pcmd,chain.numberOfInFiles());
                pinf("%s can only process a single input filename.\n",pcmd);
                pinf("use +t%s instead of %s if you want to process text.\n",pcmd,pcmd);
@@ -56143,7 +56791,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                }
             }
             if (butf) {
-               UTF8Decoder utf(szLineBuf, iutf);
+               UTF8Codec utf(szLineBuf, iutf);
                while (utf.hasChar()) {
                   uint n = utf.nextChar();
                   chain.print("U+%04X\t%c\n", n, unicodeToIso(n));
@@ -58991,7 +59639,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (!chain.usedata)
          return 9+perr("missing chain text input");
 
-      const char *acol = "xh";
+      cchar *acol = "xh";
       int icol = strlen(acol);
       
       int inest=0,inest2=0,itmpnest=0;
@@ -59555,7 +60203,8 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
 
       printHelp(
          "search and compare\n"
-         "   sfk find       - find words in binary files, showing text\n"
+         "   sfk find       - find words in text and binary files\n"
+         "   sfk ftext      - find words only in text files\n"
          "   sfk md5gento   - create list of md5 checksums over files\n"
          "   sfk md5check   - verify list of md5 checksums over files\n"
          "   sfk md5        - calc md5 over a file, compare two files\n"
@@ -60547,7 +61196,8 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          "\n"
          "      if any command supports slash patterns,\n"
          "\n"
-         "      - they are NOT active by default.\n"
+         "      - they are not active by default, except for commands\n"
+         "        starting with \"x\" that use SFK Expressions.\n"
          "\n"
          "      - to use, say -spat directly after the command name:\n"
          "        #sfk echo -spat \"three\\tlittle\\ttabs\\t.\"\n"
@@ -61096,7 +61746,7 @@ printx(
                if (mystrstrip(pline, ppat, &npos)) {
                   nhit++;
                   if (npos + strlen(ppat) < MAX_LINE_LEN)
-                     memset(szAttrBuf+npos, 'a', strlen(ppat)); // °°
+                     memset(szAttrBuf+npos, 'a', strlen(ppat));
                }
             }
 
