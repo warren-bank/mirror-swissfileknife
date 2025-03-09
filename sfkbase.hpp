@@ -8,12 +8,14 @@ public:
    StringTable          ( );
   ~StringTable          ( );
    long addEntry        (char *psz, long nAtPos=-1);
+   long removeEntry     (long nAtPos);
    long numberOfEntries ( );
    char *getEntry       (long iIndex, int nTraceLine);
    long  setEntry       (long iIndex, char *psz);
    void resetEntries    ( );
    bool isSet           (long iIndex);
    void dump            (long nIndent=0);
+   long find            (char *psz); // out: index, or -1
 private:
    long addEntryPrefixed(char *psz, char cPrefix);
    long setEntryPrefixed(long iIndex, char *psz, char cPrefix);
@@ -77,7 +79,8 @@ public:
    Array &rootDirs      ( ) { return clRootDirs; }
    Array &dirMasks      ( ) { return clDirMasks; }
    Array &fileMasks     ( ) { return clFileMasks; }
-   bool  anythingAdded  ( );
+   bool  anyRootAdded   ( );
+   bool  anyFileMasks   ( );  // of first root
    void  dump           ( );
    long  getDirCommand  ( );  // of current root
    bool  isAnyExtensionMaskSet   ( );
