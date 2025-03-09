@@ -78,6 +78,7 @@ int getFileMD5(char *pszFile, SFKMD5 &md5, bool bSilent=0, bool bInfoCycle=0);
 int getFileMD5(char *pszFile, uchar *abOut16);
 void oprintf(cchar *pszFormat, ...);
 void oprintf(StringPipe *pOutData, cchar *pszFormat, ...);
+int copyFromFormText(char *pSrc, int iMaxSrc, char *pDstIn, int iMaxDst, uint nflags=0);
 bool iseol(char c);
 
 extern bool bGlblEscape;
@@ -1069,7 +1070,7 @@ int CoiMap::remove(char *pkey)
    return nrc;
 }
 
-void setWebConfig(int iWhat, char *pszValue) // °°
+void setWebConfig(int iWhat, char *pszValue)
 {
    int iValue = atoi(pszValue);
 
@@ -12893,6 +12894,132 @@ int ExtProgram::stop()
    return 0;
 }
 
+static cchar *pszPicReaderTpl1 =
+"<html><head><title>image reader</title>\n"
+"<script type=\"text/javascript\">\n"
+"var apic = new Array();\n"
+"apic = [\n";
+
+static cchar *pszPicReaderTpl2 =
+"   ];\n"
+"var ipic = 0;\n"
+"function gopic() {\n"
+"   var opic = document.getElementById(\"pic\");\n"
+"   opic.src = apic[ipic];\n"
+"   document.title = apic[ipic];\n"
+"   scroll(0,0);\n"
+"}\n"
+"function doprev() { if (ipic > 0) ipic--; else ipic = apic.length-1; gopic(); }\n"
+"function donext() { if (ipic < apic.length-1) ipic++; else ipic = 0; gopic(); }\n"
+"function doinit() {\n"
+"   gopic();\n"
+"   var w     = document.body.clientWidth;\n"
+"   var h     = document.body.clientHeight;\n"
+"   var oarea = document.getElementById(\"aprev\");\n"
+"   oarea.coords = \"0,0,\"+(w/2)+\",\"+(h*2);\n"
+"   var oarea = document.getElementById(\"anext\");\n"
+"   oarea.coords = \"\"+(w/2)+\",0,\"+w+\",\"+(h*2);\n"
+"}\n"
+"</script></head>\n"
+"<body id=\"doc\" leftmargin=\"0\" topmargin=\"0\" marginwidth=\"0\" marginheight=\"0\" onload=\"javascript:doinit()\">\n"
+" <center>\n"
+" <img id=\"pic\" src=\"tmp.png\" ";
+
+static cchar *pszPicReaderTpl3 =
+" usemap=\"#mymap\">\n"
+" <map name=\"mymap\">\n"
+"  <area id=\"aprev\" shape=\"rect\" coords=\"0,0,400,400\"   title=\"previous\" onclick=\"javascript:doprev()\">\n"
+"  <area id=\"anext\" shape=\"rect\" coords=\"0,400,400,800\" title=\"next\"     onclick=\"javascript:donext()\">\n"
+" </map>\n"
+"</body>\n"
+"</html>\n"
+;
+
+static cchar *pszPicListTpl1 =
+"<html><body>\n"
+;
+
+static cchar *pszPicListTpl2 =
+"</body></html>\n"
+;
+
+bool ispathchr(char c) {
+   if (c=='\\') return 1;
+   if (c=='/') return 1;
+   return 0;
+}
+
+int execToHtml(int imode, int iaspect, char *plist, char *pszOutFile)
+{
+   FILE *fout = fopen(pszOutFile, "w");
+   if (!fout)
+      return 9+perr("cannot write: %s", pszOutFile);
+
+   if (imode==1)
+      fwrite(pszPicReaderTpl1, 1, strlen(pszPicReaderTpl1), fout);
+   else
+      fwrite(pszPicListTpl1, 1, strlen(pszPicListTpl1), fout);
+
+   char *pcur=plist;
+   char *pmax=pcur+strlen(pcur);
+   while (pcur<pmax)
+   {
+      char *pnext = pcur;
+
+      while (*pnext!=0 && *pnext!='\r' && *pnext!='\n') {
+         if (*pnext=='\\')
+            *pnext='/';
+         pnext++;
+      }
+
+      if (*pnext)
+         *pnext++ = '\0';
+
+      while (*pnext=='\r' || *pnext=='\n')
+         pnext++;
+
+      /*
+         outfile: mydir\index.html
+         pcur   : mydir/pic1.jpg
+      */
+      int ioff=0;
+      for (int i=0; pcur[i] && pszOutFile[i]; i++) {
+         if (ispathchr(pcur[i]) && ispathchr(pszOutFile[i]))
+            ioff=i+1;
+         else
+         if (pcur[i] != pszOutFile[i])
+            break;
+      }
+      pcur+=ioff; // -> pic1.jpg
+
+      if (imode==1) {
+         fprintf(fout, "   \"%s\",\n", pcur);
+      } else {
+         if (iaspect==1) // fitw
+            fprintf(fout, "<img src=\"%s\" width=\"100%%\"><p/>\n", pcur);
+         else
+            fprintf(fout, "<img src=\"%s\"><p/>\n", pcur);
+      }
+
+      pcur=pnext;
+   }
+
+   if (imode==1) {
+      fwrite(pszPicReaderTpl2, 1, strlen(pszPicReaderTpl2), fout);
+      if (iaspect==1)
+         fprintf(fout, "width=\"94%%\"");
+      else
+         fprintf(fout, "height=\"94%%\"");
+      fwrite(pszPicReaderTpl3, 1, strlen(pszPicReaderTpl3), fout);
+   } else {
+      fwrite(pszPicListTpl2, 1, strlen(pszPicListTpl2), fout);
+   }
+
+   fclose(fout);
+
+   return 0;
+}
+
 size_t myfread(uchar *pBuf, size_t nBytes, FILE *fin , num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
 char getYNAchar();
 
@@ -15270,6 +15397,600 @@ int execDirCleanup(char *pszSrc, FileList &oDirFiles)
          }
       }
    }
+
+   return 0;
+}
+
+const char *szGlblPhraseData =
+{
+"#:sfk-phrase-db:100:\n"
+"# content is converted as:\n"
+"# ,  -> random selection\n"
+"# \\, -> tab\n"
+"# ;  -> ,\n"
+"# \\; -> ;\n"
+"# \\+ -> nothing\n"
+"# \\n -> linefeed\n"
+"# $1sym -> remember a random index in slot 1\n"
+"#          for later repeat as $1sym\n"
+"\n"
+"$company: $namecom\\,$stradr\\,$city $statecode $zip\n"
+"$person: $nameper\\,$stradr\\,$city $statecode $zip\n"
+"$nameper: $name1 $name2\n"
+"$name1: $preperm,$preperf\n"
+"$preperm: Arthur,Alexander,Brian,Colin,Donald,Edward,Henry,\n"
+"          Jack,James,Larry,Neil,Richard\n"
+"$preperf: Alice,Brenda,Dora,Ellen,Grace,Helena,Ilona,Laura,\n"
+"          Lena,Sandra,Susan\n"
+"$name2: Smith,Jones,Harris,Young,Scott,Cole,Ellis,Porter,\n"
+"          Anderson,Johnson,Peterson,Miller\n"
+"$namecom: $comsyl1$comsyl2 $combra $comtype\n"
+"$pvrfile: $nametv-$date-$timemin-$tvshow.mts\n"
+"$tvshow:  $tvshow1,$tvshow2,$tvshow3\n"
+"$tvshow1: The $nameper $tvwhat\n"
+"$tvshow2: $nameper $tvwhat\n"
+"$tvshow3: $newstype News\n"
+"$newstype: Market,Technology,World\n"
+"$tvwhat:  Show,News,Talk\n"
+"$nametv:  $typetv$jointv$nameflat\n"
+"$jointv:  $dig,_\n"
+"$typetv:  Channel,Station,TV,News,Cable\n"
+"$nameflat: $comsyl1$comsyl2\n"
+"$comsyl1: Wel,Gen,Fram,Nap,Ken,Can,New,Al,Be,Dan,El\n"
+"$comsyl2: ton,mond,dale,ney,kin,port,tree,way,nex,car,dyne\n"
+"$cnsyl1: Che,Wo,Fi,Gu,Kan,Sel,Ben,Chong,Ching,Wing,Fon,Bun\n"
+"$cnsyl2: che,wo,fi,gu,kan,sel,ben,chong,ching,wing,fon,bun\n"
+"$combra: Machinery,Printing,Design,Furniture,Computers\n"
+"$comtype: Inc,Ltd\n"
+"$stradr: $num3 $namestr $strtype\n"
+"$date: $year$month$day\n"
+"$time: $hour$minsec$minsec\n"
+"$timemin: $hour$minsec\n"
+"$hour: 01,02,03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18,19,20,21,22,23\n"
+"$minsec: 01,02,03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18,19,20,\n"
+"         21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,\n"
+"         41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59\n"
+"$year: 2011,2012,2013,2014\n"
+"$month: 01,02,03,04,05,06,07,08,09,10,11\n"
+"$day:  01,02,03,04,05,06,07,08,09,10,11,12,13,14,\n"
+"       15,16,17,18,19,20,21,22,23,24,25,26,27,28\n"
+"$num9: $dig1$dig$dig$dig$dig$dig$dig$dig$dig\n"
+"$num8: $dig1$dig$dig$dig$dig$dig$dig$dig\n"
+"$num7: $dig1$dig$dig$dig$dig$dig$dig\n"
+"$num6: $dig1$dig$dig$dig$dig$dig\n"
+"$num5: $dig1$dig$dig$dig$dig\n"
+"$num4: $dig1$dig$dig$dig\n"
+"$num3: $dig1$dig$dig\n"
+"$dig1: 1,2,3,4,5,6,7,8,9\n"
+"$dig: 0,1,2,3,4,5,6,7,8,9\n"
+"$namestr: $comsyl1$comsyl2\n"
+"$strtype: Dr,Rd\n"
+"$zip: $num5\n"
+"$city: London,Melville,Hertford,Denton,Framingham,Orlando,Irvine,\n"
+"       Seattle,Toronto,Victoria,Portland,Wellington\n"
+"$statecode: AL,MT,AK,NE,AZ,NV,AR,NH,CA,NJ,CO,NM,CT,NY,DE,NC,FL,\n"
+"            ND,GA,OH,HI,OK,ID,OR,IL,PA,IN,RI,IA,SC,KS,SD,KY,TN,\n"
+"            LA,TX,ME,UT,MD,VT,MA,VA,MI,WA,MN,WV,MS,WI,MO,WY\n"
+"$char1: A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z\n"
+"$country: USA,England,Australia,Canada,Argentina,Chile,China,\n"
+"          France,Germany,Greece,Japan,Spain,Taiwan\n"
+"$countrycode: US,EN,AU,CA,AR,CL,CN,\n"
+"          FR,DE,GR,JP,ES,TW\n"
+"\n"
+"$ip4: $ip4part.$ip4part.$ip4part.$ip4part\n"
+"$ip4part: 1$dig$dig\n"
+"\n"
+"$news: $1preperm $name2 created a new product; the $2verb $3sub with $social connectivity.\\n\n"
+"       It allows to $4get $images from all $5friend\\+s around your $area live on $your $watch.\\n\n"
+"       \"Everyone needs a $2verb $3sub\"; $1preperm says; \"it's the smart and social way to $4get $5friend\\+s\".\n"
+"$verb: flying, rolling, jumping, hoovering\n"
+"$sub: watch, rubber duck, camera, ventilator, rice cooker,\n"
+"      coffee machine, toaster, paper weight, car key, remote control\n"
+"$get: keep track of, share, post\n"
+"$images: images, sounds, videos\n"
+"$your: your, a friends\n"
+"$watch: watch, tv, smartphone, tablet\n"
+"$friend: bird, dog, cat, squirrel, turtle, hamster\n"
+"$area: area, house, couch, toilet, fridge, car, bathroom, garage\n"
+"$social: facebook, twitter, google, tumblr, whats app, instagram\n"
+"\n"
+};
+
+class Phraser;
+
+class Symbol
+{
+public:
+   Symbol   (char *pszName, Phraser *parent);
+   void     collect(char *pszContent);
+   char    *name() { return szClName; }
+   char    *solve(char *pout, int nmaxout, int nlevel, int istatic);
+   bool     issep(char c);
+   bool     ispunctortab(char c);
+private:
+   char     szClName[100];
+   char     szClOpt[100];
+   char     szClCont[1024];
+   char     szClBuf[100];
+   char     szClBuf2[200];
+   // int      astatic[100];
+   Phraser  *phraser;
+};
+
+class Phraser
+{
+public:
+   Phraser  ();
+   int     load(char *pszAll, char *pszData);
+   int     load(char *pszFile);
+   char    *solve(char *psz);
+   int     add(Symbol *p);
+   Symbol  *get(char *pszName,int *pstatic);
+   void     reset();
+   void     resetIndexes();
+   int      astatic[1000+10];
+private:
+   void     fetch(char *pbuf, char *psrc, int nlen);
+   char     *pszClFilename;
+   char     szClBuf1[200];
+   char     szClOut[10000];
+   Symbol   *psym[1000];
+   int     nsym;
+};
+
+static bool skipspace(char **ppsz) {
+   char *psz = *ppsz;
+   while (*psz && isspace(*psz))
+      psz++;
+   *ppsz = psz;
+   return (*psz != 0);
+}
+
+static bool skipto(char **ppsz, char c) {
+   char *psz = *ppsz;
+   while (*psz && *psz != c)
+      psz++;
+   *ppsz = psz;
+   return (*psz != 0);
+}
+
+Symbol::Symbol(char *pszName, Phraser *parent)
+{
+   memset(this,0,sizeof(*this));
+   szClOpt[0] = '\0';
+   if (cs.debug)
+      printf(" create symbol: %s\n", pszName);
+   char *pszopt = strchr(pszName, ',');
+   if (pszopt) {
+      strncpy(szClName, pszName, pszopt-pszName);
+      szClName[pszopt-pszName] = '\0';
+      strcopy(szClOpt, pszopt);
+   } else {
+      strcopy(szClName, pszName);
+   }
+   memset(szClCont, 0, sizeof(szClCont));
+   phraser = parent;
+}
+
+bool Symbol::issep(char c)
+{
+   if (c == ',' || c== '\t')
+      return 1;
+   return 0;
+}
+
+bool Symbol::ispunctortab(char c)
+{
+   if (ispunct(c))
+      return 1;
+   if (c == '\t' || c == '\x01')
+      return 1;
+   return 0;
+}
+
+void Symbol::collect(char *pszContent)
+{
+   szLineBuf2[0] = '\0';
+   copyFromFormText(pszContent, strlen(pszContent), szLineBuf2, MAX_LINE_LEN, 2);
+
+   if (cs.debug)
+      printf("   %s collects \"%s\"\n", szClName, szLineBuf2);
+
+   strcat(szClCont, szLineBuf2);
+
+   if (cs.debug)
+      printf("   %s now holds \"%s\"\n", szClName, szClCont);
+}
+
+char *Symbol::solve(char *pout, int nmaxout, int nlevel, int istatic)
+{
+   if (cs.debug)
+      printf(" %s %p solves \"%s\"\n", szClName, this, szClCont);
+
+   char *pcont = szClCont;
+
+   // if comma-separated phrases are given,
+   // which are not escaped like \,
+   bool biscsep = 0;
+   char clast = 0;
+   char *psz = 0;
+   for (psz=pcont; *psz; psz++) {
+      if (issep(*psz) == 1 && clast != '\\')
+         {  biscsep=1; break; }
+      clast = *psz;
+   }
+
+   if (biscsep)
+   {
+      // then random-select phrase
+
+      // count phrases
+      int nwords = 0;
+      char *psz1 = pcont;
+      for (clast=0; *psz1; psz1++) {
+         if (issep(*psz1) == 1 && clast != '\\')
+            nwords++;
+         clast = *psz1;
+      }
+      nwords++;
+
+      // select a phrase
+      int itarg = 0;
+      int imaxsymstat = (sizeof(phraser->astatic)/sizeof(int))-10;
+      if (istatic > 0 && istatic < imaxsymstat) {
+         if (phraser->astatic[istatic] < 0)
+            phraser->astatic[istatic] = rand();
+         itarg = phraser->astatic[istatic];
+      } else {
+         itarg = rand();
+      }
+      itarg = itarg % nwords;
+      int iword = 0;
+      psz1 = pcont;
+      while (psz1 && *psz1)
+      {
+         char *psz2 = psz1;
+         for (clast=0; *psz2; psz2++) {
+            if (issep(*psz2) == 1 && clast != '\\')
+               break;
+            clast = *psz2;
+         }
+         if (iword == itarg) {
+            mystrcopy(szClBuf2, psz1, psz2-psz1+1);
+            if (cs.debug)
+               printf("   sel \"%s\"\n", szClBuf2);
+            pcont = szClBuf2;
+            break;
+         }
+         iword++;
+         if (issep(*psz2) == 1) psz2++;
+         while (*psz2 == ' ') psz2++;
+         psz1 = psz2;
+      }
+      if (pcont == szClCont) {
+         perr("syntax error: probably too many commas in line: %s\n",szClCont);
+         return 0;
+      }
+   }
+
+   int iout = strlen(pout);
+
+   if (!strchr(pcont, '$')) {
+      // solve terminal
+      strcat(pout, pcont);
+   } else {
+      // solve non-terminal
+      char *psz1 = pcont;
+      while (psz1 && *psz1)
+      {
+         char *psz2 = psz1;
+         // find next sub symbol call, if any
+         while (*psz2 && *psz2 != '$') psz2++;
+         if (*psz2 == '$')
+         {
+            // flush pre-symbol content
+            if (psz2 > psz1) {
+               mystrcopy(szClBuf, psz1, psz2-psz1+1);
+               if (cs.debug)
+                  printf("   cat \"%s\"\n", szClBuf);
+               strcat(pout, szClBuf);
+            }
+            // then solve sub symbol
+            char *psz3 = psz2+1;
+            while (   *psz3 && *psz3 != ' '
+                   && *psz3 != '\\'
+                   && !ispunctortab(*psz3)) psz3++;
+            mystrcopy(szClBuf, psz2, psz3-psz2+1); // +1 for mystrcopy
+            if (cs.debug)
+               printf("  call \"%s\"\n", szClBuf);
+            int istatic=0;
+            Symbol *psub = phraser->get(szClBuf,&istatic);
+            if (!psub) { perr("no such symbol: \"%s\"\n", szClBuf); return 0; }
+            if (!psub->solve(pout, nmaxout, nlevel+1, istatic)) return 0;
+            if (!strncmp(psz3, "\\+", 2))
+               psz3 += 2;
+            psz1 = psz3;
+            if (cs.debug)
+               printf("   now on \"%s\"\n",psz1);
+            // strcat(pout, " ");
+            continue;
+         }
+         // none found: flush rest of line
+         if (cs.debug)
+            printf("   cat \"%s\"\n", psz1);
+         strcat(pout, psz1);
+         // strcat(pout, " ");
+         break;
+      }
+   }
+
+   // post-process output:
+   // printf("%02d appended \"%s\" at offs %d\n",nlevel,pout+iout,iout);
+
+   // apply options, if any
+   int nlen = strlen(pout);
+   if (strstr(szClOpt, "upper") || strstr(szClOpt, "anycase"))
+   {
+      // random-vary word casing
+      int ncase = 0;
+      if (strstr(szClOpt, "anycase")) ncase = rand() % 4;
+      if (strstr(szClOpt, "upper2"))  ncase = rand() % 2;
+      // printf("%02d MIXCASE %d %c of %.30s\n",nlevel,ncase,pout[iout],pout+iout);
+      int i=0;
+      switch (ncase) {
+         case 0: pout[iout] = toupper(pout[iout]); break;
+         case 1:
+            for (i=iout; i<nlen; i++)
+               pout[i] = toupper(pout[i]);
+            break;
+         case 2: pout[iout] = tolower(pout[iout]); break;
+         case 3:
+            for (i=iout; i<nlen; i++)
+               pout[i] = tolower(pout[i]);
+            break;
+         // case 4: break; // leave as it is
+      }
+   }
+
+   // convert format strings
+   for (psz=pout+iout; *psz; psz++) {
+      char brep=0;
+      if (clast == '\\')
+       switch (*psz) {
+         case ',' : brep=',' ; break;
+         case 't' : brep='t' ; break;
+         case '\t' : brep='\t' ; break;
+         case 'n' : brep='n' ; break;
+         case '\\': brep='\\'; break;
+       }
+      if (brep) {
+         // standing on "," of "\,"
+         psz--;
+         memmove(psz, psz+1, strlen(psz+1)+1);
+         clast = 0;
+         *psz = brep;
+      } else {
+         clast = *psz;
+      }
+   }
+
+   return pout;
+}
+
+Phraser::Phraser()
+{
+   pszClFilename = 0;
+   memset(szClBuf1, 0, sizeof(szClBuf1));
+   memset(psym, 0, sizeof(psym));
+   nsym = 0;
+   resetIndexes();
+}
+
+void Phraser::resetIndexes()
+{
+   int imaxsymstat=sizeof(astatic)/sizeof(int);
+   for (int i=0; i<imaxsymstat; i++)
+      astatic[i]=-1;
+}
+
+void Phraser::reset()
+{
+   for (int i=0; i<nsym; i++)
+      delete psym[i];
+   nsym = 0;
+}
+
+int Phraser::add(Symbol *p)
+{
+   if (nsym > (int)(sizeof(psym)/sizeof(Symbol*))-5)
+      return 9+perr("too many symbols\n");
+   psym[nsym++] = p;
+   return 0;
+}
+
+Symbol *Phraser::get(char *pszNameIn,int *pstatic)
+{
+   char szName[200];
+   strcopy(szName, pszNameIn);
+   int istatic=0;
+   if (isdigit(szName[1])) {
+      istatic=atoi(szName+1);
+      int imove=1;
+      while (isdigit(szName[imove]))
+         imove++;
+      memmove(szName+1,szName+imove,strlen(szName+imove)+1);
+      if (pstatic)
+         *pstatic=istatic;
+   }
+   for (int i=0; i<nsym; i++) {
+      if (!psym[i])
+         return 0;
+      if (!strcmp(psym[i]->name(), szName))
+         return psym[i];
+   }
+   return 0;
+}
+
+void Phraser::fetch(char *pbuf, char *psrc, int nlen) {
+   if (nlen > (int)sizeof(szClBuf1)-4)
+      {  perr("buffer overflow.1\n"); exit(9); }
+   strncpy(pbuf, psrc, nlen);
+   pbuf[nlen] = '\0';
+}
+
+int Phraser::load(char *pszAll, char *pszData)
+{
+   char *pszSymb = 0;
+   Symbol *ps = 0;
+   int nstate = 1, nline = 0;
+   int  iLineLen = 0;
+   bool bAddLineFeed = 0;
+
+   char *pszSrcCur = pszData;
+   char *pszNext   = 0;
+
+   while (*pszSrcCur)
+   {
+      if (pszAll) {
+         snprintf(szLineBuf, MAX_LINE_LEN, "all: %s", pszAll);
+         pszAll = 0;
+      } else {
+         pszNext = strchr(pszSrcCur, '\n');
+         if (!pszNext)
+            pszNext = pszSrcCur + strlen(pszSrcCur);
+         int ilen = (int)(pszNext - pszSrcCur);
+         if (ilen > MAX_LINE_LEN)
+             ilen = MAX_LINE_LEN;
+         memcpy(szLineBuf, pszSrcCur, ilen);
+         szLineBuf[ilen] = '\0';
+      }
+
+      // symbol: word1 word2 $symbol word4
+      //         word5 $symbol word6 ...
+      removeCRLF(szLineBuf);
+      nline++;
+
+      if (cs.debug)
+         printf("LINE \"%s\"\n", szLineBuf);
+
+      char *psz1 = szLineBuf;
+
+      if (szLineBuf[0]=='#' || szLineBuf[0]=='\0')
+      {
+         // skip
+      }
+      else
+      while (psz1 && *psz1)
+      {
+         if (cs.debug)
+            printf("state %d on \"%s\"\n", nstate, psz1);
+         char *psz2 = psz1;
+         switch (nstate)
+         {
+            case 1:  // expect new symbol name
+               if (!skipto(&psz2, ':'))
+                  return 9+perr("syntax error: missing \"symbol:\" in line %d\n", nline);
+               fetch(szClBuf1, psz1, psz2-psz1);
+               pszSymb = szClBuf1;
+               psz1 = psz2+1;
+               nstate = 2;
+               break;
+
+            case 2:  // expect content in symbol name line
+               if (!skipspace(&psz2))
+                  return 9+perr("syntax error: missing content after \"%s:\"\n", pszSymb);
+               ps = new Symbol(pszSymb, this);
+               if (add(ps)) return 9;
+            case 4:
+               if (!skipspace(&psz2))
+                  return 9+perr("syntax error in line %d\n",nline);
+               iLineLen = strlen(psz2);
+               bAddLineFeed = 0;
+               if (iLineLen >= 2 && strncmp(psz2+iLineLen-2, "\\n", 2) == 0) {
+                  psz2[iLineLen-2] = '\0';
+                  bAddLineFeed = 1;
+               }
+               ps->collect(psz2);
+               psz1 = 0;
+               nstate = 3;
+               break;
+
+            case 3:  // either additional content, or new symbol name
+               if (*psz2 == ' ') {
+                  // additional content
+                  if (bAddLineFeed)
+                     ps->collect(str("\n"));
+                  else
+                     ps->collect(str(" "));
+                  nstate = 4;
+                  continue;
+               } else {
+                  // new symbol name
+                  nstate = 1;
+                  continue;
+               }
+         }
+      }
+
+      if (pszNext) {
+         pszSrcCur = pszNext;
+         if (*pszSrcCur)
+            pszSrcCur++;
+      }
+   }
+
+   return 0;
+}
+
+char *Phraser::solve(char *pszName)
+{
+   // e.g. solving "all"
+   Symbol *proot = get(pszName,0);
+   if (!proot) return 0;
+   szClOut[0] = '\0';
+   char *pres = proot->solve(szClOut, sizeof(szClOut)-10, 0, 0);
+   // convert ,, replacement code back to printable ,
+   if (pres) {
+      char *psz = pres;
+      while ((psz = strchr(psz, 0x01)))
+         *psz++ = ',';
+   }
+   return pres;
+}
+
+int execPhraser(char *pszAll, char *pszSrc, int iNumRec)
+{
+   Phraser *p = new Phraser();
+   if (p->load(pszAll, (char*)pszSrc))
+      return 9;
+
+   for (int i=0; i<iNumRec; i++)
+   {
+      p->resetIndexes();
+
+      char *pres = p->solve(str("all"));
+      if (!pres) return 9+perr("cannot solve 'all'\n");
+
+      if (chain.coldata) {
+         if (chain.colbinary) {
+            if (chain.addBinary((uchar*)pres, strlen(pres)))
+               return 9;
+         } else {
+            if (chain.addLine(pres, str("")))
+               return 9;
+         }
+      }
+      else if (chain.colfiles) {
+         Coi ocoi(pres, 0);
+         if (chain.addFile(ocoi)) // is copied
+            return 9+perr("out of memory");
+      } else {
+         printf("%s\n", pres);
+      }
+   }
+
+   p->reset();
+   delete p;
 
    return 0;
 }

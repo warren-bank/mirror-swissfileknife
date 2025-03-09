@@ -254,6 +254,8 @@ extern int shrinkFormTextBlock(char *psz, int &rLen, bool bstrict, bool xchars=0
 
 // ========== end core includes and operating system abstraction ==========
 
+#define SFK18
+
 #ifndef SFKNOVFILE
  #define VFILEBASE
  #define VFILENET
