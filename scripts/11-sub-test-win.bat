@@ -1,7 +1,7 @@
 %TEXE% copy -quiet=2 -yes testfiles testfiles2 >nul
 
 %TEXE% copy -quiet=2 -yes testfiles\Formats\01-native-tab-crlf.txt 01-native-tab-crlf-cmp1.txt
-%TEXE% detab=3 testfiles\Formats\01-native-tab-crlf.txt >nul
+%TEXE% detab=3 -yes testfiles\Formats\01-native-tab-crlf.txt >nul
 %TEXE% test %TCMD% T01.1.detab testfiles\Formats\01-native-tab-crlf.txt
 
 %TEXE% scantab testfiles\Formats >res-01.txt
@@ -52,9 +52,9 @@
 
 %TEXE% copy -quiet=2 -yes all-src.cpp detab2-step1.txt
 %TEXE% copy -quiet=2 -yes all-src.cpp detab2-step2.txt
-%TEXE% entab=4 detab2-step2.txt >nul
+%TEXE% entab=4 -yes detab2-step2.txt >nul
 %TEXE% copy -quiet=2 -yes detab2-step2.txt detab2-step3.txt
-%TEXE% detab=4 detab2-step3.txt >nul
+%TEXE% detab=4 -yes detab2-step3.txt >nul
 %TEXE% md5 detab2-step1.txt detab2-step3.txt >res-detab2.txt
 %TEXE% filter -write -yes res-detab2.txt -+content >nul
 %TEXE% test %TCMD% T03.5.detab2 res-detab2.txt

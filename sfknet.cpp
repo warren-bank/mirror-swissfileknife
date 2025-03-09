@@ -1196,9 +1196,9 @@ char *TCPCon::readLine(char *poptbuf, ulong noptmaxbuf)
    while (nRemain > 10) 
    {
       // recv blocks until at least 1 byte is available.
-      mtklog("   rline.recv begin sock=%lxh",(ulong)clSock); // °°
+      // mtklog("   rline.recv begin sock=%lxh",(ulong)clSock);
       long nRead = recv(clSock, pBuf+nCursor, 1, 0);
-      mtklog("   recv'd %ld \"%c\"", nRead, pBuf[nCursor]);
+      // mtklog("   recv'd %ld \"%c\"", nRead, pBuf[nCursor]);
       if (nRead <= 0)
          return 0;
 		countIOBytes(nRead);
@@ -2821,14 +2821,14 @@ long FTPClient::list(char *pdir, CoiTable **ppout, char *pRootURL)
           && !strcmp(pRootURL+nRootUseLen-nSubDirLen, pdir)
          )
       {
-         // °°printf("root contains pdir\n");
+         // printf("root contains pdir\n");
          nRootUseLen -= nSubDirLen;
          if (nRootUseLen > 0 && pRootURL[nRootUseLen-1] != '/')
             pInsPath = "/";
          else
             pInsPath = "";
       } else {
-         // °°printf("root does not contain dir \"%s\" \"%s\" \"%s\" %d %d\n",pRootURL+nRootUseLen-nSubDirLen,pdir,pRootURL,nRootUseLen,nSubDirLen);
+         // printf("root does not contain dir \"%s\" \"%s\" \"%s\" %d %d\n",pRootURL+nRootUseLen-nSubDirLen,pdir,pRootURL,nRootUseLen,nSubDirLen);
       }
       if (bIsDir) pszTrail = "/"; // TODO: check if there's a slash already
       #endif

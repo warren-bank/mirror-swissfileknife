@@ -1,7 +1,7 @@
 $TEXE -nocol copy -quiet=2 -yes testfiles testfiles2 >/dev/null
 
 $TEXE -nocol copy -quiet=2 -yes testfiles/Formats/01-native-tab-crlf.txt 01-native-tab-crlf-cmp1.txt
-$TEXE -nocol detab=3 testfiles/Formats/01-native-tab-crlf.txt >/dev/null
+$TEXE -nocol detab=3 -yes testfiles/Formats/01-native-tab-crlf.txt >/dev/null
 $TEXE -nocol test $TCMD T01.1.detab testfiles/Formats/01-native-tab-crlf.txt
 
 $TEXE -nocol scantab testfiles/Formats >res-01.txt
@@ -52,9 +52,9 @@ $TEXE -nocol test $TCMD T03.1.snapto all-src.cpp
 
 $TEXE -nocol copy -quiet=2 -yes all-src.cpp detab2-step1.txt
 $TEXE -nocol copy -quiet=2 -yes all-src.cpp detab2-step2.txt
-$TEXE -nocol entab=4 detab2-step2.txt >/dev/null
+$TEXE -nocol entab=4 -yes detab2-step2.txt >/dev/null
 $TEXE -nocol copy -quiet=2 -yes detab2-step2.txt detab2-step3.txt
-$TEXE -nocol detab=4 detab2-step3.txt >/dev/null
+$TEXE -nocol detab=4 -yes detab2-step3.txt >/dev/null
 $TEXE -nocol md5 detab2-step1.txt detab2-step3.txt >res-detab2.txt
 $TEXE -nocol filter -write -yes res-detab2.txt -+content >/dev/null
 $TEXE -nocol test $TCMD T03.5.detab2 res-detab2.txt

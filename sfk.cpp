@@ -21,6 +21,32 @@
       -  fwrite is mapped to safefwrite
       to work around the Windows 60 MB I/O bug.
 
+   1.5.8
+   -  SYNTAX CHANGE: sfk detab: by default, the command
+           now runs in SIMULATION mode if files are selected. 
+           add -yes to really (re)write files.
+   -  add: filter: -context, -precon, -postcon to list
+           context lines around search hits. up to 100
+           pre context lines can be listed. performance
+           may slow down significantly with this option.
+   -  add: sfk inst: option -witheol to instrument also
+           "{" brackets at the end of line.
+   -  add: support for logical color names like err,time
+           with filter command. added color help text
+           reference to filter command.
+   -  chg: sfk text-join-lines renamed to sfk joinlines,
+           but old name is still supported.
+   -  chg: help text improvements.
+   -  chg: sfk now prints a warning when using an unknown
+           color name in sfk filter.
+   -  chg: sfk copy: now showing a progress percentage
+           only if there is more than 0% of progress.
+   -  fix: sfk alias: crash if file cannot be written.
+   -  fix: detab: empty text lines were stripped when
+           using a command chain like "detab=n +toclip".
+   internal:
+   -  chg: execFilter cleanup.
+
    1.5.7
    -  chg: BEHAVIOUR CHANGE: sfk tail: now internally
            uses "seek" instead of "stat" to determine
@@ -47,9 +73,6 @@
    -  fix: sfk list mydir .1.cpp did not list .1.cpp files
            and list mydir !.1.cpp did not exclude them
            due to incomplete file extension comparison.
-   internal:
-   -  add: sfk tail: option -deep to use different
-           method for file size detection.
 
    1.5.6
    Revision 2:
@@ -1207,7 +1230,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.5.7"  // ver_ and check the _PRE definition
+#define SFK_VERSION  "1.5.8"  // ver_ and check the _PRE definition
 #define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
@@ -1955,6 +1978,8 @@ public:
    bool justdirs;          // process only directories
    bool usesnap;           // interpret snapfile format and list titles
    bool usesnapfiltname;   // filter filenames as well
+   long addsnapraw;        // snapto raw mode 1 or 2
+   const char *addsnaplf;  // "\n" or "\r\n" depending on mode and OS
    ulong addsnapmeta;      // bit 0:time 1:size 2:encoding
    long stathilitelevel;   // stat command: highlight dirs <= this
    bool travelzips;        // traverse zipfile contents
@@ -2132,6 +2157,7 @@ void CommandStats::reset()
    utf16dec    =  0; // experimental, NOT yet default
    usecirclemap=  1;
    wrapbincol  = 80; // default
+   addsnaplf   = "\n";
 }
 
 bool CommandStats::stopTree(long nrc) 
@@ -2363,6 +2389,7 @@ ulong nGlblConvTarget = 0; // see eConvTargetFormats
 #ifdef WITH_FN_INST
 bool  bGlblInstRevoke = 0;
 bool  bGlblInstRedo   = 0;
+bool  bGlblInstEol    = 0;
 char *pszGlblInstInc  = "";
 char *pszGlblInstMac  = "";
 static bool bGlblTouchOnRevoke = 1;
@@ -3262,7 +3289,7 @@ void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1)
       putchar('\n');
 }
 
-char attribFromHumanColor(char *pszCol)
+char attribFromHumanColor(char *pszCol, char cDefault='i')
 {
    // red -> dark red. Red or RED -> bright red.
    if (!mystricmp(pszCol, "red"))     return pszCol[0];
@@ -3274,7 +3301,26 @@ char attribFromHumanColor(char *pszCol)
    if (!mystricmp(pszCol, "def"))     return ' ';
    if (!mystricmp(pszCol, "default")) return ' ';
    if (!mystricmp(pszCol, "white"))   return (pszCol[0] == 'W') ? 'V':'v';
-   return 'i'; // default
+
+   // since 1.58 also supporting logical colors
+   if (!mystricmp(pszCol, "err"))     return 'e';
+   if (!mystricmp(pszCol, "warn"))    return 'w';
+   if (!mystricmp(pszCol, "head"))    return 'h';
+   if (!mystricmp(pszCol, "examp"))   return 'x';
+   if (!mystricmp(pszCol, "file"))    return 'f';
+   if (!mystricmp(pszCol, "hit"))     return 'i';
+   if (!mystricmp(pszCol, "rep"))     return 'a';
+   if (!mystricmp(pszCol, "pre"))     return 'p';
+   if (!mystricmp(pszCol, "time"))    return 't';
+
+   static bool btold = 0;
+   if (!btold) 
+   {
+      btold = 1;
+      pwarn("unsupported color name: %s (try \"sfk help color\")\n", pszCol);
+   }
+
+   return cDefault;
 }
 
 char szPrintBuf1[MAX_LINE_LEN+10];
@@ -6314,7 +6360,7 @@ void ProgressInfo::setStatus(char *pverb, char *psubj, char *pszAddInfo, long nK
       szPerc[0] = '\0';
    if (pszAddInfo) {
       if (!strcmp(pszAddInfo, "00")) {
-         strcpy(szPerc, "00% ");
+         strcpy(szPerc, "... ");
          strcopy(szAddInfo, pszAddInfo+2);
       } else
          strcopy(szAddInfo, pszAddInfo);
@@ -6343,14 +6389,14 @@ void ProgressInfo::setStatProg(char *pverb, char *psubj, num nMax, num nCur, cha
 void ProgressInfo::setProgress(num nMax, num nCur, char *pszUnit) {
    if (nMax <= 0) nMax = 1; // safe division
    long nPerc = (long)(nCur * 100 / nMax);
-   if (nPerc >= 0 && nPerc <= 100)
+   if (nPerc > 0 && nPerc <= 100)
       sprintf(szPerc, "%02ld%% ", nPerc);
    else
    if (nPerc > 100) {
       sprintf(szPerc, "100%% ");
       if (cs.debug) printf("[progress: cur=%ld max=%ld perc=%ld]\n", (long)nCur, (long)nMax, (long)nPerc);
    } else {
-      sprintf(szPerc, "??%% ");
+      sprintf(szPerc, "... ");
       if (cs.debug) printf("[progress: cur=%ld max=%ld perc=%ld]\n", (long)nCur, (long)nMax, (long)nPerc);
    }
    cycle();
@@ -16358,9 +16404,13 @@ void SnapShot::setRootDir(char *pszDirName) {
 
 long SnapShot::writeToFile() 
 {
-   if (!pClFileName || !pClRootName) return 9+perr("missing filename, or root\n");
+   if (!pClFileName || !pClRootName) 
+      return 9+perr("missing filename, or root\n");
 
    FILE *fout = fopen(pClFileName, "w");
+
+   if (!fout)
+      return 9+perr("cannot write file: %s\n", pClFileName);
 
    fprintf(fout,
       "%s,build=%u\n\n"
@@ -17811,13 +17861,15 @@ long execFileStat(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes
 #ifdef WITH_FN_INST
 long execInst(char *pszFileName, long lLevel, long &lFiles, long &lDirs, num &lBytes) 
 {
-   extern int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke);
+   extern int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke, int nmode);
 
    // source code automatic instrumentation
    if (!strncmp(pszFileName, glblDotSlash, 2))
       pszFileName += 2;
 
-   long nRC = sfkInstrument(pszFileName, pszGlblInstInc, pszGlblInstMac, bGlblInstRevoke, bGlblInstRedo, bGlblTouchOnRevoke);
+   int nmode = bGlblInstEol ? 1 : 0;
+
+   long nRC = sfkInstrument(pszFileName, pszGlblInstInc, pszGlblInstMac, bGlblInstRevoke, bGlblInstRedo, bGlblTouchOnRevoke, nmode);
 
    if (nRC < 9)
       return 0;
@@ -20027,10 +20079,10 @@ long dumpJamLine(char *pszLine, long nLineLen, bool bAddLF) // len 0: zero-termi
       lRC = pGlblJamLineCallBack(pszLine, nLineLen, bAddLF);
    else
    if (nLineLen > 0)
-      fprintf(fGlblOut, "%.*s%s", (int)nLineLen, pszLine, bAddLF?"\n":"");
+      fprintf(fGlblOut, "%.*s%s", (int)nLineLen, pszLine, bAddLF?cs.addsnaplf:"");
    else {
       fputs(pszLine, fGlblOut);
-      if (bAddLF) fputs("\n", fGlblOut);
+      if (bAddLF) fputs(cs.addsnaplf, fGlblOut);
    }
 
    return lRC;
@@ -20176,6 +20228,90 @@ long execJamFile(Coi *pcoi)
 
    long lRC  = 0;
 
+   if (cs.addsnapraw)
+   {
+      // raw mode:
+
+      if (bIsBinary) {
+         // skip all binaries
+         if (glblFileCount.countSkip(pcoi->name())) {
+            if (pGlblJamStatCallBack) {
+               long nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (ulong)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+               mtklog("%ld = jam.stat.callback.5", nrc);
+               lRC |= nrc;
+            } else {
+               info.setAddInfo("%lu files, %lu lines, %lu mb", (ulong)glblFileCount.value(), (ulong)cs.lines, (ulong)(nGlblBytes/1000000UL));
+               info.setStatus("skip", pcoi->name(), 0, eKeepAdd);
+            }
+         }
+         return lRC;
+      }
+
+      // add text files 1:1 keeping exactly the same size,
+      // and skip all binary files. no conversions whatsoever.
+      if (pcoi->open("rb"))
+         { pwarn("cannot read: %s%s\n", pcoi->name(),pcoi->lasterr()); return 0; }
+
+      // write subfile header
+      if (!bGlblJamPure)
+      {
+         lRC |= dumpJamLine(pHeadLine   , 0, 1);   // :file: mtime size
+         lRC |= dumpJamLine(pcoi->name(), 0, 1);   // actual filename
+      }
+
+      while (true) 
+      {
+         num nRead  = pcoi->read(abBuf, sizeof(abBuf)-1000);
+         if (nRead <= 0)
+            break;
+
+         if (cs.addsnapraw < 2) 
+         {
+            // replace (unexpected) NULL or EOF characters by '.'
+            // also counting the lines
+            for (long i=0; i<nRead; i++)
+               switch (abBuf[i]) {
+                  case 0: case 0x1A: abBuf[i] = '.'; break;
+                  case '\n': cs.lines++; break;
+               }
+         } else {
+            // just count the lines
+            for (long i=0; i<nRead; i++)
+               if (abBuf[i] == '\n')
+                  cs.lines++;
+         }
+
+         num nWrite = myfwrite(abBuf, nRead, fGlblOut);
+         if (nWrite != nRead) {
+            perr("failed to fully write %ld bytes, possibly disk full\n", (long)nWrite);
+            pcoi->close();
+            return 9;
+         }
+
+         nGlblBytes += nRead;
+
+         // check per block if stat update is required
+         if (glblFileCount.checkTime())
+         {
+            if (pGlblJamStatCallBack) {
+               long nrc = pGlblJamStatCallBack(pcoi->name(), glblFileCount.value(), cs.lines, (ulong)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+               mtklog("%ld = jam.stat.callback.4", nrc);
+               lRC |= nrc;
+            } else {
+               info.setAddInfo("%lu files, %lu mb", (ulong)glblFileCount.value(), (ulong)(nGlblBytes/1000000UL));
+               info.setStatus("snap", pcoi->name(), 0, eKeepAdd);
+            }
+         }
+   
+         // STOP in-file processing on non-zero rc
+         if (lRC) break;
+      }
+
+      pcoi->close();
+
+      lRC |= dumpJamLine("", 0, 1);
+   }
+   else
    if (bIsBinary || cs.rewrap)
    {
       if (cs.rewrap) {
@@ -22995,17 +23131,19 @@ long execDetab(char *pszFile, char *pszOutFile)
    // write output file:
    //   if different output is specified, also create directory structure.
    if (bHaveOut) {
-      if (createOutDirTree(pszOutFile))
+      if (cs.yes && createOutDirTree(pszOutFile))
          return 9;
       info.setStatus("detab", pszOutFile);
    } else {
       info.setStatus("detab", pszFile);
    }
 
-   FILE *fOut = fopen(pszOutFile, "w");
-   if (!fOut) {
-      delete [] pInFile; 
-      return 9+perr("cannot %swrite %s\n", bHaveOut?"":"over", pszOutFile); 
+   FILE *fOut = 0;
+   if (cs.yes) {
+      if (!(fOut = fopen(pszOutFile, "w"))) {
+         delete [] pInFile; 
+         return 9+perr("cannot %swrite %s\n", bHaveOut?"":"over", pszOutFile); 
+      }
    }
 
    char *pCur     = pInFile;
@@ -23033,24 +23171,25 @@ long execDetab(char *pszFile, char *pszOutFile)
          {
             nInsert = cs.tabSize - (iout % cs.tabSize);
             for (int i2=0; i2<nInsert; i2++) {
-               fputc(' ', fOut);
+               if (cs.yes) fputc(' ', fOut);
                iout++;
             }
             nTabsDone++;
             cs.tabsDone++;
          }
-         else {
-            fputc(c1, fOut);
+         else 
+         {
+            if (cs.yes) fputc(c1, fOut);
             iout++;
          }
       }
 
-      fputc('\n', fOut);
+      if (cs.yes) fputc('\n', fOut);
 
       pCur = pNext;
    }
 
-   fclose(fOut);
+   if (cs.yes) fclose(fOut);
 
    // NO RETURN W/O DELETE UNTIL HERE
 
@@ -23072,8 +23211,10 @@ long execEntab(char *pszFile)
 
    printf("entab: %s\n", pszFile);
 
-   FILE *fOut = fopen(pszFile, "w");
-   if (!fOut) return 9+perr("cannot overwrite %s\n", pszFile);
+   FILE *fOut = 0;
+   if (cs.yes)
+      if (!(fOut = fopen(pszFile, "w")))
+         return 9+perr("cannot overwrite %s\n", pszFile);
 
    char *pCur   = pInFile;
    int bBail    = 0;
@@ -23096,7 +23237,7 @@ long execEntab(char *pszFile)
       {
          char c1 = pCur[icol];
          if (c1 != ' ') {
-            fputc(c1, fOut);
+            if (cs.yes) fputc(c1, fOut);
             continue;
          }
          // calc posn of next tab stop
@@ -23112,7 +23253,7 @@ long execEntab(char *pszFile)
                   break;
             if (i==ndist) {
                // then replace blanks by tab
-               fputc('\t', fOut);
+               if (cs.yes) fputc('\t', fOut);
                icol += ndist-1; // MIND icol++
                cs.tabsDone++;
                continue;
@@ -23120,15 +23261,15 @@ long execEntab(char *pszFile)
             // else fall through
          }
          // else copy-through current char
-         fputc(c1, fOut);
+         if (cs.yes) fputc(c1, fOut);
       }
 
-      fputc('\n', fOut);
+      if (cs.yes) fputc('\n', fOut);
 
       pCur = pNext;
    }
 
-   fclose(fOut);
+   if (cs.yes) fclose(fOut);
 
    delete [] pInFile;
 
@@ -29252,18 +29393,111 @@ struct FilterParms
    bool  bPassHitFiles;
    long  nTotalRC;
    char *pBlockMark;
+   long  nprecon;
+   long  npostcon;
+   char  cprecolor;
+   char  cpostcolor;
+   char *pPreConMark;
+   char *pPostConMark;
 }
 gfilter; // global filter settings
 
+#define MAX_CONTEXT_LINES 105
+class FilterContextLines
+{
+public:
+      FilterContextLines   ( );
+      void  shutdown       ( );
+
+   void  putLine  (char *psz);
+   char *getLine  (int   iPreIndex);
+   void  reset    ( );
+
+   char  szClLineTmp [MAX_LINE_LEN+100];
+   char  szClAttrTmp [MAX_LINE_LEN+100];
+
+private:
+   char *aClLines [MAX_CONTEXT_LINES+4];
+   char  aClValid [MAX_CONTEXT_LINES+4];
+   int   iClIndex;
+}
+gfiltPreContext;
+
+FilterContextLines::FilterContextLines( )
+   { memset(this, 0, sizeof(*this)); }
+
+void FilterContextLines::shutdown( ) 
+{
+   for (int i=0; i<MAX_CONTEXT_LINES; i++)
+      if (aClLines[i])
+         delete [] aClLines[i];
+}
+
+void FilterContextLines::reset( )
+   { mclear(aClValid); }
+
+void FilterContextLines::putLine(char *psz) 
+{
+   if (!aClLines[iClIndex])
+      if (!(aClLines[iClIndex] = new char[MAX_LINE_LEN+100]))
+         return;
+   mystrcopy(aClLines[iClIndex], psz, MAX_LINE_LEN);
+   aClValid[iClIndex] = 1;
+   iClIndex = (iClIndex + 1) % MAX_CONTEXT_LINES;
+}
+
+// In : pre index >= 1
+// Out: pre context line, or NULL if n/a
+char *FilterContextLines::getLine(int iPreIndex) 
+{
+   if (iPreIndex < 1) return 0;
+   int iCurIndex = iClIndex;
+   for (int i=0; i<iPreIndex; i++) {
+      if (--iCurIndex < 0)
+         iCurIndex = MAX_CONTEXT_LINES-1;
+      if (!aClValid[iCurIndex])
+         return 0;
+   }
+   if (aClValid[iCurIndex])
+      return aClLines[iCurIndex];
+   return 0;
+}
+
+int getContextParms(char *psz, long &rlines, char &rcolor, char **ppConMark, int nlimit=0)
+{
+   rlines = atol(psz);
+   if (nlimit > 0 && rlines > nlimit) {
+      perr("-(pre)context supports only up to %d lines\n",nlimit);
+      return 9;
+   }
+   while (*psz && isdigit(*psz))
+      psz++;
+   if (*psz==':' || *psz==',') 
+   {
+      // parse color
+      char szcol[50];   
+      char *pszs = ++psz;
+      while (isalpha(*psz)) psz++;
+      int nlen = psz - pszs;
+      if (nlen > sizeof(szcol)-10) return 0;
+      memcpy(szcol, pszs, nlen);
+      szcol[nlen] = '\0';
+      if (szcol[0])
+         rcolor = attribFromHumanColor(szcol, ' ');
+
+      // parse marker
+      if (*psz!=':' && *psz!=',')
+         return 0;
+
+      psz++;
+      *ppConMark = psz;
+   }
+   return 0;
+}
+
 long setFilterParms(
    char *argv[], long argc, long iPat, long &nPat,
-   bool  &bLNum,
-   bool  &bCnt,
-   bool  &bDumpLF,
-   bool  &bReWrite,
-   bool  &bSkipBin,
-   bool  &bFilenames,
-   bool  &bPassHitFiles,
+   struct FilterParms &rparms,
    char  **pszInFile,
    int   *iDir = 0,     // if dir parms are found
    int   *iChain = 0    // if further chaining is found
@@ -29305,19 +29539,36 @@ long setFilterParms(
    {
       char *pszOpt = argv[iPat2];
       if (!strcmp(pszOpt, "-lnum"))
-         { bLNum = 1; continue; }
+         { rparms.bLNum = 1; continue; }
       if (!strcmp(pszOpt, "-count") || !strcmp(pszOpt, "-cnt"))
-         { bCnt = 1; continue; }
+         { rparms.bCnt = 1; continue; }
       if (!strcmp(pszOpt, "-c")) // -case done in setGeneralOption
          { cs.usecase = 1; continue; }
       if (!strcmp(pszOpt, "-join"))
-         { bDumpLF = 0; continue; }
+         { rparms.bDumpLF = 0; continue; }
       if (!strncmp(pszOpt, "-bin", 4))
-         { bSkipBin = 0; continue; }
+         { rparms.bSkipBinaries = 0; continue; }
       if (!strncmp(pszOpt, "-nofile", 7))
-         { bFilenames = 0; continue; }
+         { rparms.bFilenames = 0; continue; }
       if (!strcmp(pszOpt, "-hitfiles"))
-         { bPassHitFiles = 1; continue; }
+         { rparms.bPassHitFiles = 1; continue; }
+
+      if (strBegins(pszOpt, "-precontext="))
+         { if (getContextParms(pszOpt+12, rparms.nprecon, rparms.cprecolor, &rparms.pPreConMark, MAX_CONTEXT_LINES-5)) return 9; continue; }
+      if (strBegins(pszOpt, "-precon="))
+         { if (getContextParms(pszOpt+8, rparms.nprecon, rparms.cprecolor, &rparms.pPreConMark, MAX_CONTEXT_LINES-5)) return 9; continue; }
+
+      if (strBegins(pszOpt, "-postcontext="))
+         { getContextParms(pszOpt+13, rparms.npostcon, rparms.cpostcolor, &rparms.pPostConMark); continue; }
+      if (strBegins(pszOpt, "-postcon="))
+         { getContextParms(pszOpt+9, rparms.npostcon, rparms.cpostcolor, &rparms.pPostConMark); continue; }
+
+      if (strBegins(pszOpt, "-context=")) {
+         if (getContextParms(pszOpt+9, rparms.nprecon, rparms.cprecolor, &rparms.pPostConMark, MAX_CONTEXT_LINES-5)) return 9;
+         rparms.npostcon = rparms.nprecon;
+         rparms.cpostcolor = rparms.cprecolor;
+         continue; 
+      }
 
       long i=0;
 
@@ -29405,7 +29656,7 @@ long setFilterParms(
       }
       else
       if (!strncmp(pszOpt, "-write", 6) || !strcmp(pszOpt, "-rewrite")) {
-         bReWrite = 1;
+         rparms.bReWrite = 1;
          if (!strcmp(pszOpt, "-writeall"))
             cs.writeall = 1;
          continue; 
@@ -29466,15 +29717,15 @@ long setFilterParms(
       return 9+perr("unknown option: %s\n", pszOpt);
    }
 
-   if (bHadFilt && bReWrite && !cs.force && !cs.noinfo && !cs.yes) {
+   if (bHadFilt && rparms.bReWrite && !cs.force && !cs.noinfo && !cs.yes) {
       pinf("line selection option(s) AND -write may cause massive changes.\n");
    }
    else
-   if ((bLNum || bCnt) && bReWrite && !cs.force && !cs.noinfo && !cs.yes) {
+   if ((rparms.bLNum || rparms.bCnt) && rparms.bReWrite && !cs.force && !cs.noinfo && !cs.yes) {
       pinf("-lnum or -count AND -write will change all selected files.\n");
    }
 
-   if (cs.wrapcol && (bReWrite || pszGlblSaveTo))
+   if (cs.wrapcol && (rparms.bReWrite || pszGlblSaveTo))
       return 9+perr("-wrap together with -write is not supported.\n");
 
    return 0;
@@ -30249,6 +30500,188 @@ FileCloser::~FileCloser() {
       pClCoi->close();
 }
 
+// dump szLineBuf/szAttrBuf to output.
+// also uses szLineBuf2/3 and szAttrBuf2/3.
+long dumpFilterLine
+ (
+   bool     bReWrite,
+   SFKMD5    &md5out,
+   StringTable &oOut,   // used by rewrite
+   long       &nLine,
+   long        &nCnt,   // output line counter
+   char    *paddmark,
+   char     *abLFBuf,
+   bool bDumpedFileName
+ )
+{
+   bool  bLNum      = gfilter.bLNum;
+   bool  bCnt       = gfilter.bCnt;
+   bool  bDumpLF    = gfilter.bDumpLF;
+   bool  bFilenames = gfilter.bFilenames;
+   bool  bUseColor  = bGlblUseColor;
+
+   char  *pszLine   = szLineBuf;
+   char  *pszAttr   = szAttrBuf;
+
+   if (bReWrite)
+   {
+      // create cache line. have to do this always, in case.
+      szLineBuf2[0] = '\0';
+      char *psz1 = szLineBuf2;
+      if (bLNum) { sprintf(psz1, "%03u ",nLine); psz1 += strlen(psz1); }
+      if (bCnt ) { sprintf(psz1, "%03u ",nCnt ); psz1 += strlen(psz1); }
+      long nRem = MAX_LINE_LEN - (psz1 - szLineBuf2);
+      mystrcopy(psz1, pszLine, nRem-10);
+      if (oOut.addEntry(szLineBuf2))
+         return 9+perr("out of memory\n");
+      long nLineLen2 = strlen(szLineBuf2);
+      if (!nLineLen2)
+         md5out.update((uchar*)abLFBuf, 1);
+      else
+         md5out.update((uchar*)szLineBuf2, nLineLen2);
+      nCnt++; // output line counter
+
+      // append extra line after block inclusion?
+      if (paddmark) {
+         oOut.addEntry(paddmark); // ignore rc
+         md5out.update((uchar*)paddmark, strlen(paddmark));
+         nCnt++;
+      }
+   }
+   else
+   {
+      // now holding one large output line in pszLine / pszAttr.
+      if (cs.wrapcol > 0)
+      {
+         long nWrapCol = cs.wrapcol;
+         if (bLNum) nWrapCol -= 4;
+         if (bCnt ) nWrapCol -= 4;
+
+         // -wrap selected: create multiple output lines
+         char *psz1 = pszLine;
+         char *pszOld = 0;
+         while (*psz1)
+         {
+            pszOld = psz1;
+            long icnt = 0;
+            char *pszGap = 0;
+            // step until overflow or eod, remember last whitespace
+            while (*psz1 && (icnt < nWrapCol)) {
+               char c = *psz1;
+               switch (c) {
+                  case ' ': case '\t': case ',':
+                     pszGap = psz1;
+                     break;
+               }
+               psz1++;
+               icnt++;
+            }
+            // if overflow, go back past whitespace. if no whitespace,
+            // make a word break at that point (splitting very long words).
+            if (*psz1) {
+               if (pszGap)
+                  psz1 = pszGap+1;
+            }
+            ulong noff = pszOld - pszLine;
+            ulong nlen = psz1 - pszOld;
+
+            // isolate section
+            memcpy(szLineBuf2, pszLine+noff, nlen);
+            szLineBuf2[nlen] = '\0';
+            memcpy(szAttrBuf2, pszAttr+noff, nlen);
+            szAttrBuf2[nlen] = '\0';
+
+            // then dump
+            if (chain.coldata)
+            {
+               szLineBuf3[0] = '\0';
+               szAttrBuf3[0] = '\0';
+
+               if (bFilenames && bDumpedFileName)
+                  strcat(szLineBuf3, "   ");
+               if (bLNum) mystrcatf(szLineBuf3, 0, "%03u ", nLine);
+               if (bCnt ) mystrcatf(szLineBuf3, 0, "%03u ", nCnt );
+               padBuffer(szAttrBuf3, MAX_LINE_LEN, ' ', strlen(szLineBuf3));
+
+               mystrcatf(szLineBuf3, 0, "%s", szLineBuf2);
+               mystrcatf(szAttrBuf3, 0, "%s", szAttrBuf2);
+
+               if (bDumpLF) {
+                  chain.addLine(szLineBuf3, szAttrBuf3, 1); // 1: splitByLF
+               } else {
+                  chain.addToCurLine(szLineBuf3, szAttrBuf3);
+               }
+
+               if (paddmark) { chain.addLine(paddmark, ""); nCnt++; }
+            } else {
+               if (bFilenames && bDumpedFileName)
+                  printf("   ");
+               if (bLNum) printx("<prefix>%03u<def> ", nLine);
+               if (bCnt ) printx("<prefix>%03u<def> ", nCnt );
+               if (!bUseColor)
+                  printf("%s%s", szLineBuf2, bDumpLF ? "\n":"");
+               else
+                  printColorText(szLineBuf2, szAttrBuf2, bDumpLF);
+
+               if (paddmark) { printf("%s\n", paddmark); nCnt++; }
+
+               fflush(stdout);
+            }
+            nCnt++; // output line counter
+         }
+      }
+      else
+      {
+         // dump whole line in one step
+         if (chain.coldata)
+         {
+            szLineBuf3[0] = '\0';
+            szAttrBuf3[0] = '\0';
+
+            if (bFilenames && bDumpedFileName)
+               strcat(szLineBuf3, "   ");
+            if (bLNum) mystrcatf(szLineBuf3, 0, "%03u ", nLine);
+            if (bCnt ) mystrcatf(szLineBuf3, 0, "%03u ", nCnt );
+            padBuffer(szAttrBuf3, MAX_LINE_LEN, ' ', strlen(szLineBuf3));
+
+            mystrcatf(szLineBuf3, 0, "%s", pszLine);
+            mystrcatf(szAttrBuf3, 0, "%s", pszAttr);
+
+            if (bDumpLF) {
+               chain.addLine(szLineBuf3, szAttrBuf3, 1); // 1: splitByLF
+            } else {
+               chain.addToCurLine(szLineBuf3, szAttrBuf3);
+            }
+
+            if (paddmark) { chain.addLine(paddmark, ""); nCnt++; }
+         } else {
+            if (bFilenames && bDumpedFileName)
+               printf("   ");
+            if (bLNum) printf("%03u ", nLine);
+            if (bCnt ) printf("%03u ", nCnt );
+            // printf("ucl %d\nlbuf %s\nattr %s\n",bUseColor,pszLine,pszAttr);
+            if (!bUseColor)
+               printf("%s%s", pszLine, bDumpLF ? "\n":"");
+            else
+               printColorText(pszLine, pszAttr, bDumpLF);
+            if (paddmark) { printf("%s\n", paddmark); nCnt++; }
+            fflush(stdout);
+         }
+         nCnt++; // output line counter
+      }
+   }
+
+   return 0;
+}
+
+void mirrorAttrBuf(char ccolin)
+{
+   int nNewLen = strlen(szLineBuf);
+   char ccol = ccolin ? ccolin : ' ';
+   memset(szAttrBuf, ccol, nNewLen);
+   szAttrBuf[nNewLen] = '\0';
+}
+
 // caller supplies either pszInFile or fin.
 long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char *pszOutFile)
 {__
@@ -30261,12 +30694,9 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
    long  iPat     = gfilter.iPat;
    long  nPat     = gfilter.nPat;
    bool  bVerb    = gfilter.bVerb;
-   bool  bLNum    = gfilter.bLNum;
-   bool  bCnt     = gfilter.bCnt;
    bool  bReWrite = gfilter.bReWrite;
-   bool  bDumpLF  = gfilter.bDumpLF;
-   bool  bDoClose = 0;
    bool  bFilenames = gfilter.bFilenames;
+   bool  bDoClose = 0;
 
    bool bHaveOut = (pszOutFile != 0);
    if (!bHaveOut && pcoi && pcoi->isWriteable())
@@ -30284,33 +30714,33 @@ long execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, long nMaxLines, char 
 
    if (pcoi) 
    {
-_     if (gfilter.bSkipBinaries && pcoi->isBinaryFile()) 
+      if (gfilter.bSkipBinaries && pcoi->isBinaryFile()) 
       {
-_        cs.binariesSkipped++;
+         cs.binariesSkipped++;
          if (cs.verbose) {
             setTextColor(nGlblWarnColor);
             oprintf("skipping binary file: %s\n", pcoi->name());
             setTextColor(-1);
          }
-_        return 0;
+         return 0;
       }
       if (gfilter.bReWrite) {
-_        num nFileSize = pcoi->getSize();
+         num nFileSize = pcoi->getSize();
          if (nFileSize > nGlblMemLimit)
             return 9+perr("input file too large: %s (adjust -memlimit)\n", pcoi->name());
          if (!pcoi->isWriteable())
             return 9+perr("readonly file, cannot overwrite: %s\n", pcoi->name());
       }
-_     if (pcoi->open("rb"))
+      if (pcoi->open("rb"))
          return 9+perr("cannot read file: %s%s\n", pcoi->name(),pcoi->lasterr());
       if (cs.verbose) {
          info.setStatus("scan", pcoi->name(), 0);
       }
    } else {
-_     if (bReWrite)
+      if (bReWrite)
          return 9+perr("-write requires a filename.\n");
    }
-_ 
+ 
    StringTable oOut; // in case bReWrite is used
    SFKMD5 md5in;
    SFKMD5 md5out;
@@ -30332,8 +30762,9 @@ _
    long nSubFiles = 0;
    num  nInputBytes = 0;
    long ncheckcnt = 0;
-   long ninccnt = 0; // block include counter
-   long nexcnt  = 0; // block exclude counter
+   long ninccnt = 0;  // block include counter
+   long nexcnt  = 0;  // block exclude counter
+   long nPostConCnt = 0; // post context down counter
 
    char abLFBuf[5];
    abLFBuf[0] = '\n';
@@ -30478,9 +30909,11 @@ _
          }
       }
 
-      if (nsc == 0) // if match
+      if (nsc == 0 || nPostConCnt > 0) // if match
       {
-         // matching line, matching file.
+         // text line is selected within stream.
+
+         // this means there is a matching file.
          if (gfilter.bPassHitFiles && chain.colfiles && !bCollectedFileName)
          {
             bCollectedFileName = 1;
@@ -30502,6 +30935,7 @@ _
 
          nMatchingLines++;
 
+         // print the filename?
          if (   pszInFile && !bReWrite
              && !gfilter.bSingleFile && bFilenames
              && !cs.nonames && !bDumpedFileName
@@ -30526,8 +30960,78 @@ _
             }
          }
 
-         // post-processing of selected lines
+         // dump pre context lines, if any
+         if (gfilter.nprecon) 
+         {
+            bool bcached = 0;
+
+            if (gfilter.pPreConMark && !nPostConCnt) 
+            {
+               bcached = 1;
+               strcpy(gfiltPreContext.szClLineTmp, szLineBuf);
+               strcpy(gfiltPreContext.szClAttrTmp, szAttrBuf);
+               strcopy(szLineBuf, gfilter.pPreConMark);
+               mirrorAttrBuf(' ');
+               if (dumpFilterLine(bReWrite, md5out, oOut, nLine, nCnt, 0, abLFBuf, bDumpedFileName))
+                  return 9;
+            }
+
+            for (long i=gfilter.nprecon; i>=1; i--) 
+            {
+               char *pszPreLine = gfiltPreContext.getLine(i);
+               if (!pszPreLine) continue;
+
+               // dump current pre context line. this requires
+               // to place it temporarily into szLine/AttrBuf.
+               if (!bcached) {
+                  bcached = 1;
+                  strcpy(gfiltPreContext.szClLineTmp, szLineBuf);
+                  strcpy(gfiltPreContext.szClAttrTmp, szAttrBuf);
+               }
+
+               // prepare a precontext line
+               strcpy(szLineBuf, pszPreLine);
+               mirrorAttrBuf(gfilter.cprecolor);
+
+               // post-process the precontext line (replace, highlight etc.)
+               if (processTextLine(argv, iPat, nPat, nReplaced, bUseColor, nLine, nCnt))
+                  return 9;
+
+               // dump the precontext line
+               if (dumpFilterLine(bReWrite, md5out, oOut, nLine, nCnt, 0, abLFBuf, bDumpedFileName))
+                  return 9;
+            }
+
+            if (bcached) {
+               strcpy(szLineBuf, gfiltPreContext.szClLineTmp);
+               strcpy(szAttrBuf, gfiltPreContext.szClAttrTmp);
+            }
+         }
+
+         // handle post context lines
+         bool bPostConElapsed = 0;
+         if (gfilter.npostcon > 0) 
+         {
+            // why was the current line selected?
+            if (!nsc) {
+               // if was a true content match: reset postcnt
+               // to make sure following context is dumped
+               nPostConCnt = gfilter.npostcon;
+            } else {
+               // it was part of post context.
+               mirrorAttrBuf(gfilter.cpostcolor);
+               if (nPostConCnt > 0)
+                  if (--nPostConCnt == 0)
+                     bPostConElapsed = 1;
+            }
+         }
+
+         // post-process the selected line (replace, highlight etc.)
          if (processTextLine(argv, iPat, nPat, nReplaced, bUseColor, nLine, nCnt))
+            return 9;
+
+         // dump current szLineBuf/szAttrBuf to output.
+         if (dumpFilterLine(bReWrite, md5out, oOut, nLine, nCnt, paddmark, abLFBuf, bDumpedFileName))
             return 9;
 
          // do we want to save the file content?
@@ -30536,159 +31040,27 @@ _
          if (cs.writeall || nReplaced || (cs.force && nMatchingLines))
             bSave = 1;
 
-         if (bReWrite) 
+         // if pre context is selected, reset cached precontext.
+         gfiltPreContext.reset();
+
+         // if post content was completed, show a marker?
+         if (bPostConElapsed && gfilter.pPostConMark) 
          {
-            // create cache line. have to do this always, in case.
-            szLineBuf2[0] = '\0';
-            char *psz1 = szLineBuf2;
-            if (bLNum) { sprintf(psz1, "%03u ",nLine); psz1 += strlen(psz1); }
-            if (bCnt ) { sprintf(psz1, "%03u ",nCnt ); psz1 += strlen(psz1); }
-            long nRem = MAX_LINE_LEN - (psz1 - szLineBuf2);
-            mystrcopy(psz1, szLineBuf, nRem-10);
-            if (oOut.addEntry(szLineBuf2))
-               return 9+perr("out of memory\n");
-            long nLineLen2 = strlen(szLineBuf2);
-            if (!nLineLen2)
-               md5out.update((uchar*)abLFBuf, 1);
-            else
-               md5out.update((uchar*)szLineBuf2, nLineLen);
-            nCnt++; // output line counter
-
-            // append extra line after block inclusion?
-            if (paddmark) {
-               oOut.addEntry(paddmark); // ignore rc
-               md5out.update((uchar*)paddmark, strlen(paddmark));
-               nCnt++;
-            }
-         }
-         else 
-         {
-            // now holding one large output line in szLineBuf / szAttrBuf.
-            if (cs.wrapcol > 0) 
-            {
-               long nWrapCol = cs.wrapcol;
-               if (bLNum) nWrapCol -= 4;
-               if (bCnt ) nWrapCol -= 4;
-
-               // -wrap selected: create multiple output lines
-               char *psz1 = szLineBuf;
-               char *pszOld = 0;
-               while (*psz1)
-               {
-                  pszOld = psz1;
-                  long icnt = 0;
-                  char *pszGap = 0;
-                  // step until overflow or eod, remember last whitespace
-                  while (*psz1 && (icnt < nWrapCol)) {
-                     char c = *psz1;
-                     switch (c) {
-                        case ' ': case '\t': case ',':
-                           pszGap = psz1;
-                           break;
-                     }
-                     psz1++;
-                     icnt++;
-                  }
-                  // if overflow, go back past whitespace. if no whitespace,
-                  // make a word break at that point (splitting very long words).
-                  if (*psz1) {
-                     if (pszGap)
-                        psz1 = pszGap+1;
-                  }
-                  ulong noff = pszOld - szLineBuf;
-                  ulong nlen = psz1 - pszOld;
-
-                  // isolate section
-                  memcpy(szLineBuf2, szLineBuf+noff, nlen);
-                  szLineBuf2[nlen] = '\0';
-                  memcpy(szAttrBuf2, szAttrBuf+noff, nlen);
-                  szAttrBuf2[nlen] = '\0';
-
-                  // then dump
-                  if (chain.coldata) 
-                  {
-                     szLineBuf3[0] = '\0';
-                     szAttrBuf3[0] = '\0';
-
-                     if (bFilenames && bDumpedFileName)
-                        strcat(szLineBuf3, "   ");
-                     if (bLNum) mystrcatf(szLineBuf3, 0, "%03u ", nLine);
-                     if (bCnt ) mystrcatf(szLineBuf3, 0, "%03u ", nCnt );
-                     padBuffer(szAttrBuf3, MAX_LINE_LEN, ' ', strlen(szLineBuf3));
-
-                     mystrcatf(szLineBuf3, 0, "%s", szLineBuf2);
-                     mystrcatf(szAttrBuf3, 0, "%s", szAttrBuf);
-
-                     if (bDumpLF) {
-                        chain.addLine(szLineBuf3, szAttrBuf3, 1); // 1: splitByLF
-                     } else {
-                        chain.addToCurLine(szLineBuf3, szAttrBuf3);
-                     }
-
-                     if (paddmark) { chain.addLine(paddmark, ""); nCnt++; }
-                  } else {
-                     if (bFilenames && bDumpedFileName)
-                        printf("   ");
-                     if (bLNum) printx("<prefix>%03u<def> ", nLine);
-                     if (bCnt ) printx("<prefix>%03u<def> ", nCnt );
-                     if (!bUseColor)
-                        printf("%s%s", szLineBuf2, bDumpLF ? "\n":"");
-                     else
-                        printColorText(szLineBuf2, szAttrBuf2, bDumpLF);
-
-                     if (paddmark) { printf("%s\n", paddmark); nCnt++; }
-
-                     fflush(stdout);
-                  }
-                  nCnt++; // output line counter
-               }
-            }
-            else
-            {
-               // dump whole line in one step
-               if (chain.coldata) 
-               {
-                  szLineBuf3[0] = '\0';
-                  szAttrBuf3[0] = '\0';
-
-                  if (bFilenames && bDumpedFileName)
-                     strcat(szLineBuf3, "   ");
-                  if (bLNum) mystrcatf(szLineBuf3, 0, "%03u ", nLine);
-                  if (bCnt ) mystrcatf(szLineBuf3, 0, "%03u ", nCnt );
-                  padBuffer(szAttrBuf3, MAX_LINE_LEN, ' ', strlen(szLineBuf3));
-
-                  mystrcatf(szLineBuf3, 0, "%s", szLineBuf);
-                  mystrcatf(szAttrBuf3, 0, "%s", szAttrBuf);
-
-                  if (bDumpLF) {
-                     chain.addLine(szLineBuf3, szAttrBuf3, 1); // 1: splitByLF
-                  } else {
-                     chain.addToCurLine(szLineBuf3, szAttrBuf3);
-                  }
-
-                  if (paddmark) { chain.addLine(paddmark, ""); nCnt++; }
-               } else {
-                  if (bFilenames && bDumpedFileName)
-                     printf("   ");
-                  if (bLNum) printf("%03u ", nLine);
-                  if (bCnt ) printf("%03u ", nCnt );
-                  // printf("ucl %d\nlbuf %s\nattr %s\n",bUseColor,szLineBuf,szAttrBuf);
-                  if (!bUseColor)
-                     printf("%s%s", szLineBuf, bDumpLF ? "\n":"");
-                  else
-                     printColorText(szLineBuf, szAttrBuf, bDumpLF);
-                  if (paddmark) { printf("%s\n", paddmark); nCnt++; }
-                  fflush(stdout);
-               }
-               nCnt++; // output line counter
-            }
+            strcopy(szLineBuf, gfilter.pPostConMark);
+            mirrorAttrBuf(' ');
+            if (dumpFilterLine(bReWrite, md5out, oOut, nLine, nCnt, 0, abLFBuf, bDumpedFileName))
+               return 9;
          }
       }
       else
       {
-         // no match, a line was removed from stream.
+         // no match, text line is removed from stream.
          nReplaced++;
          bSave = 1;
+
+         // if pre context is selected, remember dropped line.
+         if (gfilter.nprecon)
+            gfiltPreContext.putLine(szLineBuf);
       }
 
       if (nMaxLines > -1 && nLine >= nMaxLines)
@@ -31322,6 +31694,7 @@ void shutdownAllGlobalData()
    if (pszGlblDirTimes) delete [] pszGlblDirTimes;
 
    chain.shutdown();
+   gfiltPreContext.shutdown();
    glblSynTests.resetEntries();
 
    #ifdef SFK_CCDIRTIME
@@ -32327,6 +32700,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              #ifdef VFILEBASE
              "                 and also .gz, .bz2, .tar, .tar.gz and .tar.bz2\n"
              "                 as deep as possible, including nested archives.\n"
+             "                 type \"sfk help opt\" for supported file extensions.\n"
              "      -qarc      quick list archives, lists only archive entries\n"
              "                 at the top level, skipping nested archives.\n"
              #endif // VFILEBASE
@@ -32448,6 +32822,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "         excluding all sub folder contents.\n"
              "      #sfk list . .jpg +count\n"
              "         tell the number of .jpg files in current directory tree.\n"
+             #ifdef VFILEBASE
+             "      #sfk larc src.zip +view\n"
+             "         show content listing of zip file src.zip in Depeche View,\n"
+             "         to search filenames interactively (\"sfk view\" for details).\n"
+             #endif
              "      #sfk list . >lslr\n"
              "         list files of the current directory and all subdirectories into\n"
              "         an index text file \"lslr\" (named after the unix command \"ls -lR\").\n"
@@ -32468,7 +32847,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "         within .jar files within a .tar.bz2 archive. running this command in a\n"
              "         root dir like C:\\ may take some hours, and it may produce a 1 GB\n"
              "         or more file listing, so make sure there is enough disk space.\n"
-             #endif // VFILEBASE
+             #endif
              );
       ehelp;
 
@@ -33588,10 +33967,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       ifhelp (1)
       printx("$sfk snapto=outfile [-pure] [-nosub] -dir mydir1 -file .ext1 .ext2\n"
              "\n"
-             "    collect many files into one large text file.\n"
+             "    Collect many text files into one large text file, specifying in detail\n"
+             "    what sub folders and file (extensions) to include or exclude.\n"
+             "    The resulting file format can be loaded directly by Depeche View,\n"
+             "    allowing interactive search and filtering of the content.\n"
              "\n"
              "    $options\n"
-             "\n");
+             );
              #ifdef VFILEBASE
       if (cs.xelike)
       printx("       -arc        include content of .zip .jar .tar etc. archives.\n");
@@ -33602,33 +33984,39 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       printx("       -allbin     include binary files as text extract (not default).\n"
              "       -pure       don't insert filenames.\n"
              "       -prefix=x   insert x before every file.\n"
-             "       -nometa     do not include time and size info per file header.\n"
+             "       -nometa     by default, sfk adds the file system's time and size\n"
+             "                   info to each :file: header. can be disabled here.\n"
+             "                   note that size= may not reflect the actual bytes used\n"
+             "                   within the snapfile, due to line ending conversions.\n"
+         //  "       -raw        add text file content 1:1 without CRLF conversions\n"
+         //  "                   and skip binary files completely. assures that the\n"
+         //  "                   size= header field reflects the true content size.\n"
+         //  "       -rawest     like -raw but does not even convert unexpected null\n"
+         //  "                   or EOF (0x1A) characters within text data.\n"
              "       -nosub      or -norec does not include subdirectories (subfolders).\n"
              "       -wrap[=n]   auto-wrap long lines [near column n], e.g. -wrap=80.\n"
-             "       -stat       show time stats at end.\n",
-             glblPathChar);
+             "       -stat       show time stats at end.\n"
+             ,glblPathChar);
+      printx("\n"
+             "    $see also\n"
+             "       #sfk view<def>    about Depeche View, a high speed text browser.\n"
+             );
       printx("\n"
              "    $examples\n"
-             "\n"
              "       #sfk snapto=all-src.cpp . .cpp .hpp .dll <not>tmp\n"
              "          includes .cpp, .hpp and even .dll text extracts, excludes all\n"
              "          files with \"tmp\" in their name, e.g. tmp10.cpp\n"
              "\n"
-             "       #sfk snapto=all-src.cpp -dir src2 <not>src2%cold -file -all .doc\n"
+             "       #sfk snapto=all-src.cpp -dir src2 <not>src2<sla>old -file -all .doc\n"
              "          includes all text files, and .doc binary extracts.\n"
              "\n"
              "       #sfk select src5 .txt .exe +snapto=all.txt\n"
              "          filenames provided by command chaining are always included,\n"
-             "          no matter if binary or not.\n"
-             );
-      printx("\n"
-             "    $further notes\n"
+             "          no matter if binary or not. in this case, extracts from .exe\n"
+             "          binary files are also placed into the output.\n"
              "\n"
-             "       the created \"snap file\" format can be read with every text editor.\n"
-             #ifdef _WIN32
-             "       for fastest search and analysis, however, Depeche View is recommended,\n"
-             "       which interprets the created file format (:file: tags) directly.\n"
-             #endif
+             "       #sfk select -text mydir <not>.bak +snapto=all.txt\n"
+             "          select all text files from mydir, excluding .bak files.\n"
              );
       ehelp;
       // no real action here
@@ -33643,12 +34031,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    {
       pszGlblOutFile = pszCmd+strlen("snapto=");
 
-      bool bstat = 0;
+      bool bstat     = 0;
       cs.addsnapmeta = 0xFFFFUL; // add as much infos as possible
+      cs.addsnaplf   = "\n";     // by default converted by fprintf etc.
 
       #ifdef VFILEBASE
       cs.precachezip = 1;
       #endif // VFILEBASE
+
+      const char *poutmode = "w";
 
       for (; iDir < argc; iDir++) {
          if (!strncmp(argv[iDir],"-prefix=",strlen("-prefix="))) {
@@ -33667,6 +34058,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (!strcmp(argv[iDir],"-nometa"))
             cs.addsnapmeta = 0;
          else
+         if (!strcmp(argv[iDir],"-raw")) {
+            cs.addsnapraw = 1;
+            // write snapfile in binary mode,
+            // to avoid any conversions by fwrite
+            poutmode = "wb";
+            // therefore we need to specify exact
+            // line endings used for header lines
+            cs.addsnaplf  = glblLineEnd;
+         }
+         else
+         if (!strcmp(argv[iDir],"-rawest")) {
+            cs.addsnapraw = 2;
+            poutmode = "wb";
+         }
+         else
          if (isDirParm(argv[iDir]))
             break; // fall through
          else
@@ -33679,14 +34085,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3)) return lRC;
       if (btest) return 0;
 
-      fGlblOut = fopen(pszGlblOutFile, "w");
+      fGlblOut = fopen(pszGlblOutFile, poutmode);
       if (!fGlblOut) return 9+perr("cannot write %s\n", pszGlblOutFile);
 
       // write global file header
-      fprintf(fGlblOut, "%s%s", pszGlblSnapFileStamp, pszGlblJamPrefix);
+      fprintf(fGlblOut, ":snapfile sfk,1.1,%slprefix=%s",
+         cs.addsnapraw ? "raw,":"", pszGlblJamPrefix);
       if (cs.wrapcol > 0)
          fprintf(fGlblOut, ",wrap=%u", cs.wrapcol);
-      fprintf(fGlblOut,"\n\n");
+      fprintf(fGlblOut,"%s%s",cs.addsnaplf,cs.addsnaplf);
       // we will scan the input if we see this content, and exclude it
 
       // reset stats in case of input chaining
@@ -33723,12 +34130,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
    regtest("text-join-lines xinfile xoutfile");
 
-   ifcmd (!strcmp(pszCmd, "text-join-lines"))
+   ifcmd (!strcmp(pszCmd, "joinlines") || !strcmp(pszCmd, "text-join-lines"))
    {
       if (!bhelp && blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
 
       ifhelp (nparm < 2)
-      printx("<help>$sfk text-join-lines infile outfile\n"
+      printx("<help>$sfk joinlines infile outfile\n"
              "\n"
              "   join text lines from text split by email reformatting.\n"
             );
@@ -33910,16 +34317,19 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             )
       printx("<help>$sfk detab=tabsize dir ext1 [ext2 ...] [-to outmask]\n"
              "\n"
-             "   replace tabs by spaces within file(s).\n"
+             "   replace tabs by spaces within file(s) or text stream.\n"
              "\n"
              "   $options\n"
-             "\n"
              "      -to outmask   do not overwrite original files, but write\n"
              "                    to output files according to outmask, e.g.\n"
              "                    #-to tmp\\<run>path\\<run>base.<run>ext<def> or #-to tmp\\<run>file\n"
+             "      -yes          if files are selected, really (re)write them.\n"
+             "                    without -yes, detab is only simulated.\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk scantab<def>   list files containing TAB characters.\n"
              "\n"
              "   $examples\n"
-             "\n"
              "      #sfk detab=3 sources .cpp .hpp\n"
              "         replace tabs by up to 3 blanks, within all .cpp and .hpp\n"
              "         files of directory tree \"sources\".\n"
@@ -33931,6 +34341,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      #sfk detab=4 src .java -relnames -to tmp\\<run>file\n"
              "         nearly the same, however stripping the \"src\" input directory\n"
              "         name from output file paths (not possible with \"+detab\" form).\n"
+             "\n"
+             "      #sfk filter mytext.txt +detab=8\n"
+             "         detab content of a single file to the console.\n"
             );
       ehelp;
 
@@ -33941,6 +34354,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       int iDirNext = 0;
       if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext)) return lRC;
       if (btest) return 0;
+
+      cs.sim = !cs.yes;
 
       if (chain.usedata) {
          // detab stream line
@@ -33954,16 +34369,24 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             }
             detabLine(szLineBuf, szLineBuf2, MAX_LINE_LEN, cs.tabSize);
             if (chain.coldata) {
-               if (szLineBuf2[0])
-                  chain.addLine(szLineBuf2, "");
+               chain.addLine(szLineBuf2, "");
             } else {
                printf("%s\n", szLineBuf2);
             }
          }
       } else {
          // detab file contents
+         if (cs.sim && !cs.nohead)
+            printx("$[simulating:]\n");
+
          lRC = walkAllTrees(eFunc_Detab, lFiles, lDirs, nBytes);
-         printf("%d files checked, %d detabbed, %d tabs in total.\n", cs.files, cs.tabFiles, cs.tabsDone);
+
+         const char *sxinfo = cs.sim ? "would be ":"";
+         printf("%d files checked, %d %sdetabbed, %d tabs in total.\n", 
+            cs.files, cs.tabFiles, sxinfo, cs.tabsDone);
+
+         if (cs.sim && !cs.nohead)
+            printx("$[add -yes to execute.]\n");
       }
 
       if (chain.usedata) {
@@ -34118,6 +34541,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "\n"
              "      #sfk entab=3 sources .cpp .hpp\n"
              "      #sfk entab=3 singleFileName.txt\n"
+             "\n"
+             "   $experimental!\n"
+             "   so far, this command rewrites every selected file,\n"
+             "   no matter if blanks would be replaced by tabs or not.\n"
             );
       ehelp;
 
@@ -34129,8 +34556,19 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1, &iDirNext)) return lRC;
       if (btest) return 0;
 
+      cs.sim = !cs.yes;
+
+      if (cs.sim && !cs.nohead)
+         printx("$[simulating:]\n");
+
       lRC = walkAllTrees(eFunc_Entab, lFiles, lDirs, nBytes);
-      printf("%d files checked, %d entabbed, %d tabs in total.\n", cs.files, cs.tabFiles, cs.tabsDone);
+
+      const char *sxinfo = cs.sim ? "would be ":"";
+      printf("%d files checked, %d %sentabbed, %d tabs in total.\n", 
+         cs.files, cs.tabFiles, sxinfo, cs.tabsDone);
+
+      if (cs.sim && !cs.nohead)
+         printx("$[add -yes to execute.]\n");
 
       STEP_CHAIN(iDirNext, 0);
       bDone = 1;
@@ -34793,6 +35231,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "          find lines containing words \"-pat\", \"\\-foo\" and \"+list\"\n"
              "          in all files of directory src, with verbose search infos.\n"
              "\n"
+             "       #sfk find testfiles class +view\n"
+             "          search \"class\" within \"testfiles\", and show results\n"
+             "          interactively in Depeche View (\"sfk view\" for details).\n"
+             "\n"
              "       #sfk filter -+-pat -+\\-foo -++list -dir src\n"
              "          alternative search, done with sfk filter, on textfiles.\n"
              "\n"
@@ -35078,6 +35520,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      -cut[-]    p1 to \"*\"  - cut all from marker line until end of text\n"
              "      -nocheck     - with inc, cut: ignore block endings without a start\n"
              "      -addmark txt - with inc, cut: insert txt after every processed block\n"
+             "      -context=n            - select n lines of context around hit lines\n"
+             "      -precon=5:blue        - select context before or after hit lines,\n"
+             "      -postcon=5:cyan:---     in blue or cyan, with separator \"---\".\n"
              "\n");
       printx("   $text processing options\n"
              "      applied <err>after<def> line selection options only.\n"
@@ -35202,9 +35647,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              );
       printx("\n"
              "   $see also\n"
-             "      #sfk find<def>      find words in text and binary files. faster, but less flexible.\n"
-             "      #sfk hexfind<def>   find text or binary data in binary files, with hex dump output.\n"
-             "      #sfk replace<def>   replaces many strings in parallel, in text and binary files.\n"
+             "      #sfk find<def>       find words in text and binary files. faster, but less flexible.\n"
+             "      #sfk hexfind<def>    find text or binary data in binary files, with hex dump output.\n"
+             "      #sfk replace<def>    replaces many strings in parallel, in text and binary files.\n"
+             "      #sfk help color<def> for the list of color names.\n"
              );
       printx("\n"
              "   $examples\n"
@@ -35277,6 +35723,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "         if the data contains escaped quotes like \"\" then further prefiltering\n"
              "         can be necessary, like removing those quotes by -sreplace _\\q\\q__\n"
              );
+      printx("      #sfk filt mysrc.cpp \"-+fopen(\" -postcontext=3:blue:----- +view\n"
+             "         filter source file \"mysrc.cpp\" for fopen calls, and list the following\n"
+             "         three lines (post context) of every call, separating outputs by -----\n"
+             "         and showing the whole result in Depeche View (\"sfk view\" for more).\n"
+             );
       ehelp;
 
       CommandScope ocmd("Filter");
@@ -35290,6 +35741,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       gfilter.bDumpLF = 1;
       gfilter.bSkipBinaries = 1; // always, this is a text-only filter.
       gfilter.bFilenames = 1;
+      gfilter.cprecolor  = ' ';
+      gfilter.cpostcolor = ' ';
 
       #ifdef VFILEBASE
       cs.precachezip = 1;
@@ -35309,8 +35762,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       int iChainNew = 0;
       if (setFilterParms(
          argv, argc, gfilter.iPat, gfilter.nPat,
-         gfilter.bLNum, gfilter.bCnt, gfilter.bDumpLF, gfilter.bReWrite,
-         gfilter.bSkipBinaries, gfilter.bFilenames, gfilter.bPassHitFiles,
+         gfilter,
          &pszInPath, &iDirNew, &iChainNew
          ))
          return 9;
@@ -36736,6 +37188,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "                   do not specify mtkinc, mtkmac on -revoke.\n"
              "    -keep-dates    on revoke, also reactivate original file dates\n"
              "    -redo          redo all changes\n"
+             "    -witheol       also instrument { at end of line, like in:\n"
+             "                   void Foo::bar(int nmode) {\n"
              "\n"
              "       #sfk inst mtk/mtktrace.hpp _mtkb_ -dir testfiles !save_ -file .cpp\n"
              "          instrument the code (saving all in save_inst dirs)\n"
@@ -36768,6 +37222,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          else
          if (!strcmp(argv[iDir], "-keep-dates")) {
             bGlblTouchOnRevoke = 0;
+         }
+         else
+         if (!strcmp(argv[iDir], "-witheol")) {
+            bGlblInstEol   = 1;
          }
          else
          if (isDirParm(argv[iDir]))
@@ -41464,6 +41922,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
          // write the batch
          FILE *fout = fopen(szRefNameBuf, "w");
+         if (!fout) return 9+perr("cannot write batch file: %s\n", szRefNameBuf);
 
          // write alias batch header for later re-identification.
          fprintf(fout, "%s\n", pszGlblAliasBatchHead);
@@ -41796,6 +42255,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          {
             // open output batchfile
             FILE *fout = fopen(szRefNameBuf, "w");
+            if (!fout) return 9+perr("cannot write batch file: %s\n", szRefNameBuf);
 
             // write alias batch header for later re-identification.
             fprintf(fout, "%s\n", pszGlblAliasBatchHead);
@@ -43174,14 +43634,23 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       ifhelp (!chain.useany() && (nparm < 1))
       printx("<help>$sfk list ... +[f]view [-noshl|-nocol] [\"-...\"]\n"
              "\n"
-             "   display text or file contents with Depeche View, a free high speed\n"
-             "   text viewer and editor available from http://stahlworks.com/dev/\n"
-             "   requires dview, dview.exe or dview.bat being located in the PATH.\n"
-             "   if you have an executable like dview143.exe, rename it before use.\n"
-             "   to run Depeche View under linux, WINE must be installed. google\n"
+             "   Depeche View is a high speed text browser and editor,\n"
+             "   available from http://stahlworks.com/dev/\n"
+             "\n"
+             "   It is used to search, filter and edit huge amounts of ASCII text,\n"
+             "   like source code, log files, or html documentation. The tool loads\n"
+             "   every text from a folder, showing all content as one huge text,\n"
+             "   allowing instant interactive search as you type.\n"
+             "   \n"
+             "   Depeche View integrates with SFK through command chaining.\n"
+             "   Many SFK commands allow to add \"+view\" to have their output\n"
+             "   shown instantly in DView. This requires dview, dview.exe\n"
+             "   or dview.bat being located in the PATH. If you have downloaded\n"
+             "   an executable like dview143.exe, rename it before use.\n"
+             "   To run Depeche View under linux, WINE must be installed. Google\n"
              "   for \"linux wine\" or search \"wine\" in your package manager.\n"
              "\n"
-             "   $use as chain command, or to display stdin:\n"
+             "   $use as a chain command, or to display stdin:\n"
              "\n"
              "      +[f]view can be used only #after another command<def>\n"
              "      producing a list of filenames or plain text data:\n"
@@ -43242,14 +43711,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      #sfk echo x +view -verbose\n"
              "         tell verbosely which dview(.exe?) executable is actually used.\n"
              "\n"
-             "      #sfk list docs .txt +ffilter -+foo -hitfiles +fview \"-id txt\"\n"
-             "         view all .txt $files<def> from docs containing \"foo\", pass\n"
-             "         option -id to the viewer, setting a window title like txt_1.\n"
+             "      #sfk list docs .txt +ffilter -+foo -hitfiles +fview \"-max -over\"\n"
+             "         view all .txt $files<def> from docs containing \"foo\", pass options\n"
+             "         -max -over to the viewer, showing a maximized window in overscan\n"
+             "         mode (without any title bar).\n"
              "\n"
-             "      #sfk list docs .txt +ffilter -+foo +view \"-area 20:20:800:300:15\"\n"
-             "         view only text $lines<def> from docs containing \"foo\", pass\n"
-             "         parameter set \"-area ...\" to the viewer, opening an 800x300\n"
-             "         viewer window at position 20,20 (and add. window yoffset=15).\n"
+             "      #sfk list docs .txt +ffilter -+foo +view \"-space 0:0:40\"\n"
+             "         view only text $lines<def> from docs containing \"foo\", in a window\n"
+             "         covering the whole desktop, except for 40 pixels at the bottom.\n"
              #ifdef _WIN32
              "\n"
              "      #sfk fromclip +view\n"
@@ -43258,6 +43727,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "\n"
              "      #tar tvf foo.tar | sfk view -i\n"
              "         display a tar file's content listing.\n"
+             "\n"
+             "      #sfk larc -size -time -withdirs foo.tar +view\n"
+             "         the same, with sfk reading the .tar directly.\n"
             );
       ehelp;
 
@@ -46530,7 +47002,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "       convert between CR/LF and just LF text format.\n"
              "          #sfk remcr batches .bat .cmd\n"
              "          #sfk remcr mybatch.bat\n"
-             "   $sfk text-join-lines infile outfile\n"
+             "   $sfk joinlines infile outfile\n"
              "       for text with lines split by email reformatting.\n"
              "   $sfk rep[lace] [...] -text /src/dst/ -dir mydir -file .ext1 [-yes]\n"
              "       replace strings or byte blocks in files.  \"sfk rep\" for more.\n"
@@ -46768,10 +47240,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                 "      4 = green\n"
                 "      8 = blue\n"
                 "\n"
-                "   some commands like \"sfk echo\" accept plain text color descriptions,\n"
-                "   like red, Green, magenta. sfk for windows tries to autoselect color\n"
-                "   brightness if a black or white shell background is found. otherwise\n"
-                "   the spelling matters: red means dark red, and Red means bright red.\n"
+                "   some commands like \"sfk echo\" also accept direct color names:\n"
+                "   red,green,blue,yellow,cyan,magenta,default,Red,Green,Blue...\n"
+                "   sfk for windows tries to autoselect color brightness if a black\n"
+                "   or white shell background is found. otherwise the spelling matters:\n"
+                "   red means dark red, and Red means bright red.\n"
                 "   you may also set SFK_COLORS to bright or dark, or specify options\n"
                 "   -bright or -dark in your command, to force all plain text colors\n"
                 "   to the same brightness, regardless of spelling.\n"
@@ -47024,6 +47497,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
   printx("              with some other commands, also process archive file contents.\n"
          "              archives recognized by sfk must have one of these extensions:\n"
          "              .zip .jar .ear .war .aar .xpi .tar .tar.gz .tar.bz2 .tgz .gz .bz2\n"
+         "              to include further extensions, read below about SFK_ZIP_EXT.\n"
    #ifndef VFILEMAX
          "              this binary (SFK Base/XD) can read only the first 1000 bytes\n"
          "              of every archive entry. listing of contents is not limited.\n"
@@ -47143,6 +47617,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
   printx("      $%s SFK_ZIP_EXT=\".foo .bar .myext\"\n"
          "        set additional, user defined zip file extensions. in this example,\n"
          "        files ending with .foo, .bar or .myext are also treated like zip files.\n"
+         "        for the list of default extensions, look above at the -arc option.\n"
          "\n"
          ,pszSet
          );

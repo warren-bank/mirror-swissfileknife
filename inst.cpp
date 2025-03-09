@@ -1,8 +1,5 @@
 /*
    source instrumentation support
-
-	sfk 1.5.4:	support for blocks starting with "   {"
-               instead of just "{".
 */
 
 #include "sfkbase.hpp"
@@ -37,7 +34,9 @@ static char szCopyCmd[4096];
 
 static char *pszGlblInclude = "";
 static char *pszGlblMacro   = "";
-static bool  bdebug=0;
+
+static bool  bdebug   = 0;
+static bool  binsteol = 0;
 
 #define TRB_SIZE    200 // token ring buffer
 #define BLINE_SIZE 1024
@@ -351,6 +350,21 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
          // printf("=> %s \"%s\"\n", szLineBuf2, pszMethodStartLine);
          nClHits++;
       }
+      else
+      if (binsteol) 
+      do
+      {
+         // also instrument "{" at end of line
+         char *pcur = strrchr(szLineBuf2, '{');
+         if (!pcur) break;
+         if (!strcmp(pcur, "{")) {
+            reduceSignature(pszMethodStartLine, szLineBuf3);
+            sprintf(pcur, "{%s(\"%s\");", pszGlblMacro, szLineBuf3);
+            // printf("=> %s \"%s\"\n", szLineBuf2, pszMethodStartLine);
+            nClHits++;
+         }  
+      }
+      while (0);
    }
    // else keep szLineBuf2 unchanged
 
@@ -526,9 +540,11 @@ static char *loadFile(char *pszFile, int nLine)
    return pOut;
 }
 
-int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke)
+int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke, int nmode)
 {
    // printf("INST %s %u %s %s\n",pszFile,bRevoke,pszInc,pszMac);
+
+   binsteol = (nmode & 1) ? 1 : 0;
 
    pszGlblInclude = pszInc;
    pszGlblMacro   = pszMac;

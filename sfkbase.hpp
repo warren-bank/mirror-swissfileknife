@@ -158,6 +158,7 @@ static       char  glblRunChar     = '$';
 static const char *glblWildStr     = "*";
 static const char  glblWildChar    = '*';
 static const char *glblWildInfoStr = "*";
+static const char *glblLineEnd     = "\r\n";
 #define SFK_FILT_NOT1 "-!"
 #define SFK_FILT_NOT2 "-ls!"
 #define SFK_FILT_NOT3 "-le!"
@@ -174,6 +175,7 @@ static       char  glblRunChar     = '#';
 static       char  glblWildStr[10];       // "+";
 static       char  glblWildChar;          // '+';
 static       char  glblWildInfoStr[20];   // "+ or \\*";
+static const char *glblLineEnd     = "\n";
 #define SFK_FILT_NOT1 "-:"
 #define SFK_FILT_NOT2 "-ls:"
 #define SFK_FILT_NOT3 "-le:"
