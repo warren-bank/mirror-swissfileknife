@@ -4,6 +4,17 @@
    known issues:
    -  not all browser instances deleted on exit
       (however cleaned up implicitely by process end)
+   -  general review of all things (not) copied
+      from old to new view.
+
+   0.3.1
+   -  fix: mouse wheel lockup on high wheel speed.
+   -  fix: cleanup of behaviour on changing views by rclick:
+   -  fix: sometimes uneditable file mask.
+   -  fix: always activate new view.
+   -  fix: shift, ctrl key lock on view change.
+   -  fix: uneditable mask on view change.
+   -  fix: always go to edit mask mode on view change.
 
    0.3.0
    -  add: shift+lmouse now allows multi-word and line
@@ -50,7 +61,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#define VER_NUM  "0.3.0"
+#define VER_NUM  "0.3.1"
 #define VER_STR  "sfk snapview " VER_NUM " beta"
 #define INFO_STR "f1:fullscr f8:help < sfk snapview " VER_NUM
 
@@ -338,8 +349,8 @@ private:
    char  szClSnapPrefix[MAX_SNAPPRE_LEN+10];
    char  *pszClCurSubFile;  // i.e. :file:
    bool  bClCaseSearch;
-   bool  bClShift;      // shift key pressed
-   bool  bClCtrl;
+   static bool bClShift; // shift key pressed, global accross all viewers
+   static bool bClCtrl;  //  ctrl key pressed, global accross all viewers
    bool  bClActive;
    long  nClHelpMode;
    ulong nClTabSize;
@@ -350,7 +361,6 @@ private:
    long  nClMatchingFiles; // on local scope, how many filenames do match
    long  nClFirstFileMatch;
    bool  bClClearBottom;
-   bool  bClExtHelp;
 
    long  nClClipLRow;   // absolute low  line of Shift+Button selection
    long  nClClipHRow;   // absolute high line of Shift+Button selection
@@ -363,6 +373,9 @@ Browser *apGlblBrowsers[MAX_BROWSERS];
 ulong nGlblBrowsers = 0;
 bool  bGlblMinimized = 0;
 ulong nGlblSubFiles = 0;
+
+bool Browser::bClShift = 0;
+bool Browser::bClCtrl  = 0;
 
 Browser::Browser() 
 {
@@ -410,8 +423,6 @@ Browser::Browser()
    bClStdCluster  = 0;
    pszClCurSubFile = 0;
    bClCaseSearch  = 0;
-   bClShift = 0;
-   bClCtrl  = 0;
    bClActive = 0;
    nClHelpMode = 0;
    nClSearchStart = 0;
@@ -427,7 +438,6 @@ Browser::Browser()
    nClMatchingFiles = -1;
    nClFirstFileMatch = -1;
    bClClearBottom = 0;
-   bClExtHelp = 0;
    nClClipLRow = -1;
    nClClipHRow = -1;
    nClClipLCol = -1;
@@ -509,9 +519,13 @@ void Browser::copyConfig(Browser *pSrc)
    nClTopFixIdx   = pSrc->nClTopFixIdx;
    nClTopFix      = pSrc->nClTopFix;
 
-   bClLocalScope  = pSrc->bClLocalScope;
+   bClLocalScope   = pSrc->bClLocalScope;
+
    strncpy(szClFileMask, pSrc->szClFileMask, MAX_LINE_LEN);
    szClFileMask[MAX_LINE_LEN] = '\0';
+   iFileMaskPos    = pSrc->iFileMaskPos;
+   bClEditFileMask = false;
+
    nClMatchingFiles  = pSrc->nClMatchingFiles;
    nClFirstFileMatch = pSrc->nClFirstFileMatch;
 
@@ -952,7 +966,9 @@ _
          sprintf(&szBuf[strlen(szBuf)], ", %lu msec.", (ulong)nClSearchTime);
       else
          strcat(szBuf, ".");
-      sprintf(&szBuf[strlen(szBuf)], " %s%s",bClShift?"S":"",bClCtrl?"C":"");
+      if (nClWheel != 0)
+         sprintf(&szBuf[strlen(szBuf)], " mw %ld ",(long)nClWheel);
+      sprintf(&szBuf[strlen(szBuf)], "%s%s",bClShift?"S":"",bClCtrl?"C":"");
       ulong nGrey = strlen(&szBuf[iOffs]);
       if (iOffs+nGrey < sizeof(szBuf)-10)
          memset(&aAttrMask[iOffs], 'g', nGrey);
@@ -1686,13 +1702,14 @@ _
                if (strlen(szClSel) > 0)
                {
                   pRight->setMask(szClSel);
-                  pRight->activate();
                }
                else
                {
                   pRight->updatePanel();
                   pRight->update();
                }
+
+               pRight->activate();
             }
          }
 
@@ -2105,6 +2122,8 @@ _
          // mtklog("WHEEL %d", zDelta);
          short nStep  = WHEEL_DELTA;
          nClWheel += zDelta;
+         // NOTE: zDelta can also be MULTIPLES of WHEEL_DELTA,
+         //       if user turns wheel rapidly under high load!
 
          // calc currently displayed top and bottom lines
          long ymax = hchar ? nClPixHeight/hchar : BROW_MAX;
@@ -2114,15 +2133,20 @@ _
 
          if (nClWheel >= nStep)
          {
-            nClWheel -= nStep;
             // mouse wheel up
-            if (!nClMWMode || bClShift)
+            if (!nClMWMode || bClShift) {
+               // independent from wheel speed, always step just ONE hit:
+               nClWheel = 0;
                goPreviousMaskHit();
-            else {
-               if (nClTopLine >= 5)
-                  nClTopLine -= 5;
-               else
-                  nClTopLine = 0;
+            } else {
+               // in case of hectic wheel turns, we step farther:
+               while (nClWheel > 0) {
+                  nClWheel -= nStep;
+                  if (nClTopLine >= 5)
+                     nClTopLine -= 5;
+                  else
+                     nClTopLine = 0;
+               }
                updatePanel();
                update();
             }
@@ -2130,13 +2154,18 @@ _
          else
          if (nClWheel <= -nStep) 
          {
-            nClWheel += nStep;
             // mouse wheel down
-            if (!nClMWMode || bClShift)
+            if (!nClMWMode || bClShift) {
+               // independent from wheel speed, always step just ONE hit:
+               nClWheel = 0;
                goNextMaskHit();
-            else {
-               if ((nClTopLine+ymax) < nClLines+nClBotLines-2)
-                  nClTopLine += 5;
+            } else {
+               // in case of hectic wheel turns, we step farther:
+               while (nClWheel < 0) {
+                  nClWheel += nStep;
+                  if ((nClTopLine+ymax) < nClLines+nClBotLines-2)
+                     nClTopLine += 5;
+               }
                updatePanel();
                update();
             }

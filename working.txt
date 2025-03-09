@@ -450,7 +450,7 @@ now about the compression point:
       versus bulk transfer times). and do you want to wait
       6 hours to verify a DVD if it's still readable?
 
-sfk "mirrorto" tries to solve this problem by a technique i call
+sfk "freezeto" tries to solve this problem by a technique i call
 "decentralized compression".
 
 for example, your daily working data comprises these dirs:
@@ -500,10 +500,8 @@ create a file C:\batch\do-mirror-d-to-z.bat
  
    D:
    cd \
-   mkdir Z:\zmirrord\02-tools
-   copy C:\tools\unzip.exe Z:\zmirrord\02-tools /Y
-   copy C:\tools\sfk.exe Z:\zmirrord\02-tools /Y
-   sfk mirrorto=Z:\zmirrord -from=C:\batch\mirror-d-to-z.sfk
+   mkdir Z:\zmirrord
+   sfk freezeto=Z:\zmirrord -from=C:\batch\mirror-d-to-z.sfk
 
 the "02-tools" stuff will be explained later.
 if you run this batch now,

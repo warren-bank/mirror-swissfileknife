@@ -39,13 +39,13 @@ Therefore I will now talk about the <b>Windows (XP/NT/2K) Command Shell</b> (mor
 By default, you get an uncomfortable, inefficient shell, about 80x25 characters, wide font, and without some important mouse support for text marking and insertion. Furthermore, just to open the shell via "Start Menu" is ways too complicated. So let's do some configuration:
 <p>
 <lu>
-<li>create a shell desktop icon for immediate access. to do so, open Start Menu -> Programs -> Accessories, then right mouse button over the Windows command shell icon, select "copy". now left-click onto some empty space on the desktop, select "insert". a new icon appears.
+<li>create a shell desktop icon for immediate access. to do so, open Start Menu -> Programs -> Accessories, then right mouse button over the Command Prompt icon, select "copy". now left-click onto some empty space on the desktop, select "paste". a new icon appears.
 <li>right-click on this icon, select the properties.
-<li>layout: select buffer size: width 120, height 3000. this means, whatever text is listed, the shell will allow you to view the last 3000 lines, so no important outputs will get lost.
+<li>layout: set screen buffer size: width 120, height 3000. this means, whatever text is listed, the shell will allow you to view the last 3000 lines, so no important outputs will get lost.
 <li>layout: select window size: width 120, height 25. this tells how much of the buffer is displayed by default, it can be changed afterwards by resizing the window.
 <li>options: activate QuickEdit Mode (and Insert Mode), if not done already. this essential option allows you to mark text in the shell eighter by free selection (keeping left button pressed) or by double-click (selecting a whole word), to copy this into clipboard by right button, and to insert clipboard content by right button (if nothing is marked up in the shell).
 <li>font: select a more compact font size, I recommend "7x12".
-<li>now select the tab where "%SystemRoot%\system32\cmd.exe" is listed (don't know the name under english windows). extend this expression to<p>
+<li>now select the Shortcut tab. extend the Target expression to<p>
 <font face="courier">
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;%SystemRoot%\system32\cmd.exe /K c:\batch\init.bat
 </font>
@@ -615,12 +615,12 @@ usage:
        run self-defined command on files or directories.
        type "sfk run" for help.
 
-   sfk mirrorto=targetdir [-quiet] -dir src1 -copy|zip
+   sfk freezeto=targetdir [-quiet] -dir src1 -copy|zip
        copy or freeze all or updated files from src to target,
        using the external commands xcopy and zip.
        !dirname excludes directory "dirname".
        option -quiet avoids listing every single zip or xcopy call.
-       NOTE: as everything else, mirrorto comes WITHOUT ANY WARRANTY.
+       NOTE: as everything else, freezeto comes WITHOUT ANY WARRANTY.
        -&gt; Always have a manual check afterwards if your most important
           files are really contained within the backup archives!
        -&gt; Test read your backup media on different drives and machines!

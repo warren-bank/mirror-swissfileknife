@@ -1,3 +1,1 @@
-@rem sfk compile without gui popup support
-@rem should compile on every unix-like system with low effort
-cl sfk.cpp patch.cpp inst.cpp
+g++ sfk.cpp patch.cpp inst.cpp -o sfk
