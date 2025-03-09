@@ -8,6 +8,28 @@
    the world's fastest source code browser and editor.
 
    1.9.6
+   Revision 2:
+   -  rel: 22.02.2020, Minor Update
+   -  sum: Fixed CRC checksum calculation with 64-bit sfk.
+           Better handling of multiple network interfaces with sfk ip.
+   -  FIX: sfk 64 bit: wrong crc checksum calculations.
+           sfk zip created wrong crc checksums.
+           sfk unzip showed wrong crc error messages.
+           sfk crc, crcgento, crccheck produced
+           wrong results.
+   -  CHG: OUTPUT CHANGE: sfk ip under windows:
+           now gives a list of all possible ip's
+           if more than one network interface exists.
+           the preferred ip can now be filtered by
+           environment variable SFK_OWN_NET.
+           for batch files the output of 'sfk ip'
+           can also be predefined by SFK_OWN_IP.
+   -  add: calc: now tolerates whitespace text.
+   -  add: udpdump: sfk for windows: when listening 
+           for multicast traffic sfk now listens
+           on all network interfaces.
+   -  doc: xed: reasons for unexpected line breaks.
+   -  fix: compile: vc14 (vs2015) support.
    Initial Release:
    -  rel: 08.02.2020, Major Update
    -  sum: important bugfixes for file selection.
@@ -1504,7 +1526,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.9.6" // ver_ and check the _PRE definition
+#define SFK_VERSION  "1.9.6.2" // ver_ and check the _PRE definition
 #define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
@@ -1587,10 +1609,25 @@
  #endif
 #endif
 
-#if defined(SFK_STATIC)
- #define SFK_BUILD_INFO "static"
+#define SFK_STRINGIFY(x) #x
+#define SFK_TOSTRING(x) SFK_STRINGIFY(x)
+
+#if defined(_MSC_VER)
+ #define SFK_CPL_VER "vc" SFK_TOSTRING(_MSC_VER)
+ #if defined(_WIN64)
+  #define SFK_CPL_BITS ";x64"
+ #else
+  #define SFK_CPL_BITS ";x32"
+ #endif
 #else
- #define SFK_BUILD_INFO "-"
+ #define SFK_CPL_VER  ""
+ #define SFK_CPL_BITS ""
+#endif
+
+#if defined(SFK_STATIC)
+ #define SFK_BUILD_INFO SFK_CPL_VER SFK_CPL_BITS "static"
+#else
+ #define SFK_BUILD_INFO SFK_CPL_VER SFK_CPL_BITS ""
 #endif
 
 #define VER_DAT_STR "date=" __DATE__
@@ -1925,7 +1962,7 @@ int mysetpos64(FILE *f, num pos, char *pszFile)
 
 // ====== SFK primitive function library begin ========
 
-char *ownIPList(int &rhowmany, uint nPort=0, const char *psep=" or ");
+char *ownIPList(int &rhowmany, uint nOptPort, const char *psep, int nmode);
 
 #if (defined(WITH_TCP) || defined(VFILENET) || defined(DV_TCP))
 
@@ -2289,6 +2326,8 @@ int sfkcalc(double &r, char *pszFrom, char **ppNext, int iLevel, bool bStopPM=0)
    char *pszNext=0;
    int   iOwnBra=0;
 
+   skipWhite(&pszFrom); // sfk1962
+
    if (isdigit(*pszFrom)!=0 || *pszFrom=='-') {
       v1=getcalcval(pszFrom,&pszNext);
       pszFrom=pszNext;
@@ -2304,7 +2343,12 @@ int sfkcalc(double &r, char *pszFrom, char **ppNext, int iLevel, bool bStopPM=0)
    bool bstop=0;
    while (*pszFrom!=0 && bstop==0)
    {
+      skipWhite(&pszFrom); // sfk1962
+      if (*pszFrom==0)     // sfk1962
+         break;
+
       if (cs.debug) printf("%.*s[%s]\n",iLevel*2,pszGlblBlank,pszFrom);
+
       // get * / + -
       char c = *pszFrom++;
       switch (c)
@@ -3341,21 +3385,36 @@ char *ipAsString(struct sockaddr_in *pAddr, char *pszBuffer, int iBufferSize, ui
    return pszBuffer;
 }
 
-// IN: howmany==0 : list all ip's separated by psep,
-//                  return amount in howmany
-//     howmany==1 : list first ip only, ignore port
-char *ownIPList(int &rhowmany, uint nPort, const char *psep)
+// mode 0: full list, or not, depending on environment
+// mode 1: just a single ip
+// mode 2: always full list
+char *ownIPList(int &rhowmany, uint nPort, const char *psep, int nmode)
 {
    static char szIPListBuf[200];
    szIPListBuf[0] = '\0';
+
+   char szEnvNet[100]; szEnvNet[0]='\0';
 
    // if option -ownip=x is given
    if (cs.szownip[0]) {
       strcopy(szIPListBuf, cs.szownip);
       return szIPListBuf;
    }
-
-   bool bsingle = (rhowmany == 1) ? 1 : 0;
+   if (nmode < 2)
+   {
+      char *pszEnvIP = getenv("SFK_OWN_IP"); // sfk1962
+      if (pszEnvIP) {
+         strcopy(szIPListBuf, pszEnvIP);
+         rhowmany = 1;
+         return szIPListBuf;
+      }
+      char *pszEnvNet = getenv("SFK_OWN_NET"); // sfk1962
+      if (pszEnvNet!=0 && strlen(pszEnvNet)>0) {
+         strcopy(szEnvNet, pszEnvNet);
+         if (szEnvNet[strlen(szEnvNet)-1]!='.')
+            strcat(szEnvNet, ".");
+      }
+   }
 
    prepareTCP();
 
@@ -3365,21 +3424,43 @@ char *ownIPList(int &rhowmany, uint nPort, const char *psep)
       sprintf(szPortStr, ":%u", nPort);
 
    char *psz = 0;
+   int ndone = 0;
+   const char *pprefix = "";
 
    #ifdef _WIN32
 
    struct in_addr addr;
 
    hostent *pinfo = gethostbyname(""); // fails under linux
-   if (pinfo) {
-      memcpy(&addr,pinfo->h_addr_list[0],sizeof(struct in_addr));
-      char *pownip = inet_ntoa(addr);
-      strcopy(szIPListBuf, pownip);
-      if (bsingle)
-         return szIPListBuf;
-      strcat(szIPListBuf, szPortStr); // if any
-      rhowmany = 1;
+   if (pinfo) 
+   {
+      for (int i=0; pinfo->h_addr_list[i]; i++)
+      {
+         memcpy(&addr,pinfo->h_addr_list[i],sizeof(struct in_addr));
+
+         const char *pszIP = inet_ntoa(addr);
+
+         if (strcmp(pszIP, "127.0.0.1"))
+         {
+            // sfk1962: filter by sfk_own_net if not forced list
+            if (nmode<2 && szEnvNet[0]!=0 && strncmp(pszIP,szEnvNet,strlen(szEnvNet))!=0)
+               continue;
+
+            int nlen = strlen(pszIP);
+            int nrem = (int)sizeof(szIPListBuf) - (int)strlen(szIPListBuf);
+            if (nlen < nrem - 10) {
+                strcat(szIPListBuf, pprefix);
+                strcat(szIPListBuf, pszIP);
+                if (nmode==1)
+                  return szIPListBuf;
+                strcat(szIPListBuf, szPortStr); // if any
+                pprefix = psep;
+                ndone++;
+            }
+         }
+      }
    }
+   rhowmany = ndone;
 
    #else
 
@@ -3387,8 +3468,6 @@ char *ownIPList(int &rhowmany, uint nPort, const char *psep)
    struct ifaddrs *pAdrObj = NULL;
    char szAdrBuf[200]; mclear(szAdrBuf);
    getifaddrs(&pAdrObj);
-   const char *pprefix = "";
-   int ndone = 0;
    while (pAdrObj != NULL)
    {
      if (   pAdrObj->ifa_addr != 0
@@ -3399,19 +3478,26 @@ char *ownIPList(int &rhowmany, uint nPort, const char *psep)
      {
        void *pIPData = &((struct sockaddr_in *)pAdrObj->ifa_addr)->sin_addr;
        const char *pszIP = inet_ntop(AF_INET, pIPData, szAdrBuf, sizeof(szAdrBuf)-10);
-       if (strcmp(pszIP, "127.0.0.1")) {
+       if (strcmp(pszIP, "127.0.0.1"))
+       do
+       {
+          // sfk1962: filter by sfk_own_net if not forced list
+          if (nmode<2 && szEnvNet[0]!=0 && strncmp(pszIP,szEnvNet,strlen(szEnvNet))!=0)
+             break;
+
           int nlen = strlen(pszIP);
           int nrem = (int)sizeof(szIPListBuf) - (int)strlen(szIPListBuf);
           if (nlen < nrem - 10) {
              strcat(szIPListBuf, pprefix);
              strcat(szIPListBuf, pszIP);
-             if (bsingle)
+             if (nmode==1)
                return szIPListBuf;
              strcat(szIPListBuf, szPortStr); // if any
              pprefix = psep;
              ndone++;
           }
        }
+       while (0);
      }
      pAdrObj = pAdrObj->ifa_next;
    }
@@ -3748,7 +3834,7 @@ int setaddr(struct sockaddr_in *paddr, char *pstr, int iflags)
       mclear(szExpBuf);
 
       int   nnum  = 0; // number of own ip's
-      char *plist = ownIPList(nnum, 0, "\t");
+      char *plist = ownIPList(nnum, 0, "\t", 1); // setaddr
 
       // copy first 3 segments of own ip, if any
       char *pseg2=0,*pseg3=0,*pseg4=0;
@@ -3837,7 +3923,7 @@ struct hostent *sfkhostbyname(const char *pstr, bool bsilent)
       mclear(szExpBuf);
 
       int   nnum  = 0; // number of own ip's
-      char *plist = ownIPList(nnum, 0, "\t");
+      char *plist = ownIPList(nnum, 0, "\t", 1); // sfkhostbyname
 
       // copy first 3 segments of own ip, if any
       char *pseg2=0,*pseg3=0,*pseg4=0;
@@ -11472,8 +11558,10 @@ void listcodes(bool ball, bool bfull, bool btrace)
 uchar SFKNoCase::itolower(uchar c)
 {
    #ifdef SWINST
+
    return tolower(c);
-   #endif
+
+   #else
 
    #ifdef _WIN32
 
@@ -11513,13 +11601,17 @@ uchar SFKNoCase::itolower(uchar c)
    return tolower(c);
 
    #endif
+
+   #endif
 }
 
 uchar SFKNoCase::itoupper(uchar c)
 {
    #ifdef SWINST
+
    return toupper(c);
-   #endif
+
+   #else
 
    #ifdef _WIN32
 
@@ -11557,6 +11649,8 @@ uchar SFKNoCase::itoupper(uchar c)
    #else
 
    return toupper(c); // FIX sfk193 linux case insensitivity
+
+   #endif
 
    #endif
 }
@@ -31976,6 +32070,8 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
    // show just a single line info w/o dump?
    bool bOneLine = (cs.knx == 2) ? 1 : 0;
 
+   char szExtInfo[100]; szExtInfo[0] = '\0';
+
    do
    {
       if (bind(nsock, (struct sockaddr *)&oOwnAddr, sizeof(oOwnAddr)) != 0)
@@ -32005,23 +32101,31 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
          if (!(hostinfo=gethostbyname(name)))
             { perr("get ownhost failed (%s) (1)\n", name); break; }
 
-         struct in_addr *pin_addr = (struct in_addr *)*hostinfo->h_addr_list;
-
-         mreq.imr_interface.s_addr = pin_addr->s_addr;
-         mreq.imr_multiaddr.s_addr = inet_addr(pszGroup);
- 
-         // force IP_ADD_MEMBERSHIP of ws2tcpip.h
-         #define MY_IP_ADD_MEMBERSHIP 12
-
          int iRC = 0;
-         if (iRC = setsockopt(nsock, IPPROTO_IP, MY_IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq))) {
-            perr("cannot join multicast: rc=%d %s", iRC, netErrStr());
-            perr("host=%s sock=%d group=%s",name,nsock,pszGroup);
-            break;
-            // in case of error 10042 see
-            //    http://support.microsoft.com/kb/257460
-            // wrong winsock header, runtime linkage etc.
+         int ndone = 0;
+         for (int i=0; hostinfo->h_addr_list[i]; i++) // sfk1962 mcast receive
+         {
+            struct in_addr *pin_addr = (struct in_addr *)hostinfo->h_addr_list[i];
+   
+            mreq.imr_interface.s_addr = pin_addr->s_addr;
+            mreq.imr_multiaddr.s_addr = inet_addr(pszGroup);
+    
+            // force IP_ADD_MEMBERSHIP of ws2tcpip.h
+            #define MY_IP_ADD_MEMBERSHIP 12
+   
+            if (iRC = setsockopt(nsock, IPPROTO_IP, MY_IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq))) {
+               perr("cannot join multicast: rc=%d %s", iRC, netErrStr());
+               perr("host=%s sock=%d group=%s",name,nsock,pszGroup);
+               break;
+               // in case of error 10042 see
+               //    http://support.microsoft.com/kb/257460
+               // wrong winsock header, runtime linkage etc.
+            }
+            ndone++;
          }
+         if (iRC) break;
+         if (ndone > 1)
+            sprintf(szExtInfo, ", on %d interfaces", ndone);
  
          #else
  
@@ -32043,7 +32147,7 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
 
       if (!cs.quiet) {
          if (pszGroup)
-            printf("[waiting on %s port %d for data.]\n", pszGroup, nPort);
+            printf("[waiting on %s port %d for data%s.]\n", pszGroup, nPort, szExtInfo);
          else
             printf("[waiting on port %d for data.]\n", nPort);
       }
@@ -33176,7 +33280,7 @@ int httpServ(uint nPort, uint nPort2, bool bDeep, bool bNoList, bool bRW, bool b
 
    // get own ip
    int   namount = 0;
-   char *pownip  = ownIPList(namount, (nPort==80) ? 0 : nPort);
+   char *pownip  = ownIPList(namount, (nPort==80) ? 0 : nPort, " or http://", 0); // httpserv
    struct in_addr addr;
 
    if (strlen(pownip)) {
@@ -34726,7 +34830,7 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
    char szRepBuf[200];
 
    int   namount = 0;
-   pownip = ownIPList(namount, 0);
+   pownip = ownIPList(namount, 0, " or ", 0); // ftpserv
 
    if (strlen(pownip))
    {
@@ -35142,7 +35246,7 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                   break;
             }
             int   ihowmany = 1; // force first ip
-            char *pszOwnIP = ownIPList(ihowmany);
+            char *pszOwnIP = ownIPList(ihowmany, 0, "", 1); // PASV ownip
             char *psz = 0;
             while (psz = strchr(pszOwnIP, '.'))
                *psz = ',';
@@ -42336,6 +42440,8 @@ void printMainHelp(bool bhelp, char *penv[])
           && !strBegins(psz, "SFK_PROXY=")
           && !strBegins(psz, "SFK_CRASH_LOG=")
           && !strBegins(psz, "SFK_PATH=")
+          && !strBegins(psz, "SFK_OWN_NET=")
+          && !strBegins(psz, "SFK_OWN_IP=")
          )
          continue;
       if (bFirstEnv) {
@@ -44640,23 +44746,14 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   if (!strcmp(pszCmd, "testcase"))
+   if (!strcmp(pszCmd, "testcrc"))
    {
-      for (; iDir<argc; iDir++)
-      {
-         char *p = argv[iDir];
-         mclear(szLineBuf);
-         for (int i=0; p[i]; i++) {
-            bool b1 = sfkisprint(p[i]);
-            int  b2 = isprint((char)p[i]);
-            bool b3 = isprint((char)p[i]); // linux/win differs
-            printf("isprint(%c) = %d %d %d\n",
-               (uint)p[i], (uint)b1, (uint)b2, (uint)b3);
-            szLineBuf[i] = sfktolower(p[i]);
-         }
-         printf("from %s\n",p);
-         printf("to   %s\n",szLineBuf);
-      }
+      int n = 100;
+      uchar *buf = new uchar[n];
+      memset(buf, 0, n);
+      uint ncrc  = sfkPackSum(buf, n, 0);
+      printf("CRC: %x\n", ncrc);
+      delete [] buf;
       bDone = 1;
    }
 
@@ -56027,6 +56124,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      like 746573746... it means a following command\n"
              "      cannot handle stream data. use option -tolines then.\n"
              "\n");
+      printx("   $unexpected line breaks with +tofile\n"
+             "      happen if lines are longer then %d chars.\n"
+             "         use -tofile instead.\n"
+             "      happen if data contains carriage return chars.\n"
+             "         add \"/\\r//\" to remove them.\n"
+             "\n", (int)MAX_LINE_LEN);
       printx("   $see also\n"
              "      #sfk swap<def>     change single line character order\n"
              "\n");

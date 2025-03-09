@@ -14,7 +14,7 @@ sfk label begin -var
 
    +echo -spat "
       /*
-         SFKPack V1.0.2, a frozen monolithic code containing
+         SFKPack V1.0.3, a frozen monolithic code containing
 
             zlib     1.2.11
 
@@ -68,6 +68,7 @@ sfk label begin -var
       #define Z_BUFSIZE   (256*1024)
       #define UNZ_BUFSIZE (256*1024)
       #define NOCRYPT
+      #define NOBYFOUR
       #ifdef _WIN32
       extern "C" {
          int _fseeki64(FILE *stream, __int64 offset, int origin);
@@ -77,7 +78,8 @@ sfk label begin -var
       "
       +tofile sfkpack-tmp.c
 
-   // #define BYFOUR - not 64 bit compatible
+   // v103: BYFOUR is not vc14 and 64 bit compatible and
+   // causes wrong crcs therefore #define NOBYFOUR above.
 
    +echo "
       sfklib\zlib\zconf.h

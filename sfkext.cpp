@@ -6048,15 +6048,18 @@ int UDPIO::initSendReceive
       if (!(hostinfo=gethostbyname(name)))
          return 11+perr("get ownhost failed (%s) (2)\n", name);
 
-      struct in_addr *pin_addr = (struct in_addr *)*hostinfo->h_addr_list;
-      mreq.imr_interface.s_addr = pin_addr->s_addr;
-      mreq.imr_multiaddr.s_addr = inet_addr(pszTargetAddress);
-
-      // force IP_ADD_MEMBERSHIP of ws2tcpip.h
-      #define MY_IP_ADD_MEMBERSHIP 12
-
-      if (setsockopt(fdTmp, IPPROTO_IP, MY_IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq)) != 0 )
-         return 11+perr("Join multicast failed. Errno=%u (%s)",  netErrno(), netErrStr());
+      for (int i=0; hostinfo->h_addr_list[i]; i++) // sfk1962 mcast receive
+      {
+         struct in_addr *pin_addr = (struct in_addr *)hostinfo->h_addr_list[i];
+         mreq.imr_interface.s_addr = pin_addr->s_addr;
+         mreq.imr_multiaddr.s_addr = inet_addr(pszTargetAddress);
+   
+         // force IP_ADD_MEMBERSHIP of ws2tcpip.h
+         #define MY_IP_ADD_MEMBERSHIP 12
+   
+         if (setsockopt(fdTmp, IPPROTO_IP, MY_IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq)) != 0 )
+            return 11+perr("Join multicast failed. Errno=%u (%s)",  netErrno(), netErrStr());
+      }
 
       // in case of error 10042 see
       //    http://support.microsoft.com/kb/257460
@@ -24749,7 +24752,7 @@ PortMon::~PortMon( )
    cludp.shutdown();
 }
 
-char *ownIPList(int &rhowmany, uint nPort=0, const char *psep=" or ");
+char *ownIPList(int &rhowmany, uint nOptPort, const char *psep, int nmode);
 extern num nGlblStartTime;
 
 char *safeHtml(const char *psz)
@@ -24798,7 +24801,7 @@ void PortMon::sendlog(TCPCon *pcon, int bwide)
       "\r\n"
       "<html><body><pre><code>"
       "uptime %u sec - ownip: %s - listening on:\r\n"
-      , iuptimesec, ownIPList(inumips,0," "));
+      , iuptimesec, ownIPList(inumips,0," ",0)); // portmon
 
    int i=0;
    int nevents=0;
@@ -24835,7 +24838,7 @@ void PortMon::run( )
    int fromlen = sizeof(sockaddr_in);
 
    int   ihowmany = 1; // force first ip
-   char *pszOwnIP = ownIPList(ihowmany);
+   char *pszOwnIP = ownIPList(ihowmany,0,"",0); // portmon
    char *pShortIP = pszOwnIP+strlen(pszOwnIP);
 
    while (pShortIP>pszOwnIP && isdigit(pShortIP[-1])==0) pShortIP--;
@@ -26362,13 +26365,45 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   or expand a short ip for use in further commands.\n"
              "   a short ip can be given like 100, .100, .2.100\n"
              "\n");
+      printx("   $options\n"
+             "      -first  show just the first ip of all ips\n"
+             "              which are not localhost.\n"
+             #ifdef _WIN32
+             "              default since sfk 1.9.6.2 is to\n"
+             "              show all ip's, if not filtered by\n"
+             "              environment variables (see below)\n"
+             #endif
+             "      -all    show all ip's, ignoring any given\n"
+             "              environment variable\n"
+             "\n");
+      printx("   $environment variables\n"
+             "      multiple network interfaces will display\n"
+             "      multiple ip's. to filter or predefine the\n"
+             "      output of 'sfk ip' you can use:\n"
+             "\n"
+             "      #<exp> SFK_OWN_NET=192.168.1\n"
+             "         to define your preferred subnet.\n"
+             "         e.g. if your computer has ip's\n"
+             "            $192.168.56.1\n"
+             "            $192.168.1.100\n"
+             "         then 'sfk ip' will select the 2nd address.\n"
+             "\n"
+             "      #<exp> SFK_OWN_IP=192.168.1.100\n"
+             "         to define your machine's IP manually,\n"
+             "         for calls to 'sfk ip' within batch files.\n"
+             "\n");
       printx("   $chaining support\n"
              "      output chaining is supported.\n"     // sfk1833
              "\n");
       webref(pszCmd);
       printx("   $examples\n"
              "      #sfk ip\n"
-             "         list own machine's ip address(es).\n"
+             "         list own machine's list of ip's,\n"
+             "         possibly filtered by environment variables.\n"
+             "\n"
+             "      #sfk ip -all\n"
+             "         list own machine's list of ip's\n"
+             "         ignoring any environment variable.\n"
              "\n"
              "      #sfk ip 100 +run \"putty user@##text\"\n"
              "         expand short ip to 192.168.1.100 if own\n"
@@ -26381,11 +26416,16 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       char *pszGivenIP = 0;
       char  szFullIP[200];
+      int   nmode = 0; // ip list, or filtered by environment
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
+         if (!strcmp(pszArg, "-first"))
+            { nmode = 1; continue; }
+         if (!strcmp(pszArg, "-all"))
+            { nmode = 2; continue; }
          if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(pszArg))
                break; // fall through
@@ -26394,7 +26434,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             else
                return 9+perr("unknown option: %s\n", pszArg);
          }
-         else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
          // process non-option keywords:
@@ -26423,7 +26462,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       else
       {
          int nnum = 0;
-         pres = ownIPList(nnum, 0, "\t");
+         pres = ownIPList(nnum, 0, "\t", nmode); // sfk1962: ip command multi address output
       }
 
       chain.print("%s", pres);
