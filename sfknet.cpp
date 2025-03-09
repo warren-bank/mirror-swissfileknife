@@ -1129,11 +1129,24 @@ void TCPCon::rawClose()
    clSock = INVALID_SOCKET;
 }
 
+static void localSetBlocking(SOCKET hSock, bool bYesNo)
+{
+   #ifdef _WIN32
+   unsigned long ulParm = bYesNo ? 0 : 1;
+   ioctlsocket(hSock, FIONBIO, &ulParm);
+   #else
+   if (bYesNo)
+      fcntl(hSock, F_SETFL, (fcntl(hSock,F_GETFL) & ~O_NONBLOCK));
+   else
+      fcntl(hSock, F_SETFL, (fcntl(hSock,F_GETFL) | O_NONBLOCK));
+   #endif
+}
+
 void  TCPCon::setBlocking (bool bYesNo) 
 {
-   // in case of server socket, make accept non-blocking:
-   unsigned long ulParm = bYesNo ? 0 : 1;
-   ioctlsocket(clSock, FIONBIO, &ulParm);
+   // unsigned long ulParm = bYesNo ? 0 : 1;
+   // ioctlsocket(clSock, FIONBIO, &ulParm);
+   localSetBlocking(clSock, bYesNo); // 169
 }
 
 int  TCPCon::read(uchar *pBlock, uint nLen) 
@@ -1462,8 +1475,9 @@ int TCPCore::makeServerSocket (int nportin, TCPCon **ppout)
    */
 
    // make later accepts non-blocking:
-   unsigned long ulParm = 1;
-   ioctlsocket(hServSock, FIONBIO, &ulParm);
+   // unsigned long ulParm = 1;
+   // ioctlsocket(hServSock, FIONBIO, &ulParm);
+   localSetBlocking(hServSock, 0); // 169
 
    if (listen(hServSock, 4) == SOCKET_ERROR)
       return 9+perr("cannot listen on port %u", nPort);
@@ -4679,7 +4693,7 @@ int UDPIO::initSendReceive
       memset(&mreq, 0, sizeof(mreq));
       mreq.imr_interface.s_addr = htonl(INADDR_ANY);
 
-      #ifdef MAC_OS_X
+      #if defined(MAC_OS_X) || defined(SOLARIS)
         #define SOL_IP IPPROTO_IP
       #endif
 

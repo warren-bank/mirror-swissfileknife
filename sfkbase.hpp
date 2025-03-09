@@ -19,6 +19,9 @@
    #define MAC_OS_X
   #endif
  #endif
+ #if defined(__sun) && defined(__SVR4)
+  #define SOLARIS
+ #endif
 #endif
 
 #include <stdlib.h>
@@ -87,6 +90,7 @@
   #include <pthread.h>
   #include <pwd.h>
   #include <ifaddrs.h>
+  #include <fcntl.h>
   #ifndef  _S_IFDIR
    #define _S_IFDIR 0040000 // = 0x4000
   #endif
@@ -117,7 +121,13 @@
  #define __dev_t   dev_t
 #endif // MAC_OS_X
 
+#ifdef SOLARIS
+ #define __dev_t   dev_t
+ // #define FIONBIO   0
+#endif
+
 #define uchar unsigned char
+#define ushort unsigned short
 #define uint  unsigned int
 #define ulong unsigned long
 #define bool  unsigned char
@@ -180,6 +190,8 @@ extern char  glblWildChar;          // '+';
 extern char  glblWildInfoStr[20];   // "+ or \\*";
 #endif
 
+#define mymin(a,b) ((a<b)?(a):(b))
+
 // - - - - - 64 bit abstractions - - - - -
 
 #ifdef WINFULL
@@ -238,6 +250,8 @@ extern mytime_t getSystemTime();
  #define VFILEBASE
  #define VFILENET
 #endif // SFKNOVFILE
+
+#define WITH_CASE_XNN
 
 int isDir(char *pszName);
 cchar *sfkLastError();
@@ -314,6 +328,14 @@ public:
       void deleteNow ( )      { if (pClPtr) delete [] pClPtr; pClPtr = 0; }
 private:
       uchar *pClPtr;
+};
+
+class CharAutoDelPP {
+public:
+      CharAutoDelPP (char **pp) { ppClPtr = pp; }
+     ~CharAutoDelPP ( )         { if (*ppClPtr) delete [] *ppClPtr; }
+private:
+      char **ppClPtr;
 };
 
 // max length of sfk (internal) filenames and URL's
@@ -1292,7 +1314,19 @@ num fileTimeToTimeT(num nwft);
 num fileTimeToTimeT(FILETIME *pft);
 #endif
 
+inline void sfkSetBit(uchar *pField, uint iBit) 
+{
+   pField[iBit>>3] |= (1U << (iBit & 7));
+}
+
+inline uchar sfkGetBit(uchar *pField, uint iBit)
+{
+   return (pField[iBit>>3] & (1U << (iBit & 7))) ? 1 : 0;
+}
+
 extern int (*pGlblSFKStatusCallBack)(int nMsgType, char *pmsg);
+
+char *dataAsTrace(void *pAnyData, int iDataSize, char *pszBuf=0, int iMaxBuf=0);
 
 #ifndef USE_SFK_BASE
  #if defined(WINFULL) && defined(_MSC_VER)

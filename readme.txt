@@ -38,6 +38,7 @@ How to get SFK up and running anywhere
 
       -  wget http://stahlworks.com/sfkux             (Linux lib6)
       -  wget http://stahlworks.com/sfkuxold          (Linux lib5)
+      -  wget http://stahlworks.com/sfkarm            (ARM Linux)
 
       Whole distribution package in a .zip (insert version for nnn):
 
@@ -54,8 +55,7 @@ How to get SFK up and running anywhere
 
    Apple Macintosh:
 
-      The Mac binaries are experimental and unsupported,
-      available from:
+      The Mac binaries are available from:
 
       -  wget http://stahlworks.com/sfkmac            (Intel i686)
       -  wget http://stahlworks.com/sfkmacold         (PowerPC)
@@ -242,8 +242,7 @@ See also:
    -  Swiss File Knife Extended Edition (XE) is the commercial version
       of SFK, allowing direct reading of (nested) .zip, .tar.gz and
       .tar.bz2 file contents, and high performance replace of patterns
-      in text and binary files. Executables are available for Windows
-      and 32-Bit Linux (newer and lib5 systems), but not for Mac.
+      in text and binary files. Read more under:
 
          http://stahlworks.com/sfkxe.html
 

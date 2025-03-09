@@ -83,6 +83,7 @@ extern char *sfkmem_strdup(const char *strSource, char *pszFile, int nLine);
 extern void  sfkmem_setZone(void *p,size_t size);
 extern long  sfkmem_checkZone(void *p,size_t size);
 extern void  sfkmem_setpredel(char *file, long line);
+extern void  sfkmem_nocheck();
 
 #else
 
@@ -94,6 +95,7 @@ long  sfkmem_news = 0;
 long  sfkmem_dels = 0;
 long  sfkmem_errs = 0;
 size_t sfkmem_bytes = 0;
+char  sfkmem_bnocheck = 0;
 
 void SFKMemoryList :: add(SFKMemoryListEntry* pNew)
 {
@@ -221,6 +223,11 @@ void sfkmem_hexdump(void *pAddressIn, long  lSize)
    }
 }
 
+void sfkmem_nocheck()
+{
+   sfkmem_bnocheck = 1;
+}
+
 void sfkmem_setZone(void *p,size_t size)
 {
    unsigned char *puc = (unsigned char *)p;   
@@ -270,6 +277,11 @@ void *sfkmem_debnew(size_t size, char *pszSource, int line)
    pBlock->lLine    = line;
    pBlock->file     = pszSource;
 
+   if (sfkmem_bnocheck)
+   {
+      return (char*)pUserMemory;
+   }
+
    sfkmem_setZone(pBlock->abRedZone,lrs1);
    sfkmem_setZone(pUserMemory+size ,lrs2);
 
@@ -292,6 +304,12 @@ void sfkmem_debdel(void *pUserMemory)
 
    long npre  = sizeof(SFKMemoryBlock);
    char *ppre = (char*)pUserMemory - npre;
+
+   if (sfkmem_bnocheck)
+   {
+      free(ppre);
+      return;
+   }
 
    SFKMemoryBlock *p = (SFKMemoryBlock *)ppre;
 
@@ -373,6 +391,9 @@ void sfkmem_debdel(void *pUserMemory)
 
 long anyMemoryLeaks()
 {
+   if (sfkmem_bnocheck)
+      return 0;
+
    return (glblMem.first() != 0) ? 1 : 0;
 }
 
