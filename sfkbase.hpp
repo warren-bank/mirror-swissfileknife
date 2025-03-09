@@ -191,6 +191,7 @@ extern char  glblWildInfoStr[20];   // "+ or \\*";
 #endif
 
 #define mymin(a,b) ((a<b)?(a):(b))
+#define mymax(a,b) ((a>b)?(a):(b))
 
 // - - - - - 64 bit abstractions - - - - -
 
@@ -219,6 +220,7 @@ extern char *numtohex(num n, int nDigits, char *pszBuf);
 extern num   atonum(char *psz);
 extern num   myatonum(char *psz);
 extern mytime_t getSystemTime();
+extern int shrinkFormTextBlock(char *psz, int &rLen, bool bstrict, bool xchars=0, uchar **ppFlags=0);
 
 #ifndef SIG_UNBLOCK
    #define SIG_UNBLOCK 2
@@ -281,6 +283,7 @@ int  mystrnicmp     (char *psz1, cchar *psz2, int nLen);
 bool  strBegins      (char *pszStr, cchar *pszPat);
 bool  striBegins     (char *pszStr, cchar *pszPat);
 bool  strEnds        (char *pszStr, cchar *pszPat);
+void  trimCR         (char *pszBuf);
 void  removeCRLF     (char *pszBuf);
 bool  sfkisalpha     (uchar uc);
 bool  sfkisalnum     (uchar uc);
@@ -881,6 +884,8 @@ private:
    Coi   *rawNextEntry  ( );  // result owned by CALLER.
    void   rawCloseDir   ( );  // required after processing.
 
+public:
+
    #ifdef VFILEBASE
 
    int   provideInput  (int nTraceLine, bool bsilent=0);
@@ -1328,7 +1333,7 @@ inline uchar sfkGetBit(uchar *pField, uint iBit)
 extern int (*pGlblSFKStatusCallBack)(int nMsgType, char *pmsg);
 
 char *dataAsHex(void *pAnyData, int iDataSize, char *pszBuf=0, int iMaxBuf=0);
-char *dataAsTrace(void *pAnyData, int iDataSize, char *pszBuf=0, int iMaxBuf=0);
+char *dataAsTrace(void *pAnyData, int iDataSize=-1, char *pszBuf=0, int iMaxBuf=0);
 
 /*
     Simplest possible utf8 decoder, primarily for 16 bit code points.

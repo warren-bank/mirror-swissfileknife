@@ -25,7 +25,7 @@
  #endif
 #endif
 
-#include "sfknet.hpp"
+#include "sfkext.hpp"
 
 #ifndef SO_REUSEPORT
  #define SO_REUSEPORT 15
@@ -34,16 +34,20 @@
 int perr(const char *pszFormat, ...);
 int pwarn(const char *pszFormat, ...);
 int pinf(const char *pszFormat, ...);
+int printx(const char *pszFormat, ...);
 
-extern bool endsWithArcExt(char *pname);
-extern num nGlblMemLimit;
+bool endsWithArcExt(char *pname);
 extern cchar *arcExtList[];
-extern void tellMemLimitInfo();
-extern int quietMode();
+void tellMemLimitInfo();
+int quietMode();
+char *getHTTPUserAgent();
+int createOutDirTree(char *pszOutFile);
+size_t myfwrite(uchar *pBuf, size_t nBytes, FILE *fout, num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
+int getTwoDigitHex(char *psz);
+int sfkmemcmp2(uchar *psrc1, uchar *psrc2, num nlen, bool bGlobalCase, uchar *pFlags);
+
 extern bool bGlblEscape;
-extern char *getHTTPUserAgent();
-extern int createOutDirTree(char *pszOutFile);
-extern size_t myfwrite(uchar *pBuf, size_t nBytes, FILE *fout, num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
+extern num  nGlblMemLimit;
 
 #ifndef USE_SFK_BASE
 UDPIO sfkNetIO;
@@ -5707,3 +5711,2114 @@ int UDPIO::getTextSendDelay( )
 
    return iClNonDuplexSendDelay;
 }
+
+// ------------- sfk patch - Text File Patching support -----------------
+
+#define SFKPATCH_MAX_CMDLINES    10000 // max lines per :file ... :done block
+#define SFKPATCH_MAX_CACHELINES  10000 // max lines per :from ... :to pattern
+#define SFKPATCH_MAX_NUMCMD        500 // max number of :from commands per patchfile
+#define SFKPATCH_MAX_OUTLINES   500000 // max lines per target file
+
+class SFKPatch
+{
+public:
+      SFKPatch ( );
+     ~SFKPatch ( );
+ 
+static SFKPatch
+   *current    ( );
+
+   int processCmdPatch(char *psz);
+   int processCmdInfo (char *psz);
+   void log(int nLevel, const char *pFormat, ... );
+   int detabLine(char *pBuf, char *pTmp, int nBufSize, int nTabSize);
+   int processCmdRoot (char *pszIn);
+   int patchMainInt(int argc, char *argv[], int offs);
+   char *skipspace(char *psz);
+   int processPatchFile(char *pszPatchFileName);
+   int processCmdFile(char *pszIn);
+   int processCreateFile(char *pszIn);
+   int processCreateDir(char *pszIn);
+   void shrinkLine(char *psz, char *pszOut);
+   int compareLines(char *psz1, char *psz2);
+   int processFileUntilDone(char *pszTargFileName);
+
+static SFKPatch
+   *pClCurrent;
+
+FILE *fpatch;
+char *pszRoot;
+char szCmdBuf[MAX_LINE_LEN];
+int  bGlblRevoke;
+int  bGlblBackup;
+int  bGlblSimulate;
+int  bGlblTouchOnRevoke;
+int  nCmdFileLineEndings;
+int  nGlblLine;
+int  bGlblIgnoreWhiteSpace;
+int  bGlblAlwaysSimulate;
+int  bGlblVerbose;
+int  bGlblQuickSum;
+int  bGlblUnixOutput;
+int  nGlblPatchedFiles;
+int  nGlblRevokedFiles;
+char *pszGlblRelWorkDir;
+int  bGlblAnySelRep;
+int  bGlblCheckSelRep;
+int  bGlblStats;
+int  nGlblDetabOutput;
+int  bGlblVerify;
+int  bGlblNoPID ;
+int  bGlblIgnoreRoot;
+char **apOut;
+
+// select-replace table over all targets
+#define MAX_GLOBAL_CHANGES 50
+char *apGlobalChange[MAX_GLOBAL_CHANGES][3];
+int anGlobalChange[MAX_GLOBAL_CHANGES];
+int iGlobalChange;
+
+// select-replace table local to current target
+#define MAX_LOCAL_CHANGES 50
+char *apLocalChange[MAX_LOCAL_CHANGES][3];
+int anLocalChange[MAX_GLOBAL_CHANGES];
+int iLocalChange;
+
+char *aPatch[SFKPATCH_MAX_CMDLINES];
+char *aBuf[SFKPATCH_MAX_CACHELINES];
+int   aifrom[SFKPATCH_MAX_NUMCMD];
+int   aifromlen[SFKPATCH_MAX_NUMCMD];
+int   aito[SFKPATCH_MAX_NUMCMD];
+int   aitolen[SFKPATCH_MAX_NUMCMD];
+
+char szLine1[MAX_LINE_LEN];
+char szLine2[MAX_LINE_LEN];
+};
+
+class PatchMemCover {
+public:
+   PatchMemCover  ( ) {
+      bdead = 0;
+      SFKPatch::current()->apOut = new char*[SFKPATCH_MAX_OUTLINES+10];
+      if (!SFKPatch::current()->apOut)
+         bdead = 1;
+   }
+   ~PatchMemCover ( ) {
+      if (SFKPatch::current()->apOut) {
+         delete [] SFKPatch::current()->apOut;
+         SFKPatch::current()->apOut = 0;
+      }
+   }
+   int bdead;
+};
+
+SFKPatch *SFKPatch :: pClCurrent = 0;
+
+SFKPatch :: SFKPatch( )
+{
+   memset(this, 0, sizeof(*this));
+   bGlblTouchOnRevoke = 1;
+   nCmdFileLineEndings = -1;
+   bGlblIgnoreWhiteSpace = 1;
+}
+
+SFKPatch *SFKPatch :: current( )
+{
+   if (!pClCurrent)
+      pClCurrent = new SFKPatch();
+
+   return pClCurrent;
+}
+
+int patchMain(int argc, char *argv[], int offs)
+{
+   return SFKPatch::current()->patchMainInt(argc, argv, offs);
+}
+
+int SFKPatch :: processCmdPatch(char *psz) { return 0; }
+int SFKPatch :: processCmdInfo (char *psz) { return 0; }
+
+// 0 == error, >0 == normal msg, >= 5 do not tell if in QuickSum mode
+void SFKPatch :: log(int nLevel, const char *pFormat, ... )
+{
+   va_list argList;
+   va_start(argList, pFormat);
+   if (nLevel == 0) {
+      vfprintf(stderr, pFormat, argList);
+      fflush(stderr);
+   } else {
+      if (!(bGlblQuickSum && nLevel >= 5)) {
+         vprintf(pFormat, argList);
+         fflush(stdout);
+      }
+   }
+   va_end(argList);
+}
+
+int SFKPatch :: detabLine(char *pBuf, char *pTmp, int nBufSize, int nTabSize)
+{
+   strcpy(pTmp, pBuf);
+   int iout=0, nInsert=0;
+   for (int icol=0; pTmp[icol] && iout < (nBufSize-nTabSize-2); icol++) {
+      char c1 = pTmp[icol];
+      if (c1 == '\t') {
+         nInsert = nTabSize - (iout % nTabSize);
+         for (int i2=0; i2<nInsert; i2++)
+            pBuf[iout++] = ' ';
+      } else {
+         pBuf[iout++] = c1;
+      }
+   }
+   pBuf[iout] = '\0';
+   if (iout >= (nBufSize-nTabSize-2)) {
+      log(0, "error  : detab: line buffer overflow. max line len supported is %d\n",(nBufSize-nTabSize-2));
+      return 9;
+   }
+   return 0;
+}
+
+int SFKPatch :: processCmdRoot (char *pszIn) {
+   strcpy(szCmdBuf, pszIn);
+   char *psz = 0;
+   if ((psz = strchr(szCmdBuf, '\r')) != 0) *psz = 0;
+   if ((psz = strchr(szCmdBuf, '\n')) != 0) *psz = 0;
+   pszRoot = strdup(szCmdBuf);
+   if (!bGlblIgnoreRoot && strcmp(pszRoot, pszGlblRelWorkDir)) {
+      log(0, "error  : you are not in the %s directory.\n",pszRoot);
+      return 1+4;
+   }
+   return 0;
+}
+
+int SFKPatch :: patchMainInt(int argc, char *argv[], int offs)
+{
+   PatchMemCover mem;
+   if (mem.bdead) {
+      log(0, "error: out of memory in patchMain\n");
+      return 9;
+   }
+
+   if (!strcmp(argv[1+offs], "-example"))
+   {
+      printx(
+         "#patchfile example, containing all supported patchfile commands:\n\n"
+         ":patch \"enable FooBar testing\"\n"
+         ":info makes some stuff public, for direct access by test funcs\n"
+         "\n"
+         ":root foosrc\n"
+         "\n"
+         ":file include\\Foobar.hpp\n"
+         ":from \n"
+         "private:\n"
+         "    bool                  isAvailable               (int nResource);\n"
+         "    void                  openBar                   (int nMode);\n"
+         ":to\n"
+         "public: // [patch-id]\n"
+         "    bool                  isAvailable               (int nResource);\n"
+         "    void                  openBar                   (int nMode);\n"
+         ":from \n"
+         "    // returns the application type, 0x00 == not set.\n"
+         "    UInt16                getAppType                ( );\n"
+         ":to\n"
+         "    // returns the application type, 0x00 == not set.\n"
+         "    UInt16                getAppType                ( );\n"
+         "    UInt32                getAppTypeInternal        ( );\n"
+         ":done\n"
+         "\n"
+         ":## this is a remark, allowed only outside :file blocks.\n"
+         ":## the above syntax is sufficient for most cases; but now follow some\n"
+         ":## more commands for global replace, file and dir creation, etc.\n"
+         ":## select-replace has 3 parms, and applies changes (parms 2+3) only\n"
+         ":## in lines containing the search term (parm 1).\n"
+         "\n"
+         ":file include\\Another.cpp\n"
+         ":select-replace /MY_TRACE(/\\n\"/\"/\n"
+         ":select-replace _printf(\"spam: _printf(_while(0) printf(_\n"
+         ":set only-lf-output\n"
+         ":from \n"
+         "    bool                  existsFile                (char *psz);\n"
+         ":to\n"
+         "    // [patch-id]\n"
+         "    int                   existsFile                (char *psz);\n"
+         ":done\n"
+         "\n"
+         ":mkdir sources\n"
+         ":create sources\\MyOwnFix.hpp\n"
+         "// this file is generated by sfk patch.\n"
+         "##define OTHER_SYMBOL MY_OWN_SYMBOL\n"
+         ":done\n"
+         "\n"
+         ":skip-begin\n"
+         "this is outcommented stuff. the skip-end is optional.\n"
+         ":skip-end\n"
+         );
+      return -1;
+   }
+
+   if (!strcmp(argv[1+offs], "-template") || !strcmp(argv[1+offs], "-tpl"))
+   {
+      printf(
+         ":patch \"thepatch\"\n"
+         "\n"
+         ":root theproject\n"
+         "\n"
+         ":file include\\file1.hpp\n"
+         ":from \n"
+         ":to\n"
+         "    // [patch-id]\n"
+         ":from \n"
+         ":to\n"
+         ":done\n"
+         "\n"
+         ":file sources\\file1.cpp\n"
+         ":from \n"
+         ":to\n"
+         "    // [patch-id]\n"
+         ":done\n"
+         "\n"
+         );
+      return -1;
+   }
+
+   szCmdBuf[0] = '\0';
+   #ifdef _WIN32
+   if (_getcwd(szCmdBuf,sizeof(szCmdBuf)-10)) { }
+   #else
+   if (getcwd(szCmdBuf,sizeof(szCmdBuf)-10)) { }
+   #endif
+   char *psz = strrchr(szCmdBuf, glblPathChar);
+   if (!psz) {
+      log(0, "error: cannot identify working dir. make sure you are in the correct directory.\n");
+      return 9;
+   }
+   psz++;
+   pszGlblRelWorkDir = strdup(psz);
+ 
+   char *pszPatchFileName = 0;
+   char *pszPatchFileBackup = 0;
+   int bWantRevoke = 0;
+   int bWantRedo   = 0;
+   int bJustSim    = 0;
+
+   for (int iarg=1; iarg<argc; iarg++) {
+      if (!strcmp(argv[iarg+offs], "-revoke")) {
+         bWantRevoke = true;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-redo")) {
+         bWantRevoke = true;
+         bWantRedo   = true;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-keep-dates")) {
+         bGlblTouchOnRevoke = 0;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-exact-match")) {
+         bGlblIgnoreWhiteSpace = 0;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-sim")) {
+         bJustSim = 1;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-verify")) {
+         bJustSim    = 1;
+         bGlblVerify = 1;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-qs")) {
+         bGlblQuickSum = 1;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-verbose")) {
+         bGlblVerbose = 1;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-stat")) {
+         bGlblStats = 1;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-nopid")) {
+         bGlblNoPID = 1;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-anyroot")) {
+         bGlblIgnoreRoot = 1;
+      }
+      else
+      if (!strncmp(argv[iarg+offs], "-", 1)) {
+         printf("unknown option: %s\nuse with no parameters to get help.\n",argv[iarg+offs]);
+         return 9;
+      }
+      else {
+         pszPatchFileName = argv[iarg+offs];
+         char *psz = strrchr(pszPatchFileName, glblPathChar);
+         if (!psz) psz = strrchr(pszPatchFileName,':');
+         if (!psz) { psz = pszPatchFileName; } else psz++;
+         sprintf(szCmdBuf,"save_patch%c%s", glblPathChar, psz);
+         pszPatchFileBackup = strdup(szCmdBuf);
+      }
+   }
+
+   // pass -1: check logic
+   if (bJustSim && bWantRevoke) {
+      log(0, "error  : cannot simulate and revoke together.\n");
+      return 9;
+   }
+
+   // pass 0: init stats
+   for (int i1=0; i1<MAX_GLOBAL_CHANGES; i1++)
+      anGlobalChange[i1] = 0;
+   for (int i2=0; i2<MAX_LOCAL_CHANGES; i2++)
+      anLocalChange[i2]  = 0;
+
+   // pass 1: revoke: always, unconditional.
+   int iRC = 0;
+   if (bWantRevoke) {
+      bGlblRevoke = 1;
+      if (fileExists(pszPatchFileBackup)) {
+         log(5, "* revoking changes from: %s\n", pszPatchFileBackup);
+         iRC = processPatchFile(pszPatchFileBackup);
+      } else {
+         log(5, "* revoking changes from: %s\n", pszPatchFileName);
+         iRC = processPatchFile(pszPatchFileName);
+      }
+      bGlblRevoke = 0;
+      if (!iRC && !bWantRedo) {
+         if (bGlblQuickSum) {
+            printf("* patch revoked: %s - %d target files\n",pszPatchFileName,nGlblRevokedFiles);
+         } else {
+            if (bGlblTouchOnRevoke)
+               printf("* all changes revoked. the target files got the current time stamp,\n"
+                      "* to ease recompile. you may use -keepdates to change this behaviour.\n");
+            else
+               printf("* all changes revoked, including original timestamps.\n");
+         }
+      }
+      if (!iRC) {
+         // remove patchfile backup
+         if (fileExists(pszPatchFileBackup))
+            if (remove(pszPatchFileBackup)) {
+               log(0, "error  : cannot remove stale backup: %s\n",pszPatchFileBackup);
+               return 1;
+            }
+      }
+      if (!iRC && !bWantRedo)
+         return 0;
+   }
+
+   // pass 2: pre-scan if all patches may be applied
+   bGlblSimulate = 1;
+   if (!iRC) {
+      log(5, "* checking target file compliancies\n");
+      iRC = processPatchFile(pszPatchFileName);
+   }
+   if (bJustSim) {
+      if (!iRC) {
+         if (bGlblQuickSum)
+          printf("* patch %s: %s\n", bGlblVerify ? "intact" : "valid", pszPatchFileName);
+         else
+          printf("* all checked. the patch is %s.\n", bGlblVerify ? "still intact" : "valid and may be applied.");
+         return 0;
+      } else {
+         if (bGlblQuickSum)
+            log(0, "patch  : %s\n",pszPatchFileName);
+         printf("* there were errors. the patch cannot be applied.\n");
+         printf("* however, if an older patch is active, you may still -revoke it.\n");
+         return 1;
+      }
+   }
+   bGlblSimulate = 0;
+
+   // pass 3: create backups
+   if (!iRC && !bGlblNoPID) {
+      log(5, "* creating backups\n");
+      bGlblBackup = 1;
+      iRC = processPatchFile(pszPatchFileName);
+      bGlblBackup = 0;
+   }
+
+   // pass 3: apply patches
+   if (!iRC) {
+      log(5, "* applying patches%s\n", bGlblNoPID?" permanently":"");
+      bGlblCheckSelRep = 1;
+      iRC = processPatchFile(pszPatchFileName);
+      if (!iRC) {
+         if (bWantRedo) {
+            if (bGlblQuickSum)
+               printf("* all changes re-applied: %s - %d target files\n",pszPatchFileName,nGlblPatchedFiles);
+            else
+               printf("* all changes re-applied.\n");
+         } else {
+            if (bGlblQuickSum) {
+               printf("* patch applied: %s - %d target files\n",pszPatchFileName,nGlblPatchedFiles);
+            } else {
+               printf("* all done.\n");
+            }
+         }
+         // patch applied: save the patchfile for future revoke
+         if (!bGlblNoPID)
+         {
+         #ifdef _WIN32
+         _mkdir("save_patch");
+         #else
+         mkdir("save_patch", S_IREAD | S_IWRITE | S_IEXEC);
+         #endif
+         FILE *fout = fopen(pszPatchFileBackup,"w");
+         if (fout) { fprintf(fout,"dummy"); fclose(fout); }
+         #ifdef _WIN32
+         sprintf(szCmdBuf, "xcopy /Q /K /Y %s %s >nul",pszPatchFileName,pszPatchFileBackup);
+         #else
+         sprintf(szCmdBuf, "cp -p %s %s",pszPatchFileName,pszPatchFileBackup);
+         #endif
+         iRC = system(szCmdBuf);
+         if (iRC)
+            log(0, "error  : cannot backup patchfile to: %s\n",pszPatchFileBackup);
+         }
+      } else {
+         if (iRC & 4)
+            log(0, "info   : make sure you are above the \"%s\" directory.\n",pszRoot);
+      }
+   } else {
+      if (bGlblQuickSum)
+         log(0, "patch  : %s\n",pszPatchFileName);
+      if (iRC & 4) {
+         log(0, "info   : make sure you are in the \"%s\" directory.\n",pszRoot);
+         return iRC;
+      }
+      printf("* NOTHING CHANGED: i will either apply ALL changes, or NONE.\n"
+             "* you may also try sfk patch -revoke or -redo.\n"
+            );
+      fflush(stdout);
+   }
+
+   return iRC;
+}
+
+char *SFKPatch :: skipspace(char *psz) {
+   while (*psz && *psz == ' ')
+      psz++;
+   return psz;
+}
+
+int SFKPatch :: processPatchFile(char *pszPatchFileName)
+{
+   int iRC = 0;
+
+   fpatch = fopen(pszPatchFileName, "r");
+   if (!fpatch) { log(0, "error  : cannot open patchfile: %s\n",pszPatchFileName); return 2+4; }
+   nGlblLine = 0;
+
+   // parse patch file, exec commands
+   int bWithinSkip = 0;
+   char szBuf[MAX_LINE_LEN];
+   while (fgets(szBuf,sizeof(szBuf)-10,fpatch) != NULL)
+   {
+      nGlblLine++;
+
+      // determine line endings of the command file
+      if (nCmdFileLineEndings == -1)
+      {
+         if (strstr(szBuf,"\r\n") != 0)
+            nCmdFileLineEndings = 2;   // CR/LF
+         else
+            nCmdFileLineEndings = 1;   // LF only
+      }
+
+      if (strBegins(szBuf,":#"))
+         continue;
+
+      if (strBegins(szBuf,":skip-end")) {
+         if (!bWithinSkip) {
+            log(0, "error  : skip-end without skip-begin in line %d\n",nGlblLine);
+            return 2;
+         }
+         bWithinSkip = 0;
+         continue;
+      }
+
+      if (strBegins(szBuf,":skip-begin")) {
+         if (bWithinSkip) {
+            log(0, "error  : skip-begin twice in line %d\n",nGlblLine);
+            return 2;
+         }
+         bWithinSkip = 1;
+         continue;
+      }
+
+      if (bWithinSkip)
+         continue;
+
+      if (strBegins(szBuf,":patch ")) {
+         iRC |= processCmdPatch(skipspace(szBuf+7));
+         continue;
+      }
+      if (   strBegins(szBuf,":info ")
+          || strBegins(szBuf,":info\r")
+          || strBegins(szBuf,":info\n")
+         )
+      {
+         iRC |= processCmdInfo(skipspace(szBuf+6));
+         continue;
+      }
+      if (strBegins(szBuf,":root ")) {
+         if (processCmdRoot(skipspace(szBuf+6)))
+            return 1+4;
+         continue;
+      }
+      if (strBegins(szBuf,":select-replace "))
+      {
+         bGlblAnySelRep = 1;
+         if (iGlobalChange < MAX_GLOBAL_CHANGES-2) {
+            char *psz = skipspace(szBuf+strlen(":select-replace "));
+            char  nCC = *psz++;
+            char *pszMaskBegin = psz;
+            while (*psz && (*psz != nCC)) psz++;
+            char *pszMaskEnd   = psz;
+            if (*psz) psz++;
+            char *pszFromBegin = psz;
+            while (*psz && (*psz != nCC)) psz++;
+            char *pszFromEnd   = psz;
+            if (*psz) psz++;
+            char *pszToBegin   = psz;
+            while (*psz && (*psz != nCC)) psz++;
+            char *pszToEnd     = psz;
+            *pszMaskEnd = 0;
+            *pszFromEnd = 0;
+            *pszToEnd   = 0;
+            if (strlen(pszFromBegin) > 0) {
+               char *pszMaskDup = strdup(pszMaskBegin);
+               char *pszFromDup = strdup(pszFromBegin);
+               char *pszToDup   = strdup(pszToBegin);
+               apGlobalChange[iGlobalChange][0] = pszMaskDup;
+               apGlobalChange[iGlobalChange][1] = pszFromDup;
+               apGlobalChange[iGlobalChange][2] = pszToDup;
+               iGlobalChange++;
+            }
+         } else {
+            log(0, "error  : too many global select-replace, only up to %d supported.\n",MAX_GLOBAL_CHANGES);
+            return 2;
+         }
+         continue;
+      }
+      if (strBegins(szBuf,":create ")) {
+         iRC |= processCreateFile(skipspace(szBuf+8));
+         continue;
+      }
+      if (strBegins(szBuf,":mkdir ")) {
+         iRC |= processCreateDir(skipspace(szBuf+7));
+         continue;
+      }
+      if (strBegins(szBuf,":file ")) {
+         iRC |= processCmdFile(skipspace(szBuf+6));
+         continue;
+      }
+      if (strBegins(szBuf,":set only-lf-output")) {
+         bGlblUnixOutput = 1;
+         continue;
+      }
+      if (strBegins(szBuf,":set detab=")) {
+         nGlblDetabOutput = atol(szBuf+strlen(":set detab="));
+         log(5, "setting detab to %d\n",nGlblDetabOutput);
+         continue;
+      }
+      if (strBegins(szBuf,":")) {
+         log(0, "error  : unknown command in line %d: %s\n",nGlblLine,szBuf);
+         return 1;
+      }
+
+      // everything else handled by processCmdFile
+   }
+
+   fclose(fpatch);
+
+   // now that all was processed, cleanup table of global changes
+   for (int i=0;i<iGlobalChange;i++) {
+      if (bGlblCheckSelRep) {
+         if (!anGlobalChange[i])
+            log(5, "info   : global select-replace never applied: %s, %s, %s\n",apGlobalChange[i][0],apGlobalChange[i][1],apGlobalChange[i][2]);
+         else
+         if (bGlblStats || bGlblVerbose)
+            log(5, "global select-replace applied %d times: %s, %s, %s\n",anGlobalChange[i],apGlobalChange[i][0],apGlobalChange[i][1],apGlobalChange[i][2]);
+      }
+      free(apGlobalChange[i][0]);
+      free(apGlobalChange[i][1]);
+      free(apGlobalChange[i][2]);
+   }
+   iGlobalChange = 0;
+
+   return iRC;
+}
+
+int SFKPatch :: processCmdFile(char *pszIn)
+{
+   if (strlen(pszIn) < 1) { log(0, "error  : missing filename after :file\n"); return 2; }
+
+   strcpy(szCmdBuf, pszIn);
+   char *psz = 0;
+   if ((psz = strchr(szCmdBuf, '\r')) != 0) *psz = 0;
+   if ((psz = strchr(szCmdBuf, '\n')) != 0) *psz = 0;
+   char *pszFile = strdup(szCmdBuf);
+ 
+   strcpy(szCmdBuf, pszFile);
+
+   // check if file exists
+   if (!bGlblRevoke)
+      if (!fileExists(szCmdBuf)) {
+         log(0, "error  : unable to open file: %s\n",szCmdBuf);
+         return 2+4;
+      }
+
+   iLocalChange = 0;
+   int iRC = processFileUntilDone(szCmdBuf);
+
+   // always cleanup this table, which is feeded by processFileUntilDone
+   for (int i=0;i<iLocalChange;i++) {
+      if (bGlblCheckSelRep) {
+         if (!anLocalChange[i])
+            log(5, "info   : local select-replace never applied: %s, %s, %s\n",apLocalChange[i][0],apLocalChange[i][1],apLocalChange[i][2]);
+         else
+         if (bGlblStats || bGlblVerbose)
+            log(5, "local select-replace applied %d times: %s, %s, %s\n",anLocalChange[i],apLocalChange[i][0],apLocalChange[i][1],apLocalChange[i][2]);
+      }
+      free(apLocalChange[i][0]);
+      free(apLocalChange[i][1]);
+      free(apLocalChange[i][2]);
+   }
+   iLocalChange = 0;
+
+   return iRC;
+}
+
+int SFKPatch :: processCreateFile(char *pszIn)
+{
+   if (strlen(pszIn) < 1) { log(0, "error  : missing filename after :create\n"); return 2; }
+
+   strcpy(szCmdBuf, pszIn);
+   char *psz = 0;
+   if ((psz = strchr(szCmdBuf, '\r')) != 0) *psz = 0;
+   if ((psz = strchr(szCmdBuf, '\n')) != 0) *psz = 0;
+   char *pszFile = strdup(szCmdBuf);
+ 
+   strcpy(szCmdBuf, pszFile);
+
+   // any existing file?
+   if (!bGlblRevoke && !bGlblBackup) {
+      if (fileExists(szCmdBuf)) {
+         if (!bGlblVerify)
+            log(0, "warning: file already exists: %s\n", szCmdBuf);
+      } else {
+         if (bGlblVerify) {
+            log(0, "error  : file no longer exists: %s\n", szCmdBuf);
+            return 1;
+         }
+      }
+   }
+
+   FILE *fout = 0;
+
+   if (!bGlblSimulate && bGlblRevoke) {
+      // do exact opposite: delete old file
+      if (remove(szCmdBuf))
+         log(0, "warning: cannot remove: %s\n", szCmdBuf);
+      else {
+         nGlblRevokedFiles++;
+         log(5, "removed: %s\n", szCmdBuf);
+      }
+   }
+   else
+   {
+      // create new output file
+      if (!bGlblSimulate && !bGlblRevoke && !bGlblBackup) {
+         fout = fopen(szCmdBuf, "w");
+         if (!fout) {
+            log(0, "error  : cannot create file: %s\n", szCmdBuf); // return 2+4;
+            // fall-through, continue to allow creation of other files.
+         }
+      }
+   }
+
+   // copy-through contents from patchfile until :done
+   char szBuf[MAX_LINE_LEN];
+   int iout = 0;
+   int bGotDone = 0;
+   int nStartLine = nGlblLine;
+   while (fgets(szBuf,sizeof(szBuf)-10,fpatch) != NULL)
+   {
+      nGlblLine++;
+      if (!strncmp(szBuf, ":done", 5)) {
+         bGotDone = 1;
+         break;
+      }
+      if (!bGlblSimulate && !bGlblRevoke && !bGlblBackup && fout) {
+         fputs(szBuf, fout);
+         iout++;
+      }
+   }
+
+   // close output file
+   if (!bGlblSimulate && !bGlblRevoke && !bGlblBackup && fout) {
+      fflush(fout);
+      fclose(fout);
+      nGlblPatchedFiles++;
+      log(5, "written: %s, %d lines.\n",szCmdBuf,iout);
+   }
+
+   if (!bGotDone) {
+      if (!fout) { log(0, "error  : missing :done after :create of line %d\n", nStartLine); return 2; }
+   }
+
+   return 0;
+}
+
+int SFKPatch :: processCreateDir(char *pszIn)
+{
+   if (strlen(pszIn) < 1) { log(0, "error  : missing filename after :mkdir\n"); return 2; }
+
+   strcpy(szCmdBuf, pszIn);
+   char *psz = 0;
+   if ((psz = strchr(szCmdBuf, '\r')) != 0) *psz = 0;
+   if ((psz = strchr(szCmdBuf, '\n')) != 0) *psz = 0;
+   char *pszFile = strdup(szCmdBuf);
+ 
+   strcpy(szCmdBuf, pszFile);
+
+   if (!bGlblSimulate && bGlblRevoke) {
+      // not yet supported: remove dir on revoke (sequence problem)
+      // _rmdir(szCmdBuf);
+      return 0;
+   }
+
+   // create dir. have to use Win-specific API.
+   if (!bGlblSimulate && !bGlblRevoke && !bGlblBackup) {
+      #ifdef _WIN32
+      int iRC = _mkdir(szCmdBuf);
+      #else
+      int iRC = mkdir(szCmdBuf, S_IREAD | S_IWRITE | S_IEXEC);
+      #endif
+      if (!iRC) log(5, "created: %s\n",szCmdBuf);
+   }
+
+   return 0;
+}
+
+void SFKPatch :: shrinkLine(char *psz, char *pszOut)
+{
+   int bWithinString = 0;
+   int nWhiteCnt = 0;
+   for (;*psz; psz++)
+   {
+      if (*psz == '\r' || *psz == '\n')
+         break;   // strip also CR, LF from shrinked strings
+
+      if (*psz == '\"' || *psz == '\'')
+         bWithinString = 1-bWithinString;
+
+      if (bWithinString)
+         *pszOut++ = *psz;
+      else
+      if (*psz != ' ' && *psz != '\t') {
+         *pszOut++ = *psz;
+         nWhiteCnt = 0;
+      }
+      else {
+         // always apply first whitespace
+         nWhiteCnt++;
+         if (nWhiteCnt == 1)
+            *pszOut++ = ' ';
+      }
+   }
+   *pszOut = 0;
+}
+
+int SFKPatch :: compareLines(char *psz1, char *psz2)
+{
+   if (bGlblIgnoreWhiteSpace)
+   {
+      shrinkLine(psz1, szLine1);
+      shrinkLine(psz2, szLine2);
+      int iRC = strcmp(szLine1,szLine2);
+      if (bGlblVerbose)
+      {
+         if (iRC)
+            printf("src-> %s\npat-> %s\n",szLine1,szLine2);
+         else
+            printf("src*> %s\npat*> %s\n",szLine1,szLine2);
+      }
+      return iRC;
+   }
+   return strcmp(psz1, psz2);
+}
+
+int SFKPatch :: processFileUntilDone(char *pszTargFileName)
+{
+   // INPUT implicite: fpatch stream
+
+   // 1. read next block from patchfile until ":done"
+   char szBuf[MAX_LINE_LEN];
+   char szBuf2[MAX_LINE_LEN];
+   int ipatch = 0;
+   while (fgets(szBuf,sizeof(szBuf)-10,fpatch) != NULL)
+   {
+      nGlblLine++;
+      aPatch[ipatch++] = strdup(szBuf);
+      aPatch[ipatch] = 0;
+      if (ipatch > SFKPATCH_MAX_CMDLINES) { log(0, "command block too large, max %d lines supported.\n",(int)SFKPATCH_MAX_CMDLINES); return 2; }
+      if (!strncmp(szBuf, ":done", 5))
+         break;
+   }
+
+   // 2. find commands
+   int icmd=0; int iline=0; int bNextCmd=0; int bDone=0;
+   int bWithinToBlock=0, bHavePatchIDForThisFile=0;
+   int bFromPassed=0, nLocalDetabOutput=0;
+   while (!bDone)
+   {
+      aifrom   [icmd]=-1;
+      aifromlen[icmd]=-1;
+      aito     [icmd]=-1;
+      aitolen  [icmd]=-1;
+      for (;iline<ipatch;iline++)
+      {
+         if (!strncmp(aPatch[iline],":select-replace ",strlen(":select-replace ")))
+         {
+            bGlblAnySelRep = 1;
+            if (iLocalChange < MAX_LOCAL_CHANGES-2) {
+               char *psz = aPatch[iline]+strlen(":select-replace ");
+               char  nCC = *psz++;
+               char *pszMaskBegin = psz;
+               while (*psz && (*psz != nCC)) psz++;
+               char *pszMaskEnd   = psz;
+               if (*psz) psz++;
+               char *pszFromBegin = psz;
+               while (*psz && (*psz != nCC)) psz++;
+               char *pszFromEnd   = psz;
+               if (*psz) psz++;
+               char *pszToBegin   = psz;
+               while (*psz && (*psz != nCC)) psz++;
+               char *pszToEnd     = psz;
+               *pszMaskEnd = 0;
+               *pszFromEnd = 0;
+               *pszToEnd   = 0;
+               if (strlen(pszFromBegin) > 0) {
+                  char *pszMaskDup = strdup(pszMaskBegin);
+                  char *pszFromDup = strdup(pszFromBegin);
+                  char *pszToDup   = strdup(pszToBegin);
+                  apLocalChange[iLocalChange][0] = pszMaskDup;
+                  apLocalChange[iLocalChange][1] = pszFromDup;
+                  apLocalChange[iLocalChange][2] = pszToDup;
+                  iLocalChange++;
+               }
+            } else {
+               log(0, "error  : too many select-replace in one :file, only up to %d supported.\n",MAX_LOCAL_CHANGES);
+               return 2;
+            }
+            continue;
+         }
+
+         if (!strncmp(aPatch[iline],":set detab=",strlen(":set detab="))) {
+            nLocalDetabOutput = atol(aPatch[iline]+strlen(":set detab="));
+            // log(5, "setting local detab to %d\n",nLocalDetabOutput);
+            continue;
+         }
+
+         if (!strncmp(aPatch[iline],":from",strlen(":from")))
+         {
+            bFromPassed = 1;
+            bWithinToBlock = 0;
+            if (aifrom[icmd] == -1) {
+               // starts new command (only at file start)
+               aifrom[icmd]    = iline+1;
+            } else {
+               // ends current command
+               aitolen[icmd]   = iline-aito[icmd];
+               bNextCmd = 1;
+            }
+         }
+
+         if (!bFromPassed && !strncmp(aPatch[iline], ":", 1)) {
+            log(0, "unexpected command: %s\n", aPatch[iline]);
+            return 9;
+         }
+
+         if (!strncmp(aPatch[iline],":to",strlen(":to"))) {
+            aito[icmd]      = iline+1;
+            aifromlen[icmd] = aito[icmd]-aifrom[icmd]-1;
+            bWithinToBlock  = 1;
+         }
+
+         if (!strncmp(aPatch[iline],":done",strlen(":done"))) {
+            // only at EOF
+            bWithinToBlock = 0;
+            aitolen[icmd]   = iline-aito[icmd];
+            bNextCmd = 1;
+            bDone = 1;
+         }
+
+         if (strstr(aPatch[iline], "[patch-id]") != 0) {
+            if (bWithinToBlock)
+               bHavePatchIDForThisFile = 1;
+            else {
+               log(0, "error  : line %d: [patch-id] not allowed within :from block. expected in :to block.\n",nGlblLine);
+               return 2;
+            }
+         }
+
+         if (bNextCmd)
+         {
+            bNextCmd=0;
+            if (aifrom[icmd]   ==-1) { log(0, "error  : line %d: :from block missing\n",nGlblLine); return 2; }
+            if (aito[icmd]     ==-1) { log(0, "error  : line %d: :to block missing\n",nGlblLine); return 2; }
+            if (aifromlen[icmd]<= 0) { log(0, "error  : line %d: :from block empty\n",nGlblLine); return 2; }
+            if (aitolen[icmd]  <= 0) { log(0, "error  : line %d: :to block empty\n",nGlblLine);   return 2; }
+            icmd++;
+            if (icmd >= SFKPATCH_MAX_NUMCMD-2)   { log(0, "error  : too many commands, only %d supported\n",SFKPATCH_MAX_NUMCMD); return 2; }
+            aifrom[icmd]    = iline+1;
+            break;
+         }
+
+      }  // endfor inner loop
+
+   }  // endfor outer loop (bDone)
+
+   if (!bHavePatchIDForThisFile && !bGlblNoPID) {
+      log(0, "error  : line %d: [patch-id] missing!\n",nGlblLine);
+      log(0, "info   : you must supply at least one [patch-id] within a :to block per :file,\n"
+             "info   : otherwise i cannot identify already-patched files.\n");
+      return 2;
+   }
+
+   // =========== pre-scan the target file, find out if it's patched =====================
+
+   int bTargetIsPatched = 0;
+
+   FILE *ftarg2 = fopen(pszTargFileName, "r");
+
+   if (!ftarg2) { log(0, "error  : cannot read target file: %s\n", pszTargFileName); return 2+4; }
+
+   while (fgets(szBuf,sizeof(szBuf)-10,ftarg2) != NULL)
+      if (strstr(szBuf,"[patch-id]") != 0)
+         bTargetIsPatched = 1;
+
+   fclose(ftarg2);
+
+   // ====================================================================================
+
+   char szProbeCmd[MAX_LINE_LEN];
+
+ if (!bGlblSimulate)
+ { // begin backup block
+
+   // make a backup of the target file
+   char szRelFileName[1024];
+   char szBackupDir[MAX_LINE_LEN];
+   strcpy(szBackupDir, pszTargFileName);
+   char *pszLastDir = strrchr(szBackupDir, glblPathChar);
+   // if (!pszLastDir) { log(0, "error  : no '%c' path character in %s, cannot create backup dir.\n", glblPathChar, szBackupDir); return 2; }
+   if (pszLastDir) {
+      pszLastDir++;
+      strcpy(szRelFileName,pszLastDir);
+      *pszLastDir = 0;
+      strcat(szBackupDir, "save_patch");
+   } else {
+      // file name without any path:
+      strcpy(szRelFileName, pszTargFileName);
+      strcpy(szBackupDir, "save_patch");
+   }
+
+   // IS a backup file already existing?
+   sprintf(szProbeCmd,"%s%c%s",szBackupDir,glblPathChar,szRelFileName);
+
+   // are we by any chance in REVOKE mode?
+   if (bGlblRevoke && bTargetIsPatched)
+   {
+      // YES: copy backup file back.
+      char szCopyCmd[MAX_LINE_LEN];
+      // 0. ensure backup exists
+      if (!fileExists(szProbeCmd)) { log(0, "error  : cannot revoke, no backup file: %s\n",szProbeCmd); return 1+4; }
+      // is there an old target?
+      if (fileExists(pszTargFileName))
+      {
+         // 1. ensure target is writeable
+         #ifdef _WIN32
+         sprintf(szCopyCmd, "attrib -R %s",pszTargFileName);
+         #else
+         sprintf(szCopyCmd, "chmod +w %s", pszTargFileName);
+         #endif
+         if (system(szCopyCmd)) { }
+         #ifdef _WIN32
+         // 2. delete target to ensure copy will work
+         sprintf(szCopyCmd, "del %s",pszTargFileName);
+         if (system(szCopyCmd)) { }
+         #endif
+      }
+      // 3. copy backup over target
+      if (bGlblTouchOnRevoke) {
+         // make sure target has current timestamp
+         FILE *fsrc = fopen(szProbeCmd, "rb");
+         if (!fsrc) { log(0, "error  : cannot open %s\n",szProbeCmd); return 2+4; }
+         FILE *fdst = fopen(pszTargFileName,"wb");
+         if (!fdst) { log(0, "error  : cannot open %s\n",pszTargFileName); return 2+4; }
+         // quick binary block copy
+         // size_t fread( void *buffer, size_t size, size_t count, FILE *stream );
+         // size_t fwrite( const void *buffer, size_t size, size_t count, FILE *stream );
+         size_t ntotal = 0;
+         while (1) {
+            size_t nread = fread(szCopyCmd, 1, sizeof(szCopyCmd), fsrc);
+            if (nread <= 0)
+               break;
+            fwrite(szCopyCmd, 1, nread, fdst);
+            ntotal += nread;
+         }
+         fclose(fdst);
+         fclose(fsrc);
+         // write-protect target
+         #ifdef _WIN32
+         sprintf(szCopyCmd, "attrib +R %s",pszTargFileName);
+         #else
+         sprintf(szCopyCmd, "chmod -w %s", pszTargFileName);
+         #endif
+         if (system(szCopyCmd)) { }
+         log(5, "revoked: %s, %u bytes\n",pszTargFileName,(unsigned int)ntotal);
+         nGlblRevokedFiles++;
+      } else {
+         // xcopy requires us to create a dummy, otherwise we get a prompting
+         FILE *fdst = fopen(pszTargFileName,"w");
+         if (!fdst) { log(0, "error  : cannot open %s\n",pszTargFileName); return 2+4; }
+         fprintf(fdst, "tmp\n\n"); fflush(fdst);
+         fclose(fdst);
+         // no overwrite this with /K, keeping potential +R attributes
+         #ifdef _WIN32
+         sprintf(szCopyCmd, "xcopy /Q /K /Y %s %s >nul",szProbeCmd,pszTargFileName);
+         #else
+         sprintf(szCopyCmd, "cp -p %s %s",szProbeCmd,pszTargFileName);
+         #endif
+         int iRC = system(szCopyCmd);
+         if (!iRC) {
+            log(5, "revoked: %s\n",pszTargFileName);
+            nGlblRevokedFiles++;
+         } else {
+            log(0, "revoke failed: %s\n",pszTargFileName);
+            return 1;
+         }
+      }
+      // 4. make backup writeable, and remove
+      #ifdef _WIN32
+      sprintf(szCopyCmd, "attrib -R %s",szProbeCmd);
+      #else
+      sprintf(szCopyCmd, "chmod +w %s", szProbeCmd);
+      #endif
+      if (system(szCopyCmd)) { }
+      if (remove(szProbeCmd)) {
+         log(0, "error  : cannot delete stale backup: %s\n",szProbeCmd);
+         return 1;
+      }
+      return 0;
+   }
+
+   if (bGlblRevoke && !bTargetIsPatched)
+   {
+      if (!bTargetIsPatched) {
+         log(0, "warning: isn't patched, will not revoke: %s\n",pszTargFileName);
+      }
+   }
+
+   // otherwise continue creating a backup
+   if (bGlblBackup)
+   {
+      // prepare: if stale backup, delete first
+      if (fileExists(szProbeCmd))
+      {
+         // remove old backup, most probably stale
+         char szCopyCmd[MAX_LINE_LEN];
+         log(5, "del.bup: %s\n",szProbeCmd);
+         #ifdef _WIN32
+         sprintf(szCopyCmd, "attrib -R %s",szProbeCmd);
+         #else
+         sprintf(szCopyCmd, "chmod +w %s", szProbeCmd);
+         #endif
+         if (system(szCopyCmd)) { }
+         if (remove(szProbeCmd)) {
+            log(0, "error  : cannot delete stale backup: %s\n",szProbeCmd);
+            return 1;
+         }
+      }
+
+      // create backup dir and file
+      char szCopyCmd[MAX_LINE_LEN];
+      int iRC = 0;
+      // sprintf(szCopyCmd,"mkdir %s",szBackupDir);
+      // int iRC = system(szCopyCmd); // create backup dir, if not done yet
+      #ifdef _WIN32
+      if (_mkdir(szBackupDir))
+      #else
+      if (mkdir(szBackupDir, S_IREAD | S_IWRITE | S_IEXEC))
+      #endif
+      {
+         // log(0, "warning: cannot create backup dir: %s\n",szBackupDir);
+         // return 1;
+      }
+      #ifdef _WIN32
+      sprintf(szCopyCmd,"xcopy /Q /K %s %s >nul",pszTargFileName,szBackupDir);
+      #else
+      sprintf(szCopyCmd,"cp -p %s %s",pszTargFileName,szBackupDir);
+      #endif
+      iRC = system(szCopyCmd); // create backup file
+      if (iRC) {log(0, "error  : creation of backup file failed: RC %d\n",iRC); return 2+4; }
+      if (fileExists(szProbeCmd)) {
+         log(5, "backupd: %s\n",szProbeCmd);
+      } else {
+         log(0, "error  : verify of backup file failed: %s\n",szProbeCmd); return 2+4;
+      }
+      return 0;
+   }
+
+ } // end backup block
+
+   if (bGlblRevoke)
+      return 0;
+
+   // 3. read and patch the target file
+   FILE *ftarg = fopen(pszTargFileName, "r");
+   if (!ftarg) { log(0, "error  : cannot read target file: %s\n", pszTargFileName); return 2+4; }
+
+   // we cache the output in memory
+   int iout = 0;
+
+   int isrcbuf=0, ipatmatch=0;
+   aBuf[0] = 0;
+   int icmd2 = 0, nLine = 0, nTargLineEndings = -1;
+   while (fgets(szBuf,sizeof(szBuf)-10,ftarg) != NULL)
+   {
+      nLine++;
+
+      // make sure target file has SAME line endings as cmd file.
+      if (nTargLineEndings == -1)
+      {
+         if (strstr(szBuf,"\r\n") != 0)
+            nTargLineEndings = 2;   // CR/LF
+         else
+            nTargLineEndings = 1;   // LF only
+         if (nCmdFileLineEndings != nTargLineEndings)
+         {
+            log(0, "error  : different line endings!\n");
+            log(0, "error  :   the patch file uses %s line endings.\n",(nCmdFileLineEndings==2)?"CR/LF":"LF");
+            log(0, "error  :   this target file uses %s line endings: %s\n",(nTargLineEndings==2)?"CR/LF":"LF",pszTargFileName);
+            return 2;
+         }
+      }
+
+      if (strstr(szBuf,"[patch-id]") != 0) {
+         if (bGlblVerify) {
+            if (!bGlblQuickSum)
+               log(5, "checked: %s is still patched\n",pszTargFileName);
+            return 0;
+         }
+         if (!bGlblNoPID) {
+            log(0, "error  : %s already patched\n",pszTargFileName);
+            return 1;
+         }
+      }
+
+      // does current in-line match the CURRENT pattern's current line?
+      if ((icmd2<icmd) && !compareLines(szBuf,aPatch[aifrom[icmd2]+ipatmatch]))
+      {
+         ipatmatch++;
+         aBuf[isrcbuf++] = strdup(szBuf);
+         if (isrcbuf > SFKPATCH_MAX_CACHELINES-10) { log(0, "pattern cache overflow, %d lines exceeded\n",(int)SFKPATCH_MAX_CACHELINES); return 2; }
+         if (ipatmatch == aifromlen[icmd2]) {
+            // full pattern match:
+            // write replacement pattern
+            for (int i3=0;i3<aitolen[icmd2];i3++) {
+               apOut[iout++] = strdup(aPatch[aito[icmd2]+i3]);
+               if (iout > SFKPATCH_MAX_OUTLINES-10) { log(0, "output cache overflow, %d lines exceeded\n",(int)SFKPATCH_MAX_OUTLINES); return 2; }
+            }
+            // drop the cache
+            for (int i4=0;i4<isrcbuf;i4++)
+               free(aBuf[i4]);
+            // reset stats
+            isrcbuf=0;
+            ipatmatch=0;
+            // switch to next command
+            icmd2++;
+         }
+      } else {
+         // flush and clear the cache, if any
+         for (int i2=0;i2<isrcbuf;i2++) {
+            apOut[iout++] = strdup(aBuf[i2]);
+            if (iout > SFKPATCH_MAX_OUTLINES-10) { log(0, "output cache overflow, %d lines exceeded\n",(int)SFKPATCH_MAX_OUTLINES); return 2; }
+            free(aBuf[i2]);
+         }
+         // flush also current line, which wasn't cached
+         apOut[iout++] = strdup(szBuf);
+         if (iout > SFKPATCH_MAX_OUTLINES-10) { log(0, "output cache overflow, %d lines exceeded\n",(int)SFKPATCH_MAX_OUTLINES); return 2; }
+         // reset stats
+         isrcbuf=0;
+         ipatmatch=0;
+      }
+   }
+
+   if (icmd2 != icmd) {
+      log(0, "error  : from-pattern %d of %d mismatch, in file %s\n",icmd2+1,icmd,pszTargFileName);
+      log(0, "info   : check pattern content and SEQUENCE (must match target sequence).\n");
+      return 2;
+   }
+
+   fclose(ftarg);
+
+ if (!bGlblSimulate)
+ {
+   // now, we hold the patched target file in apOut.
+   // overwrite the target.
+   int bSwitchedAttrib = 0;
+   cchar *pszFileMode = "w";
+   if (bGlblUnixOutput)
+         pszFileMode = "wb";
+   ftarg = fopen(pszTargFileName, pszFileMode);
+   if (!ftarg) {
+      // open for write failed? try switching attributes
+      #ifdef _WIN32
+      sprintf(szProbeCmd, "attrib -R %s",pszTargFileName);
+      #else
+      sprintf(szProbeCmd, "chmod +w %s", pszTargFileName);
+      #endif
+      if (system(szProbeCmd)) { }
+      bSwitchedAttrib = 1;
+      ftarg = fopen(pszTargFileName, pszFileMode);
+   }
+   if (!ftarg) {
+      log(0, "error  : cannot overwrite target file: %s\n", pszTargFileName); return 2+4;
+   }
+
+   // write and free all memory lines
+   for (int n=0; n<iout; n++)
+   {
+      strcpy(szBuf, apOut[n]);
+
+      // apply local changes, which have priority over globals
+      int ipat=0;
+      for (ipat=0; ipat<iLocalChange; ipat++) {
+         if (   (strstr(szBuf, apLocalChange[ipat][0]) != 0)
+             && (strstr(szBuf, apLocalChange[ipat][1]) != 0)
+            )
+         {
+            // replace pattern within line
+            if (bGlblVerbose) { printf("lc1>%s",szBuf);fflush(stdout); }
+
+            char *psz = strstr(szBuf, apLocalChange[ipat][1]);
+            *psz = 0;
+            strcpy(szBuf2,szBuf);
+            strcat(szBuf2,apLocalChange[ipat][2]);
+            psz += strlen(apLocalChange[ipat][1]);
+            strcat(szBuf2,psz);
+            strcpy(szBuf,szBuf2);
+
+            if (bGlblVerbose) { printf("lc2>%s",szBuf);fflush(stdout); }
+
+            anLocalChange[ipat]++;
+         }
+      }
+
+      // apply global changes, if anything left to change
+      for (ipat=0; ipat<iGlobalChange; ipat++) {
+         if (   (strstr(szBuf, apGlobalChange[ipat][0]) != 0)
+             && (strstr(szBuf, apGlobalChange[ipat][1]) != 0)
+            )
+         {
+            // replace pattern within line
+            if (bGlblVerbose) { printf("gc1>%s",szBuf);fflush(stdout); }
+
+            char *psz = strstr(szBuf, apGlobalChange[ipat][1]);
+            *psz = 0;
+            strcpy(szBuf2,szBuf);
+            strcat(szBuf2,apGlobalChange[ipat][2]);
+            psz += strlen(apGlobalChange[ipat][1]);
+            strcat(szBuf2,psz);
+            strcpy(szBuf,szBuf2);
+
+            if (bGlblVerbose) { printf("gc2>%s",szBuf);fflush(stdout); }
+
+            anGlobalChange[ipat]++;
+         }
+      }
+
+      // apply detabbing, if selected
+      if (nLocalDetabOutput) {
+         if (detabLine(szBuf, szBuf2, MAX_LINE_LEN, nLocalDetabOutput))
+            return 9;
+      }
+      if (nGlblDetabOutput) {
+         if (detabLine(szBuf, szBuf2, MAX_LINE_LEN, nGlblDetabOutput))
+            return 9;
+      }
+
+      // apply unix conversion or not, and finally write
+      if (bGlblUnixOutput) {
+         char *psz = strrchr(szBuf,'\n'); if (psz) *psz = 0;
+               psz = strrchr(szBuf,'\r'); if (psz) *psz = 0;
+         fprintf(ftarg, "%s\n", szBuf);
+      } else {
+         fputs(szBuf,ftarg);
+      }
+
+      free(apOut[n]);
+   }
+
+   fclose(ftarg);
+
+   // have to re-enable write protection?
+   if (bSwitchedAttrib) {
+      #ifdef _WIN32
+      sprintf(szProbeCmd, "attrib +R %s",pszTargFileName);
+      #else
+      sprintf(szProbeCmd, "chmod -w %s", pszTargFileName);
+      #endif
+      if (system(szProbeCmd)) { }
+   }
+
+   if (bSwitchedAttrib) {
+      log(5, "Patched: %s, %d lines.\n",pszTargFileName,iout);
+   } else {
+      log(5, "patched: %s, %d lines.\n",pszTargFileName,iout);
+   }
+   nGlblPatchedFiles++;
+ }
+ else {
+   log(5, "checked: %s, %d lines.\n",pszTargFileName,iout);
+ }
+
+   if (bGlblVerify) {
+      log(0, "error  : %s no longer patched - probably overwritten\n",pszTargFileName);
+      return 1;
+   }
+
+   return 0;
+}
+
+// ----------- sfk inst - c++ source code instrumentation support --------------
+
+#define SFKINST_TRBSIZE    200 // token ring buffer
+#define SFKINST_BLINESIZE 1024
+#define SFKINST_BLINEMAX    50
+
+class SrcParse
+{
+public:
+   SrcParse ( );
+   uint processFile (char *pText, bool bSimulate, FILE *foutOptional);
+   void  processLine (char *pBuf, bool bSimulate);
+
+protected:
+   void addtok    (char c);
+   void addWord   ( );
+   void addColon  ( );
+   void addScope  ( );
+   void addBra    ( );
+   void addKet    ( );
+   void addCBra   ( );
+   void addCKet   ( );
+   void addSemi   ( );
+   void addRemark ( );
+   bool hasFunctionStart (uint &rn1stline);
+   char pretok    (uint &itok2, uint &nstepdowncnt, uint &rnline);
+   void addDetectKeyword   (char **rpsz);
+   void reduceSignature    (char *pszIn, char *pszOut);
+
+   enum eSFKInstScanStates {
+      ess_idle  = 1,
+      ess_word  = 2,
+      ess_num   = 3,
+      ess_colon = 4,
+      ess_slash = 5
+      };
+
+private:
+   uchar atok[SFKINST_TRBSIZE+10];
+   uint itok;
+   uchar altok[SFKINST_TRBSIZE+10]; // just for the current line
+   uint iltok;
+   uint atokline[SFKINST_TRBSIZE+10]; // line number of token
+   uint nline;
+   char  abline[SFKINST_BLINEMAX][SFKINST_BLINESIZE+2];
+   uint ibline;
+   uint ibackscope;
+   bool  bbackscope;
+   FILE *clOut;
+   uint nClHits;
+
+   char szLineBuf[MAX_LINE_LEN+10];
+   char szLineBuf2[MAX_LINE_LEN+10];
+   char szLineBuf3[MAX_LINE_LEN+10];
+   char szBupDir[MAX_LINE_LEN+10];
+   char szBupFile[MAX_LINE_LEN+10];
+   char szCopyCmd[MAX_LINE_LEN+10];
+
+public:
+static bool
+   bdebug,
+   binsteol;
+
+static cchar
+   *pszGlblInclude,
+   *pszGlblMacro;
+};
+
+bool   SrcParse::bdebug = 0;
+bool   SrcParse::binsteol = 0;
+cchar *SrcParse::pszGlblInclude = "";
+cchar *SrcParse::pszGlblMacro   = "";
+
+SrcParse::SrcParse()
+{
+   memset(this, 0, sizeof(*this));
+}
+
+uint SrcParse::processFile(char *pText, bool bSimulate, FILE *fout)
+{
+   if (!bSimulate) {
+      clOut = fout;
+      fprintf(fout, "#include \"%s\" // [instrumented]\n", pszGlblInclude);
+   }
+
+   // char *pCopy = strdup(pText);
+   uint nTextLen = strlen(pText);
+   char *pCopy = new char[nTextLen+10];
+   if (!pCopy) { fprintf(stderr, "error  : out of memory at %d\n", __LINE__); return 0; }
+   memcpy(pCopy, pText, nTextLen+1);
+
+   nClHits = 0;
+
+   // NO RETURNS FROM HERE
+
+   uint nMaxLineLen = sizeof(szLineBuf)-10;
+   char *psz1 = pCopy;
+   char *pszContinue = 0;
+   while (psz1)
+   {
+      char *psz2 = strchr(psz1, '\n');
+      if (psz2)
+      {
+         pszContinue = psz2+1;
+         int nLineLen = psz2 - psz1;
+         if (nLineLen > (int)nMaxLineLen) nLineLen = nMaxLineLen;
+         strncpy(szLineBuf, psz1, nLineLen);
+         szLineBuf[nLineLen] = '\0';
+         char *pszCR = strchr(szLineBuf, '\r');
+         if (pszCR) *pszCR = '\0';
+      }
+      else
+      {
+         memset(szLineBuf, 0, sizeof(szLineBuf));
+         strncpy(szLineBuf, psz1, nMaxLineLen);
+         pszContinue = 0;
+      }
+
+      processLine(szLineBuf, bSimulate);
+      psz1 = pszContinue;
+   }
+
+   // NO RETURNS UNTIL HERE
+
+   delete [] pCopy;
+
+   return nClHits;
+}
+
+bool isatoz(char c) { char c2=tolower(c); return (c2>='a' && c2<='z'); }
+bool isnum_(char c) { return (c>='0' && c<='9') || (c=='_'); }
+
+void SrcParse::reduceSignature(char *psz1, char *psz2)
+{
+   // reduce [type] class::method([parms])
+   //     to class::method
+
+   // goto last scope (in case there are many)
+   //     cls1::type1 & cls2::type2::method3(
+   char *pszs = strstr(psz1, "::");
+   if (!pszs) { strcpy(psz2, psz1); return; }
+   char *prbra = strrchr(psz1, '(');
+   char *pszn;
+   while ((pszn = strstr(pszs+1, "::")) && (pszn < prbra))
+      pszs = pszn;
+   // find head
+   char *pszh = pszs-1;
+   while (pszh >= psz1) {
+      char c = *pszh;
+      // if (!isnum_(c) && !isatoz(c))
+      //    break;
+      if (c == ' ' || c == '\t')
+         break;
+      pszh--;
+   }
+   while ((pszh<pszs) && !isatoz(*pszh))
+      pszh++;
+   // find tail
+   char *pszt = pszs+2;
+   while (*pszt) {
+      char c = *pszt;
+      // if ((c != '~') && !isnum_(c) && !isatoz(c))
+      //   break;
+      if (c == '(')
+         break;
+      pszt++;
+   }
+   while ((pszt > pszh) && (*pszt == ' ' || *pszt == '('))
+      pszt--;
+   pszt++;
+   // check and copy
+   if (pszh < pszt) {
+      strncpy(psz2, pszh, pszt-pszh);
+      psz2[pszt-pszh] = '\0';
+   } else {
+      strcpy(psz2, "?::?");
+   }
+}
+
+void SrcParse::processLine(char *pszLine, bool bSimulate)
+{
+   nline++;
+
+   char *pszx;
+   if ((pszx = strchr(pszLine, '\n'))) *pszx = '\0';
+   if ((pszx = strchr(pszLine, '\r'))) *pszx = '\0';
+
+   // store in backline buffer
+   strncpy(abline[ibline], pszLine, SFKINST_BLINESIZE-10);
+   abline[ibline][SFKINST_BLINESIZE-10] = '\0';
+   if (ibackscope == ibline) {
+      bbackscope = 0; // got overwritten
+   }
+
+   // reset current line token buffer.
+   // this is handled like a string, with zero terminator.
+   iltok = 0;
+   memset(altok, 0, sizeof(altok));
+
+   // printf("] %s\n", pszLine);
+   // printf("] %s\n", abline[ibline]);
+
+   char *psz1 = pszLine;
+   char c1;
+   uchar nstate = ess_idle;
+   do
+   {
+      c1 = *psz1; // incl. null at eol
+
+		mtklog(("inst: %c %d",c1,nstate));
+
+      if (isatoz(c1)) {
+         switch (nstate) {
+            case ess_idle:
+               nstate=ess_word;
+               addDetectKeyword(&psz1);
+               break;
+         }
+      }
+      else
+      if (isnum_(c1)) {
+         switch (nstate) {
+            case ess_idle: nstate=ess_num ; break;
+         }
+      }
+      else
+      {
+         // NOT alphanumeric
+         switch (nstate) {
+            case ess_word : nstate=ess_idle; addWord(); break;
+         }
+
+         if (c1 == '/') {
+            switch (nstate) {
+               case ess_idle : nstate=ess_slash; break;
+               case ess_slash:
+                  nstate=ess_idle ; addRemark(); c1=0; break;
+            }
+         }
+         else
+         if (c1 == '*') {
+            switch (nstate) {
+               case ess_slash:
+                  nstate=ess_idle; addRemark(); break;
+            }
+         }
+         else
+         if (nstate == ess_slash)
+             nstate = ess_idle;
+
+         if (c1 == ':') {
+            switch (nstate) {
+               case ess_idle : nstate=ess_colon; break;
+               case ess_colon: nstate=ess_idle ; addScope(); break;
+            }
+         }
+         else
+         if (nstate == ess_colon) {
+             nstate = ess_idle;
+             addColon();
+         }
+ 
+         if (c1 == '(') { nstate=ess_idle; addBra(); }
+         else
+         if (c1 == ')') { nstate=ess_idle; addKet(); }
+         else
+         if (c1 == '{') { nstate=ess_idle; addCBra(); }
+         else
+         if (c1 == '}') { nstate=ess_idle; addCKet(); }
+         else
+         if (c1 == ';') { nstate=ess_idle; addSemi(); }
+      }
+
+      psz1++;
+   }
+   while (c1);
+   // printf("\n");
+
+   // assumed function start in current line?
+   if (   strstr((char*)altok, "wsw(")
+       || strstr((char*)altok, "wsww(")
+      )
+   {
+      ibackscope = ibline;
+      bbackscope = 1;
+   }
+
+   strcpy(szLineBuf2, szLineBuf);
+
+   // REDUCTION: so far, this accepts only "{" lines
+   //            without anything else in it.
+   if (hasFunctionStart(ibackscope))
+   {
+      char *pszMethodStartLine = abline[ibackscope];
+
+		mtklog(("inst:   msline \"%.20s\"", pszMethodStartLine));
+
+     if (bdebug)
+     {
+      printf("FN BODY at %d: %s\n", nline, (char*)atok);
+      char *psz1;
+      uint i2 = ibackscope;
+      while ((psz1 = abline[i2])) {
+         if (strlen(psz1))
+            printf("] %s\n", psz1);
+         if (i2 == ibline)
+            break;
+         if (++i2 >=  SFKINST_BLINEMAX)
+            i2 = 0;
+      }
+     }
+
+      // the current line contains the relevant "{" somewhere.
+      // for now, we instrument only simple lines:
+		mtklog(("inst:   lbuf2  \"%s\"", szLineBuf2));
+		// accept "{" but also "[anywhitespace]{"
+		char *pszs = szLineBuf2;
+		while (*pszs && (*pszs==' ' || *pszs=='\t')) pszs++;
+      if (!strcmp(pszs, "{")) {
+         reduceSignature(pszMethodStartLine, szLineBuf3);
+         sprintf(pszs, "{%s(\"%s\");", pszGlblMacro, szLineBuf3);
+         // printf("=> %s \"%s\"\n", szLineBuf2, pszMethodStartLine);
+         nClHits++;
+      }
+      else
+      if (binsteol)
+      do
+      {
+         // also instrument "{" at end of line
+         char *pcur = strrchr(szLineBuf2, '{');
+         if (!pcur) break;
+         if (!strcmp(pcur, "{")) {
+            reduceSignature(pszMethodStartLine, szLineBuf3);
+            sprintf(pcur, "{%s(\"%s\");", pszGlblMacro, szLineBuf3);
+            // printf("=> %s \"%s\"\n", szLineBuf2, pszMethodStartLine);
+            nClHits++;
+         }
+      }
+      while (0);
+   }
+   // else keep szLineBuf2 unchanged
+
+   if (!bSimulate) {
+      fputs(szLineBuf2, clOut);
+      fputc('\n', clOut);
+   }
+
+   if (++ibline >= SFKINST_BLINEMAX)
+      ibline = 0;
+}
+
+void SrcParse::addDetectKeyword(char **rpsz)
+{
+   char *psz1 = *rpsz;
+   if (!strncmp(psz1, "class ", strlen("class ")))
+      {  addtok('k'); psz1+=strlen("class "); }
+   else
+   if (!strncmp(psz1, "struct ", strlen("struct ")))
+      {  addtok('k'); psz1+=strlen("struct "); }
+   *rpsz = psz1;
+}
+
+void SrcParse::addWord()   { addtok('w'); }
+void SrcParse::addColon()  { addtok(':'); }
+void SrcParse::addScope()  { addtok('s'); }
+void SrcParse::addBra()    { addtok('('); }
+void SrcParse::addKet()    { addtok(')'); }
+void SrcParse::addCBra()   { addtok('{'); }
+void SrcParse::addCKet()   { addtok('}'); }
+void SrcParse::addSemi()   { addtok(';'); }
+void SrcParse::addRemark() { addtok('r'); }
+
+void SrcParse::addtok(char c)
+{
+	mtklog(("inst:  addtok %c", c));
+
+   atok[itok] = c;
+   atokline[itok] = ibline;
+   if (++itok >= SFKINST_TRBSIZE)
+      itok = 0;
+   atok[itok] = '*';
+
+   altok[iltok] = c;
+   if (++iltok >= SFKINST_TRBSIZE)
+      iltok = 0;
+   altok[iltok] = '*';
+   // printf("%c", c);
+}
+
+char SrcParse::pretok(uint &itok2, uint &nstepcnt, uint &rnline)
+{
+   if (nstepcnt == 0)
+      return 0;
+   else
+      nstepcnt--;
+
+   if (itok2 == 0)
+      itok2 = SFKINST_TRBSIZE-1;
+   else
+      itok2--;
+
+   rnline = atokline[itok2];
+   return atok[itok2];
+}
+
+bool SrcParse::hasFunctionStart(uint &rnline)
+{
+   uint itok2 = itok;
+   uint ncnt  = SFKINST_TRBSIZE;
+
+   // W* S W B W* K ** {
+
+   uint ntline = 0;
+   char c1 = pretok(itok2, ncnt, ntline);
+   if (!c1) return false;
+   if (c1 != '{') {
+		mtklog(("inst:   hasfs %c, false", c1));
+		return false;
+	}
+
+   // have a curly braket:
+
+   uint nBra = 0;
+   uint nKet = 0;
+   uint nrc  = 0;
+   uint nScope = 0;
+   uint nBraDist = 0; // word distance from last bra
+ 
+   while (!nrc && (c1 = pretok(itok2, ncnt, ntline))) {
+      switch (c1) {
+         case 's':
+            if (bdebug) printf("s-hit %d %d\n",nBra,nKet);
+            if (nBra > 0 && (nBra == nKet) && (nBraDist==1))
+            {
+               rnline = ntline;
+               // nrc = 1;
+               nScope++;
+            }
+            break;
+         case '{': nrc=2; break;
+         case '}': nrc=3; break;
+         case ';': nrc=4; break;
+         case '(': nBra++; nBraDist=0; break;
+         case ')': nKet++; break;
+         case ':': nBra=nKet=0; break;
+         case 'k': nrc=5; break; // class or struct
+         case 'w':
+            nBraDist++;
+            if (nScope == 1) {
+               // probably standing on wsw(
+               nrc = 1;
+            }
+            break;
+      }
+   }
+
+   if (nrc == 1) {
+		mtklog(("inst:   hasfs true"));
+      return true;
+	}
+
+   if (bdebug) {
+      printf("MISS.%d: %s %d %d\n", nrc, (char*)atok,nBra,nKet);
+      char *psz1;
+      uint i2=ibackscope;
+      while ((psz1 = abline[i2])) {
+         if (strlen(psz1))
+            printf("] %s\n", psz1);
+         if (i2 == ibline)
+            break;
+         if (++i2 >=  SFKINST_BLINEMAX)
+            i2 = 0;
+      }
+   }
+
+   return false;
+}
+
+static int fileSize(char *pszFile)
+{
+   struct stat sinfo;
+   if (stat(pszFile, &sinfo))
+      return -1;
+   return sinfo.st_size;
+}
+
+// NOTE: DO NOT FORGET TO DELETE RESULT
+static char *loadFile(char *pszFile, int nLine)
+{
+   int lFileSize = fileSize(pszFile);
+   if (lFileSize < 0)
+      return 0;
+   char *pOut = new char[lFileSize+10];
+   // printf("loadFile %p %d\n", pOut, nLine);
+   FILE *fin = fopen(pszFile, "rb");
+   if (!fin) { fprintf(stderr, "error  : cannot read: %s\n", pszFile); return 0; }
+   int nRead = fread(pOut, 1, lFileSize, fin);
+   fclose(fin);
+   if (nRead != lFileSize) {
+      fprintf(stderr, "error  : cannot read: %s (%d %d)\n", pszFile, nRead, lFileSize);
+      delete [] pOut;
+      return 0;
+   }
+   pOut[lFileSize] = '\0';
+   return pOut;
+}
+
+int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke, int nmode)
+{
+   char szLineBuf[MAX_LINE_LEN+10];
+   char szLineBuf2[MAX_LINE_LEN+10];
+   char szLineBuf3[MAX_LINE_LEN+10];
+   char szBupDir[SFK_MAX_PATH+100];
+   char szBupFile[SFK_MAX_PATH+100];
+   char szCopyCmd[MAX_LINE_LEN+10];
+
+   // printf("INST %s %u %s %s\n",pszFile,bRevoke,pszInc,pszMac);
+
+   SrcParse::binsteol = (nmode & 1) ? 1 : 0;
+
+   SrcParse::pszGlblInclude = pszInc;
+   SrcParse::pszGlblMacro   = pszMac;
+
+   #ifdef _WIN32
+   if (strstr(pszFile, "save_inst\\"))
+   #else
+   if (strstr(pszFile, "save_inst/"))
+   #endif
+   {
+      fprintf(stderr, "warning: exclude, cannot instrument: %s\n", pszFile);
+      return 5;
+   }
+
+   // create backup infos
+   strcpy(szBupDir, pszFile);
+   char *pszPath = strrchr(szBupDir, glblPathChar);
+   if (pszPath) *pszPath = '\0';
+   else strcpy(szBupDir, ".");
+   char *pszRelFile = strrchr(pszFile, glblPathChar);
+   if (pszRelFile) pszRelFile++;
+   else pszRelFile = pszFile;
+   strcat(szBupDir, glblPathStr);
+   strcat(szBupDir, "save_inst");
+   sprintf(szBupFile, "%s%c%s", szBupDir, glblPathChar, pszRelFile);
+   // printf("BUPDIR: %s\n", szBupDir);
+   // printf("BUPFIL: %s\n", szBupFile);
+
+   if (bRevoke)
+   {
+      // first check if the file is really instrumented
+      char *pFile = loadFile(pszFile, __LINE__);
+      bool bisins = 1;
+      if (pFile) {
+         if (!strstr(pFile, "// [instrumented]"))
+            bisins = 0;
+         delete [] pFile;
+      }
+
+      if (!bisins)
+      {
+         if (!bRedo) {
+            fprintf(stderr, "skipped: %s - not instrumented\n", pszFile);
+            return 1;
+         }  // else fall through
+      }
+      else
+      {
+         if (!fileExists(szBupFile)) { fprintf(stderr, "warning: cannot revoke, no backup: %s\n", pszFile); return 5; }
+ 
+         if (fileExists(pszFile)) {
+            // 1. ensure target is writeable
+            #ifdef _WIN32
+            sprintf(szCopyCmd, "attrib -R %s",pszFile);
+            #else
+            sprintf(szCopyCmd, "chmod +w %s", pszFile);
+            #endif
+            if (system(szCopyCmd)) { }
+            #ifdef _WIN32
+            // 2. delete target to ensure copy will work
+            sprintf(szCopyCmd, "del %s",pszFile);
+            if (system(szCopyCmd)) { }
+            #endif
+         }
+
+         char *pszTargFileName = pszFile;
+
+         if (bTouchOnRevoke)
+         {
+            // make sure target has current timestamp
+            FILE *fsrc = fopen(szBupFile, "rb");
+            if (!fsrc) { fprintf(stderr, "error  : cannot open %s\n",szBupFile); return 2+4; }
+            FILE *fdst = fopen(pszTargFileName,"wb");
+            if (!fdst) { fprintf(stderr, "error  : cannot open %s\n",pszTargFileName); return 2+4; }
+            // quick binary block copy
+            // size_t fread( void *buffer, size_t size, size_t count, FILE *stream );
+            // size_t fwrite( const void *buffer, size_t size, size_t count, FILE *stream );
+            size_t ntotal = 0;
+            while (1) {
+               size_t nread = fread(szCopyCmd, 1, sizeof(szCopyCmd), fsrc);
+               if (nread <= 0)
+                  break;
+               fwrite(szCopyCmd, 1, nread, fdst);
+               ntotal += nread;
+            }
+            fclose(fdst);
+            fclose(fsrc);
+            // write-protect target
+            #ifdef _WIN32
+            sprintf(szCopyCmd, "attrib +R %s",pszTargFileName);
+            #else
+            sprintf(szCopyCmd, "chmod -w %s", pszTargFileName);
+            #endif
+            if (system(szCopyCmd)) { }
+            if (!bRedo) {
+               printf("revoked: %s, %u bytes\n",pszTargFileName,(unsigned int)ntotal);
+               return 0;
+            }  // else fall through
+         }
+         else
+         {
+            // xcopy requires us to create a dummy, otherwise we get a prompting
+            FILE *fdst = fopen(pszTargFileName,"w");
+            if (!fdst) { fprintf(stderr, "error  : cannot open %s\n",pszTargFileName); return 9; }
+            fprintf(fdst, "tmp\n\n"); fflush(fdst);
+            fclose(fdst);
+            // now overwrite this with /K, keeping potential +R attributes
+            #ifdef _WIN32
+            sprintf(szCopyCmd, "xcopy /Q /K /Y /R %s %s >nul",szBupFile,pszTargFileName);
+            #else
+            sprintf(szCopyCmd, "cp -p %s %s",szBupFile,pszTargFileName);
+            #endif
+            int iRC = system(szCopyCmd);
+            if (!iRC) {
+               if (!bRedo) {
+                  printf("revoked: %s\n",pszTargFileName);
+                  return 0;
+               }  // else fall through
+            } else {
+               fprintf(stderr, "error  : revoke failed: %s\n",pszTargFileName);
+               return 1;
+            }
+         }   // endelse touch-on-revoke
+      }  // endelse is-instrumented
+   }
+
+   // instrument the target file
+
+   int nsize = fileSize(pszFile);
+   if (nsize <= 0) { fprintf(stderr, "skipped: %s - empty file\n", pszFile); return 5; }
+   if (nsize > 50 * 1048576) { fprintf(stderr, "warning: too large, skipping: %s\n", pszFile); return 5; }
+
+   char *pFile = loadFile(pszFile, __LINE__);
+   if (!pFile)
+      return 9;
+
+   // COVER ALL RETURNS WITH pFILE CLEANUP FROM HERE:
+
+   if (strstr(pFile, "// [instrumented]")) {
+      fprintf(stderr, "warning: already instrumented, skipping: %s\n", pszFile);
+      delete [] pFile;
+      return 5;
+   }
+
+   SrcParse *pparse1 = new SrcParse();
+   if (pparse1->processFile(pFile, 1, 0) == 0) {
+      fprintf(stderr, "skipped: %s - nothing to change\n", pszFile);
+      delete [] pFile;
+      delete pparse1;
+      return 5;
+   }
+   delete pparse1;
+
+   // create backup file
+   #ifdef _WIN32
+   _mkdir(szBupDir);
+   #else
+   mkdir(szBupDir, S_IREAD | S_IWRITE | S_IEXEC);
+   #endif
+   FILE *ftmp = fopen(szBupFile,"w");
+   if (ftmp) { fprintf(ftmp,"dummy"); fclose(ftmp); }
+   #ifdef _WIN32
+   sprintf(szLineBuf, "xcopy /Q /K /Y /R %s %s >nul",pszFile,szBupFile);
+   #else
+   sprintf(szLineBuf, "cp -p %s %s",pszFile,szBupFile);
+   #endif
+   int iRC = system(szLineBuf);
+   if (iRC) {
+      fprintf(stderr, "error  : cannot backup file to: %s\n",szBupFile);
+      delete [] pFile;
+      return 9;
+   }
+
+   // reopen target file for write
+   FILE *fout = fopen(pszFile, "w");
+   if (!fout) {
+      // probably write protected
+      #ifdef _WIN32
+      sprintf(szLineBuf, "attrib -R %s", pszFile);
+      #else
+      sprintf(szLineBuf, "chmod +w %s",  pszFile);
+      #endif
+      if (system(szLineBuf)) { }
+      // retry
+      if (!(fout = fopen(pszFile, "w"))) {
+         fprintf(stderr, "error  : unable to write: %s\n", pszFile);
+         delete [] pFile;
+         return 9;
+      }
+   }
+
+   SrcParse *pparse2 = new SrcParse();
+   uint nHits = pparse2->processFile(pFile, 0, fout);
+
+   // cleanup
+   delete pparse2;
+   delete [] pFile;
+   fclose(fout);
+
+   if (bRedo)
+      printf("redone : %s, %d hits\n", pszFile, nHits);
+   else
+      printf("inst'ed: %s, %d hits\n", pszFile, nHits);
+
+   return 0;
+}
+
