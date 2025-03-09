@@ -39745,8 +39745,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          if (!szInFile[0]) {
             if (fileExists(pszArg))
                strcopy(szInFile, pszArg);
-            else
+            else if (!strEnds(pszArg, ".zip")) // sfk2002 avoid telling x.zip.zip
                snprintf(szInFile, SFK_MAX_PATH, "%s.zip", pszArg);
+            else
+               return 9+perr("no such file: %s\n", pszArg);
             continue;
          }
          if (istate) {

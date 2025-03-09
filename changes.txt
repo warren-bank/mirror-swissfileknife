@@ -1,5 +1,11 @@
 
    2.0.0
+   Revision 2:
+   -  rel: 26.10.2024, Bugfix Update
+   -  fix: sfk echo -lines w1 w2 w3 +filt -join +toterm
+           dropped last character of words.
+   -  doc: added iview to main help under windows.
+   Initial Release:
    -  rel: 19.10.2024, Major Update
    -  sum: most is now open source,
            also including tools sfktray

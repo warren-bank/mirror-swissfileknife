@@ -74786,6 +74786,9 @@ int main(int argc, char *argv[])
 
 #endif
 
+/*
+   24.10.24 add: support for palette png's. [2410241]
+*/
 
 #include "sfkpicio.hpp"
 
@@ -74879,6 +74882,7 @@ uint mergeColorWithBack(uint c, uint bg)
    return c + bg;
 }
 
+// .
 uint *loadpng(uchar *pPacked, uint iPacked, struct SFKPicData *p)
 {
    p->rc=0;
@@ -74920,7 +74924,8 @@ uint *loadpng(uchar *pPacked, uint iPacked, struct SFKPicData *p)
 
    png_set_sig_bytes(png_ptr, sig_read);
 
-   png_read_png(png_ptr, info_ptr, 0, png_voidp_NULL);
+   // with transform of 1-pix data to full 8-pix for easier decode [2410241]
+   png_read_png(png_ptr, info_ptr, PNG_TRANSFORM_PACKING, NULL);
 
    p->width = info_ptr->width;
    p->height = info_ptr->height;
@@ -74956,27 +74961,71 @@ uint *loadpng(uchar *pPacked, uint iPacked, struct SFKPicData *p)
       return 0;
    }
 
-   for (int y=0; y<nSrcHeight; y++)
+   if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_PALETTE) // [2410241]
    {
-      uchar *pSrcBytes = ppSrc[y];
-      uint  *pDstPix   = pOutPix + nOutWidth * y;
+      png_colorp palette;
+      int num_palette;
+      png_get_PLTE(png_ptr, info_ptr, &palette, &num_palette);
 
-      for (int x=0; x<nSrcWidth; x++)
+      png_bytep trans_alpha = NULL;
+      int num_trans = 0;
+      png_get_tRNS(png_ptr, info_ptr, &trans_alpha, &num_trans, NULL);
+
+      for (int y = 0; y < nSrcHeight; y++)
       {
-         uint c =    (((uint)pSrcBytes[0]) <<  0)
-                  |  (((uint)pSrcBytes[1]) <<  8)
-                  |  (((uint)pSrcBytes[2]) << 16);
+         uchar *pSrcBytes = ppSrc[y];
+         uint *pDstPix = pOutPix + nOutWidth * y;
 
-         if (nSrcChannels == 4)
-            c |= (((uint)pSrcBytes[3]) << 24);
-         else
-            c |= (((uint)0xFF) << 24);
+         for (int x = 0; x < nSrcWidth; x++)
+         {
+            int index = pSrcBytes[x];  // Der Palettenindex
 
-         if (p->mixonload)
-            c = mixcolor(c, p->backcolor, p->mixonload ? 2 : 0);
+            if (index < 0 || index >= num_palette)
+               continue;
 
-         pSrcBytes += nSrcChannels;
-         *pDstPix++ = c;
+            png_color color = palette[index];
+
+            uint c = (((uint)color.red) << 0) |
+                     (((uint)color.green) << 8) |
+                     (((uint)color.blue) << 16);
+
+            if (index < num_trans)
+            {
+                c |= (((uint)trans_alpha[index]) << 24);
+            }
+            else
+            {
+                c |= (((uint)0xFF) << 24);
+            }
+
+            *pDstPix++ = c;
+         }
+      }
+   }
+   else
+   {
+      for (int y=0; y<nSrcHeight; y++)
+      {
+         uchar *pSrcBytes = ppSrc[y];
+         uint  *pDstPix   = pOutPix + nOutWidth * y;
+   
+         for (int x=0; x<nSrcWidth; x++)
+         {
+            uint c =    (((uint)pSrcBytes[0]) <<  0)
+                     |  (((uint)pSrcBytes[1]) <<  8)
+                     |  (((uint)pSrcBytes[2]) << 16);
+   
+            if (nSrcChannels == 4)
+               c |= (((uint)pSrcBytes[3]) << 24);
+            else
+               c |= (((uint)0xFF) << 24);
+   
+            if (p->mixonload)
+               c = mixcolor(c, p->backcolor, p->mixonload ? 2 : 0);
+   
+            pSrcBytes += nSrcChannels;
+            *pDstPix++ = c;
+         }
       }
    }
 
