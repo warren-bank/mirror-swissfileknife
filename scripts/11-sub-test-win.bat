@@ -105,3 +105,9 @@
 ..\sfk runloop 1 50 "echo test number $i" -nohead >res-28.txt
 ..\sfk runloop 1 50 "echo test number $05i" -nohead >>res-28.txt
 ..\sfk test %TCMD% T15.1.runloop res-28.txt
+
+..\sfk copy -quiet testfiles\Formats\18-ziptest.zip testfiles\Formats\50-ziptest.zip
+..\sfk replace -quiet -yes -bylist testfiles\Formats\21-patch-bin.txt testfiles\Formats\50-ziptest.zip >nul
+..\sfk md5 testfiles\Formats\18-ziptest.zip testfiles\Formats\50-ziptest.zip >>res-50.txt
+..\sfk test %TCMD% T16.1.replace res-50.txt
+

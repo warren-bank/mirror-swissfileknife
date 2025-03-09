@@ -104,5 +104,11 @@
 ../sfk -nocol runloop 1 50 "echo test number #i" -nohead >res-28.txt
 ../sfk -nocol runloop 1 50 "echo test number #05i" -nohead >>res-28.txt
 ../sfk -nocol test $TCMD T15.1.runloop res-28.txt
+
+../sfk -nocol copy -quiet testfiles/Formats/18-ziptest.zip testfiles/Formats/50-ziptest.zip
+../sfk -nocol replace -quiet -yes -bylist testfiles/Formats/21-patch-bin.txt testfiles/Formats/50-ziptest.zip >/dev/null
+../sfk -nocol md5 testfiles/Formats/18-ziptest.zip testfiles/Formats/50-ziptest.zip >>res-50.txt
+../sfk -nocol test $TCMD T16.1.replace res-50.txt
+
 ../sfk -nocol filter testfiles/Formats/20-tab-data-line.txt -sep "\t" -form "\"#col1\";\"#col2\";\"#col3\";\"#col4\";\"#col5\"" >res-24.txt
 ../sfk test $TCMD T11.1.tabform res-24.txt
