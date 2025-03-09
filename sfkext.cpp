@@ -48,6 +48,8 @@ extern int nGlblFunc;
 
 extern unsigned char abBuf[MAX_ABBUF_SIZE+100];
 
+const char *getSFKVersion();
+int parseVersion(char *psz, int nmaxlen, StringMap &rmap);
 int perr(const char *pszFormat, ...);
 int pwarn(const char *pszFormat, ...);
 int pinf(const char *pszFormat, ...);
@@ -103,12 +105,14 @@ int execHttpLog(uint nPort, char *pszForward, int nForward);
 void mystrcatf(char *pOut, int nOutMax, cchar *pszFormat, ...);
 int cbSFKMatchOutFN(int iFunction, char *pMask, int *pIOMaskLen, uchar **ppOut, int *pOutLen);
 void copySFKMatchOptions();
+int mySetFileTime(char *pszFile, num nTime);
+int createOutDirTreeW(char *pszOutFile, KeyMap *pOptMap);
 
+extern bool bGlblEnableOPrintf;
 extern bool bGlblEscape;
 extern num  nGlblMemLimit;
 extern num  nGlblBytes;
 extern int nGlblActiveFileAgeLimit;
-
 extern bool bGlblGrepLineNum    ;
 extern bool bGlblHtml           ;
 extern bool bGlblAllowAllPlusPosFile;
@@ -154,6 +158,8 @@ extern int nGlblTimeColor      ;
 extern int nGlblTraceIncColor  ;
 extern int nGlblTraceExcColor  ;
 
+bool bGlblRandSeeded = 0;
+
 extern char szLineBuf[MAX_LINE_LEN+10];
 extern char szLineBuf2[MAX_LINE_LEN+10];
 extern char szLineBuf3[MAX_LINE_LEN+10];
@@ -181,6 +187,9 @@ bool sfkhavevars( )
 
 int sfksetvar(char *pname, uchar *pdata, int idata)
 {
+   if (pdata == 0) return 9+perr("int. #2171132");
+   if (idata <  0) return 9+perr("int. #2171133");
+
    for (char *psz=pname; *psz; psz++)
    {
       if (isalpha(*psz))
@@ -205,13 +214,17 @@ int sfksetvar(char *pname, uchar *pdata, int idata)
    int iHeadSize = sizeof(struct SFKVarHead);
 
    struct SFKVarHead oOldHead;
+
    uchar *pOldData = (uchar*)glblSFKVar.get(pname);
+
    if (pOldData) {
       memcpy(&oOldHead, pOldData, iHeadSize);
       pOldData += iHeadSize;
    }
 
-   if (oOldHead.iDataLen == idata)
+   if (   pOldData != 0 // fix sfk189 crash x64
+       && oOldHead.iDataLen == idata
+      )
    {
       // sfk185: reuse var memory on same length.
       memcpy(pOldData, pdata, idata);
@@ -229,8 +242,9 @@ int sfksetvar(char *pname, uchar *pdata, int idata)
    
       ohead.iDataLen = idata;
       memcpy(pcopy, &ohead, iHeadSize);
-   
-      memcpy(pcopy+iHeadSize, pdata, idata);
+
+      if (idata > 0)
+         memcpy(pcopy+iHeadSize, pdata, idata);
       pcopy[iHeadSize+idata] = '\0'; // safety
    
       uchar *pold = (uchar*)glblSFKVar.get(pname);
@@ -1749,7 +1763,7 @@ TCPCore::TCPCore(char *pszID, char cProtocol)
 {__
    mtklog(("tcpcore ctr %p",this));
 
-   if (sizeof(*this) > 10000)
+   if (sizeof(*this) > 20000)
       perr("tcpcore stack sizing problem");
 
    // sfk wide tcp default: 10 seconds
@@ -10036,7 +10050,7 @@ char *dataAsTraceQ(ushort *pAnyData)
    return pszBuf;
 }
 
-int execFixFile(ushort *ain, __wfinddata64_t *pdata)
+int execFixFile(ushort *ain, sfkfinddata64_t *pdata)
 {
    cs.files++;
 
@@ -10173,11 +10187,14 @@ int execFixFile(ushort *ain, __wfinddata64_t *pdata)
       dataAsTraceQ(ain));
 
    // printx("$DIFF:<def> name=%d time=%d %llu %llu\n",bChgName,bChgTime,pdata->time_write,nTime2);
-
+   num nTime3 = 0;
+   if (pdata->time_write > 0)
+      nTime3 = pdata->time_write; // display default: current file time
+   if (bChgTime != 0 && nTime2 > 0)
+      nTime3 = nTime2;
    cchar *ptimecol = (bChgTime != 0 && nTime2 > 0) ? "<rep>":"<time>";
    cchar *pnamecol = bChgName ? "<rep>":"";
-   
-   printx("$  TO:<def> %s%s<def> %s%s<def>\n", ptimecol, timeAsString(nTime2,1),
+   printx("$  TO:<def> %s%s<def> %s%s<def>\n", ptimecol, timeAsString(nTime3,1), // sfk1883
       pnamecol, dataAsTraceW(apure));
 
    if (idst < 1) {
@@ -10189,7 +10206,7 @@ int execFixFile(ushort *ain, __wfinddata64_t *pdata)
    {
       do
       {
-         if (bChgName && _wrename(ain, apure))
+         if (bChgName && _wrename((const wchar_t *)ain, (const wchar_t *)apure))
          {
             perr("... rename failed: %s\n", dataAsTraceW(ain));
             break;
@@ -10200,7 +10217,7 @@ int execFixFile(ushort *ain, __wfinddata64_t *pdata)
          if (bChgTime != 0 && nTime2 > 0)
          {
             HANDLE hDst = CreateFileW(
-               apure,
+               (const wchar_t *)apure,
                FILE_WRITE_ATTRIBUTES,
                0,    // share
                0,    // security
@@ -11904,32 +11921,51 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
       chain.print(
          "@echo off\n"
          "sfk script %%~f0 -from begin %%*\n"
-         "rem %%~f0 is the absolute batch file name\n"
+         "rem . %%~f0 is the absolute batch file name\n"
          "GOTO xend\n"
          "\n"
          "sfk label begin -var\n"
-         "   +if \"%%1 = \" call help\n"
-         "   +tell \"main got parameters: %%1 %%2 %%3\"\n"
-         "   +setvar \"a=the quick brown fox\"\n"
-         "   +call myfunc foo bar %%1\n"
+         "   +if \"%%1 = \" begin\n"
+         "      +tell \"add 'play' to play the number game.\"\n"
+         "      +stop 0\n"
+         "      +endif\n"
+         "   +if \"%%1 = play\" begin\n"
+         "      +call game\n"
+         "      +stop 0\n"
+         "      +endif\n"
+         "   +tell \"unknown parameter: %%1\"\n"
          "   +end\n"
          "\n"
-         "sfk label myfunc\n"
-         "   +tell \"func got parameters: %%1 %%2 %%3\"\n"
-         "   +tell -var \"variable a contains: #(a)\"\n"
-         "   +echo -var \"#(a)\"\n"
-         "      +tcall substr 4 5\n"
-         "      +setvar b\n"
-         "   +tell -var \"variable b contains: #(b)\"\n"
-         "   +end\n"
-         "\n"
-         "sfk label substr\n"
-         "   +xex \"/[start][%%1 chars][%%2 chars]/[part3]/\"\n"
-         "   +tend\n"
-         "\n"
-         "sfk label help\n"
-         "   +tell \"supply one or more parameters.\"\n"
-         "   +stop -all\n"
+         "sfk label game\n"
+         "   // Note: install SFKTray to see colorful lights.\n"
+         "   +rand 1 10\n"
+         "      +setvar mynum\n"
+         "   +tell \"i know a number, you can guess it.\"\n"
+         "   +tell \"enter from 1 to 10, you have 3 tries.\"\n"
+         "   +setvar try=\"try again.\"\n"
+         "   +for i from 1 to 3\n"
+         "      +prompt\n"
+         "         +setvar usernum\n"
+         "      +if \"#(i) > 2\"\n"
+         "         then setvar try=\"\"\n"
+         "      +if \"#(mynum) < #(usernum)\" begin\n"
+         "         +status local \"slot=#(i) color=red\"\n"
+         "         +tell \"no, my number is [Red]lower[def]. #(try)\"\n"
+         "         +endif\n"
+         "      +if \"#(mynum) > #(usernum)\" begin\n"
+         "         +status local \"slot=#(i) color=red\"\n"
+         "         +tell \"no, my number is [Red]higher[def]. #(try)\"\n"
+         "         +endif\n"
+         "      +if \"#(mynum) = #(usernum)\" begin\n"
+         "         +status local \"slot=1 color=green blink=fast timeout=10\"\n"
+         "         +status local \"slot=2 color=green blink=fast timeout=10\"\n"
+         "         +tell \"[green]correct, you win![def]\"\n"
+         "         +stop 0\n"
+         "         +endif\n"
+         "   +endfor\n"
+         "   +status local \"slot=1 color=red blink=fast timeout=10\"\n"
+         "   +status local \"slot=2 color=red blink=fast timeout=10\"\n"
+         "   +tell \"[Red]3 tries done, you loose. it was #(mynum).[def]\"\n"
          "   +end\n"
          "\n"
          ":xend\n"
@@ -11942,7 +11978,7 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
          "sfk script $0 -from begin $@\n"
          "function skip_block\n"
          "{\n"
-         "sfk label begin\n"
+         "sfk label begin -var\n"
          "#  +echo \"main got parameters: %%1 %%2 %%3\"\n"
          "#  +then setvar \"a=the quick brown fox\"\n"
          "#  +call myfunc foo bar %%1\n"
@@ -11952,11 +11988,11 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
          "\n"
          "sfk label myfunc\n"
          "   +echo \"func got parameters: %%1 %%2 %%3\"\n"
-         "   +echo -var \"variable a contains: #(a)\"\n"
-         "   +echo -var \"#(a)\"\n"
+         "   +echo \"variable a contains: #(a)\"\n"
+         "   +echo \"#(a)\"\n"
          "      +tcall substr 4 5\n"
          "      +setvar b\n"
-         "   +echo -var \"variable b contains: #(b)\"\n"
+         "   +echo \"variable b contains: #(b)\"\n"
          "   +end\n"
          "\n"
          "sfk label substr\n"
@@ -13783,6 +13819,7 @@ void SFKPic::copyFrom(SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst
 }
 
 #endif // SFKPIC
+
 
 size_t myfread(uchar *pBuf, size_t nBytes, FILE *fin , num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
 char getYNAchar();
@@ -18934,10 +18971,13 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      functions can be applied using ##(func(varname,...)).\n"
          "      available functions are:\n"
          "\n"
-         "      #strpos(v,'text')<def>        get index of text within v\n"
+         "      #strpos(v,'text')<def>        get index of text within v.\n"
+         "                              0=first char, -1=not found\n"
          "      #strpos(v,-case 'text')<def>  same, case sensitive\n"
          "      #strpos(v,-spat '\\x20')<def>  using slash patterns\n"
          "      #strrpos(v,'text')<def>       search from right side\n"
+         "      #contains(v,'text')<def>      tells 1 if text is found in v,\n"
+         "                              else 0. accepts -case and -spat\n"
          "      #substr(v,o[,l])<def>         substring from offset o length l.\n"
          "                              use negative o from right side.\n"
          "      #[l/r]trim(v)<def>            strip whitespace at sides\n"
@@ -18961,6 +19001,13 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      $command                           output\n"
          "      +echo -var \"##(substr(a,4,3))\"     bar\n"
          "      +echo -var \"##(strpos(a,'bar'))\"   4\n"
+         "\n");
+  printx("   $searching a variable within a variable\n"
+         "\n"
+         "      nested expansions are not supported, so\n"
+         "         <examp>##contains(v,'##(a)')<def>\n"
+         "      is not valid. use instead:\n"
+         "         <examp>+getvar v +xex -justrc \"_##(a)_\" +if \"rc=1\"\n"
          "\n");
    }
 
@@ -19506,8 +19553,10 @@ char *SFKMapArgs::eval(char *pszExp)
    // strpos(foo,'bar')
    // strpos(foo,-spat '\x20')
    // strpos(foo,-case 'Bar')
+   // contains(foo,'bar')
    if (   !strcmp(pfunc, "strpos")
        || !strcmp(pfunc, "strrpos")
+       || !strcmp(pfunc, "contains") // sfk1889
       )
    {
       if (csep != ',') return 0;
@@ -19515,6 +19564,7 @@ char *SFKMapArgs::eval(char *pszExp)
       bool bcase = 0;
       bool bspat = 0;
       bool brite = strcmp(pfunc, "strrpos") ? 0 : 1;
+      bool bcont = strcmp(pfunc, "contains") ? 0 : 1;
 
       while (1)
       {
@@ -19530,7 +19580,7 @@ char *SFKMapArgs::eval(char *pszExp)
       }
 
       char *plitst = pnext;
-      if (*plitst!='\'') return 0;
+      if (*plitst!='\'') return 0; // nullptr == error
       plitst++;
       pnext = plitst;
       for (; *pnext!=0 && *pnext!='\''; pnext++);
@@ -19552,6 +19602,10 @@ char *SFKMapArgs::eval(char *pszExp)
          phit = bcase ? strstr(pvart, plitst) : mystrstri(pvart, plitst);
       if (phit)
           ipos   = (int)(phit-pvart);
+
+      if (bcont)
+         ipos = (ipos == -1) ? 0 : 1;
+
       sprintf(szClEvalOut, "%d", ipos);
       return szClEvalOut;
    }
@@ -25311,6 +25365,76 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   // .
+   ifcmd (   !strcmp(pszCmd, "rand")
+          || !strcmp(pszCmd, "random") // sfk189
+         )
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk rand[om] from to\n"
+             "\n"
+             "   create a random number. from and to values\n"
+             "   can be in the range 1 to 32000 approx.\n"
+             "\n"
+             "   $command chaining\n"
+             "      supports output chaining.\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk rand 1 10\n"
+             "         create a number from 1 to 10\n"
+             "      #sfk rand 1 10 +setvar r\n"
+             "         set variable r to a random number\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool bfrom=0,bto=0;
+      int ifrom=0,ito=0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!bfrom) {
+            bfrom=1;
+            ifrom=atoi(pszArg);
+            continue;
+         }
+         if (!bto) {
+            bto=1;
+            ito=atoi(pszArg);
+            continue;
+         }
+         return 9+perr("unexpected: %s", pszArg);
+      }
+ 
+      if (!bfrom || !bto)
+         return 9+perr("missing from or to value");
+
+      if (!bGlblRandSeeded) {
+         bGlblRandSeeded=1;
+         srand((unsigned)time(NULL));
+      }
+
+      int irange=(ito-ifrom)+1;
+      chain.print("%d\n", (rand() % irange) + ifrom);
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
    ifcmd (!strcmp(pszCmd, "status"))
    {
       ifhelp (nparm < 1)
@@ -25320,7 +25444,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   by UDP to given target host, or \"local\" for own machine.\n"
              "\n"
              "   $statustext fields\n"
-             "      v1         protocol version, always v1\n"
+             "      v1         optional protocol version\n"
              "      slot=n     target slot number 1-9\n"
              "      color=s    set color s as one of:\n"
              "                 #red green blue yellow orange\n"
@@ -25363,15 +25487,15 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      examples given below. not every typing error is detected.\n"
              "\n"
              "   $examples\n"
-             "      #sfk status local \"v1 slot=1 color=yellow text='checking service'\"\n"
+             "      #sfk status local \"slot=1 color=yellow text='checking service'\"\n"
              "         tell that a service is currently checked on slot 1\n"
-             "      #sfk status local \"v1 slot=1 color=green timeout=15,orange text='service ok'\"\n"
+             "      #sfk status local \"slot=1 color=green timeout=15,orange text='service ok'\"\n"
              "         tell that a service is currently running. the check must be\n"
              "         repeated within 15 seconds otherwise the status times out\n"
              "         and SFKTray changes the slot color to orange.\n"
-             "      #sfk status local \"v1 slot=1 color=red blink=slow text='service offline'\"\n"
+             "      #sfk status local \"slot=1 color=red blink=slow text='service offline'\"\n"
              "         tell about an offline service on localhost slot 1\n"
-             "      #sfk -var for i from 1 to 9 +status local \"v1 slot=##(i) color=gray\" +endfor\n"
+             "      #sfk -var for i from 1 to 9 +status local \"slot=##(i) color=gray\" +endfor\n"
              "         reset all status slots\n"
              "\n"
              );
@@ -25391,7 +25515,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       mclear(szDstIP);
       mclear(szMsg);
 
-      cs.quiet = 1;
+      int iQuiet = 1;   // sfk189 no hexdump
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
@@ -25471,15 +25595,21 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          }
       }
 
-      snprintf(szMsg, sizeof(szMsg)-10,
-         ":status %s", ptext);
+      // sfk189: vn is optional
+      if (ptext[0]=='v' && isdigit(ptext[1])!=0) {
+         // send user defined protocol version
+         snprintf(szMsg, sizeof(szMsg)-10, ":status %s", ptext);
+      } else {
+         // use default protocol version
+         snprintf(szMsg, sizeof(szMsg)-10, ":status v1 %s", ptext);
+      }
 
       udpSend(szDstIP, ndstport, nlisten, nownport,
-         (uchar*)szMsg, strlen(szMsg), nTimeout, 0);
+         (uchar*)szMsg, strlen(szMsg), nTimeout, iQuiet);
 
       if (iChainNext) {
          // cleanup the chain
-         STEP_CHAIN(iChainNext, 1); // status
+         STEP_CHAIN(iChainNext, 0); // fix sfk189: chain stop on +list
       }
 
       bDone = 1;
@@ -27324,10 +27454,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bcolpat = 1;
             continue;
          }
-         if (!strcmp(pszArg, "-vname")) {
-            cs.vname = 1;
-            continue;
-         }
          if (!strncmp(pszArg, "-", 1) && strcmp(pszArg, "-to"))
          {
             if (isDirParm(pszArg))
@@ -27607,10 +27733,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                cs.showpost = 1;
             if (iwhat & 4)
                cs.showlist = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-vname")) {
-            cs.vname = 1;
             continue;
          }
          if (    !strcmp(pszArg, "-to")
@@ -28036,6 +28158,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
    #endif // SFKPIC
 
 
+
    return 0;
 }
 // extmain.end
@@ -28043,6 +28166,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
+
+
+
+
+
 
 
 

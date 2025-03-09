@@ -197,6 +197,13 @@ extern       char  glblWildChar    ;
  #if _MSC_VER >= 1310
   #define SFK_W64
  #endif
+ #if _MSC_VER >= 1900 // visual c++ 14.0
+  #define SFK_NO_MEMTRACE
+  #define SFK_VC14
+  #define sfkfinddata64_t _wfinddata64_t
+ #else
+  #define sfkfinddata64_t __wfinddata64_t
+ #endif
 #endif
 
 #ifdef _WIN32
@@ -791,6 +798,8 @@ public:
    void  setSize  (num nSize );
    void  setTime  (num nMTime, num nCTime = 0); // just in memory
 
+   int   setFileTime (num nMTime); // on disk
+
    int   writeAttr(uint nattr, bool bFullPreserve); // set and change on disk
    // RC 0: OK, else error
    // Changes only bits 0..11 but not the file type.
@@ -1235,7 +1244,7 @@ public:
    void  cycle           ( );  // print status if enough time elapsed
    void  clear           ( );  // clear status, if it was printed
    int   print           (const char *pszFormat, ...);
-   void  setProgress     (num nMax, num nCur, cchar *pszUnit);
+   void  setProgress     (num nMax, num nCur, cchar *pszUnit, bool btriple=0);
    void  setStatProg     (cchar *pverb, cchar *psubj, num nMax, num nCur, cchar *pszUnit);
 
 // private:
@@ -1393,7 +1402,7 @@ int getFileSystemInfo(
    uint &rOutVolID
    );
    
-int createOutDirTree(char *pszOutFile);
+int createOutDirTree(char *pszOutFile, KeyMap *pOptMap=0);
 
 #ifdef _WIN32
 void timetToFileTime(num ntimet, FILETIME *pft);
@@ -1413,7 +1422,7 @@ inline uchar sfkGetBit(uchar *pField, uint iBit)
 
 extern int (*pGlblSFKStatusCallBack)(int nMsgType, char *pmsg);
 
-char *dataAsHex(void *pAnyData, int iDataSize, char *pszBuf=0, int iMaxBuf=0);
+char *dataAsHex(void *pAnyData, int iDataSize, char *pszBuf=0, int iMaxBuf=0, bool bLowerCase=0);
 char *dataAsTrace(void *pAnyData, int iDataSize=-1, char *pszBuf=0, int iMaxBuf=0);
 char *dataAsTraceW(ushort *pAnyData);
 
@@ -1735,7 +1744,8 @@ public:
    char *rentodir;         // rename moveto dir
    bool exact;
    bool listfiles;
-   bool vname;             // windows only: virtual utf names
+   bool uname;             // windows only: utf names
+   bool tname;             // windows only: transcript names
    bool dewide;            // fixfile
    bool rewide;            // fixfile
    bool setftime;          // fixfile
@@ -1775,6 +1785,12 @@ public:
    bool movefiles;
    SFKMatch *apexp;        // xrename
    int  iexp;              // xrename
+   num  totalinbytes;
+   num  totaloutbytes;
+   int  icomp;
+   bool fastcomp;
+   int  numBadFiles;
+   int  numFilesOK;
 };
 
 // extern struct CommandStats gs;
@@ -1821,7 +1837,8 @@ enum eWalkTreeFuncs {
    eFunc_XRename     ,
    eFunc_GetPic      ,
    eFunc_XFind       ,
-   eFunc_SumFiles
+   eFunc_SumFiles    ,
+   eFunc_PackTo
 };
 
 // temporary file class, REMOVING THE FILE IN DESTRUCTOR.
@@ -2066,6 +2083,8 @@ int saveFile(char *pszName, uchar *pData, int iSize, const char *pszMode="wb");
 int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc=0, char *pszShDst=0);
 int joinShadowPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2);
 int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot);
+int mygetpos64(FILE *f, num &rpos, char *pszFile);
+int mysetpos64(FILE *f, num pos, char *pszFile);
 
 #ifdef _WIN32
 char *winSysError();
@@ -2129,7 +2148,7 @@ bool   isHttpURL(char *psz);
 
 #ifndef USE_SFK_BASE
 
- #if defined(WINFULL) && defined(_MSC_VER)
+ #if defined(WINFULL) && defined(_MSC_VER) && !defined(SFK_NO_MEMTRACE)
   #define SFK_MEMTRACE
  #endif
 
@@ -2254,7 +2273,7 @@ public:
 
 #ifdef SFKINT
  #define WITH_FTP_LIMITS
- #define SFKPIC
+ // #define SFKPIC
 #endif
 
 #define MAX_FTP_VDIR 10
