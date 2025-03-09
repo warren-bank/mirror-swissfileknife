@@ -373,6 +373,9 @@ public:
    // begin download from an url.
    // NOTE: pcoi's name might be changed on redirect.
 
+   int   postraw (char *purl, char *pszRawReq);
+   // header+data in one request text
+
    int   read (uchar *pbuf, int nbufsize);
    // read block from currently open url stream.
    // chunked transfer is managed transparently.
@@ -750,3 +753,4 @@ class AlignTest3 { public: int a1; char c1; char c2; char c3; };
 
 extern void getAlignSizes1(int &n1, int &n2, int &n3);
 extern void getAlignSizes2(int &n1, int &n2, int &n3);
+

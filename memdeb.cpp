@@ -67,10 +67,8 @@ long   bValid;
 char   abRedZone[4];
 };
 
-// new and delete op's MUST be declared in EVERY .cpp source,
-// otherwise redirection cannot be assured.
-static void *operator new[](size_t size, char *src, int line);
-static void *operator new(size_t size, char *src, int line);
+void *operator new[](size_t size, char *src, int line);
+void *operator new(size_t size, char *src, int line);
 
 #ifdef MEMDEB_JUST_DECLARE
 
@@ -258,6 +256,9 @@ void *sfkmem_debnew(size_t size, char *pszSource, int line)
    
    if (!ppre) 
    {
+      #ifdef VERBOSE_MEM_PRINTF
+      printf("%p = ALLOC %ld (%s, %ld)\n", ppre, size, pszSource, line);
+      #endif
       #ifdef VERBOSE_MEM
       mtklog(("%p = ALLOC %ld (%s, %ld)", ppre, size, pszSource, line));
       #endif
@@ -267,6 +268,9 @@ void *sfkmem_debnew(size_t size, char *pszSource, int line)
    
    char *pUserMemory = ppre + npre;
    
+   #ifdef VERBOSE_MEM_PRINTF
+   printf("%p = ALLOC %ld (%s, %ld) raw %p\n", pUserMemory, size, pszSource, line, ppre);
+   #endif
    #ifdef VERBOSE_MEM
    mtklog(("%p = ALLOC %ld (%s, %ld) raw %p", pUserMemory, size, pszSource, line, ppre));
    #endif
@@ -298,6 +302,9 @@ void sfkmem_debdel(void *pUserMemory)
    if (!pUserMemory)
       return;
   
+   #ifdef VERBOSE_MEM_PRINTF
+   printf("%p   DELETE (%s, %ld)\n", pUserMemory, sfkmem_file, sfkmem_line);
+   #endif
    #ifdef VERBOSE_MEM
    mtklog(("%p   DELETE (%s, %ld)", pUserMemory, sfkmem_file, sfkmem_line));
    #endif
@@ -375,6 +382,8 @@ void sfkmem_debdel(void *pUserMemory)
    }
    else
    {
+      #ifndef SFKMEM_IGNORE_DELETE
+
       printf("DELETE TWICE:\n"
          "  of block: %p\n"
          "  done in : %s line %ld\n",
@@ -384,6 +393,8 @@ void sfkmem_debdel(void *pUserMemory)
          );
          
       sfkmem_errs++;
+
+      #endif
    }         
    
    sfkmem_dels++;  
@@ -441,7 +452,7 @@ void sfkmem_checklist(const char *pszCheckPoint)
          long lrs1 = 4;
          long lrs2 = p->lSize / 10;
          if (lrs2 < 4) lrs2 = 4;
-   
+
          if (sfkmem_checkZone(p->abRedZone, 4))
          {
             printf("MEMORY OVERWRITE after %s\n"
@@ -525,16 +536,16 @@ void sfkmem_setpredel(char *file, long line)
    sfkmem_line = line;
 }
 
-#endif // just_declare
-
-static void *operator new(size_t size, char *pszSource, int line)
+void *operator new(size_t size, char *pszSource, int line)
 {  return sfkmem_debnew(size, pszSource, line);  }
 
-static void *operator new[](size_t size, char *pszSource, int line)
+void *operator new[](size_t size, char *pszSource, int line)
 {  return sfkmem_debnew(size, pszSource, line);  }
 
-static void operator delete(void *pUserMemory)
+void operator delete(void *pUserMemory)
 {  sfkmem_debdel(pUserMemory);  }
+
+#endif // just_declare
 
 #define newTmpPreProc50796 new(__FILE__,__LINE__)
 #define new newTmpPreProc50796

@@ -7,6 +7,97 @@
    The whole source code was created with Depeche View Professional,
    the world's fastest source code browser and editor.
 
+   1.9.9
+   -  rel: 15.08.2023, Major Update
+   -  sum: improved scripting and network functions.
+           detail improvements and bugfixes.
+   -  CHG: SYNTAX CHANGE: option -keepchain is now active by default.
+           this means a chain like
+              sfk sel -today mydir +run ... +tell ...
+           no longer stops at the 2nd command if no files are found.
+           command +run just skips to +tell.
+           use option -stoponempty for the old behaviour,
+           or set SFK_CONFIG=stoponempty
+           the new default allows to use
+              sfk sel -today mydir1 +sft server cput
+              +then sel -today mydir2 +sft server cput
+           without stopping inbetween because mydir1 has no recent files.
+   -  add: sfk if ... begin ... +elseif ... +else ... +endif.
+   -  add: sfk webproxy, a simple http proxy for analysis
+           of traffic, and for routing workarounds.
+   -  add: sfk web: option -headerstovar to put received
+           http headers into a variable.
+   -  add: sfk web: option -headertovar to put content 
+           of a single http header into a variable.
+   -  add: sfk udpsend: return code support.
+   -  add: sfk utoa, wtoa: option -showfail to list
+           the input codes which fail to convert.
+   -  add: the sfk tcp toolkit, consisting of commands like
+           accept, connect, send, receive, to write simple
+           tcp test scripts. for info: sfk help tcp
+   -  add: sfk list: option -xsize to show mixed size
+           infos depending on file size
+   -  add: udpdump: option -time to tell receive time.
+   -  add: udpdump: support for multiple -[not]from.
+   -  add: touch: option -delay=n to wait per file.
+   -  add: sysinfo: extended by bool size info.
+   -  add: help color: SFK_COLORS shortcuts b and w.
+   -  add: sfk sleep: support for 1s[ec], 1m[inute].
+   -  add: sfk batch: improved function templates,
+           extra perline template.
+   -  add: sfk samp c tmp.c: full rework of template code
+           for an instant c or c++ program, including
+           basic tool functions.
+   -  add: sfk help env: list supported environment vars.
+   -  add: sfk encode -base64: option -linechars=n.
+   -  add: sfk unsetvar, delete an sfk variable.
+   -  add: sfk loop: optional delay time.
+   -  add: sfk fjoin: join files with any filename.
+   -  add: sfk -var: #(isempty(a)) now tells
+           if variable a is not set or empty
+   -  fix: sfk perline no longer removes %1 to %9 in text
+           when used directly. in a script, these are still
+           replaced by parameters given to sfk label,
+           which can be changed by -prefix= option. [23531]
+   -  fix: sfk treesize: -gb did not work with -quiet.
+   -  fix: filter of multiple files: unexpected context.
+   -  fix: sfk ip: memory leak when used repeatedly.
+   -  fix: sfk ftpserv: now sends a correct error reply
+           if client requests a non existing file.
+   -  chg: sfk knxdump: support ga1 value up to 31.
+   -  fix: sfk knxdump: wrong output with 14 byte text.
+   -  doc: sfk stat: fixed wrong example text.
+   -  doc: sfk olist: how to view contents of selected
+           office files in a folder directly with dview.
+   -  doc: sfk view: -office option, view office example
+   -  doc: sfk xex: info about overlapping char groups.
+   -  doc: sfk call: more details on recursion limit.
+   -  doc: sfk basic: infos on slash and quote caveats.
+   -  doc: sfk deblank: improved description.
+   -  doc: sfk label, call, wtou: improved help.
+   -  doc: sfk video: improved example.
+   -  dep: deprecated sfk media removed from help.
+           joining files should now be done by fjoin.
+   -  dep: sfk ... +tif +tcall +fcall +tend +fend
+           are deprecated as they are too complex
+           and cause errors.
+   internal:
+   -  chg: sfk batch: help now shows .sh examples on linux
+   -  fix: errors from single bit bool variables
+           on some compilers.
+   -  opt: reduced stack load per call from 145k to 90k
+           by moving functions to sfkext.cpp
+   -  add: sfk poplines, get random lines from a file
+   -  add: SFK_COLORS=black or white shortcut support
+   -  chg: sfk web, httpclient now stores all header fields
+           in provided coi, not just selected
+   -  inf: #(var) content replace must always be done
+           only before the next +cmd. [23562]
+   -  add: #(mod(a,n))
+   -  add: more reduced sfklib compile can now be done by
+           -DUSE_SFK_BASE -DSFKNOPACK -DSFKNOVFILE -DSFK_NO_NET
+   -  add: clipto64, clipfrom64
+
    1.9.8.2
    -  rel: 20.09.2022, Major Update
    -  sum: added clipboard access on desktop linux
@@ -55,7 +146,6 @@
            instantly on port 3000
    -  add: sfk list: option -xsize to show mixed size
            infos depending on file size
-   -  add: sfk touch -delay=n
    -  add: sfk readbytes
 
    1.9.8
@@ -1781,8 +1871,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.9.8" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "2"
+#define SFK_VERSION  "1.9.9" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -2347,6 +2437,16 @@ public:
 num nClStart, &rOutputAddRef;
 };
 
+char *myvtext(const char *pszFormat, ...)
+{
+   static char szBuf[4096];
+   va_list argList;
+   va_start(argList, pszFormat);
+   ::vsnprintf(szBuf, sizeof(szBuf)-10, pszFormat, argList);
+   szBuf[sizeof(szBuf)-10] = '\0';
+   return szBuf;
+}
+
 // copies a maximum of nMaxDst MINUS ONE chars,
 // AND adds a zero terminator at pszDst (within nMaxDst range!).
 // to use this like strncpy, always add +1 to nMaxDst.
@@ -2513,82 +2613,6 @@ char *safeRunCommand(char *psz) {
    mystrcopy(szSafeRunBuf, psz, MAX_LINE_LEN);
    strcat(szSafeRunBuf, " 2>&1");
    return szSafeRunBuf;
-}
-
-unum getFlexNum(char *psz, bool bAllHex)
-{
-   /*
-      123
-      123.123.123.123
-      010101011101010
-      010.011.101.010
-      ab2f37e9
-      0x123
-      0o234
-      0b100
-   */
-
-   // pass 1: get overall type
-   bool bbin=0,bdig=0,bxdig=bAllHex,bdots=0,bchar=0;
-   if (strBegins(psz, "0x"))
-      { bxdig=1; psz+=2; }
-   else
-   if (strBegins(psz, "0b"))
-      { bbin=1; psz+=2; }
-   else
-   if (strBegins(psz, "0t"))
-      { bchar=1; psz+=2; }
-   else
-   for (char *psz2=psz; *psz2; psz2++) {
-      char c = tolower(*psz2);
-      if (isdigit(c))
-         { bdig=1; continue; }
-      if (isxdigit(c))
-         { bxdig=1; continue; }
-      if (c=='0' || c=='1')
-         { bbin=1; continue; }
-      if (c=='.')
-         { bdots=1; continue; }
-      bchar=1;
-   }
-
-   int ibase=1;
-   if (bxdig) ibase=16;
-   else
-   if (bdig)  ibase=10;
-   else
-   if (bbin)  ibase=2;
-
-   // pass 2: collect number(s)
-   unum ncur=0,nout=0;
-   for (; *psz; psz++) {
-      char c = tolower(*psz);
-      if (c=='.') {
-         nout = nout + ncur;
-         nout = nout * 256;
-         ncur = 0;
-         continue;
-      }
-      if (bchar) {
-         ncur = ncur * 256;
-         ncur = ncur + (unum)(*psz);
-         continue;
-      }
-      ncur = ncur * ibase;
-      switch (c) {
-         case '0': case '1': case '2': case '3': case '4':
-         case '5': case '6': case '7': case '8': case '9':
-            ncur = ncur + ((unum)c - '0');
-            continue;
-         case 'a': case 'b': case 'c': case 'd': case 'e': case 'f':
-            ncur = ncur + 10 + ((unum)c - 'a');
-            continue;
-      }
-   }
-
-   nout = nout + ncur;
-
-   return nout;
 }
 
 double getcalcval(char *psz, char **pcont)
@@ -3788,9 +3812,10 @@ char *ownIPList(int &rhowmany, uint nPort, const char *psep, int nmode)
    #else
 
    // linux: list all existing interface IPV4 addresses
-   struct ifaddrs *pAdrObj = NULL;
+   struct ifaddrs *pAdrObj=0, *pFirst=0;
    char szAdrBuf[200]; mclear(szAdrBuf);
    getifaddrs(&pAdrObj);
+   pFirst = pAdrObj;
    while (pAdrObj != NULL)
    {
      if (   pAdrObj->ifa_addr != 0
@@ -3824,6 +3849,9 @@ char *ownIPList(int &rhowmany, uint nPort, const char *psep, int nmode)
      }
      pAdrObj = pAdrObj->ifa_next;
    }
+   if (pFirst)
+      freeifaddrs(pFirst); // sfk1990 fix
+
    rhowmany = ndone;
 
    #endif
@@ -4054,6 +4082,8 @@ void CommandStats::reset()
    chan           = 1;
    chanserv       = 2;
    cliptries      = 6;
+
+   keepchain      = 1; // sfk1990 new default
 
    if (cs.headers) {
       delete [] cs.headers;
@@ -5023,6 +5053,7 @@ int postProcessToken(char **pptok, StringTable &oDynaStrings,
    // accept "$" and "%" parameters, or user defined?
    bool buserpre = cs.paramprefix[0] ? 1 : 0;
 
+   if (argv != 0) // sfk1990 no "%1" substitute with perline [23531]
    for (int iparm=0; iparm<9; iparm++)
    {
       char *pcur = szLineBuf;
@@ -5444,7 +5475,7 @@ void setColorScheme(cchar *psz1)
       { nGlblBrightColBase = 0; bany=1; }
 
    #ifdef MAC_OS_X // 1694
-   if (strstr(psz1, "theme:black") || !strcmp(psz1, "b")) {
+   if (strstr(psz1, "theme:black") || !strcmp(psz1, "black") || !strcmp(psz1, "b")) {
       nGlblDarkColBase    =  0;
       nGlblBrightColBase  =  0;
       nGlblHeadColor      =  4;
@@ -5457,7 +5488,7 @@ void setColorScheme(cchar *psz1)
       nGlblDefColor       = 14;
       bany=1;
    }
-   if (strstr(psz1, "theme:white") || !strcmp(psz1, "w")) {
+   if (strstr(psz1, "theme:white") || !strcmp(psz1, "white") || !strcmp(psz1, "w")) {
       nGlblDarkColBase    =  0;
       nGlblBrightColBase  =  0;
       nGlblHeadColor      =  4;
@@ -5476,7 +5507,7 @@ void setColorScheme(cchar *psz1)
       bany=1;
    }
    #else
-   if (strstr(psz1, "theme:black") || !strcmp(psz1, "b")) {
+   if (strstr(psz1, "theme:black") || !strcmp(psz1, "black") || !strcmp(psz1, "b")) {
       // bright colors with black background
       nGlblDarkColBase =  1;
       nGlblExampColor  =  7; // bright yellow
@@ -5491,7 +5522,7 @@ void setColorScheme(cchar *psz1)
       #endif
       bany=1;
    }
-   if (strstr(psz1, "theme:white") || !strcmp(psz1, "w")) {
+   if (strstr(psz1, "theme:white") || !strcmp(psz1, "white") || !strcmp(psz1, "w")) {
       // with white background, user may want to select
       // bright or dark colors case by case.
       nGlblHeadColor      =  4; // green
@@ -6545,12 +6576,6 @@ int KeyMap::put(char *pkey, void *pval)
    return 0; // done
 }
 
-int KeyMap::putnum(char *pkey, num nval)
-{
-   void *p = (void*)nval;
-   return put(pkey, p);
-}
-
 void *KeyMap::get(char *pkey, int *poutidx)
 {
    int imid=0;
@@ -6564,11 +6589,62 @@ void *KeyMap::get(char *pkey, int *poutidx)
    return apClVal[imid]; // if any
 }
 
+#if 0
+
+// old proven code, may produce compiler warning
+int KeyMap::putnum(char *pkey, num nval)
+{
+   void *p = (void*)nval;
+   return put(pkey, p);
+}
+
 num KeyMap::getnum(char *pkey, int *poutidx)
 {
    void *p = get(pkey, poutidx);
    return (num)p;
 }
+
+#else
+
+/*
+   sfk199 avoid compiler warning by a union:
+   the KeyMap stores a      key -> pobj mapping,
+   but can also be used for key -> int mapping.
+   internally it stores just a void *p.
+   in case of a 32-bit compile this limits
+   the stored number to 32 bits also.
+*/
+typedef union
+{
+   void *pval;
+   num   nval;
+   uint  uval;
+} sfkNumPtr_t;
+
+int KeyMap::putnum(char *pkey, num nval)
+{
+   sfkNumPtr_t u;
+   memset(&u, 0, sizeof(u));
+   if (sizeof(u.pval) <= 4)
+      u.uval = (uint)nval;
+   else
+      u.nval = nval;
+   void *p = u.pval;
+   return put(pkey, p);
+}
+
+num KeyMap::getnum(char *pkey, int *poutidx)
+{
+   sfkNumPtr_t u;
+   memset(&u, 0, sizeof(u));
+   void *p = get(pkey, poutidx);
+   u.pval = p;
+   if (sizeof(u.pval) <= 4)
+      return (num)u.uval;
+   return (num)u.nval;
+}
+
+#endif
 
 bool KeyMap::isset(char *pkey) {
    int imid=0;
@@ -6944,184 +7020,6 @@ int parseVersion(char *psz, int nmaxlen, StringMap &rmap)
 
    return 0;
 }
-
-#ifdef VFILENET
-char *flatURLName(char *purl, char *pctype, char *pbuf, int nmaxbuf, uint nmode, bool &rdefault)
-{__
-   bool bpath2name = (nmode & 1) ? 1 : 0;
-   bool bpath2path = (nmode & 2) ? 1 : 0;
-   bool bwithdom   = (nmode & 4) ? 1 : 0;
-   bool bskippath  = (!bpath2name && !bpath2path);
-   // nmode & 8 is reserved
-   bool bsynext    = (nmode & 16) ? 1 : 0;
-
-   *pbuf = '\0'; // safety
-
-   char *prel    = purl;
-   char *purlmax = purl + strlen(purl);
-   char *pCacheDir = getDiskCachePath();
-
-   char szNameBuf[SFK_MAX_PATH+10];
-
-   // only normalize net filenames,
-   // or net files from the cache dir.
-   if (strBegins(prel, "http://")) prel += strlen("http://");
-   else
-   if (strBegins(prel, "https://")) prel += strlen("https://");
-   else
-   if (strBegins(prel, "ftp://"))  prel += strlen("ftp://");
-   else
-   if (strBegins(prel, pCacheDir))
-   {
-      prel += strlen(pCacheDir);
-      if (*prel == glblPathChar) prel++;
-
-      // rebuild url from cache name format
-      char *psrc = prel;
-      char *pdst = szNameBuf;
-      char *pdstmax = pdst+sizeof(szNameBuf)-10;
-      szNameBuf[0] = '\0';
-
-      if (strBegins(psrc, "http/") || strBegins(psrc, "http\\"))
-         { psrc += 5; strcat(pdst, "http://"); pdst += 7; }
-      else
-      if (strBegins(psrc, "ftp/") || strBegins(psrc, "ftp\\"))
-         { psrc += 4; strcat(pdst, "ftp://"); pdst += 6; }
-
-      while (*psrc && (pdst < pdstmax))
-      {
-         if (!strncmp(psrc, "%2F", 3))
-            { psrc+=3; *pdst++ = '/'; continue; }
-         if (*psrc == '\\')
-            { psrc++; *pdst++ = '/'; continue; }
-         *pdst++ = *psrc++;
-      }
-      *pdst = '\0';
-
-      // printf("-> \"%s\"\n", szNameBuf);
-
-      prel = szNameBuf;
-   }
-   else
-      return 0;
-
-   char *pdst = pbuf;
-   int  nrem = nmaxbuf - 10;
-
-   if (nrem <= 100) { perr("int. #9529106"); return 0; }
-
-   if (bskippath) {
-      // the/sub/doc.zip -> doc.zip
-      // http://foo.com/ -> ""
-      char *psz2 = strrchr(prel, '/');
-      if (psz2) {
-         prel = psz2+1;
-         if (!*prel) {
-            strcpy(pdst, "index.html");
-            rdefault = 1;
-            return pbuf;
-         }
-      }
-   }
-   else
-   if (!bwithdom) {
-      // foobar.com/path -> path
-      char *psz2 = strchr(prel, '/');
-      if (psz2) {
-         prel = psz2+1;
-         if (!*prel) {
-            strcpy(pdst, "index.html");
-            rdefault = 1;
-            return pbuf;
-         }
-      }
-   }
-
-   // convert and add rest of url.
-   // http: $-_.+!*'(),
-   char *psrc = prel;
-   cchar *pext1 = 0;
-   char *pext2 = 0;
-   char  clast = 0;
-   bool  lm    = 0; // last char was minus
-   while (*psrc && (nrem > 0))
-   {
-      char c = *psrc++;
-      clast  = c;
-      if (isalnum(c)) {
-         *pdst++ = c; nrem--; lm=0;
-         continue;
-      }
-      if (!pext2) pext2 = psrc-1;
-      switch (c) {
-         case '.':
-             pext1 = psrc-1; pext2 = 0;
-         case '-': case '+': case '_':
-            *pdst++ = c; nrem--; lm=0;
-            continue;
-         case '/':
-            if (bpath2path) {
-               *pdst++ = glblPathChar; nrem--; lm=0;
-               continue;
-            }
-         default:
-            if (!lm) {
-               *pdst++ = '-'; nrem--; lm=1;
-            }
-            continue;
-      }
-      /*
-      sprintf(szBuf, "%%%02X", (unsigned)c);
-      *pdst++ = szBuf[0];
-      *pdst++ = szBuf[1];
-      *pdst++ = szBuf[2];
-      nrem -= 3;
-      */
-   }
-
-   // fix trailing slash
-   if (clast == '/' && (nrem >= 12)) {
-      strcpy(pdst, "index.html");
-      pdst += strlen(pdst);
-      pext1 = ".html";
-      nrem -= 10;
-      rdefault = 1;
-   }
-
-   *pdst = '\0';
-
-   if (bsynext)
-   {
-      // create default extensions for well-known ctypes
-      if (!pext1 && pctype) {
-         if (strstr(pctype, "text"))   pext1 = ".txt";
-         if (strstr(pctype, "html"))   pext1 = ".html";
-      }
- 
-      if (!pext1) pext1 = ".dat";
- 
-      // if extension is not at end of name, append it again
-      if (pext1)
-      {
-         int nlen   = strlen(pext1);
-         bool binurl = (pext1 >= purl && pext1 <= purlmax);
-         if (binurl && pext2 && (pext2 > pext1))
-            nlen = pext2 - pext1;
-         if (nlen > 7) { pext1 = ".dat"; nlen = 4; }
-         char *pcmp = pdst - nlen;
-         if (pcmp < pbuf) pcmp = pbuf;
-         if (nlen <= 7 && nlen < nrem && strncmp(pcmp, pext1, nlen))
-         {
-            memcpy(pdst, pext1, nlen);
-            pdst[nlen] = '\0';
-            nrem -= nlen;
-         }
-      }
-   }
-
-   return pbuf;
-}
-#endif // VFILENET
 
 extern uchar *sfkgetvarexp(char *pname, int *plen);
 
@@ -10760,7 +10658,11 @@ int perr(const char *pszFormat, ...)
       // sfk197 prefix error by current command
       info.clear();
       setTextColor(nGlblErrColor, 1); // on stderr
+      #ifdef USE_SFK_BASE
+      fprintf(stderr, "error: %s", szErrBuf);
+      #else
       fprintf(stderr, "error: sfk %s: %s", cs.curcmd, szErrBuf);
+      #endif
       setTextColor(-1, 1);
    }
 
@@ -11508,6 +11410,7 @@ InfoCounter glblFileCount;
 
 void resetFileCounter()   { glblFileCount.reset(); cs.lines = 0; }
 bool fileCountCheckTime() { return glblFileCount.checkTime(); }
+uint glblFileCountValue() { return glblFileCount.value(); }
 
 // --- sfk190 nocase with variable table ---
 
@@ -11621,6 +11524,11 @@ unsigned short glblCodePage850[] = {
 };
 
 SFKChars sfkchars;
+
+int setsfkcharsacp(int i)
+{
+   return sfkchars.setacp(i);
+}
 
 SFKChars::SFKChars( )
 {
@@ -17004,6 +16912,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (!strcmp(psz1, "-noop"))      { return true; }
    if (!strcmp(psz1, "-quiet"))     { pcs->quiet = 1; return true; }
    if (!strcmp(psz1, "-quiet=2"))   { pcs->quiet = 2; return true; }
+   if (!strcmp(psz1, "-quiet=3"))   { pcs->quiet = 3; return true; }
    if (!strcmp(psz1, "-stat"))      { pcs->dostat = 1; return true; } // sfk1892
    if (!strcmp(psz1, "-nostat"))    { pcs->dostat = 0; pcs->nostat=1; return true; } // sfk1892
    if (!strcmp(psz1, "-nohead"))    { pcs->nohead = 1; return true; }
@@ -17604,6 +17513,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (!strcmp(psz1, "-strict"))    { pcs->strict = 1; return true; }
    if (!strcmp(psz1, "-nostrict"))  { pcs->strict = 0; return true; }
    if (!strcmp(psz1, "-nopass"))    { pcs->nopass = 1; return true; }
+   if (!strcmp(psz1, "-strictif"))  { pcs->strictif = 1; return true; } // sfk1990
 
    // sfk187
    if (!strcmp(psz1, "-chainweb") || !strcmp(psz1, "-cweb"))    
@@ -17665,6 +17575,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    #endif // SFKOFFICE
    if (!strcmp(psz1, "-keepdata"))   { pcs->keepdata = 1; return true; }
    if (!strcmp(psz1, "-keepchain"))  { pcs->keepchain = 1; return true; }
+   if (!strcmp(psz1, "-stoponempty")) { pcs->keepchain = 0; return true; } // sfk1990
    if (!strncmp(psz1, "-every=", 7)) { pcs->justevery = atoi(psz1+7); return true; }
    if (!strncmp(psz1, "-cliptries=", 11)) { pcs->cliptries = atoi(psz1+11); return true; }
    /*
@@ -17831,6 +17742,15 @@ void stripTrailingBackSlashes(char *psz)
       psz[nidx-1] = '\0';
       nidx--;
    }
+}
+
+bool isHttpURL(char *psz)
+{
+   if (strBegins(psz, "http://"))
+      return 1;
+   if (strBegins(psz, "https://"))
+      return 1;
+   return 0;
 }
 
 cchar *aGlblChainCmds[] =
@@ -18007,6 +17927,7 @@ cchar *aGlblChainCmds[] =
    "6jsonform", // sfk1952
    "6jform",    // sfk1952
    "2cscaninc", // sfk1982 internal
+   "1fjoin",    // sfk199
    0
 };
 
@@ -18542,15 +18463,6 @@ bool isChainStart(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNext,
    }
 
    return bres;
-}
-
-bool isHttpURL(char *psz)
-{
-   if (strBegins(psz, "http://"))
-      return 1;
-   if (strBegins(psz, "https://"))
-      return 1;
-   return 0;
 }
 
 int addConveniencePathMask(char *psz1, int &lRC, int iFromInfo)
@@ -24198,10 +24110,14 @@ int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd, bool b
 
 int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &bFatal);
 
+#ifndef SFK_NO_RUNEXT
+
 // run program with output to chain redirect
 int runExtProg(char *psz)
 {
    // sfk198 rerun with new runtime run
+
+   char szRCBuf[100];
 
    psz = safeRunCommand(psz); // redirect stderr
 
@@ -24224,7 +24140,13 @@ int runExtProg(char *psz)
       psz2++;
    char *pszProgName = psz2;
 
-   bool bShowInfo = (chain.coldata && !cs.quiet && !cs.noprog) ? 1 : 0;
+   // bool bShowInfo = (chain.coldata && !cs.quiet && !cs.noprog) ? 1 : 0;
+   bool bShowInfo = cs.prog; // sfk1990
+
+   // printf("runext showinfo=%d coldata=%d\n",bShowInfo,chain.coldata);
+   // rerun.todo: error in sfk rerun -yes -prog  "dir /S C:\" +setvar a
+   //    needs C:\\ but why
+
    int iLines = 0;
 
    // can NOT use userInterrupt() check here.
@@ -24235,13 +24157,13 @@ int runExtProg(char *psz)
       removeCRLF(szLineBuf);
       iLines++;
       if (chain.coldata) {
-         if (bShowInfo) {
+         if (bShowInfo || cs.verbose) {
             info.setAddInfo("%u lines", iLines);
             info.setStatus(pszProgName, szLineBuf, 0, eKeepAdd);
             if (cs.verbose)
                info.printLine(1<<2);
-            else
-               info.dumpTermStatus();
+            // else
+            //   info.dumpTermStatus();
          }
          chain.addLine(szLineBuf, str(""));
       } else {
@@ -24255,11 +24177,30 @@ int runExtProg(char *psz)
    int isubrc = pclose(pPipe);
    #endif
 
+   /* too unreliable. better check (length of) returned text
+   #if (!defined(USE_SFK_BASE))
+    #ifdef _WIN32
+    // windows returns the program rc as is
+    sprintf(szRCBuf, "%d", isubrc);
+    sfksetvar(str("run.sysrc"), (uchar*)szRCBuf, strlen(szRCBuf), 4); // sfk1990
+    #else
+    // linux returns (progrc << 8)
+    sprintf(szRCBuf, "%d", isubrc>>8);
+    sfksetvar(str("run.sysrc"), (uchar*)szRCBuf, strlen(szRCBuf), 4); // sfk1990
+    uint irc2 = ((uint)isubrc) & 0xFFU;
+    if (irc2 != 0) { // ever?
+      sprintf(szRCBuf, "%u", irc2);
+      sfksetvar(str("run.sysrc2"), (uchar*)szRCBuf, strlen(szRCBuf), 4); // sfk1990
+    }
+    #endif
+   #endif
+   */
+
    if (bShowInfo)
       info.clear();
 
    if (cs.verbose)
-      printf("[ext-prog-rc %d]\n", isubrc);
+      printf("[sys rc %d (%d)]\n", isubrc, isubrc>>8);
 
    return 0;
 }
@@ -24535,6 +24476,8 @@ int execRunDir(Coi *pcoi, int lLevel, int &lFiles, int &lDirs, num &lBytes)
    return 0;
 }
 
+#endif // SFK_NO_RUNEXT
+
 int execDirStat(Coi *pcoi, int lLevel, int lFiles, int lDirs, num lBytes, num &nLocalMaxTime, num &ntime2)
 {__
    char *pszDir = pcoi->name();
@@ -24558,8 +24501,15 @@ int execDirStat(Coi *pcoi, int lLevel, int lFiles, int lDirs, num lBytes, num &n
       { }
       else
       if (cs.quiet) {
-         if (lLevel == 0)
-            oprintf(pout, "%5d mb %s\n", lMBytes, pszDir);
+         if (lLevel == 0) {
+            // oprintf(pout, "%5d mb %s\n", lMBytes, pszDir);
+            switch (cs.listunit) {
+               case 'b': oprintf(pout, "%s %s\n", numtoa(lBytes), pszDir); break;
+               case 'k': oprintf(pout, "%s kb %s\n", numtoa(lBytes/1000), pszDir); break;
+               case 'g': oprintf(pout, "%s gb %s\n", numtoa(lBytes/1000000000), pszDir); break;
+               default : oprintf(pout, "%5ld mb %s\n", lMBytes, pszDir); break;
+            }
+         }
       } else {
          if (lBytes < 0) // for sfk sel -withdirs ... +stat
          { } // print nothing, there are no stats.
@@ -25094,94 +25044,6 @@ bool equalFileContent(char *pszFile1, char *pszFile2, uchar *psrcmd5=0, uchar *p
    if (pdstmd5) memcpy(pdstmd5, absum2, 16);
    if (!memcmp(absum1, absum2, 16))
       return 1; // equal
-   return 0;
-}
-
-// uses szLineBuf. pOutBuf must be >= 16 bytes.
-int getFuzzyTextSum(char *pszFile, uchar *pOutBuf)
-{
-   // this function reads a text file line by line, and
-   // - strips line endings
-   // - turns all \\ slashes into /
-   // - ignores the SEQUENCE of lines
-   // to make result files of sfk commands comparable
-   // both accross platforms, and independent from the sequence
-   // in which files happen to be read from the file system.
-   FILE *fin = fopen(pszFile, "rb");
-   if (!fin) return 9+pferr(pszFile, "cannot read: %s\n", pszFile);
-   uchar abSum[16];
-   memset(abSum, 0, sizeof(abSum));
-   myfgets_init();
-   while (myfgets(szLineBuf, sizeof(szLineBuf)-10, fin))
-   {
-      szLineBuf[sizeof(szLineBuf)-10] = '\0';
-      removeCRLF(szLineBuf);
-      uint nLen = strlen(szLineBuf);
-      // turn all non-/ slashes into /
-      for (uint i=0; i<nLen; i++)
-         if (szLineBuf[i] == '\\')
-             szLineBuf[i] = '/';
-      if (cs.verbose) printf("sum: \"%s\"\n", szLineBuf);
-      // build local checksum over line
-      SFKMD5 md5;
-      md5.update((uchar*)szLineBuf, nLen);
-      // xor this with overall checksum
-      unsigned char *pmd5 = md5.digest();
-      for (uint k=0; k<16; k++)
-         abSum[k] ^= pmd5[k];
-   }
-   fclose(fin);
-   memcpy(pOutBuf, abSum, 16);
-   return 0;
-}
-
-int getFuzzyTextSum(char *pszText, int iTextLen, uchar *pOutBuf)
-{
-   uchar abSum[16];
-   memset(abSum, 0, sizeof(abSum));
- 
-   char *pszCur = pszText;
-   char *pszMax = pszText + iTextLen;
-
-   bool bStop=0;
-   while (pszCur < pszMax)
-   {
-      char *pszNext = strchr(pszCur, '\n');
-      if (!pszNext) {
-         pszNext = pszCur+strlen(pszCur);
-         bStop=1;
-      }
-
-      int iLen = pszNext-pszCur;
-      if (iLen > MAX_LINE_LEN)
-         break;
-      memcpy(szLineBuf, pszCur, iLen);
-      szLineBuf[iLen] = '\0';
-
-      removeCRLF(szLineBuf);
-      uint nLen = strlen(szLineBuf);
-      // turn all non-/ slashes into /
-      for (uint i=0; i<nLen; i++)
-         if (szLineBuf[i] == '\\')
-             szLineBuf[i] = '/';
-      if (cs.verbose) printf("sum: \"%s\"\n", szLineBuf);
-      // build local checksum over line
-      SFKMD5 md5;
-      md5.update((uchar*)szLineBuf, nLen);
-      // xor this with overall checksum
-      unsigned char *pmd5 = md5.digest();
-      for (uint k=0; k<16; k++)
-         abSum[k] ^= pmd5[k];
-
-      if (bStop)
-         break;
-
-      pszCur = pszNext;
-      pszCur++;
-   }
-
-   memcpy(pOutBuf, abSum, 16);
-
    return 0;
 }
 
@@ -27694,7 +27556,9 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
       case eFunc_FileTime  : irc = execFileTime(pszFile);   break;
       case eFunc_Touch     : irc = execTouch(pszFile, 0);   break;
       case eFunc_Find      : irc = execFind(pcoi);          break;
+      #ifndef SFK_NO_RUNEXT
       case eFunc_Run       : irc = execRunFile(pcoi, pszOutFile, lLevel, lFiles, lDirs, lBytes);  break;
+      #endif // SFK_NO_RUNEXT
       #ifndef USE_SFK_BASE
       case eFunc_FormConv  : irc = execFormConv(pszFile, pszOutFile);   break;
       #endif // USE_SFK_BASE
@@ -28180,10 +28044,12 @@ int execSingleDir(Coi *pcoi, int lLevel, int &nTreeFiles, FileList &oDirFiles, i
       case eFunc_CallBack:
            lRC = execCallFileDir(pcoi);
            break;
+      #ifndef SFK_NO_RUNEXT
       case eFunc_Run     :
            if (cs.justdirs)
               lRC = execRunDir(pcoi, lLevel, nTreeFiles, lDirs, lBytes);
            break;
+      #endif // SFK_NO_RUNEXT
       case eFunc_Deblank :
            return execDeblank(pszName);
            break;
@@ -28235,60 +28101,6 @@ int execSingleDir(Coi *pcoi, int lLevel, int &nTreeFiles, FileList &oDirFiles, i
    nLocalMaxTime = 0;
 
    return lRC;
-}
-
-int execTextJoinLines(char *pIn) {
-   // join a text file with lines broken by mailing
-
-   // 1. pre-scan for line length maximum
-   char *psz = pIn;
-   int nLineChars = 0;
-   int nLineCharMax = 0;
-   while (*psz)
-   {
-      char c = *psz++;
-      if (c == '\r')
-         continue;
-      if (c == '\n') {
-         if (nLineChars > nLineCharMax)
-            nLineCharMax = nLineChars;
-         nLineChars = 0;
-         continue;
-      }
-      nLineChars++;
-   }
-
-   if (!cs.quiet)
-      printf("[line break near %d]\n", nLineCharMax);
-
-   // 2. join lines which are broken, pass-through others
-   psz = pIn;
-   nLineChars = 0;
-   while (*psz)
-   {
-      char c = *psz++;
-
-      if (c == '\r') // drop CR. LF-mapping is done by runtime.
-         continue;
-
-      if (c == '\n') {
-         // line collected. what to do?
-         if (   (nLineChars < nLineCharMax-1)
-             || (nLineChars > nLineCharMax)
-            )
-         {
-            fputc(c, fGlblOut);  // not near threshold: do not join
-         }
-         nLineChars = 0;
-         continue;
-      } else {
-         fputc(c, fGlblOut);
-      }
-
-      nLineChars++;
-   }
- 
-   return 0;
 }
 
 int hexToBin(char *pszHex, uchar *pBin, uint nBinLen)
@@ -29082,6 +28894,7 @@ int execReplaceVar(Coi *pcoi)
    return 0;
 }
 
+#ifndef USE_SFK_BASE
 int testReplace(int iTestCaseNumber)
 {
    int irc = 0;
@@ -29228,6 +29041,7 @@ int testReplace(int iTestCaseNumber)
  
    return irc;
 }
+#endif // USE_SFK_BASE
 
 int aGlblIndentStats[10];
 
@@ -29619,23 +29433,6 @@ int execVersion(Coi *pcoi)
    pcoi->releaseContent();
 
    return nrc;
-}
-
-void detabLine(char *pszIn, char *pszOut, uint lMaxOut, int nTabSize)
-{
-   uint nInsert=0, iout=0;
-   for (int icol=0; (pszIn[icol]!=0) && (iout<lMaxOut-1); icol++)
-   {
-      char c1 = pszIn[icol];
-      if (c1 == '\t') {
-         nInsert = nTabSize - (iout % nTabSize);
-         for (uint i2=0; i2<nInsert; i2++)
-            pszOut[iout++] = ' ';
-      } else {
-         pszOut[iout++] = c1;
-      }
-   }
-   pszOut[iout] = '\0';
 }
 
 int execDetab(char *pszFile, char *pszOutFile)
@@ -30676,7 +30473,13 @@ char *findPathLocation(cchar *pszCmd, bool bExcludeWorkDir)
    #endif
 
    char *pszPath = getenv("PATH");
-   if (!pszPath) { perr("no PATH variable found.\n"); return 0; }
+   if (!pszPath)
+   {
+      #ifndef DVIEW
+      perr("no PATH variable found.\n");
+      #endif
+      return 0; 
+   }
    char *psz1 = pszPath;
    while (*psz1)
    {
@@ -33658,7 +33461,7 @@ int dumpKnxInfo(uchar *pData, int iSize, char *pBuf, int iMaxBuf)
          }
 
          uchar  nga2    = (ndest1 >> 0) & 0x07;
-         uchar  nga1    = (ndest1 >> 3) & 0x0F;
+         uchar  nga1    = (ndest1 >> 3) & 0x1F;
          uchar  nga3    = (ndest2 >> 0) & 0xFF;
          uchar  nlen    = b5; // V1732: use full length, not "& 0x0F"
          uchar  ndata6  = b7 & 0x3F;
@@ -33877,10 +33680,11 @@ bool matchesFromIPMask(char *pszip, char *pszmask)
 
 // .
 int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool bEcho,
-   char *pszFromMask, char *pszNotFromMask, int iMinSize, int iMaxSize,
+   char **apszFromMask, char **apszNotFromMask, int iMinSize, int iMaxSize,
    uchar *pPat, int nPat, uint nFlags, SOCKET hRev)
 {__
    char szTime[100];
+   char szCTimePre[100]; // conditional time prefix by -time option
    char szKNX[512];
 
    // optional -tofile support
@@ -34021,6 +33825,9 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
       uchar *pHit=0;
       int    iHit=0,nHit=0;
 
+      memset(abBuf, 0, sizeof(abBuf));
+      int    iClearSize = mymin(128,(int)sizeof(abBuf));
+
       while (!userInterrupt())
       {
          tv.tv_sec  = 0;
@@ -34034,6 +33841,8 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
             struct sockaddr_in inAddr;
 
             socklen_t nadrlen = sizeof(inAddr);
+
+            memset(abBuf, 0, iClearSize); // sfk199 fix
 
             int nRead = recvfrom(nsock, (char*)abBuf, sizeof(abBuf)-100, 0, (struct sockaddr *)&inAddr, &nadrlen);
 
@@ -34050,10 +33859,31 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
             char *premip = inet_ntoa(addr);
             uint  uremport = ntohs(inAddr.sin_port);
 
+            // if (cs.debug) printf("addr %s sent %d bytes\n", premip, nRead);
+
             // apply ip filter?
-            if (pszFromMask && !matchesFromIPMask(premip, pszFromMask))
+            int ipos=0,npos=0,ineg=0,nneg=0;
+            for (int i=0;apszFromMask[i];i++) {
+               npos++;
+               if (matchesFromIPMask(premip, apszFromMask[i])) {
+                  if (cs.debug) printf("mask %s %s match\n",premip, apszFromMask[i]);
+                  ipos++;
+               } else {
+                  if (cs.debug) printf("mask %s %s miss\n",premip, apszFromMask[i]);
+               }
+            }
+            if (npos>0 && ipos<1)
                continue;
-            if (pszNotFromMask && matchesFromIPMask(premip, pszNotFromMask))
+            for (int i=0;apszNotFromMask[i];i++) {
+               nneg++;
+               if (matchesFromIPMask(premip, apszNotFromMask[i])) {
+                  if (cs.debug) printf("notmask %s %s match\n",premip, apszFromMask[i]);
+                  ineg++;
+               } else {
+                  if (cs.debug) printf("notmask %s %s mis\n",premip, apszFromMask[i]);
+               }
+            }
+            if (ineg>0)
                continue;
             if (iMinSize != -1 && nRead < iMinSize)
                continue;
@@ -34080,13 +33910,19 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
 
             iPackets++;
 
+            szTime[0] = '\0';
+            szCTimePre[0] = '\0';
+            mytime_t nTime = (mytime_t)time(NULL);
+            struct tm *pLocTime = mylocaltime(&nTime);      // may be NULL
+            if (pLocTime)
+            {
+               strftime(szTime, sizeof(szTime)-10, "%d.%m.%Y %H:%M:%S", pLocTime);
+               if (cs.withtime)
+                  snprintf(szCTimePre, sizeof(szCTimePre)-10, "%s ", szTime);
+            }
+
             if (cs.separator && !bOneLine)
             {
-               mytime_t nTime = (mytime_t)time(NULL);
-               struct tm *pLocTime = mylocaltime(&nTime);      // may be NULL
-               szTime[0] = '\0';
-               if (pLocTime)
-                  strftime(szTime, sizeof(szTime)-10, "%d.%m.%Y %H:%M:%S", pLocTime);
                fprintf(fout, "%s----- #%03d from %s at %s (%d bytes) -----\n",
                   cs.nolf ? "":"\n", iPackets, premip, szTime, nRead);
             }
@@ -34094,11 +33930,11 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
             if (cs.knx) {
                if (bOneLine) {
                   if (btofile)
-                     fprintf(fout, "%-15.15s%s", premip, szKNX);
+                     fprintf(fout, "%s%-15.15s%s", szCTimePre, premip, szKNX);
                   else
-                     printx("$%-15.15s<def>%s", premip, szKNX);
+                     printx("%s$%-15.15s<def>%s", szCTimePre, premip, szKNX);
                } else {
-                  fprintf(fout, "%s", szKNX);
+                  fprintf(fout, "%s%s", szCTimePre, szKNX);
                }
             }
 
@@ -34111,7 +33947,7 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
                { } // -tofile -flat : no received info
             else
             if (!cs.nohead && !cs.quiet && !cs.separator)
-               fprintf(fout, "[#%03d received %03d bytes from %s port %u]\n",iPackets,nRead,premip,uremport);
+               fprintf(fout, "[%s#%03d received %03d bytes from %s port %u]\n",szCTimePre,iPackets,nRead,premip,uremport);
 
             if (!bOneLine && !cs.nodump) {
                if (btofile!=0 && nGlblHexDumpForm==4 && cs.separator==0) // flat w/o separators
@@ -34365,7 +34201,7 @@ int udpAnyServ(uint nPort, char *pszForward, int nForward, char *pszGroup, bool 
 }
 
 int udpRevServ(uint nServerPort, uint nPort, char *pszGroup,
-   char *pszFromMask, char *pszNotFromMask, int iMinSize, int iMaxSize,
+   char **apszFromMask, char **apszNotFromMask, int iMinSize, int iMaxSize,
    uchar *pPat, int nPat, uint nFlags)
 {
    prepareTCP();
@@ -34404,7 +34240,7 @@ int udpRevServ(uint nServerPort, uint nPort, char *pszGroup,
       printf("client connected on %s %s\n", premip ? premip : "-", timeAsString(nnow,0));
 
       udpAnyServ(nPort, 0, 0,
-         pszGroup, 0, pszFromMask, pszNotFromMask, 
+         pszGroup, 0, apszFromMask, apszNotFromMask, 
          iMinSize, iMaxSize, pPat, nPat, nFlags,
          hBack);
 
@@ -34513,6 +34349,8 @@ int udpSend(char *phost, int ndstport,
 
    // receive and dump replies
 
+   int lRC = 0;
+
    if (nlisten > 0)
    {
       uchar abBuffer[2000+100];
@@ -34560,6 +34398,7 @@ int udpSend(char *phost, int ndstport,
          if (nTimeout > 0 && nelaps >= nTimeout)
          {
             chain.print("[timeout]\n");
+            lRC = 3;
             break;
          }
 
@@ -34567,7 +34406,7 @@ int udpSend(char *phost, int ndstport,
       }
    }
 
-   return 0;
+   return lRC;
 }
 
 int tcpClient(char *phost, int ndstport, int nlisten, int nownport, uchar *abMsg, int nMsg, num nTimeout)
@@ -34660,6 +34499,9 @@ int tcpClient(char *phost, int ndstport, int nlisten, int nownport, uchar *abMsg
 
 int tcpAnyServ(uint nPort, char *pszForward, int nForward)
 {__
+   char szTime[100];
+   char szCTimePre[100]; // conditional time prefix by -time option
+
    prepareTCP();
 
    struct sockaddr_in ServerAdr;
@@ -34730,6 +34572,15 @@ int tcpAnyServ(uint nPort, char *pszForward, int nForward)
          //       but the connection stays open.
          if (nRead > 0)
          {
+            // sfk199 -time support
+            szCTimePre[0] = '\0';
+            if (cs.withtime) {
+               mytime_t nTime = (mytime_t)time(NULL);
+               struct tm *pLocTime = mylocaltime(&nTime);      // may be NULL
+               if (pLocTime)
+                  strftime(szCTimePre, sizeof(szCTimePre)-10, "%d.%m.%Y %H:%M:%S ", pLocTime);
+            }
+
             // autodetect http protocol on first request
             abBuf[nRead] = '\0';
             if (bFirstReq) {
@@ -34752,10 +34603,12 @@ int tcpAnyServ(uint nPort, char *pszForward, int nForward)
             }
             if (nGlblHexDumpForm == 4 && memchr(abBuf, '\0', nRead)) {
                // pure form: skip binary record
-               printf("[received request from back: binary, %d bytes]\n",nRead);
+               printf("[%sreceived request from back: binary, %d bytes]\n", szCTimePre, nRead);
             } else {
-               printf("[received request from back with %d bytes:]\n",nRead);
+               printf("[%sreceived request from back with %d bytes:]\n", szCTimePre, nRead);
                execHexdump(0, abBuf, cs.maxdump?mymin(cs.maxdump,nRead):nRead);
+               if (nGlblHexDumpForm == 4 & strEndsWith((char*)abBuf, '\n') == 0)
+                  printf("\n"); // sfk1990
             }
             nLastTime = getCurrentTime();
             // forward to front
@@ -34778,17 +34631,18 @@ int tcpAnyServ(uint nPort, char *pszForward, int nForward)
                   // pure form: dump start of binary, but not all
                   int nHexLimit = 1000;
                   if (nRead > nHexLimit) {
-                     printf("[received reply from front with binary, %d bytes. dumping first %d:]\n", nRead, nHexLimit);
+                     printf("[%sreceived reply from front with binary, %d bytes. dumping first %d:]\n",
+                        szCTimePre, nRead, nHexLimit);
                      int nCurForm = nGlblHexDumpForm;
                      nGlblHexDumpForm = 0;
                      execHexdump(0, abBuf, cs.maxdump?mymin(cs.maxdump,nHexLimit):nHexLimit);
                      nGlblHexDumpForm = nCurForm;
                   } else {
-                     printf("[received reply from front with binary, %d bytes:]\n", nRead);
+                     printf("[%sreceived reply from front with binary, %d bytes:]\n", szCTimePre, nRead);
                      execHexdump(0, abBuf, cs.maxdump?mymin(cs.maxdump,nRead):nRead);
                   }
                } else {
-                  printf("[received reply from front:]\n");
+                  printf("[%sreceived reply from front:]\n", szCTimePre);
                   execHexdump(0, abBuf, cs.maxdump?mymin(cs.maxdump,nRead):nRead);
                }
                nLastTime = getCurrentTime();
@@ -35477,6 +35331,14 @@ int httpServ(uint nPort, uint nPort2, bool bDeep, bool bNoList, bool bRW, bool b
          char *pansi = utfToAnsi(szFile);
          strcopy(szFile, pansi);
 
+         if (cs.pfixwebreply)
+         {
+            int ipart = send(hBack, cs.pfixwebreply, strlen(cs.pfixwebreply), 0);
+            // must wait now! immediate socket close will send only first part
+            doSleep(10);
+            break;
+         }
+
          // sfk198 folders select
          if (cs.withdirs)
          {
@@ -36094,8 +35956,10 @@ int httpServ(uint nPort, uint nPort2, bool bDeep, bool bNoList, bool bRW, bool b
                pctype = "text/html";
          }
          // sfk1973 more extended mime types
-         cchar *pctype2 = getMimeExt(szFile);
-         if (pctype2) pctype = pctype2;
+         if (!cs.rawctype) { // sfk199 optional
+            cchar *pctype2 = getMimeExt(szFile);
+            if (pctype2) pctype = pctype2;
+         }
 
          if (!bRaw)
          {
@@ -37416,7 +37280,13 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
             }
             // send file
             strcpy(szLineBuf2, szLineBuf);
-            if (!mapPath(szLineBuf2+5)) {
+            if (!mapPath(szLineBuf2+5))
+            {
+               if (getFileSize(sysPath()) < 0) { // sfk199 fix.1
+                  reply("550 File not found");
+                  closesocket(hClData); hClData = INVALID_SOCKET;
+                  continue; // sfk199 fix.2 and NO further reply.
+               }
                reply("150 Sending File");
                if (cs.quiet < 2)
                   printf("send file: \"%s\"\n", absPath());
@@ -37892,110 +37762,6 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
 }
 
 #endif // WITH_TCP
-
-#ifndef USE_SFK_BASE
-
-class TestDB
-{
-public:
-   TestDB   (char *pszFile);
-  ~TestDB   ( );
-   int     load     (bool bSilent);
-   int     write    ( );
-   void     shutdown ( );
-
-   int     update   (char *pszInKey, char *pszInVal);
-   char    *getValue (char *pszInKey);
-
-private:
-   char  *pszClFile;
-   StringTable clKeys;
-   StringTable clVals;
-};
-
-TestDB::TestDB(char *pszFile)
-{
-   pszClFile = strdup(pszFile);
-}
-
-TestDB::~TestDB() { shutdown(); }
-
-void TestDB::shutdown() {
-   if (pszClFile) { delete [] pszClFile; pszClFile = 0; }
-}
-
-// uses szLineBuf
-int TestDB::load(bool bSilent) {
-   FILE *fin = fopen(pszClFile, "r");
-   if (!fin) {
-      if (!bSilent)
-         perr("unable to load %s\n", pszClFile);
-      return 9;
-   }
-   int nLine = 0;
-   while (fgets(szLineBuf, sizeof(szLineBuf)-10, fin)) {
-      nLine++;
-      removeCRLF(szLineBuf);
-      char *psz = strchr(szLineBuf, ':');
-      if (!psz) {
-         perr("wrong record format in %s line %d\n", pszClFile, nLine);
-         fclose(fin);
-         return 9;
-      }
-      *psz = '\0';
-      char *pszVal = psz+1;
-      char *pszKey = szLineBuf;
-      clKeys.addEntry(pszKey);
-      clVals.addEntry(pszVal);
-   }
-   fclose(fin);
-   return 0;
-}
-
-int TestDB::write() {
-   FILE *fout = fopen(pszClFile, "w");
-   if (!fout) return 9+perr("unable to write %s\n", pszClFile);
-   int nRec = clKeys.numberOfEntries();
-   for (int i=0; i<nRec; i++) {
-      char *pszKey = clKeys.getEntry(i, __LINE__);
-      char *pszVal = clVals.getEntry(i, __LINE__);
-      if (!pszKey || !pszVal) { fclose(fout); return 9; }
-      fprintf(fout, "%s:%s\n", pszKey, pszVal);
-   }
-   fclose(fout);
-   return 0;
-}
-
-int TestDB::update(char *pszInKey, char *pszInVal) {
-   int nRec = clKeys.numberOfEntries();
-   for (int i=0; i<nRec; i++) {
-      char *pszKey = clKeys.getEntry(i, __LINE__);
-      char *pszVal = clVals.getEntry(i, __LINE__);
-      if (!pszKey || !pszVal) return 9;
-      if (!strcmp(pszKey, pszInKey)) {
-         clVals.setEntry(i, pszInVal);
-         return 0;
-      }
-   }
-   // not yet contained:
-   clKeys.addEntry(pszInKey);
-   clVals.addEntry(pszInVal);
-   return 0;
-}
-
-char *TestDB::getValue(char *pszInKey) {
-   int nRec = clKeys.numberOfEntries();
-   for (int i=0; i<nRec; i++) {
-      char *pszKey = clKeys.getEntry(i, __LINE__);
-      char *pszVal = clVals.getEntry(i, __LINE__);
-      if (!pszKey || !pszVal) return 0;
-      if (!strcmp(pszKey, pszInKey))
-         return pszVal;
-   }
-   return 0;
-}
-
-#endif // USE_SFK_BASE
 
 #ifndef USE_SFK_BASE
 extern int patchMain(int argc, char *argv[], int noffs);
@@ -40678,6 +40444,9 @@ int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *p
    bool  bReWrite   = gfilter.bReWrite;
    bool  bFilenames = gfilter.bFilenames;
 
+   // filter of multiple files: reset context per file.
+   gfiltPreContext.reset(); // sfk1990 fix: missing
+
    #ifdef SFKOFFICE
    // sfk194 office safety: RE-write forbidden
    if (bReWrite && !pszOutFile && pcoi)
@@ -42333,194 +42102,6 @@ int groupChainText(char *pcmd, bool brev, bool bcnt, int ndig,
    return 0;
 }
 
-#ifdef VFILENET
-int execWGet(Coi *psrc, char *pDstDir, uint nmode)
-{__
-   int lRC = 0;
-
-   num nstart = getCurrentTime();
-
-   char *pSrcName = psrc->name();
-
-   bool bpath2path = (nmode &  2) ? 1 : 0;
-   bool b1outfile  = (nmode &  8) ? 1 : 0;
-   bool bdump      = (nmode & 32) ? 1 : 0;
-   bool bnodump    = (nmode & 64) ? 1 : 0;
- 
-   // default on single output file
-   char *pDstName = pDstDir;
-
-   int nMaxDst= 500;
-   char szDstBuf[500+10]; mclear(szDstBuf);
-
-   if (!b1outfile && pDstDir)
-   {
-      mystrcopy(szDstBuf, pDstDir, nMaxDst);
-      strcat(szDstBuf, glblPathStr);
-   }
-
-   int isubrc = psrc->open("rb");
-
-   if (isubrc)
-      return 9+pferr(psrc->name(), "cannot read: %s%s\n", psrc->name(),psrc->lasterr());
-
-   num nSize = psrc->nClSize; // if any
-
-   char *pctype = psrc->header("content-type");
-
-   // if content is not in memory yet, try to collect,
-   // up to a limit of 200 MB
-   num    nalloc = 0;
-   uchar *pdata  = 0;
-   num    nused  = 0;
-   bool   btomem = psrc->data().src.data ? 0 : 1;
-
-   // make sure to use the redirected source name
-   pSrcName = psrc->name();
-
-   bool bSetDefault = 0;
-
-   if (b1outfile)
-   {
-      if (cs.verbose)
-         printf("write to single output file: %s\n", pDstName);
-   }
-   else
-   {
-      // create target filename without output dir
-
-      char *pcat = szDstBuf + strlen(szDstBuf);
-      int  nrem = nMaxDst  - strlen(szDstBuf);
- 
-      if (!flatURLName(pSrcName, pctype, pcat, nrem, nmode, bSetDefault))
-         return 9+perr("wrong URL format: %s\n", pSrcName);
-
-      pDstName = szDstBuf;
-
-      if (cs.verbose)
-         printf("write to joined output path: %s\n", pDstName);
-   }
-
-   if (bSetDefault && !nmode)
-      return 9+perr("need -path2name or -fullpath on URLs like : %s\n", pSrcName);
-
-   if (bpath2path)
-      if (createOutDirTree(pDstName))
-         return 9;
-
-   Coi *pdst = 0;
-
-   if (!bdump) {
-      pdst = new Coi(pDstName, 0);
-      if (!pdst) return 9+perr("out of memory");
-   }
-   CoiAutoDelete odel2(pdst, 0); // no decref
-
-   num nread    = 0;
-   num nWritten = 0;
-
-   if (chain.coldata && !chain.colbinary)
-      chain.addStreamAsLines(1,0,0);
-
-   if (pdst && pdst->open("wb"))
-      perr("cannot write: %s%s\n", pdst->name(),pdst->lasterr());
-   else
-   {
-      if (pdst) info.setAction("write", pdst->name(), "");
-
-      while ((nread = psrc->read(abBuf, sizeof(abBuf)-1000)) > 0)
-      {
-         if (bdump) {
-            if (!bnodump) {
-               if (chain.coldata) {
-                  if (chain.colbinary) {
-                     if (chain.addBinary(abBuf, nread))
-                        { lRC=9; break; }
-                  } else {
-                     chain.addStreamAsLines(2, (char*)abBuf, nread);
-                  }
-               } else {
-                  if (myfwrite(abBuf, nread, stdout))
-                     { lRC=9; break; }
-               }
-            }
-         }
-         else
-         if (pdst && pdst->write(abBuf, nread) != nread) {
-            perr("cannot fully write %s, probably disk full.\n", pdst->name());
-            break;
-         }
-
-         if (btomem)
-         {
-            num nrem = nalloc - nused;
-            if (nrem < nread + 1000)
-            {
-               // expand buffer
-               if (!nalloc) nalloc = 10000; // initial
-
-               num nalloc2 = nalloc * 2 + nread;
-
-               if (nalloc2 >= 100 * 1000000) {
-                  pinf("download will not be cached (too large).\n");
-                  btomem = 0;
-                  delete [] pdata;
-                  pdata  = 0;
-                  nalloc = 0;
-               } else {
-                  uchar *ptmp = new uchar[nalloc2+100];
-                  memcpy(ptmp, pdata, nused);
-                  // swap old and new
-                  delete [] pdata;
-                  pdata  = ptmp;
-                  nalloc = nalloc2;
-                  nrem   = nalloc - nused;
-               }
-            }
-         }
-
-         if (btomem)
-         {
-            // add block to memory
-            if (nused+nread > nalloc)
-               { perr("int. #228290640"); btomem=0; break; }
-            memcpy(pdata+nused, abBuf, nread);
-            nused += nread;
-         }
-
-         nWritten += nread;
-         info.setProgress(nSize, nWritten, "bytes");
-      }
-   }
-
-   if (chain.coldata) chain.addStreamAsLines(3,0,0);
-
-   if (pdst) pdst->close();
-   psrc->close();
-
-   if (btomem && pdata && nused)
-      psrc->setContent(pdata, nused, psrc->nClMTime);
-
-   // NO cleanup of pdata, as it is cached!
-
-   int ielapsed = (int)(getCurrentTime() - nstart);
-
-   if (pdst != 0 && cs.quiet < 2)
-      info.print("done : %s (%s bytes, %d msec).\n", pdst->name(), numtoa(nWritten), ielapsed);
-   else
-      info.clear(); // fix sfk1814
-
-   if (pdst && chain.colfiles)
-   {
-      // use tmp coi to make sure it is copied
-      Coi ocoi(pdst->name(), 0);
-      chain.addFile(ocoi); // is copied
-   }
-
-   return lRC;
-}
-#endif // VFILENET
-
 void reduceToPath(char *psz)
 {
    int iLen = strlen(psz);
@@ -43667,6 +43248,10 @@ int main(int argc, char *argv[], char *penv[])
          // yet internal with SFK_CONFIG
          if (strBegins(pszCfg, "keepchain") || strstr(pszCfg, ",keepchain"))
             gs.keepchain = cs.keepchain = 1;
+         if (strBegins(pszCfg, "stoponempty") || strstr(pszCfg, ",stoponempty")) // sfk1990
+            gs.keepchain = cs.keepchain = 0;
+         if (strBegins(pszCfg, "strictif") || strstr(pszCfg, ",strictif"))
+            gs.strictif = cs.strictif = 1;
       }
    }
 
@@ -44462,6 +44047,8 @@ void printMainHelp(bool bhelp, char *penv[])
       "   sfk tcpdump    - print TCP conversation between programs\n"
       "   sfk udpdump    - print incoming UDP requests\n"
       "   sfk udpsend    - send UDP requests\n"
+      "   sfk webproxy   - http proxy for traffic analysis\n"
+      "   sfk help tcp   - tcp toolkit to write test scripts\n"
       "   sfk ip         - tell own machine's IP address(es).\n"
       "                    type \"sfk ip -help\" for help.\n"
       "   sfk netlog     - send text outputs to network,\n"
@@ -44540,7 +44127,7 @@ void printMainHelp(bool bhelp, char *penv[])
       "   sfk ruler      - measure console text width\n"
       "   sfk license    - print the SFK license text\n"
       "   sfk update     - check for SFK updates\n"
-      "   sfk data       - create random text and test data\n"
+   // "   sfk data       - create random text and test data\n"
       "\n"
       );
 
@@ -44606,7 +44193,7 @@ void printMainHelp(bool bhelp, char *penv[])
           "   $to search ALL help text for a topic:\n"
           "\n"
           "      type #\"sfk ask word1\"<def>    to search all for word1.\n"
-          "      type #\"sfk ask w1 w2\"<def>    to search all for w1 or w2.\n"
+          "      type #\"sfk ask w1 w2\"<def>    to search all for w1 and w2.\n"
           "      type #\"sfk dumphelp\"<def>     to print ALL help text.\n"
           "\n"
           );
@@ -44614,15 +44201,13 @@ void printMainHelp(bool bhelp, char *penv[])
    #ifndef SFKPRO
    #ifdef _WIN32
    printx("   +----------------------------------------------------------+\n"
-          "   |               $Useful? Buy a new coffee mug!<def>              |\n"
-          "   |                   stahlworks.com/merch                   |\n"
+          "   |        $Get these addons to boost your daily work:<def>        |\n"
           "   |----------------------------------------------------------|\n"
-          "   |       $Get these addons to boost your daily work:<def>         |\n"
-          "   |----------------------------------------------------------|\n"
+          "   |  #SFK Book   :<def> The full command reference in print.       |\n"
           "   |  #SFK E-Book :<def> A PDF optimized for your smart phone.      |\n"
           "   |  #SFK Plus   :<def> Fast (x)replace, HTTPS web access and      |\n"
           "   |               27 status lights in the system tray.       |\n"
-          "   |  #DView Pro  :<def> Search 10,000 text files per second.       |\n"
+          "   |  #DView Pro  :<def> Search 100,000 text files per second.      |\n"
           "   |               Fly over 100,000 files in one window.      |\n"
           "   |----------------------------------------------------------|\n"
           "   |             $Read more on www.stahlworks.com<def>              |\n"
@@ -44630,11 +44215,14 @@ void printMainHelp(bool bhelp, char *penv[])
           );
    #else
    printx("   +----------------------------------------------------------+\n"
-          "   |             $Useful? Buy a new coffee mug!<def>                |\n"
-          "   |                 stahlworks.com/merch                     |\n"
+          "   |        $Get these addons to boost your daily work:<def>        |\n"
           "   |----------------------------------------------------------|\n"
-          "   |    $Get the full command reference as a mobile e-book!<def>    |\n"
-          "   |                 stahlworks.com/book                      |\n"
+          "   |  #SFK Book    :<def> The full command reference in print.      |\n"
+          "   |  #SFK E-Book  :<def> A PDF optimized for your smart phone.     |\n"
+          "   |  #Depeche View:<def> Fastest text file search and editing.     |\n"
+          "   |                Try it with WINE on Linux/Mac!            |\n"
+          "   |----------------------------------------------------------|\n"
+          "   |             $Read more on www.stahlworks.com<def>              |\n"
           "   +----------------------------------------------------------+\n"
           );
    #endif
@@ -44701,9 +44289,24 @@ SFKMapArgs::SFKMapArgs(char *pszCmd, int argc, char *argv[], int iDir)
    // default: copy all args as they are
    memcpy(clargx, argv, argc * sizeof(char*));
 
+   // detect +if expr [+]begin - it requires to map until +endif
+   bool bLongIf = false;
+   if (iDir+2<argc
+       && (!strcmp(pszCmd,"if") 
+           || strBegins(pszCmd,"ifexist") || strBegins(pszCmd,"ifnotexist"))
+       && (!strcmp(argv[iDir+1],"begin") || !strcmp(argv[iDir+1],"+begin"))
+      )
+      bLongIf = true;
+
    // replace those containing "foo #(var) bar"
-   for (int i=iDir; i<argc && isChainStart(pszCmd,argv,argc,i,0)==0; i++)
+   for (int i=iDir; i<argc; i++)
    {
+      // [23562] but only before the next +cmd.
+      // do not replace all within +if begin ... +endif
+      // as we don't know content (changes) at block start.
+      if (isChainStart(pszCmd,argv,argc,i,0))
+         break;
+
       char *ptok = clargx[i];
 
       // sfk189: debug of variable expansion
@@ -44949,7 +44552,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    bool  bDone  = 0;
    int   lRC    = 0;
    bool  btest  = bGlblSyntaxTest;
-   bool  ifdone = 0;
 
    // help text collection support:
    bool  bhelp  = 0;
@@ -44968,6 +44570,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    // if the very first command starts with +
    if (*pszCmd == '+')
       pszCmd++; // then skip this char
+
+   // for +if ... endif tracking, yet inactive
+   int   iIfLevel = 0;
+   // right now this counter is unsafe.
+   // it will be corrupted by goto, loop,
+   // nesting of if[exist] begin, and maybe more.
 
    // for +loop: restart point
    char *pszCmdStart = pszCmd;
@@ -45011,11 +44619,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    cs.argv   = argv;
 
    if (bChainCycle && cs.tracechain) {
-      printf("[chain process index %d, \"%s\", cmd=%s, nparm=%d, \"%s\" uf=%d %d ud=%d %d cf %d cd %d]\n",
+      printf("[chain process index %d, \"%s\", cmd=%s, nparm=%d, \"%s\" use.file=%d/%d data=%d/%d bin=%d col.file=%d data=%d bin=%d]\n",
          iDir,argv[iDir-1],pszCmd,nparm,(iDir<argc)?argv[iDir]:"[eod]",
          chain.usefiles, chain.usefiles ? chain.numberOfInFiles() : 0,
-         chain.usedata , chain.usedata  ? chain.indata->numberOfEntries() : 0,
-         chain.colfiles, chain.coldata
+         chain.usedata , chain.usedata  ? chain.indata->numberOfEntries() : 0, chain.usebin(),
+         chain.colfiles, chain.coldata, chain.colbinary
          );
       if (cs.tracechain > 1)
          if (chain.usedata)
@@ -45696,1003 +45304,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (   !strcmp(pszCmd, "gindex")  || !strcmp(pszCmd, "gindex2") // +wref
-          || !strcmp(pszCmd, "lindex")  
-          || !strcmp(pszCmd, "index")  // sfk183
-         )
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk gindex[2] [opts] -dir rootDir [rootDir2] ...\n"
-             "<help>$sfk index [opts] -dir localDir ...\n"
-             "\n"
-             "   create index file(s) containing file names with time\n"
-             "   and size info, for later realtime filename lookup,\n"
-             "   or just to archive folder meta data.\n"
-             "\n"
-             "   $creating index files for use with sfk name<def>\n"
-             "\n"
-             "    to create a $local index of the current directory tree<def>, use\n"
-             "      #sfk index .\n"
-             "         which writes a local file $zz-index.txt<def>.\n"
-             #ifdef _WIN32
-             "         Under windows, no files are written to C:\\\n"
-             "         directly, but only to a folder C:\\zz-index\\\n"
-             "         to avoid storage in a special system folder\n"
-             "         C:\\Users\\name\\AppData\\Local\\VirtualStore\n"
-             #endif
-             "\n"
-             "    to create a $global index of the current machine<def>, use\n"
-             "      #sfk gindex -dir C:\\ D:\\\n"
-             "         which stores a base index file in your user folder:\n"
-             "         %s<sla>data<sla>zz-index.txt\n"
-             "\n"
-             "    to create an $extended global index<def> of network drives, use\n"
-             "      #sfk gindex2 -dir T:\\ P:\\ V:\\\n"
-             "         if drives T, P, V are network drives. this will write\n"
-             "         an extended index file in a user local folder:\n"
-             "         %s<sla>data<sla>zz-index-ext.txt\n"
-             , sfkhome.szClDir
-             , sfkhome.szClDir
-             );
-      printx("\n"
-             "    in other words:\n"
-             "\n"
-             "      $sfk index<def> writes an index locally onto the disk\n"
-             "         where you are standing, $visible for all users<def>.\n"
-             "         this is useful 1. under linux in the root dir \"/\"\n"
-             "         to make an index of all files available for all users\n"
-             "         2. on external media like USB hard drives, where an\n"
-             "         index in the drive root can be used on any machine.\n"
-             "\n"
-             "      $sfk gindex<def> is your $personal global index<def> of whatever\n"
-             "         disk contents are important for you, $not for use<def>\n"
-             "         $by other users<def>, and maintained only by yourself.\n"
-             );
-      printx("\n"
-             "   $creating special purpose meta data archives<def>\n"
-             "\n"
-             "    to create a $local index of a sub folder \"mydir\"<def>, use\n"
-             "      #sfk index mydir\n"
-             "         which writes a file $zz-index-mydir.txt<def>. this file\n"
-             "         can $NOT<def> be used with $sfk name<def>. it's just an archive\n"
-             "         of file meta informations for that sub folder.\n"
-             );
-      printx("\n"
-             "   $using indexes for fast name lookup\n"
-             "\n"
-             "       #sfk name word [word2] [word3] [...]\n"
-             "         will use local index files:\n"
-             "            - in the current folder\n"
-             "            - in the parent folder\n"
-             "            - and so on, until the root folder \"<sla>\"\n"
-             "            - and also the global Base Index file\n"
-             "         and then lists all file names from those indexes\n"
-             "         having the given words in their name or path.\n"
-             "\n"
-             "       #sfk name2 word [word2] [word3] [...]\n"
-             "         does the same as name, but also includes\n"
-             "         the global Extended Index file.\n"
-             "\n"
-             "   $sfk index options\n"
-             "      -tofile f  write output into a file f instead of the\n"
-             "                 default index file. can be used then with\n"
-             "                 \"sfk name -from f ...\"\n"
-             #if (!defined(_WIN32) && !defined(SFK_LIB5))
-             "      -follow    follows symbolic directory links. this is\n"
-             "                 no default as it may cause endless recursion.\n"
-             #endif
-             #ifdef _WIN32
-             "      -hidden    list also hidden or system files\n"
-             #endif
-             #ifndef _WIN32
-             "      -verbose   show names of skipped non-regular files\n"
-             "      -showskip  tell whenever dir contents are skipped to avoid\n"
-             "                 double processing caused by symbolic links.\n"
-             "      -allowdups disable detection of duplicate dir contents.\n"
-             #endif
-             "      -arc       include contents of .zip .jar .ear etc. archives\n"
-             "\n");
-      printx("   $aliases\n"
-             "      #sfk lindex<def>       same as #sfk index<def>\n"
-             "      #sfk iname<def>        same as #sfk name<def>\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk name<def>         lookup files in local and Base Indexes\n"
-             "      #sfk name2<def>        lookup in local, Base and Extended Index\n"
-             "      #sfk help select<def>  the sfk file selection syntax.\n"
-             "      #sfk help opt<def>     for further general options.\n"
-             "      #sfk dir<def>          list contents of a directory.\n"
-             "      #sfk home<def>         tell sfk home folder location\n"
-             "\n");
-      webref("index");
-      printx("   $examples\n"
-             #ifdef _WIN32
-             "      #sfk gindex C:\\\n"
-             "          create a global Base Index containing all file names\n"
-             "          from drive C: using a short syntax.\n"
-             "      #sfk gindex C:\\ <not>.tmp <not>.bak\n"
-             "          the same, but excluding all .tmp and .bak files.\n"
-             "          to include another drive letter in the index,\n"
-             "          the long syntax must be used:\n"
-             "      #sfk gindex -dir C:\\ D:\\ -subdir !tmp -file !.bak\n"
-             "          create Base Index of C: and D: without any sub\n"
-             "          dirs having tmp in their name, and w/o .bak files.\n"
-             "      #sfk gindex2 -dir P:\\ W:\\\n"
-             "          if P: and W: are network drives, this creates\n"
-             "          an Extended Index file with their contents.\n"
-             "      #sfk index .\n"
-             "          if standing in the root dir of a drive like D:\\\n"
-             "          this will write a local index file for that drive\n"
-             "          which can later be used by typing $sfk name<def>\n"
-             "          from within in any folder on that drive.\n"
-             #else
-             "      #sfk gindex /\n"
-             "          create a base index containing all file names\n"
-             "          from the machine.\n"
-             "      #sfk gindex -dir / -subdir :tmp -file :.bak\n"
-             "          create an index of / without any sub dirs\n"
-             "          having tmp in their name, and without .bak files.\n"
-             "      #sfk index .\n"
-             "          if standing in the root dir of an embedded linux\n"
-             "          device, create an index over all files.\n"
-             "          this is not suitable for linux servers\n"
-             "          as the index may become far too large.\n"
-             "      #sfk index -dir . -subdir :/backup :/.\n"
-             "          if standing in the root dir of a desktop linux\n"
-             "          create an index over all files, excluding\n"
-             "          folders starting with 'backup', and excluding\n"
-             "          all hidden subfolders like .svn\n"
-             #endif
-             );
-      ehelp;
-
-      sfkarg;
-
-      cs.travelzips = 0;
-      nGlblListMode = 2;
-      cs.listByTime = 0;
-      cs.listBySize = 0;
-      cs.listByName = 0;
-      cs.listForm   = 0;
-      cs.listTabs   = 1;
-      nGlblListDigits = 1;
-      bool bGlobal  = (pszCmd[0] == 'g') ? 1 : 0;
-
-      // fix: 174: force absolute paths with gindex
-      cs.forceabsname = bGlobal;
-
-      glblFileSet.reset();
-
-      bool bExt = !strcmp(pszCmd, "gindex2") ? 1 : 0;
-      bool bTime=1, bSize=0, bPure=0;
-      char *toFileName = 0;
-
-      // at least list time and size
-      cs.listForm = ((cs.listForm << 8) | 0x02);
-      cs.listForm = ((cs.listForm << 8) | 0x01);
-
-      // don't follow symlinks
-      cs.skipLinks = 1;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         if (!strcmp(pszArg, "-ext")) {
-            bExt = 1;
-            continue;
-         }
-         else
-         if (!strcmp(argx[iDir], "-abs") || !strcmp(argx[iDir], "-absolute")) {
-            cs.forceabsname = 1;
-            continue;
-         }
-         else if (!strcmp(pszArg, "-follow")) {
-            cs.skipLinks = 0;
-            continue;
-         }
-         else
-         if (!strncmp(argx[iDir], "-size=", strlen("-size="))) {
-            char *psz1 = argx[iDir] + strlen("-size=");
-            nGlblListDigits = atol(psz1);
-            continue;
-         }
-         else
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         break; // assume dir name
-      }
-
-      int iDirNext = 0;
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iDirNext))) return lRC;
-      if (btest) return 0;
-
-      int bcoldata = chain.coldata;
-      chain.coldata = 0;
-
-      char szRelName[SFK_MAX_PATH+10];
-      char szPathBuf1[SFK_MAX_PATH+10];
-      char szPathBuf2[SFK_MAX_PATH+10];
-      char *toMakeDir = 0;
-
-      if (bGlobal) {
-         sprintf(szRelName, "data%czz-index%s.txt", glblPathChar, bExt ? "-ext" : "");
-         toFileName = sfkhome.makePath(szRelName);
-      }
-      else if (cs.tomaskfile) {
-         toFileName = cs.tomask;
-      }
-      else {
-         if (!glblFileSet.hasRoot(0))
-            return 9+perr("missing -dir parameter");
-         char *pszFirstRoot = glblFileSet.setCurrentRoot(0);
-         if (   !strcmp(pszFirstRoot, glblPathStr)
-             || !strcmp(pszFirstRoot, ".")
-            )
-         {
-            toFileName = str("zz-index.txt");
-         }
-         else {
-            if (strchr(pszFirstRoot, glblPathChar)) {
-               perr("cannot lindex nested directory names.", glblPathChar);
-               pinf("use only plain dir names of the current folder.\n");
-               return 9;
-            }
-            snprintf(szRelName, sizeof(szRelName)-10,
-               "zz-index-%s.txt", pszFirstRoot);
-               toFileName = szRelName;
-         }
-         #ifdef _WIN32
-         if (!getcwd(szPathBuf1,sizeof(szPathBuf1)-10))
-            return 9+perr("cannot get work dir.");
-         if (!mystricmp(szPathBuf1, "C:\\")
-             && strBegins(toFileName, "zz-index"))
-         {
-            snprintf(szPathBuf2,SFK_MAX_PATH, "C:\\zz-index\\%s", toFileName); // sfk1932 index
-            toFileName = szPathBuf2;
-            toMakeDir  = str("C:\\zz-index");
-         }
-         #endif
-      }
-
-      if (!toFileName)
-         return 9;
-
-      if (!cs.quiet && !cs.tomaskfile)
-         printx("$making<def> %s\n", toFileName);
-
-      #ifdef _WIN32
-      if (toMakeDir)
-         if (createOutDirTree(toMakeDir,0,1))
-            return 9+perr("cannot create target folder: %s", toMakeDir);
-      #endif
-
-      if (!(cs.outfile = fopen(toFileName, "w")))
-         return 9+perr("cannot open index file for writing: %s", toFileName);
-
-      fprintf(cs.outfile, "date\ttime\tsize\tname\tsfk-index-v100\n");
-
-      lRC = walkAllTrees(eFunc_FileStat, lFiles, lDirs, nBytes);
-
-      if (cs.outfile) { fclose(cs.outfile); cs.outfile = 0; }
-
-      info.clear();
-
-      if (!cs.quiet)
-      {
-         printf("%d files indexed",cs.files);
-
-         if (cs.numHiddenFiles) {
-            printf(", ");
-            setTextColor(nGlblWarnColor, 1);
-            printf("including %d hidden files.\n", cs.numHiddenFiles);
-            setTextColor(-1);
-         }
-         else
-         if (cs.numHiddenFilesSkipped || cs.numHiddenDirsSkipped) {
-            printf(".\n");
-            setTextColor(nGlblWarnColor, 1);
-            printf("skipped %d hidden files, %d hidden dirs.\n", cs.numHiddenFilesSkipped, cs.numHiddenDirsSkipped);
-            setTextColor(-1);
-         }
-         else {
-            printf(".\n");
-         }
-
-         if (cs.noFiles)
-            printf("%u non-regular files skipped. (add -verbose to show)\n", cs.noFiles);
-      }
-
-      if (iDirNext) { // sfk1933 chain support
-         if (bcoldata) {
-            chain.coldata = bcoldata;
-            chain.addLine(toFileName, str(""));
-         }
-         STEP_CHAIN(iDirNext, 1);
-      }
-
-      bDone = 1;
-   }
-
-   regtest("md5gento x.dat xdir");
-   regtest("md5gento=x.dat -quiet xdir");
-   regtest("md5gento x.dat -rel -dir xdir");
-   regtest("list xdir +md5gento xfile.md5");
-
-   ifcmd (!strncmp(pszCmd, "md5gento", 8)
-          || !strncmp(pszCmd, "crcgento", 8)) // +wref
-   {
-      bool bcrc = strBegins(pszCmd, "crc");
-      bool bmd5 = strBegins(pszCmd, "md5");
-
-      ifhelp (!chain.usefiles
-              && (!strcmp(pszCmd, "md5gento") || !strcmp(pszCmd, "crcgento"))
-              && (nparm < 2))
-      #ifdef SFKPACK
-      if (bhelp || bcrc)
-      {
-      printx("<help>$sfk crcgento[=]outputfile [-rel[names]]]] dirname [-quiet]\n"
-             "\n"
-             "   create list of crc32 checksums over all selected files.\n"
-             "\n"
-             "   $options\n"
-             "      -rel     create a list with relative filenames, i.e. strip\n"
-             "               the supplied dirname from the beginning of each name.\n"
-             "      -quiet   do not print progress output while reading files.\n"
-             "      -tab     create tab separated columns instead of \" *\" format.\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk crccheck<def>  to verify crc lists.\n"
-             "      #sfk crc<def>       create crc of a single file.\n"
-             "\n"
-             "   $examples\n"
-             "      #sfk crcgento mydir.crc mydir\n"
-             "         create checksum of all files in folder mydir and all\n"
-             "         sub folders and store them in mydir.crc.\n"
-             "\n"
-             "      #sfk select -dir prod -file !.tmp +crcgento=checksums.crc\n"
-             "         first select all files from prod, excluding .tmp files,\n"
-             "         then create an crc list to checksums.crc\n"
-            );
-      }
-      #endif // SFKPACK
-      if (bhelp || bmd5)
-      {
-      printx("<help>$sfk md5gento[=]outputfile [-rel[names]]]] dirname [-quiet]\n"
-             "\n"
-             "   create list of md5 checksums over all selected files.\n"
-             "\n"
-             "   $options\n"
-             "      -rel     create a list with relative filenames, i.e. strip\n"
-             "               the supplied dirname from the beginning of each name.\n"
-             "      -quiet   do not print progress output while reading files.\n"
-             "      -tab     create tab separated columns instead of \" *\" format.\n"
-             #if defined(SFKPRO)
-             "      -arc     create checksums of .zip, .tar.gz and .tar.bz2\n"
-             "               file contents, including nested archives.\n"
-             "      -qarc    create checksums of top level archive contents.\n"
-             #else
-             "      -(q)arc  XE: create checksums of .zip, .tar.gz and .tar.bz2\n"
-             "               file contents, including nested archives.\n"
-             "               no demo is available in sfk base, but you may use\n"
-             "               sfk xfind -arc ... to test general archive reading.\n"
-             #endif
-             "\n");
-      printx("   $see also\n"
-             "      #sfk md5check<def>  to verify md5 lists.\n"
-             "      #sfk md5<def>       create md5 of a single file.\n"
-             "      #sfk crcgento<def>  create crc lists of files.\n"
-             "\n");
-      webref("md5list");
-      printx("   $examples\n"
-             "      #sfk md5gento mydir.md5 mydir\n"
-             "         create checksum of all files in folder mydir and all\n"
-             "         sub folders and store them in mydir.md5.\n"
-             "\n"
-             "      #sfk select -dir prod -file !.tmp +md5gento=checksums.md5\n"
-             "         first select all files from prod, excluding .tmp files,\n"
-             "         then create an md5 list to checksums.md5\n"
-            );
-      }
-      ehelp;
-
-      sfkarg;
-
-      if (strBegins(pszCmd, "crc")) {
-         #ifndef SFKPACK
-         return 9+perr("this binary supports no crc functions.\n");
-         #else
-         cs.crcmd5=1;
-         #endif
-      }
-
-      pszGlblOutFile = 0;
-
-      if (!strncmp(pszCmd, "md5gento=", 9)
-          || !strncmp(pszCmd, "crcgento=", 9))
-         pszGlblOutFile = pszCmd+9;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         if (!strncmp(pszArg, "-rel", 4)) {
-            bGlblMD5RelNames = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-tab")) {
-            cs.tabform = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-crc")) // internal
-            { cs.crcmd5=1; continue; }
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // non option parms
-         if (!pszGlblOutFile) {
-            pszGlblOutFile = pszArg;
-            continue;
-         }
-         // fall through to short dir format
-         break;
-      }
-
-      if (!pszGlblOutFile)
-         return 9+perr("missing output filename\n");
-
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iChainNext))) return lRC;
-      if (btest) return 0;
-
-      #ifndef SFKPRO
-      // must block this to avoid checksums over truncated demo extracts
-      if (cs.travelzips)
-         return 9+perr("%s with -(q)arc requires SFK XE.",pszCmd);
-      #endif
-
-      fGlblOut = fopen(pszGlblOutFile, "w");
-      if (!fGlblOut) return 9+perr("cannot write %s\n", pszGlblOutFile);
-
-      lRC = walkAllTrees(eFunc_MD5Write, lFiles, lDirs, nBytes);
-
-      fclose(fGlblOut);
-
-      if (cs.quiet < 2)
-         info.print("%u files hashed into %s. %u kb/sec\n", glblFileCount.value(), pszGlblOutFile, currentKBPerSec());
-
-      pszGlblOutFile = 0; // fix sfk198 missing
-
-      STEP_CHAIN(iChainNext, 0);
-
-      bDone = 1;
-   }
-
-   regtest("md5check x.dat");
-   regtest("md5check=x.dat -quiet -skip=2");
-   regtest("md5check x.dat -rel xdir -skip 10");
-
-   ifcmd (!strncmp(pszCmd, "md5check", 8)
-          || !strncmp(pszCmd, "crccheck", 8)) // +wref
-   {
-      bool bcrc = strBegins(pszCmd, "crc");
-      bool bmd5 = strBegins(pszCmd, "md5");
-
-      ifhelp (!chain.usefiles
-              && (!strcmp(pszCmd, "md5check") || !strcmp(pszCmd, "crccheck"))
-              && (nparm < 1))
-      if (bhelp || bcrc)
-      printx("<help>$sfk crccheck[=]inputfile [-rel[ativeto]] dirname] [-quiet]\n"
-             "\n"
-             "   verify a list of crc checksums.\n"
-             "\n");
-      if (bhelp || bmd5)
-      printx("<help>$sfk md5check[=]inputfile [-rel[ativeto]] dirname] [-quiet]\n"
-             "\n"
-             "   verify a list of md5 checksums.\n"
-             "\n");
-      printx("   $options\n"
-             "      -sane    look at the modification date and time of the crc\n"
-             "               list file and of every target file. ignore files\n"
-             "               which are newer than the list. can be used to\n"
-             "               check hard disk files for unexpected changes.\n"
-             "               -sane -quiet does not list the newer files.\n"
-             "      -rel     if dirname is supplied, treat filenames from list\n"
-             "               as being relative to dirname. in this case, run the\n"
-             "               command from dirname's parent directory.\n"
-             "      -quiet   do not print progress output while checking files,\n"
-             "               and do not list kb/sec speed stats.\n"
-             "      -skip=n  do not check all files, perform just spot checking\n"
-             "               by skipping n files after every checked file.\n"
-             "\n"
-             "   $return codes for batch files\n"
-             "      0   normal execution, all checksums matched.\n"
-             "      1   normal execution, checksum(s) mismatched.\n"
-             "      2   some files were missing, all other checksums matched.\n"
-             "      3   some files were missing, and some checksums mismatched.\n"
-             "    >=9   severe error occurred, e.g. wrong checksum file format.\n"
-             "\n");
-      if (bhelp || bcrc)
-      printx("   $examples\n"
-             "      #sfk crccheck mydir.crc\n"
-             "         check if files listed in mydir.crc still have\n"
-             "         the same checksums.\n"
-             );
-      if (bhelp || bmd5)
-      {
-      printx("   $no archive file support.\n"
-             "      even with sfk xe, md5check does NOT support reading\n"
-             "      and verification of .zip, .tar.gz etc. archive contents.\n"
-             "      instead (with xe) create another md5 list by md5gento\n"
-             "      and then compare two list files by a text diff tool.\n"
-             "\n");
-      printx("   $see also\n"
-             "      #sfk md5gento<def>  to create md5 lists.\n"
-             "      #sfk md5<def>       create md5 of a single file.\n"
-             "      #sfk crccheck<def>  verify crc lists.\n"
-             "\n");
-      webref("md5list");
-      printx("   $examples\n"
-             "      #sfk md5check mydir.md5\n"
-             "         check if files listed in mydir.md5 still have\n"
-             "         the same checksums.\n"
-             #ifdef _WIN32
-             "\n"
-             "      #@rem windows batchfile example\n"
-             "         @echo off\n"
-             "         sfk md5check mysums.txt -quiet >nul 2>nul\n"
-             "         IF ERRORLEVEL 1 GOTO mdfailed\n"
-             "         sfk echo \"[[green]]all ok[[def]]\"\n"
-             "         GOTO mddone\n"
-             "         :mdfailed\n"
-             "         sfk echo \"[[red]]verification failed[[def]]\"\n"
-             "         :mddone\n"
-             #endif
-            );
-      }
-      ehelp;
-
-      sfkarg;
-
-      if (strBegins(pszCmd, "crc")) {
-         #ifndef SFKPACK
-         return 9+perr("this binary supports no crc functions.\n");
-         #else
-         cs.crcmd5=1;
-         #endif
-      }
-
-      char *pszInFile = 0;
-      char *pszRefDir = 0;
-
-      // handle md5check=infile or crccheck=infile
-      char *pszEqFile = strchr(pszCmd, '=');
-      if (pszEqFile)
-            pszInFile = pszEqFile+1;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-rel", &pszParm)) {
-            if (!pszParm) return 9;
-            pszRefDir = pszParm;
-            continue;
-         }
-         if (haveParmOption(argx, argc, iDir, "-skip", &pszParm)) {
-            if (!pszParm) return 9;
-            nGlblMD5Skip = atol(pszParm);
-            continue;
-         }
-         if (!strcmp(pszArg, "-crc"))  // internal
-            { cs.crcmd5=1; continue; }
-         if (!strcmp(pszArg, "-sane")) // sfk1953 internal
-            { cs.sanecheck=1; continue; }
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // non-option parameter:
-         if (!pszInFile) {
-            pszInFile = pszArg;
-            continue;
-         }
-         return 9+pbad(pszCmd, argx[iDir]);
-      }
-
-      if (!pszInFile)
-         return 9+perr("missing input filename\n");
-
-      if (btest) return 0;
-
-      #ifdef SFKINT
-      // bad performance, not official
-      if (cs.travelzips)
-         cs.precachezip = 1;
-      #else
-      // base: must block this to avoid checksums over truncated demo extracts.
-      // xe: unusable performance.
-      if (cs.travelzips)
-      {
-         perr("%s with -(q)arc is not supported.",pszCmd);
-         if (strBegins(pszCmd, "md5"))
-            pinf("create another md5 file by md5gento, then compare the list text.\n");
-         return 9;
-      }
-      #endif
-
-      cs.sanetime = getFileTime(pszInFile);
-
-      char *pInFile = loadFile(pszInFile);
-      if (!pInFile) return 9;
-
-      lRC = execMD5check(pInFile, pszRefDir);
-
-      delete [] pInFile;
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
-   }
-
-   regtest("md5 xfile1");
-   regtest("md5 -quiet -verify bfb9acc99d1811730687f49a09318e8f xfile1");
-
-   ifcmd (!strcmp(pszCmd, "md5") || !strcmp(pszCmd, "crc")) // +wref
-   {
-      bool bcrc = strBegins(pszCmd, "crc");
-      bool bmd5 = strBegins(pszCmd, "md5");
-
-      ifhelp (chain.usefiles == 0 && nparm < 1)
-      #ifdef SFKPACK
-      if (bhelp || bcrc)
-      {
-      printx("<help>$sfk crc [opts] file1 [file2 file3 ...]\n"
-             "\n"
-             "   calculate crc32 hash of one or more files, and optionally compare the results.\n"
-             "   if crc sums are compared, a message is shown, and the shell return code\n"
-             "   is set to 0 (all equal), or 1 (not equal), or >1 (any other error).\n"
-             "   sfk creates the same crc32 as used in zip files.\n"
-             "\n"
-             "   $the same checksum may occur twice for different files.\n"
-             "      an indentical checksum is an indicator, but not a proof, that two files\n"
-             "      have exactly the same content. depending how important this is the\n"
-             "      crc matches may be used only as a first quick step, and then be followed\n"
-             "      by sfk md5 for a deeper comparison.\n"
-             "\n"
-             "   $options\n"
-             "      -nonames   do not echo filename(s), show only the crc sum.\n"
-             "                 default if a single filename is given.\n"
-             "      -name      print filename even with just a single name.\n"
-             "      -verify    or -ver, or -v verifies the given filename(s) against\n"
-             "                 the given checksum.\n"
-             "      -nocomp    if multiple filenames are given, do not compare.\n"
-             "\n");
-      printx("   $examples\n"
-             "      #sfk crc test01.dat\n"
-             "         tell crc sum of test01.dat\n"
-             "\n"
-             "      #sfk crc test01.dat test02.dat\n"
-             "         compare both files if the content checksum is identical.\n"
-             "\n"
-             "      #sfk -var crc in.txt +setvar sum +tell \"the crc is: ##(sum)\"\n"
-             "         place checksum in a variable, then print a text\n"
-             "\n");
-      }
-      #endif // SFKPACK
-      if (bhelp || bmd5)
-      {
-      printx("<help>$sfk md5 [opts] file1 [file2 file3 ...]\n"
-             "\n"
-             "   calculate md5 hash of one or more files, and optionally compare the results.\n"
-             "   if md5 sums are compared, a message is shown, and the shell return code\n"
-             "   is set to 0 (all equal), or 1 (not equal), or >1 (any other error).\n"
-             "\n"
-             "   $options\n"
-             "      -nonames   do not echo filename(s), show only the md5 sum.\n"
-             "                 default if a single filename is given.\n"
-             "      -name      print filename even with just a single name.\n"
-             "      -verify    or -ver, or -v verifies the given filename(s) against\n"
-             "                 the given checksum.\n"
-             "      -nocomp    if multiple filenames are given, do not compare.\n"
-             "\n");
-      printx("   $see also\n"
-             "      #sfk md5var<def>    create md5 from variable content.\n"
-             "      #sfk md5gento<def>  to create md5 lists.\n"
-             "      #sfk md5<def>       create md5 of a single file.\n"
-             "      #sfk crc<def>       create crc32 checksum of a file.\n"
-             "\n");
-      webref("md5list");
-      printx("   $examples\n"
-             "      #sfk md5 test01.dat\n"
-             "         tell md5 sum of test01.dat\n"
-             "\n"
-             "      #sfk md5 test01.dat test02.dat\n"
-             "         compare both files, if content is the same.\n"
-             "\n"
-             "      #sfk select mydir .exe +md5\n"
-             "         create md5 of all .exe in mydir to terminal,\n"
-             "         with md5sum and filename separated by tab.\n"
-             "         use +md5gento instead to create a list file.\n"
-             "\n"
-             #ifdef _WIN32
-             "      #sfk md5 -quiet -verify 14da96b20e45fd84c46c5b7aef641cb3 test01.dat\n"
-             "         check if test01.dat has an md5 matching the one specified.\n"
-             "         issues no output, returns just a shell return code.\n"
-             "         within a windows .bat file, check the RC this way:\n"
-             "\n"
-             "         @echo off\n"
-             "         sfk md5 -quiet -verify 14da96b20e45fd84c46c5b7aef641cb3 test01.dat\n"
-             "         if errorlevel 1 goto mismatch\n"
-             "         echo \"file checked, all ok\"\n"
-             "         goto done\n"
-             "         :mismatch\n"
-             "         echo \"file content mismatch\"\n"
-             "         :done\n"
-             #else
-             "      #sfk md5 -verify 14da96b20e45fd84c46c5b7aef641cb3 test01.dat\n"
-             "         check if test01.dat has an md5 matching the one specified.\n"
-             #endif
-             "\n"
-             "      #sfk -var md5 in.txt +setvar sum +tell \"the md5 is: ##(sum)\"\n"
-             "         place checksum in a variable, then print a text\n"
-             );
-      }
-      ehelp;
-
-      sfkarg;
-
-      if (!strcmp(pszCmd, "crc")) {
-         #ifndef SFKPACK
-         return 9+perr("this binary supports no crc functions.\n");
-         #else
-         cs.crcmd5=1;
-         #endif
-      }
-
-      bool bMismatch  = 0;
-      int  bNames     = 1;
-      bool bComp      = 1;
-      bool bFromChain = chain.usefiles;
-      char *pszVerify = 0;
-      int  iFile      = -1;
-      int  iFileMax   = argc; // exclusive
-      int  nFileNames = 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (   haveParmOption(argx, argc, iDir, "-verify", &pszParm)
-             || haveParmOption(argx, argc, iDir, "-ver", &pszParm)
-             || haveParmOption(argx, argc, iDir, "-v", &pszParm)
-            )
-         {
-            if (!pszParm) return 9;
-            pszVerify = pszParm;
-            continue;
-         }
-         if (!strcmp(pszArg, "-name")) // sfk193
-            { bNames = 2; continue; }
-         if (strBegins(argx[iDir], "-noname")
-             || !strcmp(pszArg, "-pure")) // sfk193 internal
-         {
-            bNames = 0;
-            continue;
-         }
-         if (strBegins(argx[iDir], "-nocomp")) {
-            bComp = 0;
-            continue;
-         }
-         if (!strcmp(pszArg, "-crc")) // internal
-            { cs.crcmd5=1; continue; }
-         if (sfkisopt(argx[iDir])) {
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext)) {
-            iFileMax = iChainNext;
-            break;
-         }
-         // process non-option keywords:
-         if (iFile < 0) iFile = iDir;
-         // else step through supplied filenames
-         nFileNames++;
-      }
-
-      if (nFileNames==1 && bNames<2) // sfk193
-         bNames=0;
-
-      if (bFromChain == 0 && iFile < 0)
-         return 9+perr("supply filename(s) for reading\n");
-      if (btest) return 0;
-
-      #ifndef SFKPRO
-      // must block this to avoid checksums over truncated demo extracts
-      if (cs.travelzips)
-         return 9+perr("%s with -(q)arc requires SFK XE.",pszCmd);
-      #endif
-
-      num nstart = getCurrentTime();
-
-      if (bFromChain)
-      {
-         fGlblOut = 0;
-         lRC = walkAllTrees(eFunc_MD5Write, lFiles, lDirs, nBytes);
-      }
-      else
-      {
-         // read file(s), dump md5s underneath
-         szLineBuf2[0] = '\0';
-         int nFiles = 0;
-         for (; iFile < iFileMax; iFile++)
-         {
-            nFiles++;
- 
-            {
-               SFKMD5 md5;
-               char *pszFile = argx[iFile];
-               // special case: -verify checksum *filename
-               // -> skip * before filename
-               if (pszVerify && pszFile[0] == '*')
-                  pszFile++;
-               if (getFileMD5(pszFile, md5))
-                  return 9;
-               unsigned char *pmd5 = md5.digest();
-               for (int i=0; i<(cs.crcmd5 ? 4 : 16); i++)
-                  sprintf(&szLineBuf[i*2], "%02x", pmd5[i]);
-               if (!cs.quiet) {
-                  if (chain.colany()) {
-                     if (bNames)
-                        chain.print("%s\t%s", szLineBuf, pszFile);
-                     else
-                        chain.print("%s", szLineBuf);
-                  } else {
-                     if (bNames)
-                        oprintf("%s\t%s\n", szLineBuf, pszFile);
-                     else
-                        printf("%s\n", szLineBuf);
-                  }
-               }
-               if (szLineBuf2[0] && strcmp(szLineBuf, szLineBuf2))
-                  bMismatch = 1;
-               if (pszVerify && strcmp(pszVerify, szLineBuf))
-                  bMismatch = 1;
-               strcpy(szLineBuf2, szLineBuf);
-            }
-         }
-
-         lRC = bMismatch ? 1 : 0;
- 
-         if (((nFiles > 1 && bComp) || pszVerify != 0) && !cs.quiet) {
-            if (chain.colany()) {
-               if (bMismatch)
-                  chain.print("rc1 mismatch");
-               else
-                  chain.print("rc0 equal");
-            } else {
-               if (bMismatch)
-                  printf("content mismatch (RC==1)\n");
-               else
-                  printf("content is equal (RC==0)\n");
-            }
-         }
-      }
-
-      if (cs.verbose)
-         printf("done in %d msec\n", (int)(getCurrentTime() - nstart));
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
-   }
-
-   // .
-   ifcmd (!strcmp(pszCmd, "md5var")) // sfk193
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk md5var varname\n"
-             "\n"
-             "   create md5 hash from sfk variable content.\n"
-             "\n"
-             "   $command chaining\n"
-             "      supports output chaining.\n"
-             "\n"
-             "   $examples\n"
-             "      #sfk setvar a=foo +md5var a\n"
-             "         prints md5 over text 'foo'\n"
-             "      #sfk setvar a=foo +md5var a +setvar sum\n"
-             "         puts hash text into another variable\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      char *pszvarname = 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         if (!pszvarname)
-            { pszvarname=pszArg; continue; }
-         return 9+perr("unexpected: %s",pszArg);
-      }
-
-      if (!pszvarname)
-         return 9+perr("missing variable name");
-
-      int    ndata = 0;
-      uchar *pdata = sfkgetvar(pszvarname, &ndata);
-      if (!pdata)
-         return 9+perr("no such variable: %s",pszvarname);
-
-      SFKMD5 md5;
-      md5.update(pdata, ndata);
-
-      uchar *pmd5 = md5.digest();
-
-      char szBuf[100]; szBuf[0]='\0';
-      int  ioff=0;
-      for (int i=0; i<16; i++)
-         sprintf(szBuf+i*2, "%02x", pmd5[i]);
-
-      chain.print("%s\n", szBuf);
-
-      if (iChainNext) {
-         if (chain.coldata) {
-            STEP_CHAIN(iChainNext, 1);
-         } else {
-            STEP_CHAIN(iChainNext, 0);
-         }
-      }
-
-      bDone = 1;
-   }
-
    ifcmd (!strcmp(pszCmd, "license"))
    {
       ifhelp (nparm < 1)
       #ifndef SFKPRO
       printx(
-         "Copyright (c) 2022 by Stahlworks Technologies, www.stahlworks.com.\n"
+         "Copyright (c) 2023 by Stahlworks Technologies, www.stahlworks.com.\n"
          "All rights reserved.\n"
          "\n"
          "Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n"
@@ -46976,412 +45593,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   if (!strcmp(pszCmd, "testcrc"))
-   {
-      int n = 100;
-      uchar *buf = new uchar[n];
-      memset(buf, 0, n);
-      uint ncrc  = sfkPackSum(buf, n, 0);
-      printf("CRC: %x\n", ncrc);
-      delete [] buf;
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "testabs"))
-   {
-      printf("%s\n",getAbsPathStart(str("https://foo.com/bar.xml")));
-      printf("%s\n",getAbsPathStart(str("C:foo.txt")));
-      printf("%s\n",getAbsPathStart(str("C:\\bar.txt")));
-      printf("'%s'\n",getAbsPathStart(str("foo1.txt")));
-      printf("'%s'\n",getAbsPathStart(str("\\foo2.txt")));
-      printf("'%s'\n",getAbsPathStart(str("\\\\foo3.txt")));
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "test"))
-   {
-      if (argc < 3) {
-      printx("<help>$sfk test mode dbfile tctitle infile\n"
-             "\n"
-             "   record/compare automated test results on a database.\n"
-             "\n"
-             "      mode:\n"
-             "         rec   record checksum of infile\n"
-             "         upd   record only if not yet contained in db\n"
-             "         cmp   compare checksum against db entry\n"
-             "      dbfile : a database file, created by sfk in mode -rec\n"
-             "      tctitle: name of the testcase, e.g. T01.1.mytest\n"
-             "      infile : an output file resulting from a testcase\n"
-             "\n"
-             "   the sequence of text lines within the infile is ignored.\n"
-             "   this may lead to a checksum of \"0000\" if the input file\n"
-             "   contains the same content twice.\n"
-             "\n"
-             "   $examples\n"
-             "      #sfk test rec mycrc.db T01.1.encoding out1.dat\n"
-             "      -> creates checksum of out1.dat, writes to mycrc.db\n"
-             "         under the title T01.1.encoding\n"
-             "      #sfk test cmp mycrc.db T01.1.encoding out1.dat\n"
-             "      -> creates checksum of out1.dat, reads 2nd checksum\n"
-             "         from mycrc.db, and compares both.\n"
-             );
-         return 9;
-      }
-
-      if (argc >= 3 && !strcmp(argv[2], "workdir"))
-      {
-         szLineBuf[0] = '\0';
-         if (getcwd(szLineBuf,sizeof(szLineBuf)-10)) { }
-         char *psz = strrchr(szLineBuf, glblPathChar);
-         if (!psz) return 9;
-         psz++;
-         char *pszRelWorkDir = psz;
-         if (argc == 4) {
-            if (!strcmp(argv[3], pszRelWorkDir))
-               return 0;
-            else {
-               if (cs.verbose)
-                  printf("\"%s\" != \"%s\"\n",pszRelWorkDir,argv[3]);
-               return 9;
-            }
-         } else {
-            printf("%s\n", pszRelWorkDir);
-         }
-         return 0;
-      }
-
-      if (argc < 6) return 9+perr("missing arguments. type \"sfk test\" for help.\n");
-
-      char *pszMode   = argv[2];
-      char *pszDBFile = argv[3];
-      char *pszTitle  = argv[4];
-      char *pszInFile = argv[5];
-
-      // create checksum of infile in szLineBuf.
-      if (getFuzzyTextSum(pszInFile, abBuf))
-         return 9;
-      for (int i=0; i<16; i++)
-         sprintf(&szLineBuf2[i*2], "%02x", abBuf[i]);
-
-    {
-      TestDB tdb(pszDBFile);
-
-      // select command
-      if (!strcmp(pszMode, "rec")) {
-         tdb.load(1); // silent: ignore rc, create on 1st use
-         // write unconditional, overwrite existing vals
-         if (tdb.update(pszTitle, szLineBuf2)) return 9;
-         if (tdb.write()) return 9;
-         int tlen = strlen(pszTitle);
-         if (tlen > 15) tlen = 15;
-         printf(":REC : %s%.*s %s\n", pszTitle, (int)(15-tlen), pszGlblBlank, szLineBuf2);
-      }
-      else
-      if (!strcmp(pszMode, "upd")) {
-         tdb.load(1); // silent: ignore rc, create on 1st use
-         // write only if not yet contained
-         if (!tdb.getValue(pszTitle)) {
-            if (tdb.update(pszTitle, szLineBuf2)) return 9;
-            if (tdb.write()) return 9;
-            int tlen = strlen(pszTitle);
-            if (tlen > 15) tlen = 15;
-            printf(":ADD : %s%.*s %s\n", pszTitle, (int)(15-tlen), pszGlblBlank, szLineBuf2);
-         }
-      }
-      else
-      if (!strcmp(pszMode, "cmp")) {
-         if (tdb.load(0)) return 9;
-         char *pszVal = tdb.getValue(pszTitle);
-         if (!pszVal) return 9+perr("no such entry: %s\n", pszTitle);
-         if (!strcmp(pszVal, szLineBuf2)) {
-            // match
-            printf(": OK : %s\n", pszTitle);
-         } else {
-            // mismatch
-            printf(":FAIL: %s   - mismatch of %s\n", pszTitle, pszInFile);
-            lRC = 9;
-         }
-      }
-      else
-         return 9+perr("unknown test mode: %s\n", pszMode);
-    }
-
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "proctest")) // internal
-   {
-      if (nparm < 1)
-      {
-      printx("<help>$sfk proctest script.txt [testid] [ff]\n"
-             "\n"
-             "   test text processing by running testcases\n"
-             "   from a script. per testcase,\n"
-             "\n"
-             "   - an input file tmpin.txt is written\n"
-             "   - another file tmpout.txt is written\n"
-             "     with same content as tmpin.txt,\n"
-             "     to allow direct replace in tmpout.txt\n"
-             "   - a command from the script is executed\n"
-             "   - output file tmpout.txt is compared\n"
-             "     against the output template data in the script.\n"
-             "\n"
-             "   $script syntax\n"
-             "      :test name of test case 1\n"
-             "      :from\n"
-             "      ... [any text data] ...\n"
-             "      :command\n"
-             "      ... [single line command] ...\n"
-             "      :to\n"
-             "      ... [any text data] ...\n"
-             "      :done\n"
-             "\n"
-             "      :test name of test case 2\n"
-             "      ...\n"
-             "\n"
-             "   $script example\n"
-             "      :test 01 replace foo\n"
-             "      :from\n"
-             "      the foo and the bar\n"
-             "      :command\n"
-             "      sfk rep tmpout.txt -text \"/foo/bar/\" -yes\n"
-             "      :to\n"
-             "      the bar and the bar\n"
-             "      :done\n"
-             "\n"
-             "   $parameters\n"
-             "      testid    run only single test case\n"
-             "      ff        run all cases starting from testid\n"
-             "\n"
-             "   $options\n"
-             "      -quiet    redirect terminal output to >nul\n"
-             "      -cmd=x    replace $$cmd at line starts by x\n"
-             "\n"
-             "   $examples\n"
-             "      #sfk proctest myscript.txt\n"
-             "         runs script myscript.txt\n"
-             );
-      return 9;
-      }
-
-      char *pszScript = 0;
-      char *pszStart  = 0;
-      char *pszTheCmd = 0;
-      bool  bContinuous = 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argv[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argv, argc, iDir, "-cmd", &pszParm)) {
-            if (!pszParm) return 9;
-            pszTheCmd = pszParm;
-            continue;
-         }
-         else
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argv, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         else
-         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         if (!pszScript) {
-            pszScript = pszArg;
-            continue;
-         }
-         if (!pszStart) {
-            pszStart = pszArg;
-            continue;
-         }
-         if (!strcmp(pszArg, "ff")) {
-            bContinuous = 1;
-            continue;
-         }
-         return 9+pbad(pszCmd, pszArg);
-      }
-
-      if (!pszScript)
-         return 9+perr("missing script filename\n");
-
-      char *pScript = loadFile(pszScript);
-      if (!pScript)
-         return 9+pferr(pszScript, "cannot load: %s", pszScript);
-
-      char *pTestName,*pFromStart,*pFromEnd;
-      char *pCommand,*pToStart,*pToEnd;
-
-      bool  btelltmp = 0;
-      char *pCur = pScript;
-      while (pCur && *pCur)
-      {
-         if (strBegins(pCur, ":done")) {
-            if (nextLine(&pCur)) break;
-            continue;
-         }
-         skipOver(&pCur, " \r\n");
-         if (!*pCur) break;
-         if (!strBegins(pCur, ":test "))
-            { perr("missing :test"); break; }
-         pTestName = pCur+6;
-         if (nextLine(&pCur)) break;
-         if (strBegins(pCur, ":command")) {
-            pFromStart=str("");
-            pFromEnd=pFromStart;
-            pCommand = pCur;
-         } else {
-            if (!strBegins(pCur, ":from"))
-               { perr("missing :from after :test"); break; }
-            if (nextLine(&pCur)) break;
-            pFromStart = pCur;
-            pFromEnd = strstr(pCur, "\n:command");
-            if (!pFromEnd)
-               { perr("missing :command after :from"); break; }
-            pFromEnd++;
-            pCommand = pFromEnd;
-         }
-         if (nextLine(&pCommand)) break;
-         while (*pCommand == '#')
-            nextLine(&pCommand);
-         // auto convert ./sfk to target system
-         if (pCommand[0]=='.' && pCommand[1]==glblWrongPChar)
-            pCommand[1]=glblPathChar;
-         // join multi line command
-         char *pToStart=0;
-         {
-            char *psrc=pCommand;
-            char *pdst=psrc;
-            bool bstop=0;
-            bool bquotes=0;
-            while (*psrc)
-            {
-               // copy until line end
-               while (*psrc!=0 && *psrc!='\r' && *psrc!='\n') {
-                  if (*psrc=='\"') bquotes ^= 0x1;
-                  *pdst++ = *psrc++;
-               }
-               // skip line end
-               while (*psrc=='\r' || *psrc=='\n')
-                  psrc++;
-               // check for command end
-               if (*psrc==0 || *psrc==':')
-                  break;
-               // skip next line white start
-               if (!isspace(*psrc)) {
-                  perr(":command must be a single command: %s\n",pCommand);
-                  bstop=1; break; }
-               // insert blank if not quoted
-               if (!bquotes)
-                  *pdst++=' ';
-               while (isspace(*psrc)) psrc++;
-            }
-            *pdst='\0';
-            pToStart=psrc;
-            if (bstop) break;
-         }
-         if (!strBegins(pToStart, ":to"))
-            { perr("missing :to after :command"); break; }
-         if (nextLine(&pToStart)) break;
-         pToEnd = strstr(pToStart, "\n:done");
-         if (!pToEnd)
-            { perr("missing :test or :done after :to"); break; }
-         pToEnd++;
-         pCur = pToEnd;
-         // execute single test case
-         if (pszStart!=0 && !strstr(pTestName,pszStart))
-            { }
-         else
-         {
-            if (pszStart && bContinuous)
-               pszStart = 0;
-            printx("#TEST: ===== %s =====\n", pTestName);
-            if (!cs.quiet)
-               printf("FROM: %s\n", dataAsTrace(pFromStart, pFromEnd-pFromStart));
-            if (saveFile(str("tmpin.txt"), (uchar*)pFromStart, pFromEnd-pFromStart))
-               break;
-            if (saveFile(str("tmpout.txt"), (uchar*)pFromStart, pFromEnd-pFromStart))
-               break;
-            // replace $cmd by -cmd parameter
-            {
-               char *psrccur=pCommand;
-               char *psrcmax=psrccur+strlen(psrccur);
-               char *pdstcur=szLineBuf2;
-               char *pdstmax=pdstcur+MAX_LINE_LEN;
-               while (psrccur<psrcmax && pdstcur+100<pdstmax) {
-                  if (!strncmp(psrccur, "$cmd ", 5)) {
-                     if (!pszTheCmd)
-                        return 9+perr("missing -cmd for $cmd entries in test script");
-                     memcpy(pdstcur, pszTheCmd, strlen(pszTheCmd));
-                     pdstcur+=strlen(pszTheCmd);
-                     psrccur+=5;
-                     *pdstcur++=' ';
-                     continue;
-                  }
-                  *pdstcur++ = *psrccur++;
-               }
-               *pdstcur='\0';
-               pCommand = szLineBuf2;
-            }
-            if (!cs.quiet)
-               printf("CMD : %s\n", pCommand);
-            if (cs.quiet && !strstr(pCommand, " >")) {
-               snprintf(szLineBuf, MAX_LINE_LEN, "%s >nul 2>&1", pCommand);
-               if (system(szLineBuf)) { }
-            } else {
-               if (system(pCommand)) { }
-            }
-            if (!cs.quiet) {
-               printf("NEED: %s\n", dataAsTrace(pToStart, pToEnd-pToStart));
-               saveFile(str("tmpneed.txt"), (uchar*)pToStart, pToEnd-pToStart);
-            }
-            num nOutSize=0;
-            uchar *pOut = loadBinaryFile(str("tmpout.txt"), nOutSize);
-            if (!pOut)
-               { perr("missing output file tmpout.txt"); break; }
-            if (!cs.quiet)
-               printf("GOT : %s\n", dataAsTrace(pOut, nOutSize));
-            #ifdef _WIN32
-            if (nOutSize != pToEnd-pToStart) {
-               delete [] pOut;
-               perr("... output size differs (%d/%d)",(int)nOutSize,(int)(pToEnd-pToStart));
-               btelltmp=1;
-               break;
-            }
-            if (memcmp(pOut,pToStart,nOutSize)) {
-               delete [] pOut;
-               perr("... output differs.");
-               btelltmp=1;
-               break;
-            }
-            #else
-            uchar abSum1[20];
-            uchar abSum2[20];
-            getFuzzyTextSum((char*)pToStart, (int)(pToEnd-pToStart), abSum1);
-            getFuzzyTextSum((char*)pOut, (int)nOutSize, abSum2);
-            if (memcmp(abSum1,abSum2,16)) {
-               delete [] pOut;
-               perr("... output differs (fuzzy).");
-               btelltmp=1;
-               break;
-            }
-            #endif
-            delete [] pOut;
-         }
-      }
-      if (!cs.quiet && btelltmp)
-         printf("  ... see tmpneed.txt and tmpout.txt\n");
-
-      delete [] pScript;
-
-      bDone = 1;
-   }
-
    ifcmd (!strcmp(pszCmd, "snapto")) // +wref
    {
       ifhelp (1)
@@ -47609,334 +45820,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   regtest("text-join-lines xinfile xoutfile");
-
-   ifcmd (!strcmp(pszCmd, "joinlines") || !strcmp(pszCmd, "text-join-lines"))
-   {
-      ifhelp (nparm < 2)
-      printx("<help>$sfk joinlines infile outfile\n"
-             "\n"
-             "   join text lines from text split by email reformatting.\n"
-             "\n");
-      webref("joinlines");
-      ehelp;
-
-      sfkarg;
-
-      char *pszInFile=0,*pszOutFile=0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         if (!pszInFile)
-            { pszInFile=pszArg; continue; }
-         if (!pszOutFile)
-            { pszOutFile=pszArg; continue; }
-         return 9+perr("unexpected: %s",pszArg);
-      }
-      if (!pszInFile || !pszOutFile)
-         return 9+perr("missing parameters");
-      if (btest) return 0;
-
-      char *pInFile = loadFile(pszInFile);
-      if (!pInFile) return 9;
-
-      fGlblOut = fopen(pszOutFile, "w");
-      if (!fGlblOut) {
-         perr("cannot write %s\n", pszOutFile);
-         delete [] pInFile;
-         return 9;
-      }
-
-      lRC = execTextJoinLines(pInFile);
-
-      fclose(fGlblOut);
-      delete [] pInFile;
-
-      STEP_CHAIN(iChainNext, 0);
-
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "scantab2"))
-   {
-      cs.scanTabs = 1;
-      if ((lRC = processDirParms(pszCmd, argc, argv, 2, 3))) return lRC;
-      lRC = walkAllTrees(eFunc_Detab, lFiles, lDirs, nBytes);
-      printf("%d files of %d contain tabs.\n", cs.tabFiles, cs.files);
-      bDone = 1;
-   }
-
-   regtest("scantab -dir xsrc1 xsrc2 -file .cpp .hpp .txt");
-   regtest("scantab -quiet -pure . .cpp .hpp");
-   regtest("list xdir .txt +scantab");
-
-   ifcmd (!strcmp(pszCmd, "scantab"))  // +chaining
-   {
-      ifhelp (!chain.usefiles && (nparm < 1))
-      printx("<help>$sfk scantab [-quiet] dir [mask] [-pure]\n"
-             "\n"
-             "   list files containing tabs.\n"
-             "\n"
-             "   $options\n"
-             "      -quiet   do not list filenames, show only statistics.\n"
-             "      -pure    list only filenames, but no statistics.\n"
-          // "      -ind[ent]  collect also indentation statistics\n"
-          // "      -indsel=4  list only files with indentation 4\n"
-          // "      -verbose   list estimated indendation per file\n"
-             "\n"
-             "   $return codes for batch files\n"
-             "      0 = no tabs, 1 = tabs found, >1 = error occurred.\n"
-             "\n");
-      webref("scantab");
-      printx("   $examples\n"
-             "      #sfk scantab mydir\n"
-             "         list all text files with tabs in mydir.\n");
-      ehelp;
-
-      sfkarg;
-
-      // allow option -pure to be used anywhere:
-      bGlblAllowGeneralPure = 1;
-
-      for (; iDir<argc; iDir++)
-      {
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-indsel", &pszParm)) {
-            if (!pszParm) return 9;
-            cs.indentFilt = atol(pszParm);
-            continue;
-         }
-         else
-         if (!strncmp(argx[iDir], "-ind", 4)) {
-            cs.scanIndent = 1;
-            continue;
-         }
-         else
-         if (!strcmp(argx[iDir], "-pure")) {
-            cs.pure = 1;
-            continue;
-         }
-         else
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         break;
-      }
-
-      memset(aGlblIndentStats, 0, sizeof(aGlblIndentStats));
-      cs.scanTabs = 1;
-      int iDirNext = 0;
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iDirNext))) return lRC;
-      if (btest) return 0;
-
-      lRC = walkAllTrees(eFunc_Scantab, lFiles, lDirs, nBytes);
-      if (!lRC && (cs.tabFiles > 0)) lRC = 1; // found files with tabs
-
-      if (!cs.indentFilt && !cs.pure)
-         printf("%d files of %d contain tabs.", cs.tabFiles, cs.files);
-
-      bool bTold=0;
-      if (cs.scanIndent)
-      {
-         // create sorted indent stats
-         int i,k;
-         int asize[20], acnt[20];
-         memset(asize, 0, sizeof(asize));
-         memset(acnt , 0, sizeof(acnt));
-         // transform
-         for (i=0; i<=8; i++) {
-            int nsize = i;
-            int ncnt  = aGlblIndentStats[i];
-            asize[i] = nsize;
-            acnt[i]  = ncnt;
-         }
-         // sort
-         for (i=0; i<10; i++)
-            for (k=i+1; k<10; k++)
-               if (acnt[k] > acnt[i] || (asize[i] == 0)) {
-                  int n   = acnt[i];
-                  acnt[i]  = acnt[k];
-                  acnt[k]  = n;
-                       n   = asize[i];
-                  asize[i] = asize[k];
-                  asize[k] = n;
-               }
-         // dump sorted stats
-         for (i=0; i<=10; i++) {
-            if (acnt[i] > 0) {
-               if (!bTold) {
-                  printf(" %d files have indent %d", acnt[i], asize[i]);
-                  bTold = 1;
-               }
-               else
-               if (asize[i] > 0) {
-                  printf(", %d/%d", acnt[i], asize[i]);
-                  bTold = 1;
-               }
-               else
-               if (bTold) // list unknowns only if others listed before
-                  printf(", %d/unknown", acnt[i]);
-            }
-         }
-      }
-
-      if (bTold)
-         printf(".\n");
-      else
-      if (!cs.indentFilt && !cs.pure)
-         printf("\n");
-
-      STEP_CHAIN(iDirNext, 1);
-
-      bDone = 1;
-   }
-
-   regtest("detab=3 xfile");
-   regtest("detab=3 xsrc .cpp .hpp");
-   regtest("list xdir .txt +detab=3");
-
-   ifcmd (!strncmp(pszCmd, "detab", 5)) // +wref
-   {
-      ifhelp(   strncmp(pszCmd, "detab=", 6)
-             || (!chain.useany() && (nparm < 1))
-            )
-      printx("<help>$sfk detab=tabsize dir ext1 [ext2 ...] [-to outmask]\n"
-             "\n"
-             "   replace tabs by spaces within file(s) or text stream.\n"
-             "\n"
-             "   $options\n"
-             "      -to outmask   do not overwrite original files, but write\n"
-             "                    to output files according to outmask, e.g.\n"
-             "                    #-to tmp<sla><run>path<sla><run>base.<run>ext<def> or #-to tmp<sla><run>file\n"
-             "      -yes          if files are selected, really (re)write them.\n"
-             "                    without -yes, detab is only simulated.\n"
-             "      -memlimit=n   process files with up to n mbytes (default=300).\n"
-             "      -nowarn       do not tell about skipped or unreadable files.\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk scantab<def>   list files containing TAB characters.\n"
-             "      #sfk help opt<def>  how to change the memlimit permanently.\n"
-             #ifdef _WIN32
-             "      #sfk view<def>      a text file viewer that can show all TAB\n"
-             "                    characters in blue by pressing CTRL+T.\n"
-             #endif
-             "\n");
-      webref("detab");
-      printx("   $examples\n"
-             "      #sfk detab=3 sources .cpp .hpp\n"
-             "         replace tabs by up to 3 blanks, within all .cpp and .hpp\n"
-             "         files of directory tree \"sources\".\n"
-             "\n"
-             "      #sfk select -dir src -file .java +detab=4 -to tmp<sla><run>file\n"
-             "         list all .java files of src, then detab with tabsize 4,\n"
-             "         writing all outputs to directory tree \"tmp\".\n"
-             "\n"
-             "      #sfk detab=4 src .java -relnames -to tmp<sla><run>file\n"
-             "         nearly the same, however stripping the \"src\" input directory\n"
-             "         name from output file paths (not possible with \"+detab\" form).\n"
-             "\n"
-             "      #sfk filter mytext.txt +detab=8\n"
-             "         detab content of a single file to the console.\n"
-            );
-      ehelp;
-
-      sfkarg;
-
-      char *pszTabSize = pszCmd+strlen("detab=");
-      if (!(cs.tabSize = atol(pszTabSize))) return 9+perr("invalid tab size\n");
- 
-      cs.scanTabs = 0;
- 
-      // since 161: process only text files. before that,
-      // user had to select text files by file extension.
-      cs.textfiles = 1;
- 
-      // since 161: accept generic options
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         break; // short file parms
-      }
-
-      int iDirNext = 0;
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1, &iDirNext))) return lRC;
-      if (btest) return 0;
-
-      cs.sim = !cs.yes;
-
-      if (chain.usedata) {
-         // detab stream line
-         for (int i=0; i<chain.indata->numberOfEntries(); i++) {
-            szLineBuf[0]  = '\0';
-            szLineBuf2[0] = '\0';
-            char *psrc = chain.indata->getEntry(i, __LINE__);
-            if (psrc) {
-               strcopy(szLineBuf, psrc);
-               removeCRLF(szLineBuf);
-            }
-            detabLine(szLineBuf, szLineBuf2, MAX_LINE_LEN, cs.tabSize);
-            if (chain.coldata) {
-               chain.addLine(szLineBuf2, str(""));
-            } else {
-               printf("%s\n", szLineBuf2);
-            }
-         }
-      } else {
-         // detab file contents
-         if (cs.sim && !cs.nohead)
-            printx("$[simulating:]\n");
-
-         lRC = walkAllTrees(eFunc_Detab, lFiles, lDirs, nBytes);
-
-         const char *sxinfo = cs.sim ? "would be ":"";
-         printf("%d files checked, %d %sdetabbed, %d tabs in total.\n",
-            cs.files, cs.tabFiles, sxinfo, cs.tabsDone);
- 
-         if (cs.anyFileTooLarge)
-            pinf("use -memlimit=1000 to process larger files.\n");
-
-         if (cs.sim && !cs.nohead)
-            printx("$[add -yes to execute.]\n");
-      }
-
-      if (chain.usedata) {
-         STEP_CHAIN(iDirNext, 1); // 1: use new data
-      } else {
-         STEP_CHAIN(iDirNext, 0); // detab
-      }
-
-      bDone = 1;
-   }
-
    ifcmd (strBegins(pszCmd, "del") || strBegins(pszCmd, "rmtree")) // +wref
    {
       ifhelp (!chain.usefiles && (nparm < 1))
@@ -48139,350 +46022,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   regtest("entab=3 xfile");
-   regtest("list xdir .java +entab=4");
-
-   ifcmd (!strcmp(pszCmd, "entab") || !strncmp(pszCmd, "entab=", 6)) // +wref
-   {
-      ifhelp (!strcmp(pszCmd, "entab") || (!chain.usefiles && (nparm < 1)))
-      printx("<help>$sfk entab=tabsize dir ext1 [ext2 ...]\n"
-             "\n"
-             "   replace groups of spaces by tabs within file(s).\n"
-             "\n"
-             "   $options\n"
-             "      -to outmask   do not overwrite original files, but write\n"
-             "                    to output files according to outmask, e.g.\n"
-             "                    #-to tmp<sla><run>path<sla><run>base.<run>ext<def> or #-to tmp<sla><run>file\n"
-             "      -yes          if files are selected, really (re)write them.\n"
-             "                    without -yes, entab is only simulated.\n"
-             "      -memlimit=n   process files with up to n mbytes (default=300).\n"
-             "      -nowarn       do not tell about skipped or unreadable files.\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk scantab<def>   list files containing TAB characters.\n"
-             "      #sfk help opt<def>  how to change the memlimit permanently.\n"
-             #ifdef _WIN32
-             "      #sfk view<def>      a text file viewer that can show all TAB\n"
-             "                    characters in blue by pressing CTRL+T.\n"
-             #endif
-             "\n");
-      webref("entab");
-      printx("   $examples\n"
-             "      #sfk entab=3 sources .cpp .hpp\n"
-             "         replace 3 spaces each by a TAB character in all .cpp\n"
-             "         and .hpp files within folder sources.\n"
-             "\n"
-             "      #sfk entab=3 singleFileName.txt\n"
-             "         the same, but only in a single file.\n"
-            );
-      ehelp;
-
-      sfkarg;
-
-      if (chain.usedata)
-         return 9+perr("entab does not support chain text input.");
-
-      char *pszTabSize = pszCmd+strlen("entab=");
-      if (!(cs.tabSize = atol(pszTabSize))) return 9+perr("invalid tab size\n");
-      cs.scanTabs = 0;
-
-      int iDirNext = 0;
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1, &iDirNext))) return lRC;
-      if (btest) return 0;
-
-      cs.sim = !cs.yes;
-
-      if (cs.sim && !cs.nohead)
-         printx("$[simulating:]\n");
-
-      lRC = walkAllTrees(eFunc_Entab, lFiles, lDirs, nBytes);
-
-      const char *sxinfo = cs.sim ? "would be ":"";
-      printf("%d files checked, %d %sentabbed, %d tabs in total.\n",
-         cs.files, cs.tabFiles, sxinfo, cs.tabsDone);
-
-      if (cs.sim && !cs.nohead)
-         printx("$[add -yes to execute.]\n");
-
-      STEP_CHAIN(iDirNext, 0); // entab
-      bDone = 1;
-   }
-
-   regtest("addcr xfile");
-   regtest("lf-to-crlf xsrc .cpp .hpp");
-   regtest("list xdir .txt +addcr");
-   regtest("list -dir xdir1 xdir2 -file .cpp .hpp +lf-to-crlf");
-
-   bool baddcr  = 0;
-   bool blistle = 0;
-
-   ifcmd (   !strcmp(pszCmd, "lf-to-crlf") // +wref
-          || !strcmp(pszCmd, "addcr")
-          || !strcmp(pszCmd, "addcrlf")
-          || !strcmp(pszCmd, "listle")     // sfk185
-         )
-   {
-      blistle = strBegins(pszCmd, "listle");
-      baddcr  = blistle ? 0 : 1;
-
-      ifhelp (!chain.usefiles && (nparm < 1))
-      if (bhelp || baddcr) {
-      printx("<help>$sfk lf-to-crlf [options] dir .ext1 .ext2 [-to outmask]\n"
-             "\n"
-             "   convert just-lf (unix) text format to cr+lf (dos/windows).\n"
-             "\n"
-             "   if only a single filename, or list of filenames, is given\n"
-             "   then these are converted immediately.\n"
-             "\n"
-             "   if a directory parameter is given then the command runs\n"
-             "   in simulation mode, requiring option -yes to convert.\n"
-             "\n"
-             "   $options\n"
-             "      -forceend    if a file is changed and rewritten then\n"
-             "                   also add a line ending at the last line\n"
-             "                   even if there was none in the input file.\n"
-             "      -writeall    rewrite all files no matter if changed\n"
-             "\n"
-             "   $aliases\n"
-             "      #sfk addcr<def>    same as sfk lf-to-crlf\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk remcr<def>    convert crlf to just lf\n"
-             "      #sfk listle<def>   list line end infos for files\n"
-             "\n");
-      webref("addcrlf");
-      printx("   $examples\n"
-             "      #sfk addcr . .csv\n"
-             "         add crlf on all .csv files in current folder.\n"
-             "\n"
-             "      #sfk addcr src .cpp .hpp\n"
-             "         add crlf on all .cpp and .hpp files within src.\n"
-             "\n"
-             "      #sfk select -dir doc -file .txt +addcr -to tmp<sla><run>file\n"
-             "         add crlf on all .txt files within doc, saving to tmp.\n"
-             "\n"
-            );
-      }
-      if (bhelp || blistle) {
-      printx("<help>$sfk listle dir [.ext1 .ext2]\n"
-             "\n"
-             "   list line end infos for all text files of a folder\n"
-             "   and also show unterminated text files.\n"
-             "\n"
-             "   for each ASCII text file found this shows:\n"
-             "\n"
-             "      crlf : contains at least one CR/LF line end\n"
-             "             (windows line end format)\n"
-             "\n"
-             "      lf   : contains at least one pure LF line end\n"
-             "             (linux line end format)\n"
-             "\n"
-             "      ut   : is unterminated, i.e. last line of file\n"
-             "             is not followed by CR or LF. to fix\n"
-             "             such files you may use addcr or remcr\n"
-             "             with option -forceend.\n"
-             "\n"
-             "      cr   : contains at least one pure CR line end\n"
-             "             (old macintosh line end format)\n"
-             "\n");
-      printx("   $see also\n"
-             "      #sfk addcr<def>  convert lf to crlf line endings\n"
-             "      #sfk remcr<def>  convert crlf to lf line endings\n"
-             "\n"
-             );
-      webref("listle");
-      printx("   $examples\n"
-             "      #sfk listle mydir\n"
-             "         shows infos for all text files in mydir.\n"
-             "\n"
-            );
-      }
-      ehelp;
-
-      sfkarg;
-
-      int iDirNext = 0;
-      bool bshowle = 0;
- 
-      nGlblConvTarget = eConvFormat_CRLF;
-
-      if (!strcmp(pszCmd, "listle")) {
-         nGlblConvTarget = eConvFormat_ShowLE;
-         mclear(aGlblConvStat);
-         bshowle = 1;
-      }
-
-      // SFK 1.7.2: only text files
-      cs.textfiles = 1;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         if (strBegins(pszArg, "-forceend")) {
-            cs.forcele = 1;
-            continue;
-         }
-         else
-         if (strBegins(pszArg, "-writeall")) {
-            cs.writeall = 1;
-            continue;
-         }
-         else
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         break;
-      }
-
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1, &iDirNext))) return lRC;
-      if (btest) return 0;
-
-      if (!bshowle && (!cs.sim || cs.yes))
-      {
-         // list of filenames: execute immediately
-         if (glblSFLNumberOfEntries() > 0)
-            cs.yes = 1;
- 
-         cs.sim = !cs.yes;
-      }
-
-      if (!bshowle && cs.sim && !cs.nohead)
-         printx("$[simulating:]\n");
-
-      lRC = walkAllTrees(eFunc_FormConv, lFiles, lDirs, nBytes);
-
-      if (!bshowle && cs.sim && !cs.nohead)
-         printx("$[add -yes to execute.]\n");
-
-      if (bshowle) {
-         printx("$%d files with CR/LF, %d with LF, %d unterminated, %d with CR.<def>\n",
-            aGlblConvStat[0],aGlblConvStat[1],aGlblConvStat[2],aGlblConvStat[3]);
-      } else {
-         printf("%d files %sconverted.\n", cs.files, cs.sim ? "would be ":"");
-      }
-
-      STEP_CHAIN(iDirNext, 0); // addcr
-      bDone = 1;
-   }
-
-   regtest("remcr xfile");
-   regtest("crlf-to-lf xsrc .cpp .hpp");
-   regtest("list xdir .txt +remcr");
-   regtest("list -dir xdir1 xdir2 -file .cpp .hpp +crlf-to-lf");
-
-   ifcmd (   !strcmp(pszCmd, "crlf-to-lf") // +wref
-          || !strcmp(pszCmd, "remcr")
-          || !strcmp(pszCmd, "remcrlf")
-         )
-   {
-      ifhelp (!chain.usefiles && (nparm < 1))
-      printx("<help>$sfk crlf-to-lf [options] dir .ext1 .ext2 [-to outmask]\n"
-             "\n"
-             "   convert cr+lf (dos/windows) text format to just-lf (unix).\n"
-             "\n"
-             "   if only a single filename, or list of filenames, is given\n"
-             "   then these are converted immediately.\n"
-             "\n"
-             "   if a directory parameter is given then the command runs\n"
-             "   in simulation mode, requiring option -yes to convert.\n"
-             "\n"
-             "   $options\n"
-             "      -forceend    if a file is changed and rewritten then\n"
-             "                   also add a line ending at the last line\n"
-             "                   even if there was none in the input file.\n"
-             "      -writeall    rewrite all files no matter if changed\n"
-             "\n"
-             "   $aliases\n"
-             "      #sfk remcr<def>    same as sfk crlf-to-lf\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk addcr<def>    convert lf to crlf\n"
-             "      #sfk listle<def>   list line end infos for files\n"
-             "\n");
-      webref("remcrlf");
-      printx("   $examples\n"
-             "      #sfk remcr src .cpp .hpp\n"
-             "         reduce crlf to lf on all .cpp and .hpp files within src.\n"
-             "\n"
-             "      #sfk select -dir doc -file .txt +remcr -to tmp<sla><run>file\n"
-             "         change crlf on all .txt files within doc, saving to tmp.\n"
-            );
-      ehelp;
-
-      sfkarg;
-
-      int iDirNext = 0;
-
-      nGlblConvTarget = eConvFormat_LF;
-
-      // SFK 1.7.2: only text files
-      cs.textfiles = 1;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         if (strBegins(pszArg, "-forceend")) {
-            cs.forcele = 1;
-            continue;
-         }
-         else
-         if (strBegins(pszArg, "-writeall")) {
-            cs.writeall = 1;
-            continue;
-         }
-         else
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         break;
-      }
-
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1, &iDirNext))) return lRC;
-      if (btest) return 0;
-
-      if (!cs.sim || cs.yes)
-      {
-         // list of filenames: execute immediately
-         if (glblSFLNumberOfEntries() > 0)
-            cs.yes = 1;
- 
-         cs.sim = !cs.yes;
-      }
-
-      if (cs.sim && !cs.nohead)
-         printx("$[simulating:]\n");
-
-      lRC = walkAllTrees(eFunc_FormConv, lFiles, lDirs, nBytes);
-
-      if (cs.sim && !cs.nohead)
-         printx("$[add -yes to execute.]\n");
-
-      printf("%d files %sconverted.\n", cs.files, cs.sim ? "would be ":"");
-
-      STEP_CHAIN(iDirNext, 0); // remcr
-      bDone = 1;
-   }
-
    regtest("stat -minsize=10 .");
    regtest("stat -quiet -i");
 
@@ -48517,6 +46056,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -flat        show the no. of files and bytes per folder\n"
              "                   without its subfolders (do not accumulate).\n"
              "      -flist x     read a list of filenames from file x\n"
+             "      -quiet       show just overall size, no subfolder sizes.\n"
              "\n"
              "   $aliases\n"
              "      #sfk stat10<def>       does the same as #sfk stat -minsize=10m<def>\n"
@@ -48529,9 +46069,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n");
       webref("stat");
       printx("   $examples\n"
-             "      #sfk stat . -minsize=10m\n"
-             "          list sizes of all directories below the current one\n"
+             "      #sfk treesize -minsize=10m .\n"
+             "          list sizes of contents below the current folder\n"
              "          having a size of at least 10 mbytes.\n"
+             "      #sfk treesize10 .\n"
+             "          the same, but shorter to type.\n"
+             "      #sfk stat10 .\n"
+             "          the same, even shorter to type.\n"
              "\n"
              "      #sfk stat50 docs\n"
              "          list all directories and single files under the docs\n"
@@ -49017,122 +46561,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (!strcmp(pszCmd, "bin-to-src")) // +wref
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk bin-to-src [...] infile outfile namePrefix\n"
-             "\n"
-             "   create sourcefile containing a binary data block. the outfile\n"
-             "   will contain variable definitions beginning with namePrefix.\n"
-             "\n"
-             "   $options\n"
-             "      -java       create java source code output, default is C.\n"
-             "      -class      java: create a fully compilable class with a short\n"
-             "                  demo source code how to write the data to a file.\n"
-             "      -pack       C source: compress data with a simple RLE scheme.\n"
-             "      -hex        C source: produce hex numbers instead of decimal.\n"
-             "      -append     do not overwrite output, but append to it.\n"
-             "      -recsize=n  java: define number of bytes per record used\n"
-             "                  within the raw data. default is 500. higher values\n"
-             "                  produce less records, which may help if you get\n"
-             "                  a \"code too large\" error during java compile.\n"
-             "\n");
-      #ifdef _WIN32
-      printx("   $further commands\n"
-             "      #sfk clipsrc<def>   convert clipboard text to C    style source code\n"
-             "      #sfk clipphp<def>   convert clipboard text to PHP  style source code\n"
-             "      #sfk clipjava<def>  convert clipboard text to Java style source code\n"
-          // "      #sfk clipxml<def>   convert clipboard text to XML  style source code\n"
-             "      ... add #+toclip<def> to copy converted result back to clipboard.\n"
-             "\n");
-      #endif
-      webref("bintosrc");
-      printx("   $examples\n"
-             "      #sfk bin-to-src myimg.dat imgsrc.cpp img01\n"
-             "         create C source code containing content from myimg.dat.\n"
-             "\n"
-             "      #sfk bin-to-src -java -class myimg.dat imgdata.java imgdata\n"
-             "         create a Java class \"imgdata\" with myimg.dat content.\n"
-            );
-      ehelp;
-
-      sfkarg;
-
-      bool bPack  = 0;
-      bool bHex   = 0;
-      bool bJava  = 0;
-      bool bClass = 0;
-      bool bAppend= 0;
-      int nrecsize = 500;
-      char *pszInFile  = 0;
-      char *pszOutFile = 0;
-      char *pszPrefix  = 0;
-
-      int iChainNext = 0;
-      for (; iDir < argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-recsize", &pszParm)) {
-            if (!pszParm) return 9;
-            nrecsize = atol(pszParm);
-            continue;
-         }
-         if (!strcmp(argx[iDir], "-pack"))
-            { bPack = 1; continue; }
-         if (!strcmp(argx[iDir], "-hex"))
-            { bHex  = 1; continue; }
-         if (!strcmp(argx[iDir], "-java"))
-            { bJava = 1; continue; }
-         if (!strcmp(argx[iDir], "-class"))
-            { bClass = 1; continue; }
-         if (!strcmp(argx[iDir], "-append"))
-            { bAppend = 1; continue; }
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         if (!pszInFile)
-            { pszInFile=pszArg; continue; }
-         if (!pszOutFile)
-            { pszOutFile=pszArg; continue; }
-         if (!pszPrefix)
-            { pszPrefix=pszArg; continue; }
-         return 9+perr("unexpected: %s",pszArg);
-      }
-      if (!pszInFile || !pszOutFile || !pszPrefix)
-         return 9+perr("missing parameters");
-
-      num   nFileSize = 0;
-      uchar *pInFile = loadBinaryFile(pszInFile, nFileSize);
-      if (!pInFile) return 9+perr("cannot read %s\n", pszInFile);
-
-      fGlblOut = fopen(pszOutFile, bAppend ? "a":"w");
-      if (!fGlblOut) {
-         perr("cannot write %s\n", pszOutFile);
-         delete [] pInFile;
-         return 9;
-      }
-
-      if (bJava)
-         lRC = execBinToJava(pInFile, (int)nFileSize, bPack, pszPrefix, bClass, nrecsize);
-      else
-         lRC = execBinToCpp(pInFile, (int)nFileSize, bPack, pszPrefix, bHex);
-
-      fclose(fGlblOut);
-      delete [] pInFile;
-
-      STEP_CHAIN(iChainNext, 0);
-
-      bDone = 1;
-   }
-
    regtest("filter -no-empty-lines -count -lnum -case ++mypat");
    regtest("filter -no-blank-lines");
    regtest("filter -cnt -c -+mypat2 -+mypat3 -rep _foo_bar_");
@@ -49400,246 +46828,14 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   // .
-   ifcmd (!strcmp(pszCmd, "addhead") || !strcmp(pszCmd, "addtail")) // sfk187
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk addhead <in >out [-blank] string1 string2 ...\n"
-             "$sfk filter in.txt +addtail string1 string2 ...\n"
-             "\n"
-             "   insert string(s) at the start or end of text lines.\n"
-             "\n"
-             "   $options\n"
-             "      -blank    add blank chars between added strings.\n"
-             "                not default since sfk 1.8.7.\n"
-             "\n"
-             "   $chaining support\n"
-             "      supports input and output chaining.\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk filter infile.txt -form \"string1<run>col1\"\n"
-             "         does the same and is more flexible.\n"
-             "\n"
-             "   $examples\n"
-             "      #sfk echo bar +addhead foo\n"
-             "         prints \"foobar\".\n"
-            );
-      ehelp;
-
-      sfkarg;
-
-      bool bhead = (strcmp(pszCmd, "addhead") ? 0 : 1);
-      bool btail = bhead ? 0 : 1;
-
-      bool bblank = 0;  // sfk187 new default
-      int  iFirst = 0;
-      int  iLast  = 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         if (!strcmp(pszArg, "-blank")) {
-            bblank = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-noblank")) {
-            bblank = 0;
-            continue;
-         }
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         if (iFirst == 0) {
-            iFirst = iLast = iDir;
-            continue;
-         }
-         iLast = iDir;
-      }
-
-      int iCurLine = 0;
-
-      while (1)
-      {
-         char *pattr = 0;
-         char *ptext = 0;
-
-         // get next line
-         if (chain.usedata) {
-            if (iCurLine >= chain.indata->numberOfEntries())
-               break;
-            ptext = chain.indata->getEntry(iCurLine++, __LINE__, &pattr);
-            if (!ptext)
-               break;
-         } else {
-            if (fgets(szLineBuf, MAX_LINE_LEN, stdin) == 0)
-               break;
-            removeCRLF(szLineBuf);
-            ptext = szLineBuf;
-         }
-
-         // add text
-         szLineBuf2[0] = '\0';
-         if (btail==1 && strlen(szLineBuf2)+strlen(ptext)<MAX_LINE_LEN)
-            strcat(szLineBuf2, ptext);
-         if (btail==1 && bblank==1)
-            strcat(szLineBuf2, " ");
-         for (int i1=iFirst; i1<=iLast; i1++) 
-         {
-            if (strlen(szLineBuf2)+strlen(argx[i1]) >= MAX_LINE_LEN)
-               break;
-            strcat(szLineBuf2, argx[i1]);
-            if (bhead) {
-               if (bblank==1) {
-                  strcat(szLineBuf2, " ");
-               }
-            } else {
-               if (bblank==1 && i1+1<=iLast) {
-                  strcat(szLineBuf2, " ");
-               }
-            }
-         }
-         if (bhead==1 && strlen(szLineBuf2)+strlen(ptext)<MAX_LINE_LEN)
-            strcat(szLineBuf2, ptext);
-
-         // write output
-         if (chain.colany()) {
-            chain.addLine(szLineBuf2, pattr ? pattr : str(""));
-         } else {
-            printf("%s\n", szLineBuf2);
-         }
-      }
-
-      if (iChainNext) {
-         if (chain.coldata) {
-            STEP_CHAIN(iChainNext, 1);
-         } else {
-            STEP_CHAIN(iChainNext, 0);
-         }
-      }
-
-      bDone = 1;
-   }
-
-   #ifndef NO_ZIP_LIST
-   // internal, to test zip/jar listing via central dir
-   if (!strcmp(pszCmd, "ziplist"))
-   {
-      if (checkArgCnt(argc, 3)) return 9;
-
-      FileList oFiles;
-      getZipList(argv[2], oFiles);
-
-      int nFiles = oFiles.clNames.numberOfEntries();
-      for (int i=0; i<nFiles; i++)
-      {
-         char *psz = oFiles.clNames.getEntry(i, __LINE__);
-         num nSize = oFiles.clSizes.getEntry(i, __LINE__);
-         num nTime = oFiles.clTimes.getEntry(i, __LINE__);
-         printf("%s %s %s\n", timeAsString(nTime), numtoa(nSize,10), psz);
-      }
-      bDone = 1;
-   }
-   #endif
-
-   // internal, to test zip listing as stream
-   if (!strcmp(pszCmd, "ziplist2"))
-   {
-      if (checkArgCnt(argc, 3)) return 9;
-
-      SFKMD5 md5;
-      FileList oFiles;
-      getZipMD5(argv[2], md5, oFiles, 1);
-
-      int nFiles = oFiles.clNames.numberOfEntries();
-      for (int i=0; i<nFiles; i++)
-      {
-         char *psz = oFiles.clNames.getEntry(i, __LINE__);
-         num nSize = oFiles.clSizes.getEntry(i, __LINE__);
-         num nTime = oFiles.clTimes.getEntry(i, __LINE__);
-         printf("%s %s %s\n", timeAsString(nTime), numtoa(nSize,10), psz);
-      }
-      bDone = 1;
-   }
-
-   #ifndef USE_SFK_BASE
-   ifcmd (!strcmp(pszCmd, "patch"))
-   {
-      ifhelp (nparm < 1)
-      printx(
-          "<help>$sfk patch [-revoke|-redo] yourpatchfile.cpp [-sim|-verify]\n"
-          "\n"
-          "   search text blocks in file(s) and replace them by other text blocks,\n"
-          "   including backup creation and optional restore of original files.\n"
-          "\n"
-          "   -revoke: undo all patches, by replacing the modified targets\n"
-          "            by the backup files which sfk stores in save_patch.\n"
-          "            the target files are touched afterwards (date/time update)\n"
-          "            to enforce proper recompile. use -keep-dates to avoid this.\n"
-          "   -redo  : undo all patches and then re-apply patches.\n"
-          "            best used whenever you change the patchfile itself,\n"
-          "            to have your changes updated in the target files.\n"
-          "   -exact-match: by default, leading whitespaces are ignored.\n"
-          "                 use this option enforce exact 1:1 line matching.\n"
-          "   -keep-dates: by default, revoked files get touched. use this option\n"
-          "                to enforce original file dates (yet windows only).\n"
-          "   -sim     : simulate what the patch would do, don't change anything.\n"
-          "   -qs      : quick summary, just tell a one-line status.\n"
-          "   -stats   : show statistics of select-replace usage.\n"
-          "   -verify  : check if an applied patch is still intact.\n"
-          "   -nopid   : apply irrevocable patch without [patch-id].\n"
-          "   -anyroot : ignore the :root dir entry in a patch file.\n"
-          "\n"
-         );
-      printx(
-         "   $patchfile rules:\n"
-         "   - patches are executed exactly in the order as given in the patchfile.\n"
-         "   - each :from/:to statement is executed exactly once.\n"
-         "   - if ANY of the :from/:to statements doesn't match the input,\n"
-         "     the whole file is NOT patched.\n"
-         "   - the first :to block for a new target file must contain the word [patch-id],\n"
-         "     by using a comment in the target file's syntax, e.g. in C++: // [patch-id].\n"
-         "     this marks the file as being patched -> sfk will not patch it again.\n"
-         "\n"
-         "   it is recommended that your patchfiles have the ending .cpp (or .java etc.)\n"
-         "   to enable syntax highlighting with your favourite text editor.\n"
-         "\n"
-         );
-      printx("   #sfk patch -example\n"
-             "      shows a detailed patchfile example.\n"
-             "   #sfk patch -template\n"
-             "      gives a simple, empty patchfile template.\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      #ifdef SFK_MEMTRACE
-      bGlblNoMemCheck = 1;
-      sfkmem_nocheck();
-      #endif // SFK_MEMTRACE
-
-      lRC = patchMain(argc-1, argx, 1);
-
-      bDone = 1;
-   }
-   #endif // USE_SFK_BASE
-
    ifcmd (!strcmp(pszCmd, "if")
-          || !strcmp(pszCmd, "tif") // sfk193
+          || !strcmp(pszCmd, "tif") // deprecated with sfk1990
          )
    {
       ifhelp (!chain.usefiles && (nparm < 1))
       printx("<help>$sfk ... +if [opts] expression command1 ... +command2\n"
-             "$sfk ... +[t]if expr [+]begin +cmd1a +cmd1b ... +endif +cmd2\n"
+          // "$sfk ... +[t]if expr [+]begin +cmd1a +cmd1b ... +endif +cmd2\n"
+             "$sfk ... +if ... [+]begin ... +elseif ... +else ... +endif\n"
              "\n"
              "   execute command1 if expression is true, then continue to command2.\n"
              "   if expression is not true, skip directly to command2.\n"
@@ -49682,22 +46878,19 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #if ... begin ... endif<def>\n"
              "      - may $not<def> contain other #if[exist] / begin / endif<def>\n"
              "      - but may contain short #if ...<def> without begin.\n"
-             "      invalid nesting causes an undefined program flow.\n"
+             "      invalid nesting is not detected, and causes an undefined\n"
+             "      program flow. you may add global option -strictif to (try)\n"
+             "      to detect wrong if statements better.\n"
              "\n"
-             "   $chaining support since sfk 1.9.3\n"
+             "   $do not forget 'begin' when using complex statements!\n"
+             "      #sfk if ... begin ... +elseif ... +else ... +endif\n"
+             "      strictly requires the 'begin', otherwise it may do\n"
+             "      nothing, without any notice.\n"
+             "\n"
+             "   $no chaining data support since sfk 1.9.3\n"
              "      #+if<def>   does not accept any chain input data, as this\n"
              "            creates ambiguities with many following\n"
              "            commands, like +if ... +setvar a=text\n"
-             "      #+tif<def>  expects text and stream chain input data.\n"
-             "      $bad example:\n"
-             "        #+xed /a/b/ +if ... +xed /b/c/\n"
-             "          data cannot be passed from the first to the\n"
-             "          second xed this way, as +if will block this.\n"
-             "      $correction:\n"
-             "        #+xed /a/b/ +tif ... +xed /b/c/\n"
-             "          the +tif explicitely requests text data.\n"
-             "          you may also use global option -keepdata.\n"
-             "          for more details see: $sfk help chain\n"
              "\n"
              "   $see also\n"
              "      #sfk ifexist<def>  check if a file or folder exists.\n"
@@ -49719,218 +46912,328 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "       #+if \"##(contains(a,'bar'))\" tell \"found bar\" +tell \"done\"\n"
              "         prints \"found bar\" and then \"done\", because the\n"
              "         'contains' returns '1', causing command execution.\n"
+             "\n"
+             "      #sfk if 0 begin tell one +else tell two +endif +tell three\n"
+             "         prints 'two' and 'three'.\n"
             );
       ehelp;
 
-      sfkarg;
-
       int iChainNext = 0;
-      char *pexpr    = 0;
-      int iThenCmd   = 0;
-      int iMode      = 0;
-      int istate     = 0;
 
-      for (; iDir<argc; iDir++)
+      while (true)
       {
-         char *pszArg = argx[iDir];
-         if (istate == 0)
+       { // required to reinit sfkarg per elseif reloop
+         sfkarg;
+
+         if (cs.debug) printf("[%s.%d starts with '%s']\n", pszCmd, iIfLevel, (iDir<argc)?argx[iDir]:"");
+
+         char *pexpr    = 0;
+         int iThenCmd   = 0;
+         int bHaveBegin = 0;
+         int iElseCmd   = 0;
+         int iElseIfCmd = 0;
+         int iMode      = 0;
+         int istate     = 0;
+         int iDirStart  = iDir;
+
+         iChainNext = 0;
+   
+         for (; iDir<argc; iDir++)
          {
-            // sfk1814: accept "-yes = -yes" etc.
-            for (char *psz=pszArg; *psz; psz++) {
-               switch (*psz) {
-                  case '=': case '<': case '>':
-                     istate = 1;
-                     break;
+            char *pszArg = argx[iDir];
+            if (istate == 0)
+            {
+               // sfk1814: accept "-yes = -yes" etc.
+               for (char *psz=pszArg; *psz; psz++) {
+                  switch (*psz) {
+                     case '=': case '<': case '>':
+                        istate = 1;
+                        break;
+                  }
+               }
+            }
+            if (!istate && !strcmp(pszArg, "-text")) {
+               iMode = 1;
+               continue;
+            }
+            if (!istate && strBegins(pszArg, "-num")) {
+               iMode = 2;
+               continue;
+            }
+            if (!istate && sfkisopt(argx[iDir])) {
+               // sfk1812: accept options BEFORE expression
+               if (!strcmp(pszArg, "-showrc"))
+                  { cs.showrc = 1; continue; }
+               if (setGeneralOption(argx, argc, iDir))
+                  continue;
+               else
+                  return 9+perr("unknown option: %s\n", argx[iDir]);
+               continue;
+            }
+
+            // non-option parms
+            if (!pexpr) 
+            {
+               // collect expression
+               pexpr = argx[iDir];
+               // detect user error: "rc =" "rc <" "rc >" in unparsed data
+               char *ptmp = argv[iDir];
+               if (strBegins(ptmp, "rc =") || strBegins(ptmp, "rc <")
+                   || strBegins(ptmp, "rc >"))
+               {
+                  pwarn("possible wrong 'if' syntax: \"%s\"\n", ptmp);
+                  pinf("check command rc without blanks, like: if \"rc=0\"\n");
+               }
+               continue;
+            }
+            else 
+            {
+               // continue after expression
+               if (!strcmp(pszCmd, "elseif") && iDir == iDirStart+1) {
+                  // +elseif 1 tell ... insert implicite "begin"
+                  pszArg = str("begin");
+                  iDir--; // for iThenCmd set below
+               }
+               if (   !strcmp(pszArg, "begin")
+                   || !strcmp(pszArg, "+begin"))
+               {
+                  // begin ... +endif support since sfk189.
+                  if (cs.strictif && iIfLevel>0) {
+                     perr("nested if ... begin ... endif are not allowed, and cause malfunction.\n");
+                     pinf("use -echoonerr for more info\n");
+                     return 9;
+                  }
+                  // about nested if handling: this needs to
+                  // - parse all if [+]begin endif
+                  // - combined with if ... without endif
+                  // - combined with ifexist ... [begin]
+                  if (iDir+1<argc) {
+                     iThenCmd = iDir+1;
+                     bHaveBegin = 1;
+                  }
+                  for (; iDir<argc; iDir++)
+                  {
+                     if (!strcmp(argv[iDir],"+elseif")) {
+                        iElseIfCmd = iDir+1; // after +elseif
+                        // continue seek to +endif
+                     }
+                     if (!strcmp(argv[iDir],"+else")) {
+                        if (iDir+1 >= argc) return 9+perr("+else must be followed by commands\n");
+                        iElseCmd = iDir+1; // after +else
+                        // continue seek to +endif
+                     }
+                     if (!strcmp(argv[iDir],"+endif")) {
+                        // 'break' here to get out of inner loop,
+                        // and to reloop outer (iDir++) (2).
+                        break;
+                     }
+                  }
+                  if (iDir>=argc)
+                     return 9+perr("missing +endif after %s \"%s\" begin", pszCmd, pexpr?pexpr:"");
+                  // this will jump to 'isChainStart' below with iDir++
+                  continue; // (2)
+               }
+               // Note: on a short "+if 1 tell yo +next" this returns FALSE as 'tell' has no '+'.
+               // we fall through to setting iThenCmd. on reloop, yo is skipped,
+               // and finally the loop stops at +next.
+               if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+                  break;
+            }
+
+            if (!iThenCmd)
+               { iThenCmd = iDir; continue; } // used when?
+            // ignore all other parms as they probably belong
+            // to the thenCmd.
+
+         }  // endfor iDir
+   
+         if (!pexpr)    return 9+perr("need an expression after if.");
+         if (!iThenCmd) return 9+perr("need a command after if \"%s\", without \"+\".", pexpr);
+   
+         if (cs.showrc)
+            printf("[if got rc %d]\n", lRC);
+   
+         // evaluate expression
+         bool btrue = 0;
+         if (strBegins(pexpr, "rc=")) {
+            int ncmp = atol(pexpr+3);
+            btrue = (lRC == ncmp) ? 1 : 0;
+         }
+         else
+         if (strBegins(pexpr, "rc<>")) {  // sfk1890
+            int ncmp = atol(pexpr+4);
+            btrue = (lRC != ncmp) ? 1 : 0;
+         }
+         else
+         if (strBegins(pexpr, "rc<")) {
+            int ncmp = atol(pexpr+3);
+            btrue = (lRC < ncmp) ? 1 : 0;
+         }
+         else
+         if (strBegins(pexpr, "rc>")) {
+            int ncmp = atol(pexpr+3);
+            btrue = (lRC > ncmp) ? 1 : 0;
+         }
+         else
+         if (!strcmp(pexpr, "0"))
+         {  btrue = 0; }
+         else
+         if (!strcmp(pexpr, "1"))
+         {  btrue = 1; }
+         else
+         {
+            // sfk1812
+            strcopy(szLineBuf, pexpr);
+   
+            char *pleft = szLineBuf;
+            int   ioper = 0;
+            char *prite = pastifop(pleft, &ioper);
+            if (!prite) {
+               perr("unsupported expression: %s\n", pexpr);
+               if (!cs.usevars && strstr(pexpr, "#("))
+                  pinf("use -var to enable #() variable replacements.\n");
+               return 9;
+            }
+            // left side was zero terminated.
+   
+            bool blanydig=0,blnum=1;
+            bool branydig=0,brnum=1;
+            for (char *psz=pleft; *psz; psz++) {
+               if (isdigit(*psz))
+                  blanydig = 1;
+               else
+                  blnum = 0;
+            }
+            for (char *psz=prite; *psz; psz++) {
+               if (isdigit(*psz))
+                  branydig = 1;
+               else
+                  brnum = 0;
+            }
+   
+            // if both sides look like numbers
+            if (iMode==0 && blanydig && blnum && branydig && brnum)
+               iMode = 2;
+   
+            if (iMode==0)
+               iMode = 1;
+   
+            if (cs.debug)
+            {
+               printf("[%s compares %s \"%s\" and \"%s\"]\n",
+                  pszCmd, (iMode==1) ? "strings":"numbers",
+                  pleft, prite);
+               if (!cs.usevars && (strstr(pleft,"#(") || strstr(prite,"#(")))
+                  printf("... use -var as first option to read variables.\n");
+            }
+   
+            if (iMode==1)
+            {
+               // string comparison
+               int ival = 0;
+               if (cs.usecase)
+                  ival = strcmp(pleft, prite);
+               else
+                  ival = mystricmp(pleft, prite);
+   
+               switch (ioper)
+               {
+                  case 0: btrue = (ival == 0) ? 1 : 0; break; // =
+                  case 1: btrue = (ival == 0) ? 0 : 1; break; // <>
+                  case 2: btrue = (ival <  0) ? 1 : 0; break; // <
+                  case 3: btrue = (ival >  0) ? 1 : 0; break; // >
+                  case 4: btrue = (ival <= 0) ? 1 : 0; break; // <=
+                  case 5: btrue = (ival >= 0) ? 1 : 0; break; // >=
+               }
+   
+               // printf("if /%s/%d/%s/ mode=%d delta=%d res=%d\n",
+               //   pleft, ioper, prite, iMode, ival, btrue);
+            }
+            else
+            {
+               // numeric comparison
+               num nleft = atonum(pleft);
+               num nrite = atonum(prite);
+   
+               switch (ioper)
+               {
+                  case 0: btrue = (nleft == nrite) ? 1 : 0; break;
+                  case 1: btrue = (nleft == nrite) ? 0 : 1; break;
+                  case 2: btrue = (nleft <  nrite) ? 1 : 0; break;
+                  case 3: btrue = (nleft >  nrite) ? 1 : 0; break;
+                  case 4: btrue = (nleft <= nrite) ? 1 : 0; break;
+                  case 5: btrue = (nleft >= nrite) ? 1 : 0; break;
                }
             }
          }
-         if (!istate && !strcmp(pszArg, "-text")) {
-            iMode = 1;
-            continue;
-         }
-         if (!istate && strBegins(pszArg, "-num")) {
-            iMode = 2;
-            continue;
-         }
-         if (!istate && sfkisopt(argx[iDir])) {
-            // sfk1812: accept options BEFORE expression
-            if (!strcmp(pszArg, "-showrc"))
-               { cs.showrc = 1; continue; }
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-            continue;
-         }
-         // sfk1920: support if "+a = +a" ...
-         // as long as no expression was found
-         // do not accept begin or +tell etc.
-         if (pexpr) { // sfk1920 support if "+a = +a" ...
-            if (   !strcmp(argv[iDir], "begin")
-                || !strcmp(argv[iDir], "+begin"))
-            {
-               // begin ... +endif support since sfk189.
-               // about nested if handling: this needs to
-               // - parse all if [+]begin endif
-               // - combined with if ... without endif
-               // - combined with ifexist ... [begin]
-               if (iDir+1<argc)
-                  iThenCmd = iDir+1;
-               while (iDir<argc && strcmp(argv[iDir],"+endif")!=0)
-                  iDir++;
-               if (iDir>=argc)
-                  return 9+perr("missing +endif after if \"%s\" begin", pexpr?pexpr:"");
-               continue;
-            }
-            if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-               break;
-         }
-         // non-option parms
-         if (!pexpr) {
-            pexpr = argx[iDir];
-            // detect user error: "rc =" "rc <" "rc >" in unparsed data
-            char *ptmp = argv[iDir];
-            if (strBegins(ptmp, "rc =") || strBegins(ptmp, "rc <")
-                || strBegins(ptmp, "rc >"))
-            {
-               pwarn("possible wrong 'if' syntax: \"%s\"\n", ptmp);
-               pinf("check command rc without blanks, like: if \"rc=0\"\n");
-            }
-            continue;
-         }
-         if (!iThenCmd)
-            { iThenCmd = iDir; continue; }
-         // ignore all other parms as they probably belong
-         // to the thenCmd.
-      }
-
-      if (!pexpr)    return 9+perr("need an expression after if.");
-      if (!iThenCmd) return 9+perr("need a command after if \"%s\", without \"+\".", pexpr);
-
-      if (cs.showrc)
-         printf("[if got rc %d]\n", lRC);
-
-      // evaluate expression
-      bool btrue = 0;
-      if (strBegins(pexpr, "rc=")) {
-         int ncmp = atol(pexpr+3);
-         btrue = (lRC == ncmp) ? 1 : 0;
-      }
-      else
-      if (strBegins(pexpr, "rc<>")) {  // sfk1890
-         int ncmp = atol(pexpr+4);
-         btrue = (lRC != ncmp) ? 1 : 0;
-      }
-      else
-      if (strBegins(pexpr, "rc<")) {
-         int ncmp = atol(pexpr+3);
-         btrue = (lRC < ncmp) ? 1 : 0;
-      }
-      else
-      if (strBegins(pexpr, "rc>")) {
-         int ncmp = atol(pexpr+3);
-         btrue = (lRC > ncmp) ? 1 : 0;
-      }
-      else
-      if (!strcmp(pexpr, "0"))
-      {  btrue = 0; }
-      else
-      if (!strcmp(pexpr, "1"))
-      {  btrue = 1; }
-      else
-      {
-         // sfk1812
-         strcopy(szLineBuf, pexpr);
-
-         char *pleft = szLineBuf;
-         int   ioper = 0;
-         char *prite = pastifop(pleft, &ioper);
-         if (!prite) {
-            perr("unsupported expression: %s\n", pexpr);
-            if (!cs.usevars && strstr(pexpr, "#("))
-               pinf("use -var to enable #() variable replacements.\n");
-            return 9;
-         }
-         // left side was zero terminated.
-
-         bool blanydig=0,blnum=1;
-         bool branydig=0,brnum=1;
-         for (char *psz=pleft; *psz; psz++) {
-            if (isdigit(*psz))
-               blanydig = 1;
-            else
-               blnum = 0;
-         }
-         for (char *psz=prite; *psz; psz++) {
-            if (isdigit(*psz))
-               branydig = 1;
-            else
-               brnum = 0;
-         }
-
-         // if both sides look like numbers
-         if (iMode==0 && blanydig && blnum && branydig && brnum)
-            iMode = 2;
-
-         if (iMode==0)
-            iMode = 1;
-
-         if (cs.debug)
-         {
-            printf("[IF compares %s \"%s\" and \"%s\"]\n",
-               (iMode==1) ? "strings":"numbers",
-               pleft, prite);
-            if (!cs.usevars && (strstr(pleft,"#(") || strstr(prite,"#(")))
-               printf("... use -var as first option to read variables.\n");
-         }
-
-         if (iMode==1)
-         {
-            // string comparison
-            int ival = 0;
-            if (cs.usecase)
-               ival = strcmp(pleft, prite);
-            else
-               ival = mystricmp(pleft, prite);
-
-            switch (ioper)
-            {
-               case 0: btrue = (ival == 0) ? 1 : 0; break; // =
-               case 1: btrue = (ival == 0) ? 0 : 1; break; // <>
-               case 2: btrue = (ival <  0) ? 1 : 0; break; // <
-               case 3: btrue = (ival >  0) ? 1 : 0; break; // >
-               case 4: btrue = (ival <= 0) ? 1 : 0; break; // <=
-               case 5: btrue = (ival >= 0) ? 1 : 0; break; // >=
-            }
-
-            // printf("if /%s/%d/%s/ mode=%d delta=%d res=%d\n",
-            //   pleft, ioper, prite, iMode, ival, btrue);
+   
+         if (btrue) {
+            iChainNext = iThenCmd;
+            if (bHaveBegin)
+               iIfLevel++;
+            break;
          }
          else
-         {
-            // numeric comparison
-            num nleft = atonum(pleft);
-            num nrite = atonum(prite);
-
-            switch (ioper)
-            {
-               case 0: btrue = (nleft == nrite) ? 1 : 0; break;
-               case 1: btrue = (nleft == nrite) ? 0 : 1; break;
-               case 2: btrue = (nleft <  nrite) ? 1 : 0; break;
-               case 3: btrue = (nleft >  nrite) ? 1 : 0; break;
-               case 4: btrue = (nleft <= nrite) ? 1 : 0; break;
-               case 5: btrue = (nleft >= nrite) ? 1 : 0; break;
-            }
+         if (iElseIfCmd) {
+            // restart whole +if processing from here
+            if (cs.debug)
+               printf("[IF skips to +elseif]\n");
+            iDir = iElseIfCmd;
+            pszCmd = str("elseif");
+            continue;
          }
-      }
+         else
+         if (iElseCmd) {
+            iChainNext = iElseCmd;
+            break;
+         }
+         else {
+            // iChainNext was set to cmd after +if begin ... +endif
+            break;
+         }
 
-      if (btrue)
-         iChainNext = iThenCmd;
+       } // endblock
+
+      } // endwhile true
 
       // IF can NOT decide (at start of execution)
       // if the next command to execute needs data.
       STEP_CHAIN(iChainNext, 0); // if
       // sfk181 changed default from 1 to 0
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "else") || !strcmp(pszCmd, "elseif"))
+   {
+      sfkarg;
+
+      if (cs.debug) printf("[else.%d]\n",iIfLevel);
+
+      if (cs.strictif && iIfLevel<1) {
+         perr("+else without matching +if ... begin\n");
+         pinf("... check for missing begin after if.\n");
+         pinf("... check for nested +if begin +if begin, which is not allowed.\n");
+         if (!cs.echoonerr) pinf("add -echoonerr for more info\n");
+      }
+
+      int iChainNext = 0;
+
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strcmp(pszArg, "+endif")) {
+            if (iDir+1<argc)
+               iChainNext = iDir+1;
+            else
+               iChainNext = iDir;
+            break;
+         }
+      }
+      if (iDir>=argc)
+         return 9+perr("missing +endif after +%s", pszCmd);
+
+      STEP_CHAIN(iChainNext, 0); // if  
 
       bDone = 1;
    }
@@ -49989,6 +47292,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       int iChainNext = 0;
       char *pexpr    = 0;
       int iThenCmd   = 0;
+      int bHaveBegin = 0;
       int iMode      = 0;
       bool bOrDir    = 1;
       bool bJustDir  = 0;
@@ -50007,6 +47311,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (   !strcmp(argv[iDir], "begin")
              || !strcmp(argv[iDir], "+begin"))
          {
+            bHaveBegin = 1;
             if (iDir+1<argc)
                iThenCmd = iDir+1;
             while (iDir<argc && strcmp(argv[iDir],"+endif")!=0)
@@ -50050,8 +47355,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (btrue==1 && bIsDir==1)
          lRC = 2;
 
-      if (btrue ^ bNegate)
+      if (btrue ^ bNegate) {
          iChainNext = iThenCmd;
+         if (bHaveBegin)
+            iIfLevel++;
+      }
 
       STEP_CHAIN(iChainNext, 0);
 
@@ -50104,6 +47412,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       ehelp;
 
       sfkarg;
+
+      if (cs.strictif && iIfLevel>0) {
+         perr("goto is not allowed in an +if begin ... endif block");
+         pinf("use -echoonerr for more info\n");
+         return 9;
+      }
 
       char *pszLabel = 0;
       int   iPastLabel = 0;
@@ -50167,23 +47481,26 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   call a sub function in the current script,\n"
              "   starting at the given label.\n"
              "\n"
-             "   $chaining input control\n"
-             "      by default, \"call\" does not consume or pass\n"
-             "      through text input from previous commands.\n"
-             "      use #+tcall<def> to expect text input,\n"
-             "      use #+fcall<def> to expect file list input.\n"
+             "   $no command chaining i/o\n"
+             "      \"call\" does not consume or pass through\n"
+             "      text input from previous commands. data\n"
+             "      should be passed by arguments or variables.\n"
+          // "      use #+tcall<def> to expect text input,\n"
+          // "      use #+fcall<def> to expect file list input.\n"
              "\n"
-             "   $recursion limit\n"
+             "   $if your script exits without any error\n"
+             "      you may have reached the recursion limit.\n"
              "      if the called function calls another function\n"
-             "      by call or perline this should not be nested\n"
-             "      too often, otherwise sfk may crash.\n"
+             "      by call or perline, this should not be nested\n"
+             "      too often, otherwise sfk may crash, or your\n"
+             "      script exits without any notice.\n"
+             "      type #sfk stacksize<def> to find the allowed\n"
+             "      maximum recursion limit.\n"
+             "      use #sfk label begin -var -tracechain<def>\n"
+             "      and look for 'call level n' to check.\n"
              "\n");
       printx("   $see also\n"
-             #ifdef _WIN32
-             "      #sfk samp sfkbat<def>   script example\n"
-             #else
-             "      #sfk samp sfkbash<def>  script example\n"
-             #endif
+             "      #sfk batch mytest.<shext><def>   script example\n"
              "      #sfk stop<def>          stop a function with rc\n"
              "      #sfk if<def>            conditional execution\n"
              "      #sfk stacksize<def>     test available stack size\n"
@@ -50286,6 +47603,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    regtest("list xdir +run echo_$pfile");
 
    bool bReRun = false;
+
+   #ifndef SFK_NO_RUNEXT
 
    ifcmd (   !strcmp(pszCmd, "run")    // +wref +var
           || !strcmp(pszCmd, "run.")   // sfk191
@@ -50477,6 +47796,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   expect user input, and which will stop after a while.\n"
              "\n"
              "   $options important for rerun\n"
+             "   -prog      show progress indicator while loading output.\n"
              "   -verbose   print every line received by external command.\n"
              "              the very last line of output may not be shown.\n"
              "   -printcmd  if a command blocks endless, use -printcmd,\n"
@@ -50540,6 +47860,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             bGlblStdInFiles = 1;
             continue;
          }
+         if (!strcmp(argx[iDir], "-prog"))
+            { cs.prog = 1; continue; }
          if (!strcmp(argx[iDir], "-printcmd")) {
             cs.printcmd = 1;
             continue;
@@ -50974,6 +48296,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
+   #endif // SFK_NO_RUNEXT
+
    if (!strcmp(pszCmd, "tohtml")) // internal
    {
       ifhelp (nparm < 1)
@@ -51151,160 +48475,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
    #endif
-
-   ifcmd (!strcmp(pszCmd, "pathfind") || !strcmp(pszCmd, "where"))
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk pathfind mycmd\n"
-             "$sfk where mycmd\n"
-             "\n"
-             #ifdef _WIN32
-             "   search the current directory and the PATH for the location\n"
-             "   of a command mycmd. \"where\" is the same as \"pathfind\".\n"
-             "\n"
-             "   if mycmd does not contain a dot '.', sfk searches for all\n"
-             "   extensions listed in PATHEXT, e.g. mycmd.bat, mycmd.exe etc.\n"
-             #else
-             "   search the PATH for the location of a command mycmd.\n"
-             #endif
-             "\n"
-             "   $chaining support\n"
-             "      output chaining is supported.\n"
-             "\n"
-            );
-      webref("pathfind");
-      printx("   $examples\n"
-             "      #sfk where sfk.exe\n"
-             "         tell location of sfk.exe\n"
-             "      #sfk where sfk.exe +setvar ownpath +getvar\n"
-             "         store location of sfk.exe in a variable,\n"
-             "         then list all variables\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      char *pszName = 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         if (!pszName)
-            { pszName=pszArg; continue; }
-         return 9+pbad(pszCmd, pszArg);
-      }
-
-      if (!pszName) return 9+perr("supply a command name to search within PATH.\n");
-
-      lRC = 0;
-
-      #ifdef _WIN32
-      if (!strchr(pszName, '.'))
-      {
-         // user did NOT supply .bat etc: search for every possible extension
-         int nhits = listPathAny(pszName, 0); // 0: not silent
-         if (!nhits) {
-            if (!cs.quiet)
-               printf("nothing like %s found within PATH and current dir.\n", pszName);
-            lRC = 1;
-         }
-      }
-      else
-      #endif
-      {
-         char *pszAbs = findPathLocation(pszName);
-         if (!pszAbs) {
-            if (!cs.quiet) {
-               #ifdef _WIN32
-               printf("%s not found within PATH and current dir.\n", pszName);
-               printf("... try also .exe, .bat, .cmd extensions.\n");
-               #else
-               printf("%s not found anywhere within PATH.\n", pszName);
-               #endif
-            }
-            lRC = 1;
-         } else {
-            chain.print("%s\n", pszAbs);
-         }
-      }
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
-   }
-
-   regtest("deblank xdir .cpp .hpp");
-   regtest("list xdir +deblank -dir xdir");
-
-   ifcmd (!strcmp(pszCmd, "deblank")) // +wref
-   {
-      ifhelp (!chain.usefiles && (nparm < 1))
-      printx("<help>$sfk deblank dirname [.ext1] [.ext2] [...]\n"
-             "\n"
-             "   remove blanks from filenames and directory names.\n"
-             "   simulates by default. add -yes to apply changes.\n"
-             "\n");
-      webref("deblank");
-      printx("   $examples\n"
-             "\n"
-             "      #sfk deblank docs\n"
-             "         lists all directories and files within docs having\n"
-             "         blanks in their names, previewing changes.\n"
-             "\n"
-             "      #sfk select docs +deblank\n"
-             "         deblanks only the names of files, not of directories.\n"
-             "\n"
-             "      #sfk select -withdirs docs +deblank\n"
-             "         deblanks filenames and directories.\n"
-            );
-      ehelp;
-
-      sfkarg;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         if (!strcmp(argx[iDir], "-packalnum")) {
-            cs.packalnum = 1;
-            continue;
-         }
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         break; // fall through
-      }
-
-      // sfk deblank -yes
-      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 1, &iChainNext))) return lRC;
-      if (btest) return 0;
-
-      if (!cs.yes) printx("$[simulating:]\n");
-      lRC = walkAllTrees(eFunc_Deblank, lFiles, lDirs, nBytes);
-      if (!cs.yes) printx("$[add -yes to execute.]\n");
-
-      STEP_CHAIN(iChainNext, 0);
-
-      bDone = 1;
-   }
 
    regtest("reflist -dir xdir1 xdir2");
 
@@ -52249,206 +49419,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   bool bZeroFile = 0;
-
-   ifcmd (   !strcmp(pszCmd, "make-random-file")
-          || !strcmp(pszCmd, "make-zero-file")
-         )
-   {
-      bZeroFile = (strcmp(pszCmd, "make-zero-file") ? 0 : 1);
-
-      ifhelp (nparm < 2)
-      if (bhelp || bZeroFile)
-      printx("<help>$sfk make-zero-file outfilename size\n"
-             "\n"
-             "   create a file full of null bytes. primarily used\n"
-             "   to clean unused space on an embedded system's\n"
-             "   sd card, before creating an .iso image of that card,\n"
-             "   which is then compressed for distribution.\n"
-             "\n"
-             "   if filename contains folder(s) the directory tree\n"
-             "   is created automatically.\n"
-             "\n"
-             "   $example\n"
-             "      #sfk make-zero-file tmp1.dat 1m\n"
-             "         produce a file tmp1.dat with 1 mbyte of size.\n"
-             "      #sfk make-zero-file tmp1.dat 100g\n"
-             "         write a file with 100 gigabytes. if the available\n"
-             "         space is less, e.g. 8 gbytes, it will stop as soon\n"
-             "         as all space is used, with an error.\n"
-             );
-      if (bhelp || !bZeroFile)
-      printx("<help>$sfk make-random-file outfilename size [-text] [-seed=n]\n"
-             "\n"
-             "   creates a file full of random binary data for testing.\n"
-             "   size parameters like 5m, 100k, 9000b are supported.\n"
-             "   type \"sfk dupfind\" for details on size parameters.\n"
-             "\n"
-             "   $options\n"
-             "      -text     create text data instead of binary.\n"
-             "      -char s   create file filled with character s.\n"
-             "                e.g. -char \" \" fills with blanks.\n"
-             "      -seed=n   specify randomizer seed. default is\n"
-             "                to use a time based seed.\n"
-             "      -lock=n   wait n msec before closing the file,\n"
-             "                to keep the file locked for testing.\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk make-zero-file<def>    create file with null bytes\n"
-             "\n"
-             "   $examples\n"
-             "      #sfk make-random-file tmp1.dat 1m -seed=1234\n"
-             "         produce a file tmp1.dat with 1 mbyte of size.\n"
-             "      #sfk make-random-file mydir<sla>foo.txt 1k -text\n"
-             "         create folder mydir, and foo.txt within.\n"
-            );
-      ehelp;
-
-      sfkarg;
-
-      char *pszFile = 0;
-      char *pszSize = 0;
-      bool bText = 0, bForceSeed = 0;
-      unsigned nSeed = (unsigned)time(NULL);
-      int   nLock = 0;
-      char  nChar = 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-seed", &pszParm)) {
-            if (!pszParm) return 9;
-            nSeed = (unsigned)atol(pszParm);
-            bForceSeed = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-text")) {
-            bText = 1;
-            continue;
-         }
-         if (haveParmOption(argx, argc, iDir, "-char", &pszParm)) {
-            if (!pszParm) return 9;
-            nChar = pszParm[0];
-            continue;
-         }
-         // internal: -lock=n keeps file locked for n msec
-         if (haveParmOption(argx, argc, iDir, "-lock", &pszParm)) {
-            if (!pszParm) return 9;
-            nLock = atoi(pszParm);
-            continue;
-         }
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         if (!pszFile) {
-            pszFile = pszArg;
-            continue;
-         }
-         if (!pszSize) {
-            pszSize = pszArg;
-            continue;
-         }
-         return 9+pbad(pszCmd,pszArg);
-      }
-
-      if (!pszFile)
-         return 9+perr("missing output filename");
-      if (!pszSize)
-         return 9+perr("missing output size");
-
-      num nSize = numFromSizeStr(pszSize, "size");
-      if (nSize < 0)
-         return 9+perr("invalid output size");
-
-      // sfk1914: create out dir tree
-      if (strchr(pszFile, glblPathChar))
-         if (createOutDirTree(pszFile))
-            return 9+perr("Cannot create folder for: %s\n", pszFile);
-
-      Coi ocoi(pszFile, 0);
-      int isubrc = 0;
-
-      isubrc = ocoi.open("wb"); // sfk1972 always wb
-      if (isubrc)
-         return 9+esys("fopenw", "unable to write %s\n", pszFile);
-
-      if (!cs.quiet)
-         info.setAction("write", pszFile, "");
-
-      if (bGlblRandSeeded==0 || bForceSeed==1) {
-         bGlblRandSeeded = 1;
-         srand(nSeed); // make-random-file, checks seeded
-      }
-
-      num nRemain  = nSize;
-      num nWritten = 0;
-      int nBlockSize = sizeof(abBuf)-10;
-      memset(abBuf, nChar, nBlockSize);
-      int i=0;
-      while (nRemain > 0) 
-      {
-         if (bZeroFile || nChar)
-            { }
-         else
-         if (bText) {
-            int ibreak = 40 + rand() % 80;
-            for (i=0; i<nBlockSize; i++)
-            {
-               abBuf[i] = (uchar)(rand()%26+'a');
-               // add line breaks near 80 chars
-               if (i+10 < nBlockSize
-                   && (i % ibreak) == ibreak-2)
-               {
-                  abBuf[i++] = '\r';
-                  abBuf[i] = '\n';
-                  ibreak = 40 + rand() % 80;
-               }
-            }
-         } else {
-            for (i=0; i<nBlockSize; i++)
-               abBuf[i] = (uchar)rand();
-         }
-         int nWriteSize = nBlockSize;
-         if (nWriteSize > nRemain)
-             nWriteSize = nRemain;
-         num nWrite = ocoi.write(abBuf, nWriteSize);
-         if (nWrite != nWriteSize) {
-            esys("fwrite", "unable to write after %s bytes.\n", numtoa(nWritten));
-            lRC = 9;
-            break;
-         }
-         nRemain  -= nWriteSize;
-         nWritten += nWriteSize;
-         if (!cs.quiet)
-            info.setProgress(nSize, nWritten, "bytes");
-      }
-
-      if (nLock > 0) {
-         printf("waiting %d msec before close.\n",nLock);
-         doSleep(nLock);
-      }
-
-      ocoi.close();
-
-      if (cs.quiet < 2)
-         info.print("written %s (%s bytes).\n", pszFile, numtoa(nWritten));
-
-      STEP_CHAIN(iChainNext, 0);
-
-      bDone = 1;
-   }
-
    ifcmd (!strcmp(pszCmd, "color"))
    {
       ifhelp (nparm < 1)
@@ -52971,6 +49941,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "     -headers     show incoming request headers.\n"
          "     -startdir x  set default subdir to redirect to if a client\n"
          "                  connects for the first time, requesting '/'.\n"
+         "     -rawctype    send content-type 'application/octet-stream'\n"
+         "                  for every binary data, instead of detailed\n"
+         "                  types like video/mp2t for .ts\n"
          "\n"
          "   $about filename character encodings\n"
          "     only filenames with characters of the system codepage\n"
@@ -52989,9 +49962,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          "   $examples: display a simple web page\n"
          "     #sfk webserv -nolist\n"
          "        no file listings, load index.html if present.\n"
-         "        access to files in sub folders is blocked.\n"
-         "     #sfk webserv -nolist -deep\n"
-         "        same as above, but allow access to sub folder files.\n"
          "\n"
          "   $examples: easy file down- and upload\n"
          "     #sfk webserv\n"
@@ -53059,6 +50029,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          }
          if (!strcmp(pszArg, "-raw")) 
             { bRaw = 1; continue; }
+         if (!strcmp(pszArg, "-rawctype"))
+            { cs.rawctype = 1; continue; }
          if (!strcmp(pszArg, "-usehta")) // internal
             { cs.usehta = 1; continue; }
          if (haveParmOption(argx, argc, iDir, "-timeout", &pszParm)) { // httpserv
@@ -53069,6 +50041,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (haveParmOption(argx, argc, iDir, "-startdir", &pszParm)) { // internal
             if (!pszParm) return 9;
             cs.pwebstartdir = pszParm;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-replyfile", &pszParm)) { // internal
+            if (!pszParm) return 9;
+            num n = 0;
+            cs.pfixwebreply = (char*)loadBinaryFile(pszParm, n);
             continue;
          }
          if (!strcmp(pszArg, "-wide")) // sfk198 deleted
@@ -53127,400 +50105,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    regtest("hexdump -flat xfile1");
    regtest("tcpdump 5000 -forward xhost:xport -timeout 20000");
 
-   #ifdef VFILENET
-   bool bGetDV = 0;
-
-   if (!strcmp(pszCmd, "dview"))
-   {
-      printx(
-         "\n"
-         "$Depeche View<def> is the world's fastest #browser and editor<def>\n"
-         "#for all text files of a folder<def>, especially source code.\n"
-         "\n"
-         "It is used in embedded software development to analyze\n"
-         "projects with #ten thousands of source files<def>, but also\n"
-         "helpful for a #quick overview<def> over #documentation<def>,\n"
-         "#config files<def>, or to #filter log files<def>.\n"
-         "\n"
-         "#Further features:\n"
-         "- receive and filter network text sent by UDP\n"
-         "- load text from http:// URLs directly\n"
-         "- run self defined scripts on hotkeys\n"
-         "\n"
-         "Type #\"sfk getdv\"<def> to download Depeche View Lite now.\n"
-         "It runs instantly #without installation<def>.\n"
-         "\n"
-         "Once downloaded it can be used standalone,\n"
-         "or combined with SFK as shown under: #\"sfk view\"<def>\n"
-         "\n"
-         "For all infos see: #http://stahlworks.com/dview/<def>\n"
-         );
-
-      bDone = 1;
-   }
-
-   #ifdef _WIN32
-   if (!strcmp(pszCmd, "getdv"))
-   {
-      printf("\n=== Depeche View Lite download ===\n\n");
-      printx("$sfk will open a web browser, with URL:\n\n");
-      printf("   http://stahlworks.com/dview.exe\n");
-      char *pszWritePath=0;
-      int   isubrc=0;
-      if ((pszWritePath=getWritePath(isubrc))) {
-         printx("\nyou may then save dview.exe to folder %s\n",pszWritePath);
-         printx("or into the same folder as sfk.exe.\n");
-      } else {
-         char *pszsfk = findPathLocation("sfk" EXE_EXT, 1); // for getdv. 1=nocwd
-         if (pszsfk) {
-            char *psz=strrchr(pszsfk, '\\');
-            if (psz) *psz='\0';
-            printx("\n$you may then save dview.exe in the same folder as sfk:\n\n");
-            printf("   %s\n", pszsfk);
-         }
-      }
-      printf("\n");
-
-      printx("#press ENTER to continue, or CTRL+C to stop.\n");
-      getchar();
-
-      ShellExecute(NULL, "open", "http://stahlworks.com/dview.exe", NULL, NULL, SW_SHOWNORMAL);
-
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "gettray"))
-   {
-      printf("\n=== SFKTray Free Edition download ===\n\n");
-      printx("$sfk will open a web browser, with URL:\n\n");
-      printf("   http://stahlworks.com/dev/sfk/sfktray-set-up.exe\n");
-      printf("\n");
-      printx("$Windows requires an installation for programs\n");
-      printx("$that want to display a task icon.\n");
-      printf("\n");
-      printf("   However SFKTray requires no admin rights.\n");
-      printf("   Just install it to the path suggested by setup.\n");
-      printf("\n");
-
-      printx("#press ENTER to continue, or CTRL+C to stop.\n");
-      getchar();
-
-      ShellExecute(NULL, "open", "http://stahlworks.com/dev/sfk/sfktray-set-up.exe", NULL, NULL, SW_SHOWNORMAL);
-
-      bDone = 1;
-   }
-   #endif
-
-   #ifdef _WIN32
-   ifcmd (!strcmp(pszCmd, "wget"))
-   #else
-   ifcmd (!strcmp(pszCmd, "wget") || !strcmp(pszCmd, "getdv")) // +var
-   #endif
-   {
-      bGetDV = (strcmp(pszCmd, "getdv") == 0) ? 1 : 0;
-
-      ifhelp (chain.useany() == 0 && nparm < 1 && bGetDV == 0)
-      printx("<help>$sfk wget [options] url [outfile|outdir] [options]\n"
-             "\n"
-             "   download content from a given http:// URL.\n"
-             "   an output filename or directory can be specified.\n"
-             "   existing output files are overwritten without asking back.\n"
-             "\n"
-             "   $options\n"
-             "      -user=u     and -pw=p set http basic authentication.\n"
-             "                  you may also use global options -webuser, -webpw.\n"
-             "                  note that passwords are not encrypted on transfer,\n"
-             "                  except when using SFK Plus with HTTPS connections.\n"
-             "      -proxy      hostname:port of a proxy server. from within a company\n"
-             "                  network, it is often required to connect through proxies.\n"
-             "                  alternatively, set the environment variable SFK_PROXY :\n"
-             "                    #<exp> SFK_PROXY=myproxyhost:8000\n"
-             "                  to find out what proxy your browser is using, see\n"
-             "                  - Firefox: tools/options/advanced/network/settings\n"
-             "                  - IE: tools/internet options/connections/lan settings\n"
-             "      -path2name  include web path in generated output name,\n"
-             "                  to create unique names on multiple downloads.\n"
-             "                  this option is default on chained processing.\n"
-             "      -fullpath   recreate the whole web path within output dir.\n"
-             "      -nodom      do not include domain name in output name.\n"
-             "      -nopath     do not include any path and domain information\n"
-             "                  within the output names. will not work if URL\n"
-             "                  does not contain any relative filename.\n"
-         //  "      -usecache   allow caching of downloads.\n"
-             "      -quiet      or -noprog shows no download progress indicator.\n"
-             "      -quiet=2    show no \"done\" info line.\n"
-             "      -addext     always add a filename extension like .txt, .html\n"
-             "                  or .dat even if the URL has no such extension.\n"
-             "      -timeout=n  wait up to n msec for data\n" // wto.wget
-             "      -verbose    tell current proxy settings, if any\n"
-             "      -noclose    do not send \"Connection: close\" header.\n"
-             "\n"
-             "   $automatic name expansions\n"
-             "      http:// is added automatically. short ip's like .100 are\n"
-             "      extended like 192.168.1.100 depending on your subnet.\n"
-             "\n");
-      printx("   $quoted multi line parameters are supported in scripts\n" // wget
-             "      using full trim. type \"sfk script\" for details.\n"
-             "\n");
-      printx("   $limitations\n"
-             "      although sfk wget can download a list of URLs, it is not\n"
-             "      a real webpage downloader/archiver, as this would require\n"
-             "      the conversion of html pages to adapt contained links.\n"
-             "\n");
-      printx("   $HTTPS support\n"  // sfkplus.anno wget
-             "      SSL/TLS downloads are supported with SFK Plus.\n"
-             "      read more under:\n"
-             "         #stahlworks.com/sfkplus\n"
-             "\n");
-      printx("   $chaining support\n"
-             "      output filename chaining is supported.\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk web<def>      send a simple web request with instant\n"
-             "                   result output to terminal\n"
-             #ifndef _WIN32
-             "      #wget<def>         linux command for file download\n"
-             #endif
-             "      #curl<def>         powerful web request and download tool\n"
-             "\n");
-      webref(pszCmd);
-      printx("   $examples\n"
-             "      #sfk wget -proxy myproxy:8000 http://foobar.com/x.zip foo.zip\n"
-             "         download x.zip, writing the content into a file foo.zip,\n"
-             "         connecting through a proxy server myproxy on port 8000.\n"
-             "\n"
-             "      #sfk filt urls.txt +wget mydir\n"
-             "         if urls.txt contains a list of http:// URLs, load it\n"
-             "         and download all contents into mydir. the output names\n"
-             "         will include path information found in the source URL.\n"
-             "\n"
-             "      #sfk filt urls.txt +wget -fullpath mydir +list -big\n"
-             "         the same as above, but create the whole dir structure,\n"
-             "         and then list biggest files from the downloaded.\n"
-             "\n"
-             "      #sfk wget -quiet=2 server/info.xml tmp.txt +ffilter -nofile\n"
-             "         download info.xml from server, write it as file tmp.txt\n"
-             "         and instantly print the tmp.txt content to terminal\n"
-             "         without any status messages or filename infos.\n"
-            );
-      ehelp;
-
-      sfkarg;
-
-      CommandScope oscope("wget");
-
-      char *pSrcName    = 0;
-      char *pDstName    = 0;
-      bool  bchained    = chain.useany();
-      bool  bpath2name  = bchained;
-      bool  bpath2path  = 0;
-      bool  bwithdom    = 1;
-      bool  bcache      = 0;
-      bool  bsynext     = 0;
-      bool  bdump       = 0;
-
-      cs.execweb = 1; // wget
-
-      if (bGetDV)
-      {
-         pSrcName = str("http://stahlworks.com/dview.exe");
-         #ifdef _WIN32
-         pDstName = str(".");
-         #else
-         pDstName = str("dview-linux.exe");
-         #endif
-         bpath2name = 0;
-      }
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-user", &pszParm)) { // sfk198
-            if (!pszParm) return 9;
-            cs.pwebuser = pszParm;
-            continue;
-         }
-         if (haveParmOption(argx, argc, iDir, "-pw", &pszParm)) { // sfk198
-            if (!pszParm) return 9;
-            cs.pwebpass = pszParm;
-            continue;
-         }
-         if (bGetDV && !strcmp(argx[iDir], "-web")) {
-            #ifdef _WIN32
-            printx("$opening :<def> %s\n", pSrcName);
-            ShellExecute(NULL, "open", pSrcName, NULL, NULL, SW_SHOWNORMAL);
-            #endif
-            return 0;
-         }
-         if (!strncmp(pszArg,"-timeout=",9)) { // wto.wget.new
-            cs.maxwebwait = atol(pszArg+9);
-            continue;
-         }
-         if (!strncmp(pszArg,"-maxwait=",9)) { // wto.wget compat
-            cs.maxwebwait = atol(pszArg+9);
-            continue;
-         }
-         if (!strcmp(pszArg, "-path2name")) {
-            bpath2name = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-fullpath") || !strcmp(pszArg, "-path2path"))
-         {
-            bpath2path = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-nopath")) {
-            bpath2name = bpath2path = 0;
-            continue;
-         }
-         if (!strcmp(pszArg, "-nodom")) {
-            bwithdom = 0;
-            continue;
-         }
-         if (!strcmp(pszArg, "-usecache")) {
-            bcache = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-addext")) {
-            bsynext = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-noclose")) // wget
-            { cs.webnoclose = 1; continue; }
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         if (!pSrcName && !bchained) {
-            if (iGlblInScript) // then pszArg is writeable
-               fixMultiLineParm(pszArg, 't'); // sfk180: wget
-            pSrcName = pszArg;
-            continue;
-         }
-         if (!pDstName)
-            { pDstName = pszArg; continue; }
-         pbad(pszCmd, pszArg);
-         pinf("use \"+then wget\" to use multiple wget in one command chain.\n");
-         return 9;
-      }
-
-      if (bGetDV)
-      {
-         printx("$download:<def> Depeche View Lite\n"
-                "$from URL:<def> %s\n",
-                pSrcName
-               );
-      }
- 
-      if (!pSrcName && !bchained)
-         return 9+perr("missing URL.\n");
-
-      uint nmode = bpath2name ? 1 : 0;
-      if (bpath2path) nmode |= 2;
-      if (bwithdom)   nmode |= 4;
-      if (pDstName && !isDir(pDstName))
-         nmode |= 8; // single output file
-      if (bsynext)    nmode |= 16;
-      if (bdump)      nmode |= 32;
-
-      if (chain.usedata!=0)
-         chain.convInDataToInFiles();
-
-      if (pSrcName)
-      {
-         // auto expand url?
-         char szURL[SFK_MAX_PATH+100];
-         if (   !striBegins(pSrcName, "http:")
-             && !striBegins(pSrcName, "https:")
-             && !striBegins(pSrcName, "ftp:")
-            )
-         {
-            snprintf(szURL,SFK_MAX_PATH,"http://%s",pSrcName);
-            pSrcName=szURL;
-         }
-
-         #ifdef SFKINT
-         // sfk1860 url blank encoding
-         if (encodeURL(pSrcName))
-            pSrcName = szTopURLBuf;
-         #endif
-
-         // TODO: mem/disk caching is yet undefined
-         Coi *psrc = bcache ? glblVCache.get(pSrcName) : 0;
-         if (!psrc) {
-            psrc = new Coi(pSrcName, 0);
-            if (!psrc) return 9+perr("out of memory");
-            psrc->incref("wget");
-         }
-         CoiAutoDelete odel(psrc, 1); // with decref
-
-         if (execWGet(psrc, pDstName, nmode)) {
-            // download failed
-            #ifdef _WIN32
-            if (bGetDV)
-               printx("You may try #sfk getdv -web<def> to download via web browser.\n");
-            #else
-            if (bGetDV)
-               printx("Please download manually from %s\n", pSrcName);
-            #endif
-         } else {
-            #ifndef _WIN32
-            if (bGetDV) {
-               // post process: make binary executable
-               snprintf(szLineBuf, sizeof(szLineBuf)-10, "chmod +x \"%s\"", pDstName);
-               if (system(szLineBuf))
-                  perr("cannot set x attribute (%s)\n", szLineBuf);
-               // and duplicate to "dview" without .exe
-               snprintf(szLineBuf, sizeof(szLineBuf)-10, "cp \"%s\" dview", pDstName);
-               if (system(szLineBuf))
-                  perr("cannot copy %s to \"dview\"\n", pDstName);
-               else {
-                  printf("done : ./dview (copy of %s)\n", pDstName);
-                  printf("note : please copy \"dview\" into a folder listed in your PATH.\n");
-                  char *pszPath = getenv("PATH");
-                  if (pszPath)
-                     printf("       PATH = %s\n", pszPath);
-               }
-            }
-            #endif
-         }
-
-         if (bcache && !psrc->isCached() && psrc->data().src.data) {
-            glblVCache.put(psrc->orgName(), psrc, "wget");
-         }
-      }
-      else
-      if (chain.usefiles)
-      {
-         if ((nmode & 8)!=0 && chain.numberOfInFiles()>1)
-            return 9+perr("more than 1 input URLs, but no existing output folder given.");
-
-         for (int i=0; i<chain.numberOfInFiles(); i++)
-         {
-            Coi *pcoi = chain.getFile(i);
-            if (!pcoi) return 9+perr("int. #9529726");
-            execWGet(pcoi, pDstName, nmode);
-         }
-      }
-      else
-         return 9+perr("wrong chain input, need filenames.");
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
-   }
-
-   #endif // VFILENET
-
    if (!strcmp(pszCmd, "xe")) // alias for sfk help xe
    {
       printHelpText("xe", bhelp);
@@ -53531,11 +50115,24 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    ifcmd (!strcmp(pszCmd, "book"))
    {
       ifhelp (nparm < 1)
-      printx("The $Five Dollar SFK Book<def> is a $300 page PDF file<def>, optimized\n"
+      printx("The #SFK e-Book<def> is a $370 page PDF file<def>, optimized\n"
              "for reading on smartphones and tablets, featuring:\n"
              "\n"
              "-  a $large font<def> and no side borders, for $zoomless reading<def>\n"
              "   even on small smartphone screens.\n"
+             "\n"
+             "-  $page links!<def> touch and jump to related content, instantly.\n"
+             "   feature may depend on PDF reader used. test it with the\n"
+             "   free Demo PDF available on stahlworks.com\n"
+             "\n"
+             "-  zero weight, $always with you on your smartphone<def>.\n"
+             "\n");
+      printx("The #SFK printed book<def> is a 400 page paperback,\n"
+             "available on Amazon. Search for the title:\n"
+             "\n"
+             "   #100 Command Line Tools\n"
+             "\n");
+      printx("Both books contain:\n"
              "\n"
              "-  a $60 pages tutorial<def>, with a step by step introduction\n"
              "   into SFK with input, command and output:\n"
@@ -53548,30 +50145,25 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   -  file transfer by web or ftp server\n"
              "   -  script creation and more.\n"
              "\n"
-             "-  the tutorial includes $25 pages of Xed examples<def>\n"
+             "   the tutorial includes $25 pages of Xed examples<def>\n"
              "   with input, script, output and detailed explanations:\n"
              "   -  conversion and processing of CSV and XML data\n"
              "   -  cleanup of a translation file\n"
              "   -  convert Wiki markup text to HTML\n"
              "   -  HTTP request scripting and test automation\n"
              "   -  how to fill in an XML file with program meta data\n"
-             "   -  scripting with variables and parameters\n"
+             "   -  scripting with variables and parameters.\n"
              "\n"
-             "-  $page links!<def> touch and jump to related content, instantly.\n"
-             "   feature may depend on PDF reader used. test it with the\n"
-             "   free Demo PDF available on stahlworks.com\n"
+             "-  the full command reference.\n"
              "\n"
-             "-  zero weight, $always with you on your smartphone<def>.\n"
+             "-  an eight page index, to find functions by different\n"
+             "   search terms as in the table of contents.\n"
              "\n"
-             "All details and Demo PDF under: #stahlworks.com/ebook<def>\n"
+             "View all details under: #stahlworks.com/book<def>\n"
              "\n"
              #ifdef _WIN32
              "To open a web browser now, type: #sfk book web\n"
              #endif
-             "\n"
-             "$----------- Do you prefer a printed book? -----------\n"
-             "\n"
-             "    Search for #100 Command Line Tools<def> on Amazon!\n"
              "\n"
              );
       ehelp;
@@ -53596,7 +50188,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          // process non-option keywords:
          #ifdef _WIN32
          if (!strcmp(pszArg, "web")) {
-            ShellExecute(NULL, "open", "http://stahlworks.com/ebook", NULL, NULL, SW_SHOWNORMAL);
+            ShellExecute(NULL, "open", "http://stahlworks.com/book", NULL, NULL, SW_SHOWNORMAL);
             return 0;
          }
          #endif
@@ -53754,20 +50346,20 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          {
             int iOwnPart = atoi(pszOwn);
             int iReqPart = atoi(pszNew);
-       
+ 
             if (iOwnPart < iReqPart)
                { bOld = 1; break; }
-       
+ 
             if (iOwnPart > iReqPart)
                break;
-       
+ 
             pszOwn = strchr(pszOwn, '.');
             pszNew = strchr(pszNew, '.');
-      
+ 
             if (!pszNew) break; // end of triple or quad req
             pszNew++;
             // new continues e.g. 1.8.1.2
-      
+ 
             if (!pszOwn) { // fix sfk1812
                // but own stops e.g. 1.8.1
                bOld = 1;
@@ -54321,47 +50913,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   if (!strcmp(pszCmd, "readtest"))
-   {
-      if (argc < 3) return 9;
- 
-      char *pszSrc = argv[2];
-
-      num nstart = getCurrentTime();
-      int nlines = 0;
-
-      Coi ocoi(pszSrc, 0);
-      if (ocoi.open("rb"))
-         return 9+pferr(pszSrc, "cannot read: %s", pszSrc);
-      while (ocoi.readLine(szLineBuf, MAX_LINE_LEN) > 0) {
-         nlines++;
-         // if (!(nlines & 65535))
-         //   { printf("%d lines   \r", nlines); fflush(stdout); }
-         printf("%s",szLineBuf);
-      }
-      ocoi.close();
-
-      num nelaps = getCurrentTime() - nstart;
-      fprintf(stderr, "%d lines in %s msec\n",nlines,numtoa(nelaps));
-
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "md5test"))
-   {
-      SFKMD5 md5;
-      uchar adata[] = { 0xFF };
-      md5.update(adata, 1);
-      uchar *pmd5 = md5.digest();
-      mtklog(("test digest: %02X %02X %02X %02X",pmd5[0],pmd5[1],pmd5[2],pmd5[3]));
-      printf("test digest: %02X %02X %02X %02X\n",pmd5[0],pmd5[1],pmd5[2],pmd5[3]);
-      bDone = 1;
-   }
-
    if (   !strcmp(pszCmd, "noop") || !strcmp(pszCmd, "rem") // +chaining
        || !strcmp(pszCmd, "endif")  // sfk189
       )
    {
+      if (!strcmp(pszCmd, "endif"))
+      {
+         iIfLevel--;
+         if (cs.debug) printf("[endif level %d]\n",iIfLevel);
+      }
+
       for (; iDir<argc; iDir++)
       {
          if (!strncmp(argv[iDir], "-", 1)) {
@@ -54382,23 +50943,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       bDone = 1;
    }
-
-   #ifdef WINFULL
-   if (!strcmp(pszCmd, "coninfo"))
-   {
-      hGlblConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-      CONSOLE_SCREEN_BUFFER_INFO oConInf;
-      if (!GetConsoleScreenBufferInfo(hGlblConsole, &oConInf)) {
-         printf("no console info available.\n");
-      } else {
-         WORD nAttrib = oConInf.wAttributes;
-         printf("cons.attrib:\t0x%02lx\n", nAttrib);
-         printf("cons.width :\t%u\n", oConInf.dwSize.X);
-         printf("cons.height:\t%u\n", oConInf.dwSize.Y);
-      }
-      bDone = 1;
-   }
-   #endif
 
    /*
       NOTE:
@@ -55579,7 +52123,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      the following are normally used after fixfile\n"
              "      as they need plain ASCII filenames to work with.\n"
              "      #sfk rename<def>   flexible mass rename of files\n"
-             "      #sfk media<def>    to cut mpeg2 video files\n"
+          // "      #sfk media<def>    to cut mpeg2 video files\n"
              "\n"
              );
       webref(pszCmd);
@@ -55777,294 +52321,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       STEP_CHAIN(iChainNext, 0); // cd
 
-      bDone = 1;
-   }
-
-   ifcmd (!strcmp(pszCmd, "mkdir"))
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk mkdir path\n"
-             "\n"
-             "   create a directory, or directory tree.\n"
-             "\n"
-             "   $options\n"
-             "      -echo     echo the command on execution\n"
-             "      -forfile  path is a filename, create folder\n"
-             "                for that file. does nothing if\n"
-             "                path contains no <sla> character.\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk dir -withdirs tmp\n"
-             "         list all folder names within tmp\n"
-             "\n"
-             "   $examples\n"
-             "      #sfk mkdir tmp\\foo\\bar\n"
-             "         create directory bar within foo within tmp.\n"
-             "      #sfk mkdir -forfile tmp\\foo\\index.html\n"
-             "         create directory foo within tmp.\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      char *pszPathIn=0;
-      char szPath[SFK_MAX_PATH+10];
-      bool becho=0, bforfile=0;
-      szPath[0] = '\0';
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         if (!strcmp(pszArg, "-echo"))
-            { becho = 1; continue; }
-         if (!strcmp(pszArg, "-forfile"))
-            { bforfile = 1; continue; }
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         if (!szPath[0]) {
-            pszPathIn = pszArg;
-            strcopy(szPath, pszArg);
-         } else {
-            return 9+perr("unexpected: %s", pszArg);
-         }
-      }
-
-      if (!szPath[0])
-         return 9+perr("missing name for mkdir");
-
-      if (bforfile) {
-         char *psz = strrchr(szPath, glblPathChar);
-         if (psz)
-            *psz = '\0';
-         else
-            szPath[0] = '\0'; // nothing to do
-      }
-
-      lRC = 0;
-
-      if (szPath[0])
-      {
-         lRC = createSubDirTree(szPath, str(""));
-         if (lRC) return lRC;
-   
-         if (becho)
-            printx("<time>mkdir %s<def>\n", szPath);
-      } else {
-         if (becho)
-            printx("<time>mkdir : skipped for %s<def>\n", pszPathIn);
-      }
-
-      STEP_CHAIN(iChainNext, 0); // mkdir
-
-      bDone = 1;
-   }
-
-   ifcmd (strBegins(pszCmd, "linelen") || strBegins(pszCmd, "strlen"))
-   {
-      ifhelp (!chain.useany() && (nparm < 1))
-      printx("<help>$sfk linelen [options]\n"
-             "$sfk strlen phrase\n"
-             "\n"
-             "   tell the length of text lines supplied via stdin\n"
-             "   or through command chaining, or tell the length\n"
-             "   of a single string.\n"
-             "\n"
-             "   the result is printed to terminal, and supplied\n"
-             "   as a return code to the command shell.\n"
-             "\n"
-             "   \"sfk strlen\" does not accept any options,\n"
-             "   allowing to supply a string starting with \"-\".\n"
-             "\n"
-             "   $options\n"
-             "      -i         read lines from standard input,\n"
-             "                 tell the longest line length.\n"
-             "      -min       tell the minimum, not the maximum length.\n"
-             "      -minmax    tell both min and max length.\n"
-             "      -verbose   tell minmax, line numbers and line text.\n"
-             "                 you may also type -all or -ver\n"
-             "      -quiet     do not print anything to terminal,\n"
-             "                 just provide the shell return code.\n"
-             "\n"
-             "   $limitations\n"
-             "      if the input contains stream text, i.e. text where\n"
-             "      linefeeds are used only for paragraphs (not lines),\n"
-             "      the result will be a paragraph length, and it can be\n"
-             "      completely wrong if there are paragraphs longer than\n"
-             "      4000 characters approx.\n"
-             "\n");
-      webref(pszCmd);
-      printx("   $examples\n"
-             "      #sfk strlen \"foo bar\"\n"
-             "         results in a string length of 7.\n"
-             "\n"
-             "      #sfk filter foo.txt +linelen -all\n"
-             "         list the shortest and longest line of foo.txt\n"
-             #ifdef _WIN32
-             "\n"
-             "      #Windows batch: expand short parameter\n"
-             "         sfk strlen \"%%1\"\n"
-             "         IF %%ERRORLEVEL%% LEQ 3 (\n"
-             "            set TARGET=192.168.2.%%1\n"
-             "         ) ELSE (\n"
-             "            set TARGET=%%1\n"
-             "         )\n"
-             "         echo \"using: %%TARGET%%\"\n"
-             #endif
-             );
-      ehelp;
-
-      sfkarg;
-
-      bool  braw = strBegins(pszCmd, "strlen");
-
-      char *pphrase = 0;
-      bool  bstdin  = 0;
-      bool  bdetail = 0;
-      bool  bmin    = 0;
-      bool  bmax    = 1;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         if (!braw && !strcmp(argx[iDir], "-i")) {
-            bstdin = 1;
-            continue;
-         }
-         else
-         if (!braw && !strcmp(argx[iDir], "-min")) {
-            bmin = 1; bmax = 0;
-            continue;
-         }
-         else
-         if (!braw && !strcmp(argx[iDir], "-max")) {
-            bmax = 1;
-            continue;
-         }
-         else
-         if (!braw && !strcmp(argx[iDir], "-minmax")) {
-            bmin = 1; bmax = 1;
-            continue;
-         }
-         else
-         if (!braw && (strBegins(argx[iDir], "-ver") || !strcmp(argx[iDir], "-all")))
-         {
-            bdetail = 1;
-            continue;
-         }
-         else
-         if (!braw && sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         if (!pphrase) {
-            pphrase = argx[iDir];
-            continue;
-         }
-         return 9+perr("only one phrase can be supplied.\n");
-      }
-
-      if (!pphrase && !chain.usedata && !bstdin)
-         return 9+perr("missing phrase, chain text or -i option.\n");
-
-      if (pphrase)
-         { bmin=0; bdetail=0; }
-
-      int iline = 0;
-      int nmin  = -1;
-      int nmax  = 0;
-      int imin  = 0;
-      int imax  = 0;
-      mclear(szLineBuf2);  // will contain min line
-      mclear(szLineBuf3);  // will contain max line
-
-      if (bstdin)
-         myfgets_init();
-
-      if (pphrase) {
-         nmax = strlen(pphrase);
-         bdetail = 0;
-      }
-      else
-      while (1)
-      {
-         if (chain.usedata) {
-            if (chain.indata->eod())
-               break;
-            char *psz = chain.indata->read(0);
-            mystrcopy(szLineBuf, psz, MAX_LINE_LEN);
-         } else {
-            if (!myfgets(szLineBuf, MAX_LINE_LEN, stdin))
-               break;
-         }
-         iline++;
-         removeCRLF(szLineBuf);
-         int nlen = strlen(szLineBuf);
-         if (nmin < 0 || nlen < nmin) {
-            nmin = nlen;
-            imin = iline;
-            strcopy(szLineBuf2, szLineBuf);
-         }
-         if (nlen > nmax) {
-            nmax = nlen;
-            imax = iline;
-            strcopy(szLineBuf3, szLineBuf);
-         }
-      }
-
-      lRC = nmax;
-
-      if (!cs.quiet) {
-         if (bdetail) {
-            chain.print("min\t%d\t%d\t\"%s\"", nmin, imin, szLineBuf2);
-            chain.print("max\t%d\t%d\t\"%s\"", nmax, imax, szLineBuf3);
-         }
-         else
-         if (bmin && bmax) {
-            chain.print("%d\t%d", nmin, nmax);
-         }
-         else
-         if (bmin) {
-            chain.print("%d", nmin);
-            lRC = nmin;
-         }
-         else {
-            chain.print("%d", nmax);
-         }
-      }
-
-      if (iChainNext > 0)
-         lRC = 0;
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "mdfuzzy"))
-   {
-      if (argc < 3) return 9;
-      char *pszFile = argv[2];
-      if (getFuzzyTextSum(pszFile, abBuf))
-         return 9;
-      for (int i=0; i<16; i++)
-         printf("%02x ", abBuf[i]);
-      printf("\n");
       bDone = 1;
    }
 
@@ -59856,292 +56112,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (!strcmp(pszCmd, "csvtotab") || !strcmp(pszCmd, "csvtab")) // +wref
-   {
-      ifhelp (bFullHelp || (chain.usedata == 0 && nparm < 1))
-      printx("<help>$sfk csvtotab infile.csv [options]\n"
-             "\n"
-             "   convert csv data to plain tab separated.\n"
-             "\n"
-             "   $default input/output format\n"
-             "   - input fields are separated by a comma \",\"\n"
-             "   - input fields can be surrounded by double quotes \"\n"
-             "     and may contain escaped double quotes as \"\"\n"
-             "   - output fields are separated by TAB characters\n"
-             "   - surrounding quotes are stripped, and escaped\n"
-             "     quotes are reduced to normal quotes\n"
-             "   - if input contains any TABs they are changed to\n"
-             "     a single blank character\n"
-             "   - input fields cannot contain line breaks\n"
-             "\n"
-             "   $options\n"
-             "     -tofile x     write output to file x\n"
-             "     -insep=\"x\"    set input separator to character x\n"
-             "                   e.g. ; or \\t\n"
-             "     -outsep=\"x\"   change output separator\n"
-             "     -quote=\"x\"    change quote character, e.g. \\x27\n"
-             "                   uses single quote.\n"
-             "     -tabrep=\"x\"   change tab replacement character\n"
-             "\n"
-             "   $see also\n"
-             "     #sfk ascii<def>     list of ASCII codes for characters\n"
-             "     #sfk tabtocsv<def>  further conversion examples\n"
-             "\n");
-      webref(pszCmd);
-      printx("   $examples\n"
-             "     #sfk csvtotab in.csv -tofile out.txt\n"
-             "        convert to tab separated out.txt\n"
-             "     #sfk filter in.csv -+foo +csvtotab\n"
-             "        convert only lines with word \"foo\"\n"
-             "     #sfk csvtotab in.csv +filter \"-<not>[warning]\"\n"
-             "        drop all lines with [warning] from output\n"
-             #ifdef _WIN32
-             "     #sfk csvtotab in.csv +view -tab 10\n"
-             "        view in.csv in Depeche View for convenient browse\n"
-             "        and search of contents, with a tab size of 10.\n"
-             "        Within DView press Ctrl+Tab to change tab size\n"
-             "        in small steps, or Ctrl+Shift+Tab for large tabs.\n"
-             #endif
-             );
-      ehelp;
-
-      sfkarg;
-
-      char *pszInFile = 0;
-      char *pszOutFile = 0;
-      char  szInSep[20];
-      char  szOutSep[20];
-      char  szQuote[20];
-      char  szOutEsc[20];
-
-      strcpy(szInSep , ",");
-      strcpy(szOutSep, "\t");
-      strcpy(szQuote , "\"");
-      strcpy(szOutEsc, " ");
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-insep", &pszParm)) {
-            if (!pszParm) return 9;
-            if (copyFromFormText(pszParm, strlen(pszParm), szInSep, sizeof(szInSep)) != 1) {
-               perr("invalid or too long input separator: %s", pszParm);
-               if (pszParm[0]=='\"' && pszParm[1])
-                  pinf("try \"-insep=%c\" or -spat -insep=\\x%02x\n", pszParm[1], pszParm[1]);
-               pinf("use only a single char like ; or a valid slash pattern like \\t\n");
-               return 9;
-            }
-            continue;
-         }
-         else
-         if (haveParmOption(argx, argc, iDir, "-outsep", &pszParm)) {
-            if (!pszParm) return 9;
-            if (copyFromFormText(pszParm, strlen(pszParm), szOutSep, sizeof(szOutSep)) != 1) {
-               perr("invalid or too long output separator: %s", pszParm);
-               return 9;
-            }
-            continue;
-         }
-         else
-         if (haveParmOption(argx, argc, iDir, "-quote", &pszParm)) {
-            if (!pszParm) return 9;
-            if (copyFromFormText(pszParm, strlen(pszParm), szQuote, sizeof(szQuote)) != 1) {
-               perr("invalid quote: %s", pszParm);
-               return 9;
-            }
-            continue;
-         }
-         else
-         if (haveParmOption(argx, argc, iDir, "-tabrep", &pszParm)) {
-            if (!pszParm) return 9;
-            if (copyFromFormText(pszParm, strlen(pszParm), szOutEsc, sizeof(szOutEsc)) != 1) {
-               perr("invalid tab replacement: %s", pszParm);
-               return 9;
-            }
-            continue;
-         }
-         else
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         if (!pszInFile) {
-            pszInFile = pszArg;
-            continue;
-         }
-         return 9+pbad(pszCmd, pszArg);
-      }
-
-      if (cs.tomask && cs.tomaskfile)
-         pszOutFile = cs.tomask;
-
-      cs.cinsep     = szInSep[0];
-      cs.coutsep    = szOutSep[0];
-      cs.cquote     = szQuote[0];
-      cs.coutsepesc = szOutEsc[0];
-
-      if (pszInFile) {
-         Coi ocoi(pszInFile, 0);
-         lRC = execCsvConv(0, &ocoi, 0, 0, -1, pszOutFile);
-      } else {
-         lRC = execCsvConv(0, 0, stdin, chain.usedata ? chain.indata : 0, -1, pszOutFile);
-      }
-
-      if (iChainNext) {
-         // producing command
-         STEP_CHAIN(iChainNext, chain.coldata); // sfk181 csvtotab always
-      }
-
-      bDone = 1;
-   }
-
-   ifcmd (!strcmp(pszCmd, "tabtocsv") || !strcmp(pszCmd, "tabcsv")) // +wref
-   {
-      ifhelp (bFullHelp || (chain.usedata == 0 && nparm < 1))
-      printx("<help>$sfk tabtocsv infile.txt [options]\n"
-             "\n"
-             "   convert plain tab separated data to csv.\n"
-             "\n"
-             "   $default input/output format\n"
-             "   - input fields are separated by a tab and should\n"
-             "     not be surrounded by quotes, as these are not\n"
-             "     interpreted. input fields themselves cannot\n"
-             "     contain TAB characters.\n"
-             "   - output fields are separated by comma \",\"\n"
-             "   - output fields are surrounded by quotes \"\n"
-             "     if input contains a comma or quote\n"
-             "   - if input contains quotes it is escaped as \"\"\n"
-             "\n"
-             "   $options\n"
-             "     -tofile x     write output to file x\n"
-             "     -quotetext    surround all text by quotes\n"
-             "     -quoteall     surround all output by quotes\n"
-             "     -outsep=\"x\"   change output separator to\n"
-             "                   character x, e.g. ; or \\t\n"
-             "     -quote=\"x\"    change quote character\n"
-             "\n");
-      webref(pszCmd);
-      printx("   $examples\n"
-             "     #sfk tabtocsv in.txt -tofile out.csv\n"
-             "        convert tab separated to csv in default format\n"
-             "     #sfk csvtotab -quote=\"\\x27\" -insep=\";\" in.csv -tofile tmp.tsv\n"
-             "        reads a CSV with input fields separated by semicolon and\n"
-             "        surrounded by single quotes ' with ASCII code hex 27\n"
-             "     #sfk tabtocsv -outsep=\";\" -quote=\"\\x27\" tmp.tsv -tofile out.csv\n"
-             "        converts tab separated to an output CSV, with output fields\n"
-             "        separated by semicolon and surrounded by single quotes\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      char *pszInFile  = 0;
-      char *pszOutFile = 0;
-      char  szInSep[20];
-      char  szOutSep[20];
-      char  szQuote[20];
-      char  szOutEsc[20];
-
-      strcpy(szInSep , "\t");
-      strcpy(szOutSep, ",");
-      strcpy(szQuote , "\"");
-      strcpy(szOutEsc, " ");
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-insep", &pszParm)) {
-            if (!pszParm) return 9;
-            if (copyFromFormText(pszParm, strlen(pszParm), szInSep, sizeof(szInSep)) != 1) {
-               perr("invalid or too long input separator: %s", pszParm);
-               pinf("use only a single char like ; or a valid slash pattern like \\t\n");
-               return 9;
-            }
-            continue;
-         }
-         else
-         if (haveParmOption(argx, argc, iDir, "-outsep", &pszParm)) {
-            if (!pszParm) return 9;
-            if (copyFromFormText(pszParm, strlen(pszParm), szOutSep, sizeof(szOutSep)) != 1) {
-               perr("invalid or too long output separator: %s", pszParm);
-               return 9;
-            }
-            continue;
-         }
-         else
-         if (haveParmOption(argx, argc, iDir, "-quote", &pszParm)) {
-            if (!pszParm) return 9;
-            if (copyFromFormText(pszParm, strlen(pszParm), szQuote, sizeof(szQuote)) != 1) {
-               perr("invalid quote: %s", pszParm);
-               return 9;
-            }
-            continue;
-         }
-         else
-         if (!strcmp(pszArg, "-quotetext")) {
-            cs.quotetext = 1;
-            continue;
-         }
-         else
-         if (!strcmp(pszArg, "-quoteall")) {
-            cs.quoteall = 1;
-            continue;
-         }
-         else
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         if (!pszInFile) {
-            pszInFile = pszArg;
-            continue;
-         }
-         return 9+pbad(pszCmd, pszArg);
-      }
-
-      if (cs.tomask && cs.tomaskfile)
-         pszOutFile = cs.tomask;
-
-      cs.cinsep     = szInSep[0];
-      cs.coutsep    = szOutSep[0];
-      cs.cquote     = szQuote[0];
-      cs.coutsepesc = szOutEsc[0];
-
-      if (pszInFile) {
-         Coi ocoi(pszInFile, 0);
-         lRC = execCsvConv(1, &ocoi, 0, 0, -1, pszOutFile);
-      } else {
-         lRC = execCsvConv(1, 0, stdin, chain.usedata ? chain.indata : 0, -1, pszOutFile);
-      }
-
-      if (iChainNext) {
-         // producing command
-         STEP_CHAIN(iChainNext, chain.coldata); // sfk181 tabtocsv always
-      }
-
-      bDone = 1;
-   }
-
    ifcmd (!strcmp(pszCmd, "touch")) // +wref
    {
       ifhelp (!chain.useany() && (nparm < 1))
@@ -60179,6 +56149,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "               file's creation time into mod. time.\n"
              "               may also use -copymtoc, -copyctoa etc.\n"
              #endif
+             "      -delay=n   wait n msec after every file touch.\n"
              "\n"
              "   $command chaining support\n"
              "      multiple files can be touched through chaining:\n"
@@ -60457,6 +56428,15 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       chain.print("sfk  time_t  size: %u\n", sizeof(mytime_t));
       chain.print("void pointer size: %u\n", sizeof(void*));
       chain.print("file fpos_t  size: %u\n", sizeof(fpos_t));
+
+      for (int ishift=0;ishift<16;ishift++) {
+         int iint = (1U<<ishift);
+         bool b = (bool)iint;
+         if (b < iint) {
+            chain.print("comp. bool   size: %d bits\n",ishift);
+            break;
+         }
+      }
 
       bool bdummy=0;
       int icallstackload = submain(0,0,0,str("sfkstackloadint"),0,bdummy); // sysinfo
@@ -61036,9 +57016,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    ifcmd (!strcmp(pszCmd, "sleep")) // +chaining
    {
       ifhelp (nparm < 1)
-      printx("<help>$sfk sleep msec\n"
+      printx("<help>$sfk sleep time[s|m|h]\n"
              "\n"
-             "   delay execution for a number of milliseconds.\n"
+             "   delay execution for a number of milliseconds,\n"
+             "   seconds, minutes or hours.\n"
+             "\n"
+             "   with just a numeric value, milliseconds are used.\n"
+             "\n"
+             "   since sfk 1.9.9 sleep also accepts:\n"
+             "      1s  or 1sec  is one second.\n"
+             "      1m  or 1min  is one minute.\n"
+             "      1h  or 1hour is one hour.\n"
              "\n");
       webref("sleep");
       printx("   $usage example:\n"
@@ -61058,22 +57046,31 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       for (; iDir<argc; iDir++)
       {
-         if (isChainStart(pszCmd, argx, argc, iDir, 0))
-            break;
-         else
          if (sfkisopt(argx[iDir])) {
             if (isDirParm(argx[iDir]))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
                continue;
          }
-         else
+         if (isChainStart(pszCmd, argx, argc, iDir, 0))
+            break;
+         // process non-option keywords
          if (nmsec < 0) {
-            // process non-option keywords
             char *psz = argx[iDir];
             if (!isdigit(*psz))
                return 9+perr("wrong number format: %s\n", psz);
             nmsec = atol(psz);
+            // sfk199 postfix support
+            while (*psz && isdigit(*psz)) psz++;
+            switch (*psz) {
+               case 's': nmsec *= 1000; break;
+               case 'm': nmsec *= 1000 * 60; break;
+               case 'h': nmsec *= 1000 * 3600; break;
+               case 0:
+                  break;
+               default:
+                  return 9+perr("invalid time postfix: %c\n", *psz);
+            }
             continue;
          }
          return 9+pbad(pszCmd, argx[iDir]);
@@ -61876,9 +57873,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   or #dview.bat<def> being located in the PATH. If you have downloaded\n"
              "   an executable like dview155.exe, rename it before use.\n"
              "\n");
-      printx("   DView can be run under #Linux and Mac<def>, but this is experimental\n"
-             "   and unsupported. The latest #WINE<def> version must be installed.\n"
-             "   Google for \"linux wine\", or search it in your package manager.\n"
+      printx("   DView can be run under #Linux and Mac<def>, if the latest #WINE<def>\n"
+             "   package is installed. Google for \"linux wine\", or search it\n"
+             "   in your package manager.\n"
              "\n"
              "   $use as a chain command, or to display stdin:\n"
              "\n"
@@ -61922,6 +57919,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   $dview options and parameters\n"
              "      all non sfk options and parameters are passed through, like:\n"
              "\n"
+             "      -office               with fview: load office file contents\n"
              "      -tab n                set tab size n (dview 1.6.3 or higher)\n"
              "      -area 20:20:600:400   open at position 20,20 with size 600x400\n"
              "      -find \"a text\"        search a text instantly\n"
@@ -61948,6 +57946,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("   $examples\n"
              "      #sfk list docs .txt +fview\n"
              "         view content of all .txt files in directory docs.\n"
+             "\n"
+             "      #sfk list docs .xlsx .odt +fview -office\n"
+             "         view content of office files .xlsx, .odt within docs.\n"
              "\n"
              "      #sfk echo x +view -verbose\n"
              "         tell verbosely which dview(.exe?) executable is actually used.\n"
@@ -62495,316 +58496,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (!strcmp(pszCmd, "data"))
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk data [options] col \"<run>namecom,<run>stradr,<run>city\" [numrec]\n"
-             "\n"
-             "   create numrec records of random text\n"
-             "   to produce synthetic test or example data.\n"
-             "\n"
-             "   $formal syntax\n"
-             "     sfk data format template [numrec]\n"
-             "\n"
-             "   $supported template formats\n"
-             "     #col[umns]<def>  a list of data columns, with each column\n"
-             "                content type prefixed by <run>.\n"
-             "     #text<def>       create a text, keeping commas as is\n"
-             "\n"
-             "   $template format details\n"
-             "     #col<def>  format:\n"
-             "     - column types must be prefixed by <run>\n"
-             "     - columns are separated by comma on input\n"
-             "       which is replaced by TAB character on output\n"
-             "     #text<def> format:\n"
-             "     - symbols must be prefixed by <run>\n"
-             "     - comma \",\" is kept within text as is\n"
-             "\n"
-             "   $predefined column types\n"
-             "     #nameper<def>    name of a person\n"
-             "     #namecom<def>    name of a company\n"
-             "     #stradr<def>     street address\n"
-             "     #city<def>       city name\n"
-             "     #statecode<def>  two character string\n"
-             "     #zip<def>        five digit string\n"
-             "     #person<def>     person address record\n"
-             "     #company<def>    company address record\n"
-             "     #date<def>       $$year$$month$$day\n"
-             "     #time<def>       $$hour$$minute$$second\n"
-             "     #timemin<def>    $$hour$$minute\n"
-             "     #dig<def>        single digit\n"
-             "\n"
-             "   $options\n"
-             "     -makedb db.txt  export database to out.txt for editing\n"
-             "     -from   db.txt  load phrase database from db.txt\n"
-             "     -seed   n       set random seed to a fixed value\n"
-             "\n");
-      printx("   $quoted multi line parameters are supported in scripts\n" // data
-             "      using full trim. type \"sfk script\" for details.\n"
-             "\n");
-      printx("   $chaining support\n"
-             "      cannot use chain input data.\n"   // sfk1833
-             "\n");
-      webref(pszCmd);
-      printx("   $examples\n"
-             "     #sfk data col \"<run>namecom,<run>stradr,<run>city <run>statecode <run>zip\" 20\n"
-             "       create 20 records with random company data\n"
-             "\n"
-             "     #sfk data col \"<run>company\" 20 +tabtocsv -quoteall\n"
-             "       same as above, but using the predefined company type\n"
-             "       and with comma separated fully quoted output\n"
-             "\n"
-             "     #sfk label begin\n"
-             "     # +data col \"<run>namecom,<run>stradr,<run>city\" 20\n"
-             "     #  +filter -stabform \"\n"
-             "     #    <company>\\n\n"
-             "     #    \\x20  <name><run>col1</name>\\n\n"
-             "     #    \\x20  <street><run>col2</street>\\n\n"
-             "     #    \\x20  <city><run>col3</city>\\n\n"
-             "     #    </company>\"\n"
-             "       produce xml data in an sfk script. the \\x20 keeps\n"
-             "       initial spaces in the line.\n"
-             "\n"
-             "     #sfk data text \"<run>news\"\n"
-             "     #sfk data \"<run>news\"\n"
-             "       create a california business news text\n"
-             "\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      char *pszAll   =  0;
-      int  iNumRec   = -1;
-      int  iTemplate =  0;
-      uint nSeed     = (uint)time(NULL);
-      bool bForceSeed = 0;
-
-      char *pszSrc   = strdup((char*)szGlblPhraseData);
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-from", &pszParm)) {
-            if (!pszParm) return 9;
-            delete [] pszSrc;
-            if (!(pszSrc = loadFile(pszParm, 0)))
-               return 9;
-            continue;
-         }
-         if (haveParmOption(argx, argc, iDir, "-makedb", &pszParm)) {
-            if (!pszParm) return 9;
-            delete [] pszSrc;
-            if (saveFile(pszParm, (uchar*)szGlblPhraseData, strlen(szGlblPhraseData)))
-               return 9;
-            printf("saved to: %s\n", pszParm);
-            return 0;
-         }
-         if (haveParmOption(argx, argc, iDir, "-seed", &pszParm)) {
-            if (!pszParm) return 9;
-            nSeed = atoi(pszParm);
-            bForceSeed = 1;
-            continue;
-         }
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         if (!iTemplate) {
-            if (!strncmp(pszArg, "col", 3))
-               { iTemplate=1; continue; }
-            if (!strcmp(pszArg, "text"))
-               { iTemplate=2; continue; }
-            if (*pszArg=='$')
-               { iTemplate=2; } // and fall through
-            else
-               return 9+perr("invalid command: %s", pszArg);
-         }
-         if (!pszAll) {
-            if (iGlblInScript) // then pszArg is writeable
-               fixMultiLineParm(pszArg, 't'); // sfk187
-            pszAll = pszArg;
-            continue;
-         }
-         if (iNumRec < 0) {
-            iNumRec = atoi(pszArg);
-            continue;
-         }
-         return 9+pbad(pszCmd, pszArg);
-      }
-
-      CharAutoDel odel(pszSrc);
-
-      if (!pszAll)
-         return 9+perr("missing template text");
-
-      if (!strBegins(pszSrc, "#:sfk-phrase-db:")) {
-         perr("invalid or missing phrase database header\n");
-         pinf("file must start with: #:sfk-phrase-db:\n");
-         return 9;
-      }
-
-      if (iNumRec < 0)
-         iNumRec = 1;
-
-      if (bGlblRandSeeded==0 || bForceSeed==1) {
-         bGlblRandSeeded = 1;
-         srand(nSeed); // data, checks seeded
-      }
-
-      // convert , to tab for all
-      char *psrc = pszAll;
-      char *pdstcur = (char*)abBuf;
-      char *pdstmax = pdstcur + MAX_ABBUF_SIZE;
-      while (*psrc != 0 && pdstcur < pdstmax)
-      {
-         if (iTemplate==1 && *psrc == ',') {
-            *pdstcur++ = '\\';
-            *pdstcur++ = '\t';
-         }
-         else
-         if (iTemplate==2 && *psrc == ',') {
-            *pdstcur++ = '\x01';
-         }
-         else
-         if (*psrc == '#')
-            *pdstcur++ = '$';
-         else
-            *pdstcur++ = *psrc;
-         psrc++;
-      }
-      *pdstcur = '\0';
-      pszAll = (char*)abBuf;
-
-      // convert , to tab for data
-      psrc = pszSrc;
-      pdstcur = pszSrc;
-      for (; *psrc; psrc++) {
-         if (!strncmp(psrc, "\\,", 2)) {
-            *pdstcur++ = '\\';
-            *pdstcur++ = '\t';
-            psrc++;
-            continue;
-         }
-         if (!strncmp(psrc, "\\;", 2)) {
-            *pdstcur++ = ';';
-            psrc++;
-            continue;
-         }
-         if (*psrc == ';') {
-            *pdstcur++ = '\x01';
-            continue;
-         }
-         *pdstcur++ = *psrc;
-      }
-      *pdstcur = '\0';
-
-      execPhraser(pszAll, (char*)pszSrc, iNumRec);
-
-      if (iChainNext) {
-         STEP_CHAIN(iChainNext, 1);
-      }
-
-      bDone = 1;
-   }
-
-   /*
-   if (strBegins(pszCmd, "tobase64") || strBegins(pszCmd, "frombase64"))
-   {
-      if (nparm < 1) {
-         printx("<help>$sfk tobase64 infile [outfile]\n"
-            "$sfk frombase64 infile outfile\n"
-            );
-         return 9;
-      }
-
-      sfkarg;
-
-      bool bencode = strBegins(pszCmd, "tobase64");
-
-      char *pszInFile  = 0;
-      char *pszOutFile = 0;
-      int iChainNext   = 0;
-
-      for (; iDir<argc; iDir++)
-      {
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         if (!pszInFile)  pszInFile = argx[iDir];
-         else
-         if (!pszOutFile) pszOutFile = argx[iDir];
-         else
-            return 9+perr("unexpected: %s\n", argx[iDir]);
-      }
-
-      if (!pszInFile)  return 9+perr("missing input filename.\n");
-      if (!bencode && !pszOutFile) return 9+perr("missing output filename.\n");
-
-      num nFileSize = 0;
-      uchar *pdata = loadBinaryFile(pszInFile, nFileSize);
-      if (!pdata) return 9;
-
-      num nOutSize = nFileSize * 2; // approx.
-      uchar *pout = new uchar[nOutSize+100];
-      if (!pout) return 9+perr("out of memory.\n");
-
-      int nrc = 0;
-      int nsave = -1;
-      if (bencode) {
-         nrc = encode64(pdata, nFileSize, pout, nOutSize, 40);
-         if (nrc)
-            perr("encoding failed, rc %d\n", nrc);
-         else
-            nsave = strlen((char*)pout);
-      } else {
-         nrc = decode64(pdata, nFileSize, pout, nOutSize);
-         if (nrc < 0)
-            perr("decoding failed.");
-         else
-            nsave = nrc;
-      }
-
-      if (nsave >= 0)
-      {
-         if (!pszOutFile) {
-            printf("%s",pout);
-         } else {
-            FILE *fout = fopen(pszOutFile, "wb");
-            if (fout) {
-               int ndone = myfwrite(pout, nsave, fout);
-               if (ndone != nsave)
-                  perr("failed to fully write output file");
-               fclose(fout);
-            }
-         }
-      }
-
-      delete [] pdata;
-      delete [] pout;
-
-      bDone = 1;
-   }
-   */
-
    ifcmd (!strcmp(pszCmd, "encode") || !strcmp(pszCmd, "decode"))
    {
       ifhelp (nparm < 1)
@@ -62824,6 +58515,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -url       same as -\\x25hex\n"
              "\n"
              "   $options\n"
+             "      -linechars=n  with base64 format, number of chars\n"
+             "                    per output line. default is 40.\n"
              "      -all       encode all chars, not just non-alnum\n"
              "      -noeol     if text lines are received from a previous\n"
              "                 command then strip line end characters.\n"
@@ -62883,6 +58576,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
+         char *pszParm = 0;
          if (!strcmp(pszArg, "-i")) {
             bstdin = 1;
             continue;
@@ -62908,6 +58602,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             { imode=1; continue; }
          if (!strcmp(pszArg,"-nowrap"))
             { nlinechars=0; continue; }
+         if (haveParmOption(argx, argc, iDir, "-linechars", &pszParm)) {
+            if (!pszParm) return 9;
+            nlinechars = atol(pszParm);
+            if (nlinechars < 4)
+               return 9+perr("linechars must be >= 4");
+            continue;
+         }
          if (pszArg[0]=='-' && (!strcmp(pszArg,"-url") || strstr(pszArg,"hex")))
          {
             if (imode)
@@ -63246,232 +58947,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (!strncmp(pszCmd, "hextobin", 9)) // +wref
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk ... +hextobin outfile\n"
-             "\n"
-             "   convert lines of text containing hexdump to binary.\n"
-             "\n"
-             "   $chain-only command\n"
-             "      hextobin can be used only #after another command<def>,\n"
-             "      typically filter, which reads and prepares the input data.\n"
-             "\n"
-             "   $options\n"
-             "      -fuzzy    ignore >< and ## characters\n"
-             "      -verbose  tell conversion statistics\n"
-             "\n"
-             "   $supported input formats since SFK 1.6.9:\n"
-             "\n"
-             "      - if >...< is found then only hex data inside that is used.\n"
-             "      - if ## is found then only hex data before that is used.\n"
-             "      - else any hex characters are used, and with\n"
-             "        option -fuzzy any >< or ## characters are ignored.\n"
-             "      - whitespace at line start is ignored.\n"
-             "\n"
-             "   $1. sfk hexdump full bracket delimited format:\n"
-             "\n"
-             "      :file test.dat\n"
-             "       >6578616D 706C6520 77697468 206E6F6E< example with non 00000000\n"
-             "       >20616C6E 756D0D0A 63686172 61637465<  alnum..characte 00000010\n"
-             "       >73202D2B 28295C2F 2E0D0A<            s -+()\\/...      00000020\n"
-             "\n"
-             "   $2. sfk postdump minimal format, for forums and wiki:\n"
-             "\n"
-             "      :file test.dat\n"
-             "      65 78 61 6D 70 6C 65 20 77 69 74 68 20 6E 6F 6E ## example.with.non 0000\n"
-             "      20 61 6C 6E 75 6D 0D 0A 63 68 61 72 61 63 74 65 ## .alnum..characte 0010\n"
-             "      73 20 2D 2B 28 29 5C 2F 2E 0D 0A                ## s..........      0020\n"
-             "\n"
-             "   $3. any text with hex data inbetween that does not contain\n"
-             "      $the >< or ## characters (else -fuzzy must be used):\n"
-             "\n"
-             "      --== 6578616D 706C6520 77697468 ==--\n"
-             "      // 0x65, 0x78, 0x61, 0x6D ::\n"
-             "\n"
-             "   $input line length limitation:\n"
-             "      text lines in the input file should not be longer than\n"
-             "      4000 characters or sfk filter will split them, causing\n"
-             "      hextobin to produce errors like \"wrong hex format\".\n"
-             "\n");
-      webref("hextobin");
-      printx("   $examples\n"
-             "      #sfk filter dump.txt +hextobin out.dat\n"
-             "         convert file dump.txt and write to out.dat\n"
-             #ifdef _WIN32
-             "\n"
-             "      #sfk fromclip +hextobin %%TEMP%%\\tmp1.dat +hexdump\n"
-             "         takes a hex sequence like 22737769 73732066 from clipboard,\n"
-             "         printing its text via a temporary file and hexdump.\n"
-             #endif
-            );
-      ehelp;
-
-      sfkarg;
-
-      if (!chain.usedata) {
-         perr("%s needs input data from a previous command.\n", pszCmd);
-         pinf("type \"sfk hextobin\" for help.\n");
-         return 9;
-      }
-
-      char *pszOutFile = 0;
-      bool bFuzzy = 0;
-      bool bverbose = 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         if (!strcmp(pszArg, "-fuzzy")) {
-            bFuzzy = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-verbose")) {
-            bverbose=1;
-            continue;
-         }
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // process non-option keywords:
-         pszOutFile = argx[iDir];
-      }
-
-      FILE *fout=0;
-
-      if (chain.coldata && chain.colbinary) {
-         // no file output
-      } else {
-         if (!pszOutFile)
-            return 9+perr("hextobin: missing output filename.\n");
-         if (!(fout = fopen(pszOutFile, "wb")))
-            return 9+perr("hextobin: cannot write: %s\n", pszOutFile);
-      }
-
-      SFKMD5 outmd;
-
-      uchar *poutmax = abBuf + sizeof(abBuf) - 100;
-      bool berr=0,bprefix=0;
-      int nConvLines=0, nSkippedLines=0;
-      num nTotalBytes = 0;
-      for (int i=0; !berr && i<chain.indata->numberOfEntries(); i++)
-      {
-         // fetch another hex input line
-         char *pszLine = chain.indata->getEntry(i, __LINE__);
-         // skip initial whitespace
-         while (*pszLine!=0 && (*pszLine==' ' || *pszLine=='\t'))
-            pszLine++;
-         // auto-skip filename header
-         if (!strncmp(pszLine, ":file ", 6)) {
-            pinf("skipping filename line on input\n");
-            continue;
-         }
-         // >3135302E 38343820 42797465 73206672<
-         char  *psz  = pszLine;
-         uchar *pout = abBuf;
-         char szByte[10];
-         int iLineState=0;
-         while (*psz)
-         {
-            // skip over noise like " > "
-            while (*psz && !isxdigit(*psz)) {
-               if (!bFuzzy)
-               switch (iLineState) {
-                  case 0:
-                     if (*psz=='>') iLineState=1;
-                     if (*psz=='#') iLineState=2;
-                     break;
-                  case 1:
-                     if (*psz=='<') iLineState=2;
-                     break;
-               }
-               psz++;
-            }
-            if (iLineState==2)
-               break;
-            bprefix = 0;
-            if (!strncmp(psz, "0x", 2)) {
-               bprefix = 1;
-               psz += 2; // 0x12,0x15, 0x19
-            }
-            if (!*psz) break;
-            szByte[0] = psz[0];
-            if (isxdigit(psz[1])) {
-               // two hex chars: 00 57 38 29
-               szByte[1] = psz[1];
-               szByte[2] = '\0';
-               psz += 2;
-            }
-            else if (bprefix) {
-               // FIX 163R5: accept single hex char expression "0xa "
-               szByte[1] = '\0';
-               psz += 1;
-            }
-            else {
-               perr("wrong hex format: \"%s\"\n", psz);
-               berr=1;
-               break;
-            }
-            *pout++ = (uchar)strtol(szByte, 0, 0x10);
-            if (pout >= poutmax) { perr("buffer overflow: input lines too large\n"); berr=1; break; }
-         }
-         // flush collected binary line
-         int nBinSize = pout-abBuf;
-         if (nBinSize > 0) {
-            if (chain.coldata && chain.colbinary) {
-               if (chain.addBinary(abBuf, nBinSize))
-                  return 9;
-            } else {
-               if ((int)myfwrite(abBuf, nBinSize, fout) != nBinSize) {
-                  esys("fwrite", "failed to write %s   \n", pszOutFile);
-                  berr=1;
-                  break;
-               }
-            }
-            outmd.update(abBuf, nBinSize);
-            nTotalBytes += pout-abBuf;
-            nConvLines++;
-         } else {
-            nSkippedLines++;
-         }
-      }
-
-      if (fout)
-         fclose(fout);
-
-      if (cs.quiet || (chain.coldata && !bverbose))
-         { } // sfk1841
-      else
-      {
-         printf("%d lines converted, %d skipped, %s output bytes.\n", nConvLines, nSkippedLines, numtoa(nTotalBytes));
-         unsigned char *pmd5 = outmd.digest();
-         for (int i=0; i<16; i++)
-            sprintf(&szLineBuf[i*2], "%02x", pmd5[i]);
-         printf("md5: %s\n", szLineBuf);
-      }
-
-      // pass output filename if requested
-      if (chain.colfiles) {
-         Coi ocoi(pszOutFile, 0);
-         chain.addFile(ocoi); // is copied
-         STEP_CHAIN(iChainNext, 1);
-      } else {
-         // producing command
-         STEP_CHAIN(iChainNext, chain.coldata); // sfk181 hextobin always
-      }
-
-      bDone = 1;
-   }
-
    regtest("dupfind -listorg -minsize=3m");
 
    ifcmd (!strncmp(pszCmd, "dupfind", 3)
@@ -63630,744 +59105,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
  
       bDone = 1;
    }
-
-   ifcmd (!strncmp(pszCmd, "samp", 4) || !strncmp(pszCmd, "examp", 5)) // +wref
-   {
-      ifhelp (!chain.usefiles && (nparm < 1))
-      printx("<help>$sfk sample java|cpp|... [outfile.java|.cpp|...]\n"
-             "\n"
-             "   print a short example code in a programming language.\n"
-             "\n"
-             "   $supported parameters\n"
-             "      sfk          create a simple sfk script\n"
-             "      sfkbat       sfk script embedded in a .bat or .cmd\n"
-             "      sfkbash      sfk script embedded in a bash script\n"
-             "      http         automated http access example script\n"
-             "      http -bat    ... as a windows .bat file\n"
-             "      http -bash   ... as a linux .sh file\n"
-             "      httpdata     create a .zip file with webdemo files\n"
-             "                   for local use with sfk httpserv\n"
-             "\n"
-             "      cmd          create generic windows .cmd or .bat file\n"
-             "      bash         create generic linux bash script\n"
-             "      html         simple html page with css and javascript\n"
-             "      java         create a java class doing text  file I/O\n"
-             "      javaimg      create a java class doing image file I/O\n"
-             "      javahex      create a hexdump of binary data in java\n"
-             "      javagui      create a simple java gui application\n"
-             "      cpp          create a c++ text file I/O example\n"
-             "      cppnetlog    how to send UDP network text in C++\n"
-             "      javanetlog   how to send UDP network text in Java\n"
-             "      php          create command line php code for text I/O\n"
-             "      phpimg       create php example for image processing\n"
-         //  "      sfkcmdphp    mixture of windows .bat, sfk and php,\n"
-         //  "                   to list pixel sizes of images in a dir.\n"
-             "\n"
-             "   $options\n"
-             "      -force    if output file exists already, overwrite it.\n"
-             "\n"
-             "   $command shortcut\n"
-             #ifdef _WIN32
-             "      #sfk batch myscript.bat\n"
-             "         does the same as \"sfk samp sfkbat myscript.bat\"\n"
-             #else
-             "      #sfk batch myscript\n"
-             "         does the same as \"sfk samp sfkbash myscript\"\n"
-             #endif
-             "\n");
-      webref("sample");
-      printx("   $more in the SFK Book\n"
-             "      the #SFK Book<def> contains a 60 page tutorial, including\n"
-             "      long sfk script examples with input, output and\n"
-             "      detail explanations. type \"#sfk book<def>\" for more.\n"
-             "\n");
-      printx("   $examples\n"
-             "      #sfk samp sfkbat foo.bat\n"
-             "         creates batch file foo.bat with embedded sfk script.\n"
-             "         type \"foo.bat\" to run the created script. note that\n"
-             "         foo.bat must be created in a directory of your PATH,\n"
-             "         or in the current directory.\n"
-             "\n"
-             "      #sfk batch foo.bat -force\n"
-             "         the same as above, and overwrites an existing file.\n"
-             "\n"
-             "      #sfk batch foo.sh\n"
-             "         create a bash script file, with lf only line endings.\n"
-             "         can also be used under windows for mingw environments.\n"
-             "\n"
-             "      #sfk samp java foo.java\n"
-             "         create a java class foo. if the java JDK is available,\n"
-             "         type \"javac foo.java\" and then \"java foo\" to run it.\n"
-             "\n"
-             "      #sfk samp phpimg doimg.php\n"
-             "         create image processing script that can be run by:\n"
-             "         #php doimg.php\n"
-             "         if php.exe is in your PATH (read remarks in the script).\n"
-             "\n"
-             #ifdef _WIN32
-             "      #sfk samp javahex +toclip\n"
-             "         copy example for java hexdump creation to the clipboard.\n"
-             "\n"
-             #endif
-             #ifdef _WIN32
-             "      #sfk samp http tmp.bat\n"
-             #else
-             "      #sfk samp http tmp.sh\n"
-             #endif
-             "         create an example script for automated web/http access.\n"
-             #ifdef _WIN32
-             "\n"
-             "      #sfk samp http -bash tmp.sh\n"
-             "         the same, but using bash in a Windows Cygwin environment.\n"
-             #endif
-             );
-      ehelp;
-
-      sfkarg;
-
-      bool bbatch        = 0;
-      bool bWriteFile    = 0;
-      int nlang          = 0;
-      char *pszLang      = str("");
-      char *pszOutFile   = 0;
-      char *pszClassName = str("fileio");
-      bool bLocalFile    = 0;
-      int  iSystem       = 0;
-      #ifdef _WIN32
-      int  iDefaultSystem = 1;
-      #else
-      int  iDefaultSystem = 2;
-      #endif
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         if (!strcmp(pszArg, "-bat")) {
-            iSystem = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-bash")) {
-            iSystem = 2;
-            continue;
-         }
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         else
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // template keywords are non-option keywords
-         char *pszkey = argx[iDir];
-         if (nlang == 0) {
-            // expecting language as next key
-            if (!strcmp(pszkey, "java"))      nlang =  1; else
-            if (!strcmp(pszkey, "cpp"))       nlang =  2; else
-            if (!strcmp(pszkey, "cmd"))       nlang =  3; else // allow path begin
-            if (!strcmp(pszkey, "bash"))      nlang =  4; else
-            if (!strcmp(pszkey, "sfk"))       nlang =  5; else
-            if (!strcmp(pszkey, "sfkcmd"))    nlang =  6; else
-            if (!strcmp(pszkey, "sfkbat"))    nlang =  6; else
-            if (!strcmp(pszkey, "sfkbash"))   nlang =  7; else // allow path end
-            if (!strcmp(pszkey, "javaimg"))   nlang =  8; else
-            if (!strcmp(pszkey, "php"))       nlang =  9; else
-            if (!strcmp(pszkey, "phpimg"))    nlang = 10; else
-            if (!strcmp(pszkey, "html"))      nlang = 11; else
-            if (!strcmp(pszkey, "sfkcmdphp")) nlang = 12; else
-            if (!strcmp(pszkey, "javahex"))   nlang = 13; else
-            if (!strcmp(pszkey, "javagui"))   nlang = 14; else
-            if (!strcmp(pszkey, "cppnetlog")) nlang = 16; else
-            if (!strcmp(pszkey, "javanetlog")) nlang = 17; else
-            if (!strcmp(pszkey, "http"))     { nlang = 18;
-               if (iSystem==0) iSystem=iDefaultSystem;
-            }
-            else if (!strcmp(pszkey, "httpdata")) { nlang = 19;
-               if (!pszOutFile)
-                  pszOutFile = str("web-demo-data.zip");
-            }
-            else
-               return 9+perr("unknown example: %s\n", pszkey);
-         } else {
-            pszOutFile = pszkey;
-         }
-      }
-
-      if (nlang == 19) {
-         printSamp(nlang, pszOutFile, 0, 0, 0);
-         return 0;
-      }
-
-      // sfk181: batch language from file extension
-      cchar *pszFileMode = "w";
-      if (bbatch && pszOutFile) {
-         if (strEnds(pszOutFile, ".bat"))
-            nlang = 6;
-         if (strEnds(pszOutFile, ".sh"))
-            nlang = 7;
-      }
-      if (iSystem==2 || (pszOutFile && strEnds(pszOutFile, ".sh")))
-         pszFileMode = "wb";
-
-      if (!bLocalFile && pszOutFile) {
-         switch (nlang) {
-            // sfk181: allow path with these
-            case 3: case 4: case 5: case 6: case 7:
-               break;
-            default:
-               if (strchr(pszOutFile, glblPathChar))
-                  return 9+perr("no path allowed in output filename.\n");
-         }
-         // isolate class name from output filename
-         strcopy(szLineBuf, pszOutFile);
-         char *psz = strchr(szLineBuf, '.');
-         if (psz) {
-            *psz = '\0';
-            pszClassName = szLineBuf;
-         }
-         else
-         if (nlang < 3)
-            return 9+perr("need an output filename like x.java or x.cpp\n");
-         if (!cs.force && fileExists(pszOutFile)) {
-            perr("file already exists: %s\n", pszOutFile);
-            pinf("add -force to overwrite.\n");
-            return 9;
-         }
-         if (!(cs.outfile = fopen(pszOutFile, pszFileMode)))
-            return 9+perr("cannot write: %s\n", pszOutFile);
-      }
-
-      if (bLocalFile && pszOutFile) {
-         if (!strcmp(pszOutFile, "write"))
-            bWriteFile = 1;
-         else
-            return 9+perr("specify \"write\" or nothing after %s\n", pszLang);
-      }
-
-      printSamp(nlang, pszOutFile, pszClassName, bWriteFile, iSystem);
-
-      if (cs.outfile) {
-         fclose(cs.outfile);
-         cs.outfile = 0;
-         if (!bLocalFile)
-            printf("written: %s\n", pszOutFile);
-      }
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
-   }
-
-   ifcmd (!strcmp(pszCmd, "batch")) // sfk197 separate
-   {
-      ifhelp (!chain.usefiles && (nparm < 1))
-      printx("<help>$sfk batch outfile.[bat|sh] [options]\n"
-             "\n"
-             "   create a default sfk script batch file.\n"
-             "\n"
-             #ifdef _WIN32
-             "      use a filename ending with .bat to create\n"
-             "      a normal windows batch file.\n"
-             "\n"
-             "      use a filename ending with .sh to create\n"
-             "      a bash script file for use with linux\n"
-             "      or a windows cygwin environment.\n"
-             "\n"
-             #endif
-             "   $options\n"
-          // "      -min      create a minimal script example. (default)\n"
-             "      -full     create a full file backup example script\n"
-             "                with different commands on the same file set.\n"
-             "      -force    if output file exists already, overwrite it.\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk samp[def]  print examples for all kinds of script and\n"
-             "                programming languages.\n"
-             "\n");
-      printx("   $more in the SFK Book\n"
-             "      the #SFK Book<def> contains a 60 page tutorial, including\n"
-             "      long sfk script examples with input, output and\n"
-             "      detail explanations. type \"#sfk book<def>\" for more.\n"
-             "\n");
-      printx("   $examples\n"
-             "      #sfk batch tmp.bat\n"
-             "         creates batch file tmp.bat with embedded sfk script.\n"
-             "         type \"tmp.bat\" to run the created script.\n"
-             "\n"
-             "      #sfk batch tmp.bat -full -force\n"
-             "         create a large file backup example script.\n"
-             "         overwrite an existing tmp.bat file.\n"
-             "\n"
-             "      #sfk batch foo.sh\n"
-             "         create a bash script file, with lf only line endings.\n"
-             "         can also be used under windows for mingw environments.\n"
-             "\n");
-      #ifdef _WIN32
-      printx("      #sfk batch vedit.bat\n"
-             "         create a batch for video editing with ffmpeg.\n"
-             "\n");
-      printx("      #sfk batch gallery.bat\n"
-             "         create batch to make a gallery html from image folder.\n"
-             "\n");
-      #endif
-      ehelp;
-
-      sfkarg;
-
-      bool bbatch        = 1;
-      bool bWriteFile    = 0;
-      int nlang          = 0;
-      char *pszLang      = str("");
-      char *pszOutFile   = 0;
-      char *pszClassName = str("fileio");
-      bool bLocalFile    = 0;
-      int  iSystem       = 0;
-      #ifdef _WIN32
-      int  iDefaultSystem = 1;
-      #else
-      int  iDefaultSystem = 2;
-      #endif
-      int  ibatchoffset  = 0;
-
-      if (bbatch) {
-         #ifdef _WIN32
-         nlang = 6;
-         #else
-         nlang = 7;
-         #endif
-      }
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         if (!strcmp(pszArg, "-bat")) {
-            iSystem = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-bash")) {
-            iSystem = 2;
-            continue;
-         }
-         if (bbatch && !strcmp(pszArg, "-min"))
-            { ibatchoffset = 0; continue; }
-         if (bbatch && !strcmp(pszArg, "-full"))
-            { ibatchoffset = 100; continue; }
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         if (!pszOutFile) {
-            pszOutFile = pszArg; 
-            continue; 
-         }
-         return 9+perr("unexpected: %s", pszArg);
-      }
-
-      cchar *pszFileMode = "w";
-      if (bbatch && pszOutFile) {
-         if (strEnds(pszOutFile, ".bat"))
-            nlang = 6;
-         if (strEnds(pszOutFile, ".sh"))
-            nlang = 7;
-         if (!strcmp(pszOutFile, "tcp.bat"))
-            { nlang = 20; iSystem = 1; }
-         if (!strcmp(pszOutFile, "tcp.sh"))
-            { nlang = 20; iSystem = 2; }
-         if (!strcmp(pszOutFile, "vedit.bat"))
-            { nlang = 21; iSystem = 1; }
-         if (!strcmp(pszOutFile, "proxy.bat"))
-            { nlang = 22; iSystem = 1; }
-         if (!strcmp(pszOutFile, "proxy.sh"))
-            { nlang = 22; iSystem = 2; }
-         if (!strcmp(pszOutFile, "webreq.bat"))
-            { nlang = 23; iSystem = 1; }
-         if (!strcmp(pszOutFile, "webreq.sh"))
-            { nlang = 23; iSystem = 2; }
-         if (!strcmp(pszOutFile, "gallery.bat"))
-            { nlang = 24; iSystem = 1; }
-         if (!strcmp(pszOutFile, "gallery.sh"))
-            { nlang = 24; iSystem = 2; }
-      }
-      if (iSystem==2 || (pszOutFile && strEnds(pszOutFile, ".sh")))
-         pszFileMode = "wb";
-
-      if (!bLocalFile && pszOutFile) {
-         switch (nlang) {
-            // sfk181: allow path with these
-            case 3: case 4: case 5: case 6: case 7:
-               break;
-            default:
-               if (strchr(pszOutFile, glblPathChar))
-                  return 9+perr("no path allowed in output filename.\n");
-         }
-         // isolate class name from output filename
-         strcopy(szLineBuf, pszOutFile);
-         char *psz = strchr(szLineBuf, '.');
-         if (psz) {
-            *psz = '\0';
-            pszClassName = szLineBuf;
-         }
-         else
-         if (nlang < 3)
-            return 9+perr("need an output filename like x.java or x.cpp\n");
-         if (!cs.force && fileExists(pszOutFile)) {
-            perr("file already exists: %s\n", pszOutFile);
-            pinf("add -force to overwrite.\n");
-            return 9;
-         }
-         if (!(cs.outfile = fopen(pszOutFile, pszFileMode)))
-            return 9+perr("cannot write file: %s\n", pszOutFile); 
-      }
-
-      if (bLocalFile && pszOutFile) {
-         if (!strcmp(pszOutFile, "write"))
-            bWriteFile = 1;
-         else
-            return 9+perr("specify \"write\" or nothing after %s\n", pszLang);
-      }
-
-      printSamp(nlang+ibatchoffset, pszOutFile, pszClassName, bWriteFile, iSystem);
-
-      if (cs.outfile) {
-         fclose(cs.outfile);
-         cs.outfile = 0;
-         if (!bLocalFile)
-            printf("written: %s\n", pszOutFile);
-         #ifndef _WIN32
-         chmod(pszOutFile, S_IREAD | S_IWRITE | S_IEXEC); // sfk197 with batch
-         #endif
-      }
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "memerrtest"))
-   {
-      char *p = new char[1024];
-      (void)p;
-      // fall through, expect mem leak message
-      bDone=1;
-   }
-
-   if (!strcmp(pszCmd, "zipdump"))
-   {
-      if (nparm < 1) return -1;
-
-      cs.travelzips = 1;
-
-      // ZipReader ozip;
-      // ozip.list(argv[2]);
-      // ozip.dump(argv[2], argv[3]);
-
-      Coi ozip(argv[2], 0);
-      if (!ozip.isTravelDir())
-         {  perr("no directory: %s",argv[2]); return 9; }
-
-      if (ozip.openDir())
-         {  perr("cannot open"); return 9; }
-
-      for (Coi *psub=0; (psub=ozip.nextEntry());)
-      {
-         // psub is owned by caller!
-         printf("entry: %s dir=%d size=%d time=%u\n", psub->name(), psub->isTravelDir(), (int)psub->getSize(), (int)psub->getTime());
-         if (!psub->isTravelDir()) {
-            int nrc = psub->open("rb");
-            if (nrc) {
-               printf("   ... open rc %d\n", nrc);
-            } else {
-               char abtmp[1024];
-               int nread = psub->readLine(abtmp, 100);
-               if (nread >= 4) {
-                  execHexdump(0, (uchar*)abtmp, nread);
-               } else {
-                  printf("   ... nread %d\n", nread);
-               }
-               psub->close();
-            }
-         }
-         delete psub;
-      }
-
-      ozip.closeDir();
-
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "errortest"))
-   {
-      if (nparm < 1) {
-      printx("<help>$sfk [options] errortest mask\n"
-             "\n"
-             "   produces test error(s), showing return codes.\n"
-             "   this command implies -showrc.\n"
-             "\n"
-             "   $mask\n"
-             "   may contain one or more characters to select\n"
-             "   a test case from:\n"
-             "\n"
-             "      n   normal file processing (no error).\n"
-             "      e   produce a syntax error.\n"
-             "      w   produce a general warning.\n"
-             "      f   simulate (skipped) unreadable file.\n"
-             "      m   simulate out of memory.\n"
-             "      l   simulate general error with low rc.\n"
-             "\n"
-             "   $options\n"
-             "      -rcfromerr   on skipped errors, pass rc to shell.\n"
-             "      -stoponerr   stop on first unreadable file.\n"
-             "\n"
-             "   $example\n"
-             "      #sfk -rcfromerr errortest nnnfnn\n"
-             "         simulates five successful and one erroneous file\n"
-             "         processings, changing the shell rc on any errors.\n"
-             );
-      return 9;
-      }
-
-      char *pmask = str("");
-      gs.showrc   = 1;
-
-      for (; iDir<argc; iDir++)
-      {
-         if (!strncmp(argv[iDir], "-", 1)) {
-            if (setGeneralOption(argv, argc, iDir))
-               continue;
-            else
-               return 9+perr("unexpected: %s\n", argv[iDir]);
-         }
-         pmask = argv[iDir];
-      }
-
-      bool bstop = 0;
-      while (!bstop && *pmask)
-      {
-         switch (*pmask++)
-         {
-            case 'n':
-            {
-               int nFuncRC = 0;
-               printf("file processed, ");
-               bstop = cs.stopTree(nFuncRC);
-               printf("processing %s.\n",bstop?"stopped":"continued");
-               if (cs.debug) printf("%d=stopTree(%d)\n",bstop,nFuncRC);
-               break;
-            }
-            case 'e': lRC = 9+perr("syntax test error"); break;
-            case 'w': lRC = 5+pwarn("general test warning"); break;
-            case 'f':
-            {
-               int nFuncRC = 9+perr("file unreadable.\n");
-               bstop = cs.stopTree(nFuncRC);
-               printf("   processing %s.\n",bstop?"stopped":"continued");
-               if (cs.debug) printf("%d=stopTree(%d)\n",bstop,nFuncRC);
-               break;
-            }
-            case 'm':
-            {
-               int nFuncRC = 19+perr("out of memory.\n");
-               bstop = cs.stopTree(nFuncRC);
-               printf("   processing %s.\n",bstop?"stopped":"continued");
-               if (cs.debug) printf("%d=stopTree(%d)\n",bstop,nFuncRC);
-               break;
-            }
-            case 'l':
-            {
-               int nFuncRC = 5+perr("non-fatal fn error.\n");
-               bstop = cs.stopTree(nFuncRC);
-               printf("   processing %s.\n",bstop?"stopped":"continued");
-               if (cs.debug) printf("%d=stopTree(%d)\n",bstop,nFuncRC);
-               break;
-            }
-         }
-      }
-
-      bDone = 1;
-   }
-
-   ifcmd (!strcmp(pszCmd, "tcping")) // sfk1973
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk tcping host:port [options]\n"
-             "\n"
-             "   check if a host accepts tcp/ip connections.\n"
-             "\n"
-             "   can be used to check if you are behind a firewall\n"
-             "   that blocks outgoing connections on specific ports.\n"
-             "\n"
-             "   $options\n"
-             "      -justrc   tell nothing, set just return code\n"
-             "      -loop     retry endlessly until connect\n"
-             "      -delay=n  delay seconds between tries\n"
-             "\n"
-             "   $return code\n"
-             "      0   cannot connect\n"
-             "      1   connection success\n"
-             "      9   other error\n"
-             "\n"
-             "   $examples\n"
-             "\n"
-             "      #sfk tcping myhost:80\n"
-             "         check if myhost listens on port 80\n"
-             "\n"
-             "      #sfk tcping -justrc myhost:80 +if \"rc=1\" tell \"ok\"\n"
-             "         conditional output in a script\n"
-             "\n"
-             "      #sfk tcping -justrc myhost:80 +if \"rc<>1\" tell \"fail\"\n"
-             "         conditional output in a script\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      char *phostport = 0;
-      bool bloop      = 0;
-      int ndelay      = 1000;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-delay", &pszParm)) {
-            if (!pszParm) return 9;
-            ndelay = atol(pszParm) * 1000;
-            if (ndelay < 1000)
-                ndelay = 1000;
-            continue;
-         }
-         if (!strcmp(argx[iDir], "-loop")) {
-            bloop = 1;
-            continue;
-         }
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         if (!phostport) {
-            phostport = argx[iDir];
-            continue;
-         }
-         return 9+pbad(pszCmd, argx[iDir]);
-      }
-
-      if (!phostport)
-         return 9+perr("missing host:port\n");
-
-      lRC = 0; // default: cannot connect
-
-      int nPort = 80;
-
-      char szHost[200];
-      strcopy(szHost, phostport);
-      char *psz1 = strchr(szHost, ':');
-      if (psz1) {
-         *psz1++ = '\0';
-         nPort = atol(psz1);
-      }
-
-      SOCKET hSock = 0;
-
-      prepareTCP();
- 
-      hSock = socket(AF_INET, SOCK_STREAM, 0);
-      if (hSock == INVALID_SOCKET) {
-         if (!cs.justrc)
-            perr("cannot create socket (2)\n");
-         lRC = 9;
-      }
-
-      struct sockaddr_in oaddr;
-      oaddr.sin_family = AF_INET;
-      oaddr.sin_port = htons((unsigned short)nPort);
-
-      if (lRC < 9) {
-         if (setaddr(&oaddr,szHost)) {
-            if (!cs.justrc)
-               perr("cannot set address\n");
-            lRC = 9;
-         }
-      }
-
-      if (lRC < 9)
-      {
-         int ncnt = 1;
-         while (!userInterrupt())
-         {
-            if (connect(hSock, (struct sockaddr *)&oaddr, sizeof(oaddr)) != -1) {
-               lRC = 1;
-               break;
-            }
-   
-            if (bloop) {
-               printf("not yet available, retrying (%d)   \r",ncnt++);
-               fflush(stdout);
-               doSleep(ndelay);
-            } else {
-               if (!cs.justrc)
-                  perr("cannot connect to %s:%u, %s\n", szHost, nPort, netErrStr());
-               lRC = 0;
-               break;
-            }
-         }
-         if (lRC == 1) {
-            if (!cs.justrc)
-               printf("connected.                              \n");
-            closesocket(hSock);
-         }
-      }
-
-      STEP_CHAIN(iChainNext, 0);
-
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "cmptime"))
-   {
-      if (nparm < 2) return 9;
-      char *pszFile1 = argv[iDir+0];
-      char *pszFile2 = argv[iDir+1];
-      FileStat fs1; if (fs1.readFrom(pszFile1)) return 9+perr("1");
-      FileStat fs2; if (fs2.readFrom(pszFile2)) return 9+perr("2");
-
-      cs.verbose = 9;
-      bool bSrcIsOlder = 0;
-      int nrc = fs1.differs(fs2, 1, &bSrcIsOlder);
-      printf("rc %d srcio %d\n",nrc,bSrcIsOlder);
-
-      bDone = 1;
-   }
-
-   #ifndef _WIN32
-   if (!strcmp(pszCmd, "tellnode"))
-   {
-      if (nparm < 1) return 9;
-      char *pszFile = argv[iDir];
-
-      struct stat64 buf;
-      if (stat64(pszFile, &buf)) return 9;
-      num nnode = (num)buf.st_ino;
-      printf("%s (%u) %s\n", numtohex(nnode,16),(uint)nnode,pszFile);
-
-      bDone = 1;
-   }
-   #endif
 
    ifcmd (!strcmp(pszCmd, "script") || !strcmp(pszCmd, "fscript")) // +wref +var
    {
@@ -64704,6 +59441,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
        || !strcmp(pszCmd, "clipxml")
        || !strcmp(pszCmd, "clipphp")
        || !strcmp(pszCmd, "clipjava")
+       || strbeg(pszCmd, "clipto64")   // internal
+       || strbeg(pszCmd, "clipfrom64") // internal
       )
    {
       ifhelp (nparm >= 1 && isHelpOpt(argv[iDir]))
@@ -64769,15 +59508,20 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       if (!strcmp(pszCmd, "clipsrc"))
          sprintf(szBuf, "fromclip +filter -rep _\\_\\\\\\_ -srep _\\q_\\\\" "\\q_ -srep _\\x25_\\x25\\x25_ -sform %s\\q%ccol1\\\\" "n\\q%s", pext, glblRunChar, pext);
-      else
       if (!strcmp(pszCmd, "clipxml"))
          sprintf(szBuf, "fromclip +xmlform");
-      else
       if (!strcmp(pszCmd, "clipphp"))
          sprintf(szBuf, "fromclip +filter -rep _\\_\\\\\\_ -srep _\\q_\\\\" "\\q_ -sform %s.\\q%ccol1\\\\" "n\\q%s", pext, glblRunChar, pext);
-      else
       if (!strcmp(pszCmd, "clipjava"))
          sprintf(szBuf, "fromclip +filter -rep _\\_\\\\\\_ -srep _\\q_\\\\" "\\q_ -sform %s+\\q%ccol1\\\\" "n\\q%s", pext, glblRunChar, pext);
+      if (!strcmp(pszCmd, "clipto64"))
+         sprintf(szBuf, "fromclip +encode -base64");
+      if (!strcmp(pszCmd, "clipto64."))
+         sprintf(szBuf, "fromclip +encode -base64 +tee toterm +toclip +tell \"[green]clip was encoded[def]\"");
+      if (!strcmp(pszCmd, "clipfrom64"))
+         sprintf(szBuf, "fromclip +decode -base64");
+      if (!strcmp(pszCmd, "clipfrom64."))
+         sprintf(szBuf, "fromclip +decode -base64 +tee toterm +toclip +tell \"[green]clip was decoded[def]\"");
 
       if (bprintcmd)
          { printf("sfk %s\n", szBuf); return 0; }
@@ -64877,357 +59621,21 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
-   ifcmd (   !strcmp(pszCmd, "num")
-          || !strcmp(pszCmd, "number")
-          || !strcmp(pszCmd, "numbers")
-          || !strcmp(pszCmd, "numle")
-         )
+   ifcmd (!strcmp(pszCmd, "unset")
+          || !strcmp(pszCmd, "unsetvar")) // sfk199
    {
       ifhelp (nparm < 1)
-      printx("<help>$sfk num[bers] [options] n1 [0xn2 0bn3 ...]\n"
+      printx("<help>$sfk unsetvar ...\n"
              "\n"
-             "   print associated numbers in all kinds of formats,\n"
-             "   like decimal, hexadecimal, binary and ASCII chars\n"
-             "   and in little endian format.\n"
+             "   delete an sfk variable\n"
              "\n"
-             "   $accepted parameter formats\n"
-             "       1234           a decimal number\n"
-             "       0x1234         a hexadecimal number\n"
-             "       0b1101         a binary number\n"
-             "       192.168.1.10   four decimal numbers\n"
-             "                      joined as one 32 bit value\n"
-             "       0b1101.0110    two binary numbers\n"
-             "                      joined as one value\n"
-             "       fe237801       hex number (auto detected)\n"
-             "       0tfe23         4 ASCII chars \"fe23\"\n"
+             "   $examples\n"
+             "      #sfk setvar a=1 +unsetvar a +getvar\n"
+             "         will list no variables.\n"
              "\n"
-             "   $options\n"
-             "      -hex      all given numbers are hexadecimal\n"
-             "      -nocol    print without colors\n"
-             "      -single   don't show little endian format\n"
-             "      -show x   print just a single format of:\n"
-             "                dec   hex   ip   bin\n"
-             "                decle hexle iple binle\n"
-             "      -small    convert little endian for numbers\n"
-             "                below 65536 as 16 bits. default is\n"
-             "                to convert all as 32 bits.\n"
-             "      -noneg    do not show negative numbers.\n"
-             "\n"
-             "   $see also\n"
-             "      #sfk hex<def>   convert decimal to hex\n"
-             "      #sfk dec<def>   convert hexadecimal to decimal\n"
-             "\n");
-      webref("number");
-      printx("   $examples\n"
-             "      #sfk num 0x48454C4F\n"
-             "         prints all representations of hex value 0x48454C4F\n"
-             "      #sfk num -2\n"
-             "         prints all forms of 32-bit signed value -2\n"
-             "      #sfk num -show hexle 317705643\n"
-             "         prints ABCDEF12, the little endian hex value\n"
              );
       ehelp;
 
-      sfkarg;
-
-      bool bFirst = 1;
-      bool bLE    = 1;
-      bool bHex   = 0;
-      bool bSmall = 0;
-      bool bnoneg = 0;
-      int  ishow  = 0;
-
-      cs.nohead   = 1;
-
-      int iFirstVal = 0;
-      int iLastVal  = 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-show", &pszParm)) {
-            if (!pszParm) return 9;
-            if (!strcmp(pszParm, "dec"))   { ishow=1; continue; }
-            if (!strcmp(pszParm, "hex"))   { ishow=2; continue; }
-            if (!strcmp(pszParm, "ip"))    { ishow=3; continue; }
-            if (!strcmp(pszParm, "bin"))   { ishow=4; continue; }
-            if (!strcmp(pszParm, "decle")) { ishow=5; continue; }
-            if (!strcmp(pszParm, "hexle")) { ishow=6; continue; }
-            if (!strcmp(pszParm, "iple"))  { ishow=7; continue; }
-            if (!strcmp(pszParm, "binle")) { ishow=8; continue; }
-            return 9+perr("unknown: %s",pszParm);
-         }
-         if (!strcmp(pszArg, "-single")) { bLE = 0; continue; }
-         if (!strcmp(pszArg, "-small"))  { bSmall = 1; continue; }
-         if (!strcmp(pszArg, "-nole"))   { bLE = 0; continue; }
-         if (!strcmp(pszArg, "-lean")) {
-            bLE = 0;
-            cs.nohead = 1;
-            continue;
-         }
-         if (!strcmp(pszArg, "-hex"))
-            { bHex = 1; continue; }
-         if (!strcmp(pszArg, "-noneg"))
-            { bnoneg = 1; continue; }
-         if (sfkisopt(pszArg)
-             && !alldigits(pszArg+1)   // sfk1934
-            )
-         {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            { iLastVal=iDir; break; }
-         if (!iFirstVal)
-            { iFirstVal=iDir; iLastVal=iDir+1; continue; }
-         iLastVal=iDir+1;
-      }
-
-      for (int iVal=iFirstVal; iVal<iLastVal; iVal++)
-      {
-         char *pszArg = argx[iVal];
-
-         // process non-option keywords:
-         num nsign=0;
-         if (pszArg[0]=='-')
-            { pszArg++; nsign=-1; }
-
-         uint nBE = (uint)getFlexNum(pszArg, bHex);
-         uint nLE = 0;
-
-         if (nsign)
-            nBE   = (uint)(nsign * (num)nBE);
-
-         int sBE = (nBE & (1U << 31)) ? nBE : 0;
- 
-         if (bSmall == 1 && nBE < 65536U)
-              nLE =     ( ((nBE >>  0) & 0xFFU) <<  8 )
-                     |  ( ((nBE >>  8) & 0xFFU) <<  0 )
-                     ;
-         else
-              nLE =     ( ((nBE >>  0) & 0xFFU) << 24 )
-                     |  ( ((nBE >>  8) & 0xFFU) << 16 )
-                     |  ( ((nBE >> 16) & 0xFFU) <<  8 )
-                     |  ( ((nBE >> 24) & 0xFFU) <<  0 )
-                     ;
-
-         int sLE  = (nLE & (1U << 31)) ? nLE : 0;
-
-         if (ishow >= 5)
-            { nBE = nLE; ishow -= 4; }
-
-         uchar b0 = (uchar)((nBE >>  0) & 0xFFU);
-         uchar b1 = (uchar)((nBE >>  8) & 0xFFU);
-         uchar b2 = (uchar)((nBE >> 16) & 0xFFU);
-         uchar b3 = (uchar)((nBE >> 24) & 0xFFU);
-         uchar c0 = b0;
-         uchar c1 = b1;
-         uchar c2 = b2;
-         uchar c3 = b3;
-
-         if (!isprint(b0)) c0 = '.';
-         if (!isprint(b1)) c1 = '.';
-         if (!isprint(b2)) c2 = '.';
-         if (!isprint(b3)) c3 = '.';
- 
-         char szbin[100];
-         memset(szbin, 0, sizeof(szbin));
-
-         szLineBuf[0] = '\0';
-
-         switch (ishow) 
-         {
-            case 1: sprintf(szLineBuf, "%u"  , nBE); break;
-            case 2: sprintf(szLineBuf, "%08X", nBE); break;
-            case 3: sprintf(szLineBuf, "%03u.%03u.%03u.%03u", b3,b2,b1,b0); break;
-            case 4: { for (uint i=0; i<32; i++)
-                        szLineBuf[i] = (nBE & (1U << i)) ? '1':'0';
-                      szLineBuf[32] = '\0';
-                     }
-                     break;
-         }
-         if (szLineBuf[0]) {
-            chain.print("%s\n", szLineBuf);
-         }
-         else
-         {
-            if (!cs.quiet && !cs.nohead && bFirst) {
-               bFirst = 0;
-               chain.print(   "  ====---- =---===---                 ====----====----====----====----\n");
-            }
-
-            strcpy(szAttrBuf, "  ==--==-- =---===---                 ====----====----====----====---- =----= bbbbbbbbbbb");
-            for (int i=0; szAttrBuf[i]; i++) {
-               if (szAttrBuf[i]=='=')
-                  szAttrBuf[i] = 'x';
-               else
-               if (szAttrBuf[i]=='-')
-                  szAttrBuf[i] = 'h';
-            }
-
-            for (int i=7; i>=0; i--) szbin[ 7-i] = (b3 & (1U << i)) ? '1':'0';
-            for (int i=7; i>=0; i--) szbin[15-i] = (b2 & (1U << i)) ? '1':'0';
-            for (int i=7; i>=0; i--) szbin[23-i] = (b1 & (1U << i)) ? '1':'0';
-            for (int i=7; i>=0; i--) szbin[31-i] = (b0 & (1U << i)) ? '1':'0';
-
-            sprintf(szLineBuf, "0x%08X %10u %03u.%03u.%03u.%03u %s >%c%c%c%c<",
-               nBE,nBE, b3,b2,b1,b0, szbin, c3,c2,c1,c0);
-
-            if (!bnoneg && sBE)
-               mystrcatf(szLineBuf, MAX_LINE_LEN, " %d", sBE);
-
-            if (chain.coldata)
-               chain.addLine(szLineBuf, szAttrBuf);
-            else
-               printColorText(szLineBuf, szAttrBuf);
-
-            if (bLE)
-            {
-            for (int i=7; i>=0; i--) szbin[ 7-i] = (b0 & (1U << i)) ? '1':'0';
-            for (int i=7; i>=0; i--) szbin[15-i] = (b1 & (1U << i)) ? '1':'0';
-            for (int i=7; i>=0; i--) szbin[23-i] = (b2 & (1U << i)) ? '1':'0';
-            for (int i=7; i>=0; i--) szbin[31-i] = (b3 & (1U << i)) ? '1':'0';
-
-            sprintf(szLineBuf, "0x%08X %10u %03u.%03u.%03u.%03u %s >%c%c%c%c<",
-               nLE,nLE, b0,b1,b2,b3, szbin, c0,c1,c2,c3);
-
-            if (!bnoneg && sLE)
-               mystrcatf(szLineBuf, MAX_LINE_LEN, " %d", sLE);
-
-            if (chain.coldata)
-               chain.addLine(szLineBuf, szAttrBuf);
-            else
-               printColorText(szLineBuf, szAttrBuf);
-            }
-         }
-      }
-
-      if (iChainNext) {
-         // producing command
-         STEP_CHAIN(iChainNext, chain.coldata); // sfk181 num always
-      }
-
-      bDone = 1;
-   }
-
-   ifcmd (!strcmp(pszCmd, "hex") || !strcmp(pszCmd, "dec")) // +wref
-   {
-      ifhelp (!chain.usedata && nparm < 1)
-      printx("<help>$sfk hex value1 [value2] [...]\n"
-             "$sfk dec value1 [value2] [...]\n"
-             "$sfk ... +dec [+hex] -digits=n\n"
-             "\n"
-             "   convert numbers between decimal and hexadecimal.\n"
-             "   largest convertable number is ((2 << 64) - 1).\n"
-             "\n"
-             "   $options\n"
-             "      -digits=n  format output numbers with n digits\n"
-             "\n");
-      webref(pszCmd);
-      printx("   $examples\n"
-             "      #sfk hex 1048576 98765 234567\n"
-             "         convert 3 decimal numbers.\n"
-             "\n"
-             "      #sfk filt csv.txt -ssep \"\\t\" -form \"$$col3\" +hex\n"
-             "         convert 3rd column from csv.txt to hex.\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      bool btodec = !strcmp(pszCmd, "dec");
-
-      int  iChainNext = 0;
-      int  iVal       = iDir;
-      int  iValMax    = iDir;
-      int ndigits    = 1;
-
-      for (; iDir<argc; iDir++)
-      {
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-digits", &pszParm)) {
-            if (!pszParm) return 9;
-            ndigits = atol(pszParm);
-            continue;
-         }
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               return 9+perr("unexpected option: %s\n", argx[iDir]);
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         // skip number parms, maybe until a chain cmd
-         iValMax = iDir;
-      }
-
-      if (chain.usedata) {
-         // convert chain text
-         for (int i=0; i<chain.indata->numberOfEntries(); i++) {
-            szLineBuf[0]  = '\0';
-            char *psz = chain.indata->getEntry(i, __LINE__);
-            if (!psz) return 9+perr("int. #58282010");
-            if (btodec) {
-               // hex to dec
-               num nval = hextonum(psz);
-               numtoa(nval, ndigits, szLineBuf);
-            } else {
-               // dec to hex
-               num nval = atonum(psz);
-               numtohex(nval, ndigits, szLineBuf);
-            }
-            if (chain.coldata) {
-               if (szLineBuf[0])
-                  chain.addLine(szLineBuf, str(""));
-            } else {
-               printf("%s\n", szLineBuf);
-            }
-         }
-      } else {
-         // convert direct parameters
-         nparm = (iValMax - iVal) + 1;
-         for (; nparm > 0; nparm--)
-         {
-            szLineBuf[0]  = '\0';
-            char *psz = argx[iVal++];
-            if (btodec) {
-               // hex to dec
-               num nval = hextonum(psz);
-               numtoa(nval, ndigits, szLineBuf);
-            } else {
-               // dec to hex
-               if (!isdigit(*psz))
-                  return 9+perr("cannot convert to hex, not a number: %s", psz);
-               num nval = atonum(psz);
-               numtohex(nval, ndigits, szLineBuf);
-            }
-            if (chain.coldata) {
-               if (nparm >= 2) strcat(szLineBuf, " ");
-               chain.addToCurLine(szLineBuf, str(""));
-            } else {
-               printf("%s ", szLineBuf);
-            }
-         }
-         if (!chain.coldata)
-            printf("\n");
-      }
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
-   }
-
-   if (!strcmp(pszCmd, "dropvar"))
-   {
       sfkarg;
 
       char *pszName=0;
@@ -65258,7 +59666,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (!pszName)
          return 9+perr("missing variable name");
 
-      sfksetvar(pszName, 0, 0);
+      sfkdelvar(pszName);
 
       STEP_CHAIN(iChainNext, 0); // dropvar
 
@@ -65291,6 +59699,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   $see also\n"
              "      #sfk help var<def>   how to use sfk variables\n"
              "      #sfk getvar<def>     print variable(s)\n"
+             "      #sfk unsetvar<def>   delete an sfk variable\n"
              "\n");
       webref("helpvar");
       printx("   $examples\n"
@@ -65923,11 +60332,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      if -prefix is used it must be the first option.\n"
              "\n"
              "   $examples\n"
-             "      #sfk samp sfkbat mytest.bat\n"
+             "      #sfk batch mytest.bat\n"
              "         creates a windows batch file mytest.bat\n"
              "         with an embedded sfk command script.\n"
              "\n"
-             "      #sfk samp sfkbash mytest\n"
+             "      #sfk batch mytest.sh\n"
              "         creates a linux batch file mytest\n"
              "         with an embedded sfk command script.\n"
              "\n"
@@ -66483,420 +60892,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
 
       return iRC;
-   }
-
-   ifcmd (   strBegins(pszCmd, "xmlform") // +wref
-          || !strcmp(pszCmd, "xf")
-         )
-   {
-      ifhelp (bFullHelp || (chain.usedata == 0 && nparm < 1))
-      printx("<help>$sfk ... +xmlform[3]\n"
-             "$sfk xmlform in.xml\n"
-             "\n"
-             "   simple XML text reformatter to allow easy reading\n"
-             "   and searching of XML data.\n"
-             "\n"
-             "   this command is experimental and may not be suitable\n"
-             "   to reformat XML data intended for further processing,\n"
-             "   as lines longer than 3900 characters may be hard wrapped!\n"
-             "   furthermore output of multi line tags may contain\n"
-             "   wrong indentation in some cases.\n"
-             "\n"
-             "   $options\n"
-             "     -i         read text from stdin.\n"
-             "     -indent=3  or typing \"sfk xmlform3\" selects an\n"
-             "                indent of 3 instead of the default 2.\n"
-             "\n"
-             "   $aliases\n"
-             "     #sfk xf<def>        same as xmlform\n"
-             "\n"
-             "   $see also\n"
-             "     #sfk jsonform<def>  reformat JSON data\n"
-             "\n");
-      webref("xmlform");
-      printx("   $examples\n"
-             "     #sfk xmlform in.xml\n"
-             "       read the file in.xml and print it reformatted\n"
-             "\n"
-             "     #sfk xmlform in.xml +view\n"
-             "       display in.xml reformatted in Depeche View\n"
-             "       to allow easy browsing and searching\n"
-             "\n"
-             "     #sfk filter in.xml +xmlform\n"
-             "       reformat output of a previous sfk command\n"
-             "\n"
-             #ifdef _WIN32
-             "     #type in.xml | sfk xmlform -i\n"
-             #else
-             "     #cat in.xml | sfk xmlform -i\n"
-             #endif
-             "       reformat output of a non-sfk command\n"
-             "\n"
-             "     #sfk xex in.xml \"x<web_info>**</web_info>x[part2]x\"\n"
-             "      #+xmlform +view\n"
-             "       extract a web_info multi line text block,\n"
-             "       reformat and display it in Depeche View. [22]\n"
-             "       this uses 'x' as a separator character as '/'\n"
-             "       and '_' are already part of the search text.\n"
-             "\n"
-             "     #sfk web http://myserver/getxml.php +xf\n"
-             "       call a web URL that sends an xml reply\n"
-             "       and reformat output for easy reading.\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      CommandScope oscope("xmlform");
-
-      int   itabsize = 2;
-      bool  bstdin   = 0;
-      char *pszInFile= 0;
-
-      char *psz = pszCmd+strlen("xmlform");
-      if (isdigit(*psz))
-          itabsize=atoi(psz);
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-indent", &pszParm)) {
-            if (!pszParm) return 9;
-            itabsize = atol(pszParm);
-            continue;
-         }
-         if (!strcmp(argx[iDir], "-i")) {
-            bstdin = 1;
-            continue;
-         }
-         if (sfkisopt(argx[iDir])) {
-            if (isDirParm(argx[iDir]))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-
-         // process non-option keywords:
-         if (!bstdin && !chain.usedata && !pszInFile) {
-            pszInFile = pszArg;
-            continue;
-         }
-
-         return 9+perr("unexpected: %s\n", argx[iDir]);
-      }
-
-      if (!bstdin && !pszInFile && !chain.usedata)
-         return 9+perr("missing input");
-
-      cchar *acol = "xh";
-      int icol = strlen(acol);
- 
-      int inest=0,inest2=0,itmpnest=0;
-      int btag=0;
-
-      char szEndTag[300];
-
-      uchar *pInText = 0;
-      char  *pInAttr = 0;
-      num    nInSize = 0;
-
-      if (loadInput(&pInText, &pInAttr, &nInSize, bstdin, pszInFile, 1))
-         return 9;
-
-      CharAutoDel odel1((char*)pInText);
-      CharAutoDel odel2(pInAttr);
-
-      char *ptextcur=(char*)pInText;
-      char *pattrcur=pInAttr;
-
-      int iHardWrap = 0;
-      bool bGlue = 0;
-
-      while (ptextcur && *ptextcur && pattrcur && *pattrcur)
-      {
-         char *pnext = ptextcur+1;
-         for (; *pnext; pnext++) {
-            if (!strncmp(pnext, "</", 2)) {
-               if (!bGlue)
-                  break;
-               bGlue = 0;
-               continue;
-            }
-            if (*pnext == '<')
-               break;
-         }
-         int iLineLen = pnext-ptextcur;
-         if (iLineLen > MAX_LINE_LEN) {
-             iLineLen = MAX_LINE_LEN;
-             iHardWrap++;
-         }
-
-         memcpy(szLineBuf2, ptextcur, iLineLen);
-         memcpy(szAttrBuf2, pattrcur, iLineLen);
-         szLineBuf2[iLineLen] = '\0';
-         szAttrBuf2[iLineLen] = '\0';
- 
-         // -----
-
-         char *pSrcCur = szLineBuf2;
-         char *pSrcMax = szLineBuf2+strlen(szLineBuf2);
-         char *pDstCur = szLineBuf;
-         char *pDstMax = szLineBuf+MAX_LINE_LEN;
-         char *pAttCur = szAttrBuf;
-         char *pAttMax = szAttrBuf+MAX_LINE_LEN;
-
-         int istate=0;
-
-         if (striBegins(pSrcCur, "<?xml"))
-         {
-            strcopy(szLineBuf, pSrcCur);
-            szAttrBuf[0] = '\0';
-         }
-         else
-         {
-          while (pSrcCur<pSrcMax && pDstCur<pDstMax)
-          {
-            char c1 = pSrcCur[0];
-            char c2 = c1 ? pSrcCur[1] : 0;
-            // itmpnest=0;
-            if (c1=='<' && c2!='/') {  // start tag
-               // check for <footag/>
-               // TODO: fails with multi line tags
-               char *pszKet = strchr(pSrcCur+1, '>');
-               bool bSelfClosed = (pszKet!=0 && pszKet[-1]=='/') ? 1 : 0;
-               if (!bSelfClosed)
-                  bGlue = 1;
-               // FROM <footag any="123" ...>
-               // TO   </footag> for quick lookup
-               szEndTag[0] = '<';
-               szEndTag[1] = '/';
-               mystrcopy(szEndTag+2, pSrcCur+1, sizeof(szEndTag)-20);
-               char *psz = szEndTag+2;
-               while (*psz!=0 && *psz!='/' && *psz!='>' && *psz!=' ' && *psz!='\t')
-                  psz++;
-               if (*psz) {
-                  *psz++ = '>';
-                  *psz++ = '\0';
-               }
-               // only if such end tag(s) exist, count nesting
-               if (bSelfClosed==0 && strstr((char*)pInText, szEndTag)!=0) {
-                  // printf("endtag-hit : \"%s\"\n", szEndTag);
-                  inest++;
-                  inest2=inest;
-               } else {
-                  // printf("endtag-miss: \"%s\"\n", szEndTag);
-                  itmpnest=1;
-               }
-               btag=1;
-            }
-            else
-            if (c1=='<' && c2=='/') {  // end tag
-               // see below
-               btag=1;
-            }
-            // else
-            // if (c1=='/' && c2=='>') {  // end of tag
-            //    inest--;
-            // }
-
-            if (istate==0) {
-               if (isspace(c1)) {
-                  pSrcCur++;
-                  continue;
-               }
-               int itmp=inest+itmpnest;
-               int indec=itmp?(itmp-1):0;
-               for (int i=0; i<indec*itabsize; i++) {
-                  if (pDstCur>=pDstMax)
-                     break;
-                  *pDstCur++=' ';
-                  *pAttCur++=' ';
-               }
-               istate=1;
-            }
-
-            char cattr = ' ';
-            if (btag)
-                 cattr = acol[(inest2+itmpnest)&1];
-
-            *pDstCur=c1;
-            *pAttCur=cattr;
-
-            if (c1=='<' && c2=='/') {  // end tag
-               inest--;
-            }
-            else
-            if (c1=='>') {
-               btag=0;
-               inest2=inest;
-               itmpnest=0;
-            }
-
-            pSrcCur++;
-            pDstCur++;
-            pAttCur++;
-          }
-          *pDstCur='\0';
-          *pAttCur='\0';
-         }
-
-         {
-            // sfk180: fix: unwanted blank lines
-            char *p  = szLineBuf;
-            int ilen = strlen(p);
-            while (    ilen > 0
-                   && (   p[ilen-1] == '\r'
-                       || p[ilen-1] == '\n'
-                       || p[ilen-1] == ' '
-                       || p[ilen-1] == '\t'
-                      )
-                  )
-            {
-               p[ilen-1] = '\0';
-               ilen--;
-            }
-         }
-
-         if (chain.coldata)
-            chain.addLine(szLineBuf, szAttrBuf, 1);  // split by lf
-         else
-            printColorText(szLineBuf, szAttrBuf, 1); // with lf
-
-         // -----
-
-         ptextcur += iLineLen;
-         pattrcur += iLineLen;
-      }
-
-      if (iHardWrap && !cs.nowarn)
-         pwarn("%d lines(s) were hard wrapped.\n", iHardWrap);
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
-   }
-
-   ifcmd (!strcmp(pszCmd, "jsonform")  // sfk1952
-          || !strcmp(pszCmd, "jform")
-         )
-   {
-      ifhelp (bFullHelp || (chain.usedata == 0 && nparm < 1))
-      printx("<help>$sfk ... +jsonform\n"
-             "$sfk jform in.json\n"
-             "\n"
-             "   simple JSON text reformatter to allow easy reading\n"
-             "   and searching of JSON data.\n"
-             "\n"
-             "   this command is experimental and may not be suitable\n"
-             "   to reformat JSON data intended for further processing,\n"
-             "   as lines longer than 3900 characters may be hard wrapped.\n"
-             "\n"
-             "   $options\n"
-             "     -i             read text from stdin\n"
-             "     -allocmb=n     use n mbytes output buffer\n"
-             "\n"
-             "   $aliases\n"
-             "     #sfk jform<def>      same as jsonform\n"
-             "\n"
-             "   $see also\n"
-             "     #sfk xmlform<def>    reformat XML data\n"
-             "\n");
-      printx("   $examples\n"
-             "     #sfk jform in.json\n"
-             "       read the file in.json and print it reformatted\n"
-             "\n"
-             "     #sfk load in.json +jform\n"
-             "       the same, but get data from a previous command\n"
-             "\n"
-             "     #sfk load in.json +jform +view\n"
-             "       display in.json reformatted in Depeche View\n"
-             "       to allow easy browsing and searching\n"
-             "\n"
-             "     #sfk web http://myserver/mycall +jform\n"
-             "       call a web URL that sends a JSON reply\n"
-             "       and reformat output for easy reading.\n"
-             );
-      ehelp;
-
-      sfkarg;
-
-      bool bstdin = 0;
-      int  nalloc = 0;
-      char *pszInFile= 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg = argx[iDir];
-         char *pszParm = 0;
-         if (haveParmOption(argx, argc, iDir, "-allocmb", &pszParm)) {
-            if (!pszParm) return 9;
-            nalloc = atol(pszParm);
-            continue;
-         }
-         if (!strcmp(pszArg, "-i"))
-            { bstdin = 1; continue; }
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         if (!bstdin && !chain.usedata && !pszInFile) {
-            pszInFile = pszArg;
-            continue;
-         }
-         return 9+perr("unexpected: %s",pszArg);
-      }
-
-      if (!bstdin && !pszInFile && !chain.usedata)
-         return 9+perr("missing input");
-
-      uchar *pData = 0, *pOut = 0, *pAtt = 0;
-      num    nSize = 0,  nOutSize = 0;
-
-      if (loadInput(&pData, 0, &nSize, bstdin, pszInFile, 0))
-         return 9;
-
-      if (pData != 0 && nSize > 0)
-      {
-         if (nalloc)
-            nOutSize = nalloc * 1000000;
-         else
-            nOutSize = (nSize+100) * 3;
-   
-         pOut = new uchar[nOutSize+10];
-         pAtt = new uchar[nOutSize+10];
-
-         if (!pOut || !pAtt)
-            return 9+perr("out of memory (%d mb)", (int)(nOutSize/1000000));
-   
-         if (reformatjson((char*)pData, (char*)pOut, (char*)pAtt, nOutSize))
-            return 9+perr("buffer overflow %d %d",(int)nSize,(int)nOutSize);
-   
-         nOutSize = strlen((char*)pOut);
-   
-         if (nOutSize > 0)
-            dumpOutput(pOut, (char*)pAtt, nOutSize, 0);
-      }
-
-      if (pData) delete [] pData;
-      if (pOut)  delete [] pOut;
-      if (pAtt)  delete [] pAtt;
-
-      STEP_CHAIN(iChainNext, 1);
-
-      bDone = 1;
    }
 
    ifcmd (!strcmp(pszCmd, "sort")) // +wref
@@ -67561,9 +61556,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   marks the end of a chain of commands\n"
              "   or of a function with commands.\n"
              "\n"
-             "   $chaining input control\n"
-             "      by default, \"end\" does not consume\n"
+             "   $chaining i/o\n"
+             "      \"end\" does not consume or pass\n"
              "      text input from previous commands.\n"
+             "      result data should be returned\n"
+             "      by variables.\n"
+             /*
              "      use #+tend<def> to expect data input,\n"
              "      use #+fend<def> to expect file list input,\n"
              "      and to return this to the caller if +end\n"
@@ -67574,6 +61572,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      unexpectedly add +filter before +tend\n"
              "      to force lines instead of stream data.\n"
              "      see also: xed option -tolines\n"
+             */
              "\n"
              "   $see also\n"
              "      #sfk help chain<def>    command chain overview\n"
@@ -67608,85 +61607,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       // no real action here
       return 9;
    }
-
-   #ifdef _WIN32
-   if (!strcmp(pszCmd, "dumpcp"))
-   {
-      ifhelp (nparm < 1)
-      printx("<help>$sfk dumpcp codepage|own\n");
-      ehelp;
-
-      sfkarg;
-
-      uint nCodePage = 0;
-
-      int iChainNext = 0;
-      for (; iDir<argc; iDir++)
-      {
-         char *pszArg  = argx[iDir];
-         if (sfkisopt(pszArg)) {
-            if (isDirParm(pszArg))
-               break; // fall through
-            if (setGeneralOption(argx, argc, iDir))
-               continue;
-            else
-               return 9+perr("unknown option: %s\n", pszArg);
-         }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
-         if (!nCodePage) {
-            if (!strcmp(pszArg, "own"))
-               nCodePage = GetACP();
-            else
-               nCodePage = atoi(pszArg);
-            continue;
-         }
-         return 9+perr("unexpected: %s\n",pszArg);
-      }
-      if (!nCodePage)
-         nCodePage = GetACP();
-
-      char   sztmp[50];
-      ushort awtmp[50];
-
-      printf("// codepage %u. unlisted codes map 1:1.\n", nCodePage);
-      printf("unsigned short glblCodePage%u[] = {\n   ", nCodePage);
-      int ndone=0;
-      for (uint c=1; c<256; c++)
-      {
-         sztmp[0] = c;
-         sztmp[1] = 0;
-         awtmp[0] = 0;
-      
-         MultiByteToWideChar( // win.dumpcp
-            nCodePage, 0, sztmp, 1,
-            (wchar_t*)awtmp, 10
-            );
-      
-         ushort ntmp = awtmp[0];
-         if (ntmp == 0) continue;
-         if (ntmp == c) continue;
-         printf("0x%02x,0x%04x, ",c,ntmp);
-         if ((++ndone % 8)==0)
-            printf("\n   ");
-      }
-      if ((ndone % 8) == 0)
-         printf("0,0\n};\n");
-      else
-         printf("\n   0,0\n};\n");
-      printf("// total %u mappings.\n", ndone);
-
-      if (iChainNext) {
-         if (chain.coldata) {
-            STEP_CHAIN(iChainNext, 1);
-         } else {
-            STEP_CHAIN(iChainNext, 0);
-         }
-      }
-
-      bDone = 1;
-   }
-   #endif
 
    if (!strcmp(argv[1], "basic"))   // sfk196
    {
@@ -67860,6 +61780,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (bhelp || !strncmp(pszSub, "chain", 5))
       {
          printHelpText("chain", bhelp);
+         if (bhelp) printx("\n");
+         bDone = 1;
+      }
+
+      if (bhelp || !strncmp(pszSub, "env", 3))
+      {
+         printHelpText("env", bhelp);
          if (bhelp) printx("\n");
          bDone = 1;
       }
@@ -68352,12 +62279,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    ifcmd (!strcmp(pszCmd, "loop"))
    {
       ifhelp (iDir == iDirStart)
-      printx("<help>$sfk ... +loop\n"
+      printx("<help>$sfk ... +loop [delaytime]\n"
              "\n"
              "   repeat (loop) the execution of a command chain.\n"
              "\n"
              "   when using +loop in an sfk script file,\n"
              "   always add +end after it (+loop +end).\n"
+             "\n"
+             "   $optional delay time\n"
+             "      #sfk ... +loop 500<def>  loops every 500 msec\n"
+             "      #sfk ... +loop 3s<def>   loops every 3 seconds\n"
+             "      you may also use 'm'inutes or 'h'ours.\n"
              "\n"
              "   $see also\n"
              "      sfk tail - a script example with looping\n"
@@ -68365,8 +62297,55 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   $examples\n"
              "      #sfk list -late mydir +sleep 5000 +loop\n"
              "         list most recent files of mydir every 5 sec.\n"
+             "      #sfk list -late mydir +loop 5s\n"
+             "         the same, but shorter.\n"
              );
       ehelp;
+
+      if (cs.strictif && iIfLevel>0) {
+         perr("loop is not allowed in an +if begin ... endif block");
+         pinf("use -echoonerr for more info\n");
+         return 9;
+      }
+
+      sfkarg;
+
+      int nmsec = -1;
+
+      for (; iDir<argc; iDir++)
+      {
+         if (sfkisopt(argx[iDir])) {
+            if (isDirParm(argx[iDir]))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, 0))
+            break;
+         // sfk199 loop +3s support
+         if (nmsec < 0) {
+            char *psz = argx[iDir];
+            if (!isdigit(*psz))
+               return 9+perr("wrong number format: %s\n", psz);
+            nmsec = atol(psz);
+            // sfk199 postfix support
+            while (*psz && isdigit(*psz)) psz++;
+            switch (*psz) {
+               case 's': nmsec *= 1000; break;
+               case 'm': nmsec *= 1000 * 60; break;
+               case 'h': nmsec *= 1000 * 3600; break;
+               case 0:
+                  break;
+               default:
+                  return 9+perr("invalid time postfix: %c\n", *psz);
+            }
+            continue;
+         }
+         return 9+pbad(pszCmd, argx[iDir]);
+      }
+
+      if (nmsec > 0)
+         doSleep(nmsec);
 
       if (!userInterrupt()) {
          // restart command sequence

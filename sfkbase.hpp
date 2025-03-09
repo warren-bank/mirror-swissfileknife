@@ -340,6 +340,7 @@ char *findPathLocation(cchar *pszCmd, bool bExcludeWorkDir=0);
 extern int fileExists(char *pszFileName, bool bOrDir=0);
 
 #define strcopy(dst,src) mystrcopy(dst,src,sizeof(dst)-10)
+char *myvtext        (const char *pszFormat, ...);
 void  mystrcopy      (char *pszDst, cchar *pszSrc, int nMaxDst);
 char *mystrstri      (char *phay, cchar *ppat);
 int  mystrstrip      (char *pszHayStack, cchar *pszNeedle, int *lpAtPosition);
@@ -1549,6 +1550,9 @@ public:
 
 class SFKMatch;
 
+// note: some compilers may give 'bool' a single bit size,
+//       therefore use int if more than 0 and 1 are needed.
+
 struct CommandStats
 {
 public:
@@ -1612,13 +1616,11 @@ public:
    bool listTabs;    // split columns by tab char
    bool listContent; // list zip etc. info
    int  flatTime;    // show flat file times
-   bool sim   ;      // just simulate command
+   int  sim   ;      // just simulate command
    bool nohead;      // leave out some header, trailer info
    bool pure  ;      // extra info if -pure was specified
    bool dostat;      // copy: list just size statistics
-   bool tailTail;    // running tail, not head
    int tailLines;    // head, tail
-   bool tailFollow;  // head, tail
    char *tomask;     // output filename mask
    char *todir;      // output dir
    bool  changetld;  // with unzip
@@ -1631,7 +1633,7 @@ public:
    bool rootabsname;  // copy
    bool forceabsname; // list
    bool writeall;    // write all files, not only changed ones
-   bool spat;        // enable slash patterns \t etc.
+   int  spat;        // enable slash patterns \t etc.
    bool wpat;        // support * and ?
    bool xpat;        // dummy within base
    bool usecase;     // case-sensitive search or not
@@ -1714,7 +1716,7 @@ public:
    const char *addsnaplf;  // "\n" or "\r\n" depending on mode and OS
    uint addsnapmeta;      // bit 0:time 1:size 2:encoding
    int stathilitelevel;   // stat command: highlight dirs <= this
-   bool travelzips;        // traverse zipfile contents
+   int  travelzips;        // traverse zipfile contents
    int  office;            // traverse office contents
    int  justoffice;        // select just office files
    bool infilelist;        // processing a file list, not dir and mask
@@ -1789,7 +1791,7 @@ public:
    int  bytesperline;      // hexdump: when using hex/decsrc
    num  recordsize;        // for some commands
    bool usetmp;            // use temporary file
-   bool knx;               // internal
+   int  knx;               // internal
    char *knxtext;          // internal
    bool ntp;               // internal
    bool echoonerr;         // echo whole command on error
@@ -1964,6 +1966,7 @@ public:
    bool sanecheck;         // crccheck -sane
    num  sanetime;          // of crc list file
    int  usehta;            // webserv internal
+   int  rawctype;          // webserv
    bool usingflist;        // sfk196 with -flist
    int  absdirs;           // sfk1963 with sync
    bool checkdirs;
@@ -1982,6 +1985,9 @@ public:
    char webbasedir[512+10]; // sfk198 webserv
    char webcurdir[512+10];  // sfk198 webserv
    char *pwebstartdir;
+   char *pfixwebreply;
+   bool strictif;
+   bool withtime;
    #ifdef SFKPIC
    bool deeppic;           // probe file start
    bool dumppix;
@@ -2239,6 +2245,7 @@ public:
    void  shutdown();
    bool  colany() { return colfiles || coldata; }
    bool  useany() { return usefiles || usedata; }
+   bool  usebin() { return (nClInBinarySize > 0) ? 1 : 0; }
    int  moveOutToIn(char *pszCmd);
    int  convInDataToInFiles ( );
 
@@ -2327,6 +2334,7 @@ bool   sfkhavevars();
 int    sfksetvar(char *pname, uchar *pdata, int idata, int nadd=0);
 uchar *sfkgetvar(char *pname, int *plen);
 uchar *sfkgetvar(int i, char **ppname, int *plen);
+int    sfkdelvar(char *pname);
 void   sfkfreevars();
 bool   isHttpURL(char *psz);
 
