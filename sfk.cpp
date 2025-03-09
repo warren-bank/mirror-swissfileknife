@@ -11,6 +11,14 @@
    -  ntfs handling of links is not yet tested.
    -  unix bash interprets $, ! and probably other chars.
 
+   1.1.5
+   -  fix: stat: sizes >4GB truncated in listing.
+   -  rem: freezeto no longer listed as official function
+           until intense long-run tests are done.
+   -  fix: freezeto: enforcing unzip 5.52. older unzips
+           have problems when used with ntfs.
+   -  fix: freezeto: count info msgs not as errors.
+
    1.1.3
    -  add: filter: pattern replacement using -rep _src_dst_.
    -  fix: filter: options beginning with + not recognized.
@@ -4091,7 +4099,7 @@ long execDirStat(char *pszDir, long lLevel, long lFiles, long lDirs, num lBytes,
       if (!strncmp(pszDir, glblDotSlash, 2))
          pszDir += 2;
    
-      unsigned long lMBytes = (unsigned long)lBytes / 1000000UL;
+      ulong lMBytes = (ulong)(lBytes / 1000000UL);
    
       if (bGlblQuiet) {
          if (lLevel == 0)
@@ -6088,7 +6096,7 @@ long checkUnzipVersion(char *pszTmpFile)
    if (!pszCmd) { fprintf(stderr, "error: no unzip" EXE_EXT " found within PATH.\n"); return 9; }
    pszGlblUnzipCmd = strdup(pszCmd);
  
-   // the following command will cause a proper unzip 5.50 to tell it's version.
+   // the following command will cause a proper unzip 5.52 to tell it's version.
    sprintf(szLineBuf, "%s -v " STR_FROM_NUL " >%s 2>&1", pszGlblUnzipCmd, pszTmpFile);
    long lRC = system(szLineBuf);
    if (lRC) {
@@ -6124,10 +6132,10 @@ long checkUnzipVersion(char *pszTmpFile)
       return 9; // NOK, stone-old unzip 4.x
    }
 
-   if (nGlblUnzipVersionLo >= 50)
-      return 0; // OK: Unzip 5.50
+   if (nGlblUnzipVersionLo >= 52)
+      return 0; // OK: Unzip 5.52
 
-   // else below 5.50: too old
+   // else below 5.52: too old
    fprintf(stderr, "error: %s version too old (%ld.%ld)\n", pszGlblUnzipCmd, nGlblUnzipVersionHi, nGlblUnzipVersionLo);
    return 9;
 }
@@ -7196,7 +7204,7 @@ int main(int argc, char *argv[])
    {
       printf("sfk/" SFK_BRANCH " " SFK_VERSION " - a swiss file knife derivate.\n"); // [patch-id]
       printf("this version provided by " SFK_PROVIDER ".\n");
-      printf("based on the free sfk 1.1.3 by stahlworks art & technology.\n");
+      printf("based on the free sfk 1.1.5 by stahlworks art & technology.\n");
       printf("Distributed for free under the GNU General Public License,\n"
              "without any warranty. Use with care and on your own risk.\n");
 
@@ -7332,14 +7340,16 @@ int main(int argc, char *argv[])
              "       type \"sfk run\" for help.\n", glblRunChar, glblRunChar
              );
 
+/*
          printf(
-             #ifdef _WIN32 // uses Window-specific XCopy command
              "\n"
              "   sfk freezeto=targetdir [-quiet][-hidden][-verbose] -dir src1 -copy|zip\n"
              "       create self-verifying archive tree, prepared for dvd burning.\n"
              "       type \"sfk freezeto\" for help.\n"
-             #endif
+             );
+*/
 
+         printf(
              "\n"
              "   sfk reflist [-abs] [-wide] -dir tdir -file .text -dir sdir -file .sext\n"
              "       find file references and dependencies. \"sfk reflist\" for help.\n"
@@ -8537,7 +8547,7 @@ int main(int argc, char *argv[])
       if (lToolRC) { fprintf(stderr, "error: cannot run ZIP command. please get InfoZIP 2.31 or higher.\n"); bBail=1; }
 
       lToolRC = checkUnzipVersion(szLineBuf2);
-      if (lToolRC) { fprintf(stderr, "error: cannot run UNZIP command. please get Unzip 5.50 or higher.\n"); bBail=1; }
+      if (lToolRC) { fprintf(stderr, "error: cannot run UNZIP command. please get Unzip 5.52 or higher.\n"); bBail=1; }
 
       char *pszSFKCmd = findPathLocation("sfk" EXE_EXT);
       if (!pszSFKCmd) { fprintf(stderr, "error: cannot find location of sfk" EXE_EXT " within PATH.\n"); bBail=1; }
@@ -8650,12 +8660,24 @@ int main(int argc, char *argv[])
       if (bGlblEscape)
          logError("error: user interrupt. archive tree is INCOMPLETE.");
 
-      if (glblErrorLog.numberOfEntries() > 0) {
-         long nErr = glblErrorLog.numberOfEntries();
-         printf("=== %d errors occured: ===\n", nErr);
-         for (long i=0; i<nErr; i++)
+      if (glblErrorLog.numberOfEntries() > 0) 
+      {
+         long nMsg  = glblErrorLog.numberOfEntries();
+         long nInfo = 0;
+         long nErr  = 0;
+         long i = 0;
+         for (i=0; i<nMsg; i++) {
+            char *psz = glblErrorLog.getEntry(i, __LINE__);
+            if (!strncmp(psz, "info", 4))
+               nInfo++;
+            else
+               nErr++;
+         }
+         printf("=== %d errors, %d informal messages: ===\n", nErr, nInfo);
+         for (i=0; i<nMsg; i++)
             printf("%s\n", glblErrorLog.getEntry(i, __LINE__));
-      } else {
+      }
+      else {
          printf("=== no errors registered. ===\n");
       }
 
