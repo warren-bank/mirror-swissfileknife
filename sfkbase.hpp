@@ -1452,6 +1452,8 @@ private:
    uchar *psrc;
 };
 
+class SFKMatch;
+
 struct CommandStats
 {
 public:
@@ -1771,6 +1773,8 @@ public:
    bool brackets;
    bool cweb;              // +web expects chain input
    bool movefiles;
+   SFKMatch *apexp;        // xrename
+   int  iexp;              // xrename
 };
 
 // extern struct CommandStats gs;
@@ -1814,6 +1818,7 @@ enum eWalkTreeFuncs {
    eFunc_Media       ,
    eFunc_XHexDemo    ,
    eFunc_Rename      ,
+   eFunc_XRename     ,
    eFunc_GetPic      ,
    eFunc_XFind       ,
    eFunc_SumFiles

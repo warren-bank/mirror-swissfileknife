@@ -231,12 +231,15 @@ public:
 
    char   *pClID;
    int    nClCon;     // must be < FD_SETSIZE
+   int    nClMaxSock;   // important for select
 
    // TODO: check sizes of these. maybe make them dynamic ptrs,
    //       to assure a tcp core still suits on a stack.
    TCPCon *aClCon[FD_SETSIZE+2];
    fd_set  clReadSet; // all sockets pending accept and read
    fd_set  clSetCopy;
+   fd_set  clSetCopyW;
+   fd_set  clSetCopyE;
    bool    bClVerbose;
    int     nClRefs;
    int     iClMaxWait;
@@ -464,6 +467,7 @@ private:
    SSL     *pClSSLSocket;
    #endif // WITH_SSL
 
+
 friend class Coi;
 };
 
@@ -511,6 +515,7 @@ extern KeyMap glblCircleMap;
 extern KeyMap glblOutFileMap;
 
 #endif // VFILEBASE
+
 
 
 /*

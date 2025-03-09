@@ -251,3 +251,19 @@ See also:
       A free demo is available under:
 
          http://stahlworks.com/depeche-view.html
+
+The SFKTray GUI Status Display
+==============================
+
+   is a small Windows tool installed by sfktray-set-up.exe.
+   the Freeware edition displays two independent status lights
+   in the system tray which can be controlled by the sfk status 
+   command like:
+
+      sfk status local "v1 slot=1 color=green text='service ok'"
+
+   a status can be sent from the local or a remote machine by UDP.
+   the Full edition with 9 status lights is available from:
+   
+      http://stahlworks.com/sfktray
+
