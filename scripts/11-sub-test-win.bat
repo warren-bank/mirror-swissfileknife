@@ -91,3 +91,17 @@
 ..\sfk filter testfiles\Formats\14-all-codes.txt -sep "\x20" -form "$col6" >>res-25.txt
 ..\sfk test %TCMD% T12.1.replacex res-25.txt
 
+..\sfk split 2000b testfiles\Formats\18-ziptest.zip >res-26.txt
+..\sfk join testfiles\Formats\18-ziptest.zip.part1 testfiles\Formats\18-ziptest2.zip >>res-26.txt
+..\sfk test %TCMD% T13.1.split res-26.txt
+
+..\sfk hexdump testfiles\Formats\06-binary.jpg >res-27.txt
+..\sfk hexdump -wide testfiles\Formats\06-binary.jpg >>res-27.txt
+..\sfk hexdump -pure testfiles\Formats\06-binary.jpg >>res-27.txt
+..\sfk hexdump -hexsrc testfiles\Formats\06-binary.jpg >>res-27.txt
+..\sfk hexdump -decsrc testfiles\Formats\06-binary.jpg >>res-27.txt
+..\sfk test %TCMD% T14.1.hexdump res-27.txt
+
+..\sfk runloop 1 50 "echo test number $i" -nohead >res-28.txt
+..\sfk runloop 1 50 "echo test number $05i" -nohead >>res-28.txt
+..\sfk test %TCMD% T15.1.runloop res-28.txt

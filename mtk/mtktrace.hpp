@@ -2,7 +2,7 @@
 #define _MTKTRACE_DEFINED_
 
 /*
-   Micro Tracing Kernel 0.6.5 by stahlworks technologies.
+   Micro Tracing Kernel 0.6.7 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    NOTE: changing this header probably forces recompile of MANY files!

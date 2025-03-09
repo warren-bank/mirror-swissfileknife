@@ -1,5 +1,6 @@
 /*
-   sfk simple memory tracing
+   SFK simple memory tracing.
+   Unlimited Open Source, free for use in any project.
 */
 
 #include <stdlib.h>

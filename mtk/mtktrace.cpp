@@ -1,13 +1,15 @@
 /*
-   Micro Tracing Kernel 0.6.5 by stahlworks technologies.
+   Micro Tracing Kernel 0.6.7 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    the following line protects this file against instrumentation:
-   [instrumented]
+   // [instrumented]
 
    NOTE: Win32 GUI apps should never use "term:" tracing, but only "file:".
 
    Changes:
+   -  fix: syntax of instrumented tag, mtktrace.cpp was not excluded.
+   -  add: missing includes for standalone compile of mtktrace.cpp.
    -  add: text "error: " and "warning:" on corresponding record types.
    -  chg: by default, short form "export MTK_TRACE=filename:test.log"
            now traces twex statements into file.
@@ -24,7 +26,13 @@
       specify filename: to create a tracefile.
 */
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
+
 #ifdef _WIN32
+ #include <windows.h>
  #define pthread_self GetCurrentThreadId
  #define vsnprintf _vsnprintf
 #else
