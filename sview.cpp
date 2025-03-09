@@ -5,6 +5,15 @@
    -  not all browser instances deleted on exit
       (however cleaned up implicitely by process end)
 
+   0.3.0
+   -  add: shift+lmouse now allows multi-word and line
+           selection. on shift release, it's copied to clipboard.
+   -  add: shift-click into top line copies top line.
+   -  add: shift-click into bottom part copies mask.
+   -  fix: shift+lmouse now also checks msg flag 0x4.
+           this is needed on focus change from editor to viewer.
+   -  fix: nClXOffs handling on shift-copy, result marking.
+
    0.2.8
    -  add: support for permanent wfree by ctrl+mbutton.
    -  add: rework of help text, added second help screen.
@@ -41,8 +50,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#define VER_NUM  "0.2.8"
-#define VER_STR  "sfk snapview " VER_NUM " alpha"
+#define VER_NUM  "0.3.0"
+#define VER_STR  "sfk snapview " VER_NUM " beta"
 #define INFO_STR "f1:fullscr f8:help < sfk snapview " VER_NUM
 
 #ifdef _WIN32
@@ -87,18 +96,20 @@ VER_STR "\n"
 "realtime text browser\n"
 "stahlworks art & technology\n"
 "\n"
-"F1: toggle fullscreen      \n"
+"F1: FULLSCREEN MODE ON/OFF \n"
 "F2: move result focus up   \n"
 "F3: move result focus down \n"
 "F4: case-sensitive search  \n"
 "F6: hide all viewer windows\n"
 "F8: toggle help            \n"
 "\n"
-"Select-And-Search:  LeftMouseButton\n"
-"SAS in new view  : RightMouseButton\n"
+"Select-And-Search:  LeftMouseClick ON A WORD.\n"
+"SAS in new view  : RightMouseClick ON A WORD.\n"
+"Activate window:  LeftMouseClick ON EMPTY SPACE.\n"
+"Create new view: RightMouseclick ON EMPTY SPACE.\n"
 "\n"
 "To quickly jump through the search results,\n"
-"press SHIFT+CURSOR_DOWN, or use MouseWheel,\n"
+"press SHIFT+CURSOR_DOWN, or use MOUSEWHEEL,\n"
 "if in wlock mode. MidButton for wfree mode,\n"
 "in which you can use the mouse as usual.   \n"
 "SHIFT+MouseWheel always jumps thru results.\n"
@@ -114,6 +125,10 @@ VER_STR "\n"
 "        CTRL+TAB to change tab size.\n"
 " To close latest view, press ESCAPE.\n"
 " To close all,press ESC in 1st view.\n"
+"\n"
+"to copy words or lines to clipboard, keep SHIFT pressed, \n"
+"then left-click into the first and last character, word, \n"
+"or line of your choice. when done, release SHIFT to copy.\n"
 "\n"
 "Press F8 now for next help page.\n"
 ;
@@ -151,7 +166,6 @@ char *pszGlblHelp2 =
 "copy screen text    -> clipboard  :  CTRL+INSERT\n"
 "copy clipboard line -> search mask: SHIFT+INSERT\n"
 "copy selected line  -> clipboard  :  CTRL+LMOUSE\n"
-"take line with filename into path : SHIFT+LMOUSE\n"
 "        Permanently activate wfree: CTRL+MBUTTON\n"
 "\n"
 "To configure some defaults via environment:\n"
@@ -263,13 +277,16 @@ private:
    void  updatePanel       ( );
    void  modifySearchMask  (UINT nKey);
    void  autoSelect        (char *pszLine, ulong ncol); // -> to szClSel
-   void  putClipboard      (char *psz);
+   void  putClipboard      (char *psz, bool bShowStatus=0);
    long  getClipboard      ( );  // returns no. of chars retrieved, if any
    void  drawBorder        (HDC hdc, RECT rt, ulong CBrTop, ulong CBrLeft, ulong CDark1, ulong CDark2, bool bActive);
    void  closeRight        ( );
    #ifdef OWN_TOLOWER
    void  prepareToLower    ( );
    #endif
+   void  clipSelectHit     (ulong nLine, ulong ncol);
+   void  clipSelCopy       ( );
+   void  clipSetStatus     ( );
 
    Browser *pLeft;
    Browser *pRight;
@@ -294,6 +311,7 @@ private:
    char  szClMatchBuf[MAX_LINE_LEN+10];
    char  szClClipLine[MAX_LINE_LEN+10];
    char  szClStatusLine[MAX_LINE_LEN+10];
+   char  szClClipTabBuf[MAX_LINE_LEN+10];
    char  szClTextBuf[BCOL_MAX+10];
    long  nClWheel;
    ulong nCurSel;
@@ -333,6 +351,11 @@ private:
    long  nClFirstFileMatch;
    bool  bClClearBottom;
    bool  bClExtHelp;
+
+   long  nClClipLRow;   // absolute low  line of Shift+Button selection
+   long  nClClipHRow;   // absolute high line of Shift+Button selection
+   long  nClClipLCol;   // absolute left  column of Shift+Button selection
+   long  nClClipRCol;   // absolute right column of Shift+Button selection
 };
 
 #define MAX_BROWSERS 100
@@ -365,6 +388,7 @@ Browser::Browser()
    memset(szClStatusLine, 0, sizeof(szClStatusLine));
    memset(szClTextBuf, 0, sizeof(szClTextBuf));
    memset(szClSnapPrefix, 0, sizeof(szClSnapPrefix));
+   memset(szClClipTabBuf, 0, sizeof(szClClipTabBuf));
    nClWheel = 0;
    nCurSel  = 0;
    iMaskPos = 0;
@@ -404,6 +428,10 @@ Browser::Browser()
    nClFirstFileMatch = -1;
    bClClearBottom = 0;
    bClExtHelp = 0;
+   nClClipLRow = -1;
+   nClClipHRow = -1;
+   nClClipLCol = -1;
+   nClClipRCol = -1;
 
    char *psz1 = getenv("SFK_SNAPVIEW");
    if (psz1) 
@@ -617,7 +645,7 @@ void Browser::update() {
    UpdateWindow(clWin);
 }
 
-void Browser::putClipboard(char *pszStr)
+void Browser::putClipboard(char *pszStr, bool bShowStatus)
 {
    if (!OpenClipboard(clWin))
       { MessageBox(0, "clipboard.1", "error", MB_OK); return; }
@@ -650,6 +678,12 @@ void Browser::putClipboard(char *pszStr)
    // System is now owner of hMem.
 
    CloseClipboard();
+
+   if (bShowStatus) {
+      sprintf(szClStatusLine, "clip: %.50s", pszStr);
+      updatePanel();
+      update();
+   }
 }
 
 long Browser::getClipboard( )
@@ -780,6 +814,7 @@ _
          detab(pszLine, szBuf, sizeof(szBuf)-10);
                pszLine = szBuf;
 
+         // colorize selection hits in red
          bool bHit=0;
          int nMaskLen = strlen(szClMask);
          if (nMaskLen) 
@@ -787,6 +822,13 @@ _
             int iHitIndex = 0;
             int iHitLen   = 0;
             matches(pszLine, &iHitIndex, &iHitLen);
+
+            // this returns ABSOLUTE columns. relativize:
+            if ((iHitIndex -= nClXOffs) < 0) {
+               iHitLen += iHitIndex;
+               iHitIndex = 0;
+            }
+            
             if (iHitLen > 0 && (iHitIndex+iHitLen) < BCOL_MAX)
             {
                memset(&aAttr[iHitIndex], 'x', iHitLen);
@@ -794,13 +836,50 @@ _
             }
          }
 
+         // colorize shift+lbutton selections.
+
+         // first RELATIVIZE the absolute columns:
+         long nlcol = nClClipLCol - nClXOffs;
+         long nrcol = nClClipRCol - nClXOffs;
+
+         if (nClClipHRow == -1)
+         {
+           if ((nClClipLCol != -1) && (nClClipRCol != -1))
+           {
+            // single line selection
+            if (nClClipLRow == iLine)
+            {
+               // mtklog("csh.2 nlcol %ld nrcol %ld\n", nlcol, nrcol);
+               if (nlcol < 0) nlcol = 0;
+               if (   (nlcol > -1) && (nlcol < BCOL_MAX)
+                   && (nrcol >  0) && (nrcol < BCOL_MAX)
+                   && (nlcol <= nrcol)
+                  )
+               {
+                  long nLen = nrcol-nlcol;
+                  if (!nLen) nLen = 1;
+                  if (nlcol+nLen < BCOL_MAX) {
+                     // mtklog("csh.3 nlcol %ld nlen %ld\n", nlcol, nLen);
+                     memset(&aAttr[nlcol], 's', nLen);
+                  }
+               }
+            }
+           }
+         }
+         else  // multi line selection
+         if ((iLine >= nClClipLRow) && (iLine <= nClClipHRow))
+         {
+            memset(aAttr, 's', BCOL_MAX);
+         }
+
          if (nClXOffs < strlen(pszLine))
             setLine(yrel, pszLine+nClXOffs);
          else
             setLine(yrel, "");
 
+         // the aAttr buffer contains RELATIVE columns
          if (nClXOffs < strlen(aAttr))
-            setAttr(yrel, aAttr+nClXOffs);
+            setAttr(yrel, aAttr);
          else
             setAttr(yrel, "");
 
@@ -1368,6 +1447,7 @@ _
                   switch (aAttr[y][x]) {
                      case 'x': SetTextColor(hdc, 0x0000AA); break;
                      case 'g': SetTextColor(hdc, 0xAAAAAA); break;
+                     case 's': SetTextColor(hdc, 0xFF0000); break;
                      default : SetTextColor(hdc, nColText); break;
                   }
    
@@ -1457,7 +1537,7 @@ _
          ulong ymax = BROW_MAX;
          if (hchar) ymax = nClPixHeight/hchar;
 _
-         if (bClCtrl)
+         if (bClCtrl || (fwKeys & 8) != 0)  // 4 == SHIFT, 8 == CTRL
          {
             if ((nrow==0) && (pszClCurSubFile!=0) && (strlen(pszClCurSubFile)>1))
                strippedLineToClip(pszClCurSubFile);
@@ -1470,8 +1550,9 @@ _
             }
          }
          else
-         if (bClShift)
+         if (bClShift || (fwKeys & 4) != 0)  // 4 == SHIFT, 8 == CTRL
          {
+            /*
             if (nrow >= 1 && nrow < ymax-2)
             {
                // auto-select a path mask: strip filename
@@ -1490,6 +1571,34 @@ _
                      setFileMask(pszPath);
                   }
                }
+            }
+            */
+            if (nrow == 0) {
+               // SHIFT+click into top line: copy filename
+               if (strlen(aText[0]))
+                  putClipboard(aText[0], true);
+            }
+            else
+            if (nrow >= ymax-3) {
+               // SHIFT+click into bottom area:
+               /*
+               nrow = hchar ? ((yrel+6)/hchar) : 0;
+               if (bClLocalScope && nrow == ymax-3) {
+                  if (strlen(szClMask))
+                     putClipboard(szClMask, true);
+               }
+               else
+               if (bClLocalScope && nrow == ymax-2) {
+                  if (strlen(szClFileMask))
+                     putClipboard(szClFileMask, true);
+               }
+               else
+               */
+               putClipboard(szClMask, true);
+            }
+            else {
+               // SHIFT+click into main area:
+               clipSelectHit(nClTopLine+nrow, nClXOffs+ncol);
             }
          }
          else
@@ -1598,10 +1707,23 @@ _
             case 0x10:
                bClShift = 0;
                mtklog("SHIFT UP");
-               #ifdef SHOW_SHIFT_CTRL
-               updatePanel();
-               update();
-               #endif
+               if (nClClipLRow != -1)
+               {
+                  // end clip selection
+                  clipSelCopy();
+                  clipSetStatus();
+                  nClClipLRow = -1;
+                  nClClipHRow = -1;
+                  nClClipLCol = -1;
+                  nClClipRCol = -1;
+                  updatePanel();
+                  update();
+               } else {
+                  #ifdef SHOW_SHIFT_CTRL
+                  updatePanel();
+                  update();
+                  #endif
+               }
                break;
 
             case 0x11:
@@ -2563,6 +2685,168 @@ void Browser::gotoFirstMaskHit()
    nClSearchStart = 0;
    updatePanel();
    update();
+}
+
+void Browser::clipSelectHit(ulong nLine, ulong ncol)
+{
+   mtklog("csh %lu %lu xoffs %d\n", nLine, ncol, nClXOffs);
+
+   // user click-selected another char.
+   if (nLine >= nClLines)
+      return;
+
+   char *pszLine = apClLines[nLine];
+   detab(pszLine, szClClipTabBuf, MAX_LINE_LEN);
+   pszLine = szClClipTabBuf;
+
+   // initial set of lower line on first click:
+   if (nClClipLRow == -1)
+      nClClipLRow = nLine;
+
+   // still in the same line?
+   if (nClClipLRow != nLine)
+   {
+      // no: reset selection columns
+      nClClipLCol = -1;
+      nClClipRCol = -1;
+
+      // go into, or continue, line selection mode
+      nClClipHRow = nLine;
+      if (nClClipHRow < nClClipLRow) {
+         nClClipHRow = nClClipLRow;
+         nClClipLRow = nLine;
+      }
+   }
+
+   if (nClClipHRow == -1)
+   {
+      // single line mode: select words within line
+      bool bFixLCol = 0;
+      bool bFixRCol = 0;
+   
+      // raw-adapt left and right selection border.
+      if (nClClipLCol == -1) {
+         nClClipLCol = ncol;
+         bFixLCol = 1;
+      }
+   
+      if (nClClipRCol == -1) {
+         nClClipRCol = ncol;
+         bFixRCol = 1;
+      }
+   
+      if (ncol < nClClipLCol) {
+         nClClipLCol = ncol;
+         bFixLCol = 1;
+      }
+   
+      if (ncol > nClClipRCol) {
+         nClClipRCol = ncol;
+         bFixRCol = 1;
+      }
+   
+      // extend borders to end of alnum words.
+      if (bFixLCol)
+      for (; nClClipLCol > 0; nClClipLCol--) {
+         char c = pszLine[nClClipLCol];
+         if (isalnum(c) || c=='_')
+            continue;
+         else {
+            if (nClClipLCol < ncol)
+               nClClipLCol++;
+            break;
+         }
+      }
+   
+      if (bFixRCol) {
+         for (; pszLine[nClClipRCol]; nClClipRCol++) {
+            char c = pszLine[nClClipRCol];
+            if (isalnum(c) || c=='_')
+               continue;
+            else
+               break;
+         }
+         if (nClClipRCol == ncol)
+            nClClipRCol++;
+      }
+   }
+
+   updatePanel();
+   update();
+}
+
+void Browser::clipSelCopy()
+{
+   if (nClClipLRow == -1 && nClClipHRow == -1)
+      return;
+
+   // copy selected part to clipboard
+   if (nClClipHRow == -1)
+   {
+      // single line mode
+      if (nClClipLRow >= nClLines)
+         return;
+
+      char *pszLine = apClLines[nClClipLRow];
+      detab(pszLine, szClClipTabBuf, MAX_LINE_LEN);
+      pszLine = szClClipTabBuf;
+
+      // copy selected words
+      long nMaxLen = MAX_LINE_LEN;
+
+      // using the ABSOLUTE columns as they are.
+      long nlcol = nClClipLCol;
+      long nrcol = nClClipRCol;
+
+      if (   (nlcol > -1) && (nlcol < nMaxLen)
+          && (nrcol > -1) && (nrcol < nMaxLen)
+          && (nlcol <= nrcol)
+         )
+      {
+         long nLen = nrcol - nlcol;
+         if (!nLen) nLen = 1;
+         if (nlcol+nLen < nMaxLen) {
+            strncpy(szClClipLine, &pszLine[nlcol], nLen);
+            szClClipLine[nLen] = '\0';
+         }
+         putClipboard(szClClipLine);
+         clipSetStatus();
+      }
+   }
+   else
+   {
+      // multi line mode: collect lines
+      char *pszTmp = new char[10000];
+      if (!pszTmp) return;
+      pszTmp[0] = '\0';
+      ulong iout=0;
+      for (ulong iLine=nClClipLRow; iLine<=nClClipHRow; iLine++)
+      {
+         if (iLine >= nClLines)
+            break;
+
+         char *psz = apClLines[iLine];
+         ulong nLen = strlen(psz);
+         if (iout+nLen < 10000-100) 
+         {
+            strcat(pszTmp, psz);
+            strcat(pszTmp, "\r\n");
+            iout = strlen(pszTmp);
+         }
+         else
+            break;
+      }
+      putClipboard(pszTmp);
+      delete [] pszTmp;
+   }
+}
+
+void Browser::clipSetStatus()
+{
+   if (nClClipHRow == -1)
+      sprintf(szClStatusLine, "clip: %.50s", szClClipLine);
+   else
+      sprintf(szClStatusLine, "clip: block copy.");
 }
 
 void Browser::autoSelect(char *pszLine, ulong ncol)

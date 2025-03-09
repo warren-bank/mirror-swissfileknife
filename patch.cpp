@@ -978,11 +978,17 @@ int processFileUntilDone(char *pszTargFileName)
    char szBackupDir[MAX_LINE_LEN];
    strcpy(szBackupDir, pszTargFileName);
    char *pszLastDir = strrchr(szBackupDir, glblPathChar);
-   if (!pszLastDir) { log(0, "error  : no '\\' path character in %s, cannot create backup dir.\n"); return 2; }
-   pszLastDir++;
-   strcpy(szRelFileName,pszLastDir);
-   *pszLastDir = 0;
-   strcat(szBackupDir, "save_patch");
+   // if (!pszLastDir) { log(0, "error  : no '%c' path character in %s, cannot create backup dir.\n", glblPathChar, szBackupDir); return 2; }
+   if (pszLastDir) {
+      pszLastDir++;
+      strcpy(szRelFileName,pszLastDir);
+      *pszLastDir = 0;
+      strcat(szBackupDir, "save_patch");
+   } else {
+      // file name without any path:
+      strcpy(szRelFileName, pszTargFileName);
+      strcpy(szBackupDir, "save_patch");
+   }
 
    // IS a backup file already existing?
    sprintf(szProbeCmd,"%s%c%s",szBackupDir,glblPathChar,szRelFileName);

@@ -10,6 +10,15 @@
       may require non-portable source adaptions.
    -  time-stamp handling >2038 not yet tested.
 
+   1.1.0
+   -  add: sfk strings: extract strings from binary file.
+   -  fix: sfk patch: now also supporting target filenames
+      without any path contained. this obsoletes the error msg:
+      "no path character in (null), cannot create backup dir."
+   -  add: sview: shift+lmouse to copy word and line combinations
+      to clipboard.
+   -  add: manual.html documentation
+
    1.0.8
    -  fix: mirrorto: dir max time comparison switched off.
       the file time is not a sufficient criteria for backup.
@@ -4925,7 +4934,7 @@ int main(int argc, char *argv[])
    {
       printf("sfk/" SFK_BRANCH " " SFK_VERSION " - a swiss file knife derivate.\n"); // [patch-id]
       printf("this version provided by " SFK_PROVIDER ".\n");
-      printf("based on the free sfk 1.0.8 by stahlworks art & technology.\n");
+      printf("based on the free sfk 1.1.0 by stahlworks art & technology.\n");
       printf("Distributed for free under the GNU General Public License,\n"
              "without any warranty. Use with care and on your own risk.\n");
       printf("\n"
@@ -5009,6 +5018,9 @@ int main(int argc, char *argv[])
              "   sfk addtail <in >out [-noblank] string1 string2 ...\n"
              "       add string(s) at start or end of lines.\n"
              "       with noblank specified, does not add blank char.\n"
+             "   sfk strings filename\n"
+             "       extract strings from a binary file.\n"
+             "          sfk strings test.exe | sfk filter -+VersionInfo\n"
              "\n"
              "   sfk md5gento=outfile dir mask [mask2] [!mask3] [...]\n"
              "   sfk md5gento=outfile -dir dir1 dir2 -file mask1 mask2 !mask3 [...]\n"
@@ -6124,7 +6136,15 @@ int main(int argc, char *argv[])
       long icol   = 0;
       long istate = 0;
       long iword  = 0;
+      long ihi    = 0;
       bool bflush = 0;
+      bool bisws  = 0;
+      bool bwasws = 0;
+      bool bisbin = 0;
+      bool bishi  = 0;
+      bool bispunct = 0;
+      char c = 0;
+      unsigned char uc = 0;
       while (1) 
       {
          long nRead = fread(szLineBuf, 1, sizeof(szLineBuf)-10, fin);
@@ -6132,40 +6152,69 @@ int main(int argc, char *argv[])
             break;
          for (long i=0; i<nRead; i++)
          {
-            char c = szLineBuf[i];
+            c  = szLineBuf[i];
+            uc = (unsigned char)c;
             bflush = 0;
-            if (isprint(c)) {
+
+            if (c=='\r'||c=='\n')
+               c = ' ';
+
+            bisbin = ((uc >= 0x80) && (uc < 0xC0));
+            bishi  =  (uc >= 0xC0);
+
+            if (isprint(c) && !bisbin) {
                // printable char
                if (istate == 1) {
                   istate = 0;
                   // start collecting next word
                   iword = 0;
+                  ihi   = 0;
                }
-               // continue collecting current word
-               szLineBuf2[iword++] = c;
-               // check for word buffer overflow
-               if (iword >= 80) {
+               // continue collecting current word,
+               // reduce multi-whitespace sequences.
+               bisws    = (c==' ' || c=='\t');
+               bispunct = (c=='.' || c==',' || c==';');
+               if (!(bisws && bwasws)) {
+                  szLineBuf2[iword++] = c;
+                  if (bishi)
+                     ihi++;
+               }
+               // hard or soft word break?
+               if (iword >= 80)
                   bflush = 1;
-               }
+               else
+               if ((iword >= 20) && (bisws || bispunct))
+                  bflush = 1;
             } else {
                // non-printable (binary) char
-               if (istate == 0) {
+               if (istate == 0)
                   bflush = 1;
-               }
+               istate = 1;
+               bwasws = 0;
+               bisws  = 0;
+               bispunct = 0;
             }
             // dump current word?
             if (bflush) {
                bflush = 0;
-               if (iword > 2) {
-                  printf("%.*s ", (int)iword, szLineBuf2);
+               if (iword > 2)
+               {
+                  if (bisws || bispunct)
+                     printf("%.*s", (int)iword, szLineBuf2);
+                  else
+                     printf("%.*s ", (int)iword, szLineBuf2);
                   icol += (iword+1);
                   if (icol >= 80) {
                      fputc('\n', stdout);
                      icol = 0;
                   }
-                  iword = 0;
                }
+               iword  = 0;
+               ihi    = 0;
+               bwasws = 0;
             }
+            else
+               bwasws = bisws;
          }
       }
       fclose(fin);
