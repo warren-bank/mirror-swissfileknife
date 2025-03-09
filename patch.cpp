@@ -3,6 +3,8 @@
 
    originally written as a separate tool,
    then integrated into sfk with the least possible effort.
+
+   sfk 1.1.2: linux fixes
 */
 
 #include <stdlib.h>
@@ -98,18 +100,18 @@ int processCmdInfo (char *psz) { return 0; }
 // 0 == error, >0 == normal msg, >= 5 do not tell if in QuickSum mode
 void log(int nLevel, const char *pFormat, ... )
 {
-	va_list argList;
-	va_start(argList, pFormat);
+   va_list argList;
+   va_start(argList, pFormat);
    if (nLevel == 0) {
-   	vfprintf(stderr, pFormat, argList);
+      vfprintf(stderr, pFormat, argList);
       fflush(stderr);
    } else {
       if (!(bGlblQuickSum && nLevel >= 5)) {
-      	vprintf(pFormat, argList);
+         vprintf(pFormat, argList);
          fflush(stdout);
       }
    }
-	va_end(argList);
+   va_end(argList);
 }
 
 int detabLine(char *pBuf, char *pTmp, int nBufSize, int nTabSize)
@@ -127,11 +129,11 @@ int detabLine(char *pBuf, char *pTmp, int nBufSize, int nTabSize)
       }
    }
    pBuf[iout] = '\0';
-	if (iout >= (nBufSize-nTabSize-2)) {
+   if (iout >= (nBufSize-nTabSize-2)) {
       log(0, "error  : detab: line buffer overflow. max line len supported is %d\n",(nBufSize-nTabSize-2));
-		return 9;
-	}
-	return 0;
+      return 9;
+   }
+   return 0;
 }
 
 int processCmdRoot (char *pszIn) {
@@ -162,9 +164,9 @@ int patchMain(int argc, char *argv[], int offs)
 {
    int processPatchFile(char *pszPatchFileName);
 
-	if (argc < 2) {
+   if (argc < 2) {
       printf(
- 	       "usage: sfk patch [-revoke|-redo] yourpatchfile.cpp\n\n"
+          "usage: sfk patch [-revoke|-redo] yourpatchfile.cpp\n\n"
           "without any options supplied, sfk patch\n"
           "   - runs the patchfile.\n"
           "   - makes backups of the specified target files.\n"
@@ -241,8 +243,8 @@ int patchMain(int argc, char *argv[], int offs)
          "this is outcommented stuff. the skip-end is optional.\n"
          ":skip-end\n"
          );
-		return -1;
-	}
+      return -1;
+   }
 
    #ifdef _WIN32
    _getcwd(szCmdBuf,sizeof(szCmdBuf)-10);
@@ -416,11 +418,15 @@ int patchMain(int argc, char *argv[], int offs)
          #ifdef _WIN32
          _mkdir("save_patch");
          #else
-         mkdir("save_patch", S_IREAD | S_IWRITE);
+         mkdir("save_patch", S_IREAD | S_IWRITE | S_IEXEC);
          #endif
          FILE *fout = fopen(pszPatchFileBackup,"w");
          if (fout) { fprintf(fout,"dummy"); fclose(fout); }
+         #ifdef _WIN32
          sprintf(szCmdBuf, "xcopy /Q /K /Y %s %s >nul",pszPatchFileName,pszPatchFileBackup);
+         #else
+         sprintf(szCmdBuf, "cp -p %s %s",pszPatchFileName,pszPatchFileBackup);
+         #endif
          iRC = system(szCmdBuf);
          if (iRC)
             log(0, "error  : cannot backup patchfile to: %s\n",pszPatchFileBackup);
@@ -457,8 +463,8 @@ int processPatchFile(char *pszPatchFileName)
 
    // parse patch file, exec commands
    int bWithinSkip = 0;
-	char szBuf[MAX_LINE_LEN];
-	while (fgets(szBuf,sizeof(szBuf)-10,fpatch) != NULL) 
+   char szBuf[MAX_LINE_LEN];
+   while (fgets(szBuf,sizeof(szBuf)-10,fpatch) != NULL) 
    {
       nGlblLine++;
 
@@ -561,7 +567,7 @@ int processPatchFile(char *pszPatchFileName)
       }
       if (!strncmp(szBuf,":set detab=",strlen(":set detab="))) {
          nGlblDetabOutput = atol(szBuf+strlen(":set detab="));
-			log(5, "setting detab to %d\n",nGlblDetabOutput);
+         log(5, "setting detab to %d\n",nGlblDetabOutput);
          continue;
       }
       if (!strncmp(szBuf,":",1)) {
@@ -688,11 +694,11 @@ int processCreateFile(char *pszIn)
    }
 
    // copy-through contents from patchfile until :done
-	char szBuf[MAX_LINE_LEN];
+   char szBuf[MAX_LINE_LEN];
    int iout = 0;
    int bGotDone = 0;
    int nStartLine = nGlblLine;
-	while (fgets(szBuf,sizeof(szBuf)-10,fpatch) != NULL) 
+   while (fgets(szBuf,sizeof(szBuf)-10,fpatch) != NULL) 
    {
       nGlblLine++;
       if (!strncmp(szBuf, ":done", 5)) {
@@ -703,7 +709,7 @@ int processCreateFile(char *pszIn)
          fputs(szBuf, fout);
          iout++;
       }
-	}
+   }
 
    // close output file
    if (!bGlblSimulate && !bGlblRevoke && !bGlblBackup && fout) {
@@ -746,7 +752,7 @@ int processCreateDir(char *pszIn)
       #ifdef _WIN32
       int iRC = _mkdir(szCmdBuf);
       #else
-      int iRC = mkdir(szCmdBuf, S_IREAD | S_IWRITE);
+      int iRC = mkdir(szCmdBuf, S_IREAD | S_IWRITE | S_IEXEC);
       #endif
       if (!iRC) log(5, "created: %s\n",szCmdBuf);
    }
@@ -819,10 +825,10 @@ int processFileUntilDone(char *pszTargFileName)
    // INPUT implicite: fpatch stream
 
    // 1. read next block from patchfile until ":done"
-	char szBuf[MAX_LINE_LEN];
-	char szBuf2[MAX_LINE_LEN];
+   char szBuf[MAX_LINE_LEN];
+   char szBuf2[MAX_LINE_LEN];
    int ipatch = 0;
-	while (fgets(szBuf,sizeof(szBuf)-10,fpatch) != NULL) 
+   while (fgets(szBuf,sizeof(szBuf)-10,fpatch) != NULL) 
    {
       nGlblLine++;
       aPatch[ipatch++] = strdup(szBuf);
@@ -830,12 +836,12 @@ int processFileUntilDone(char *pszTargFileName)
       if (ipatch > MAX_CMD_LINES) { log(0, "command block too large, max %d lines supported.\n",(int)MAX_CMD_LINES); return 2; }
       if (!strncmp(szBuf, ":done", 5))
          break;
-	}
+   }
 
    // 2. find commands
    int icmd=0; int iline=0; int bNextCmd=0; int bDone=0;
    int bWithinToBlock=0, bHavePatchIDForThisFile=0;
-	int bFromPassed=0, nLocalDetabOutput=0;
+   int bFromPassed=0, nLocalDetabOutput=0;
    while (!bDone)
    {
       aifrom   [icmd]=-1;
@@ -880,15 +886,15 @@ int processFileUntilDone(char *pszTargFileName)
             continue;
          }
 
-	      if (!strncmp(aPatch[iline],":set detab=",strlen(":set detab="))) {
-	         nLocalDetabOutput = atol(aPatch[iline]+strlen(":set detab="));
-				// log(5, "setting local detab to %d\n",nLocalDetabOutput);
+         if (!strncmp(aPatch[iline],":set detab=",strlen(":set detab="))) {
+            nLocalDetabOutput = atol(aPatch[iline]+strlen(":set detab="));
+            // log(5, "setting local detab to %d\n",nLocalDetabOutput);
             continue;
-	      }
+         }
 
          if (!strncmp(aPatch[iline],":from",strlen(":from"))) 
          {
-				bFromPassed = 1;
+            bFromPassed = 1;
             bWithinToBlock = 0;
             if (aifrom[icmd] == -1) {
                // starts new command (only at file start)
@@ -900,10 +906,10 @@ int processFileUntilDone(char *pszTargFileName)
             }
          }
 
-			if (!bFromPassed && !strncmp(aPatch[iline], ":", 1)) {
-				log(0, "unexpected command: %s\n", aPatch[iline]);
-				return 9;
-			}
+         if (!bFromPassed && !strncmp(aPatch[iline], ":", 1)) {
+            log(0, "unexpected command: %s\n", aPatch[iline]);
+            return 9;
+         }
 
          if (!strncmp(aPatch[iline],":to",strlen(":to"))) {
             aito[icmd]      = iline+1;
@@ -960,7 +966,7 @@ int processFileUntilDone(char *pszTargFileName)
 
    if (!ftarg2) { log(0, "error  : cannot read target file: %s\n", pszTargFileName); return 2+4; }
 
-	while (fgets(szBuf,sizeof(szBuf)-10,ftarg2) != NULL) 
+   while (fgets(szBuf,sizeof(szBuf)-10,ftarg2) != NULL) 
       if (strstr(szBuf,"[patch-id]") != 0)
          bTargetIsPatched = 1;
 
@@ -1004,11 +1010,17 @@ int processFileUntilDone(char *pszTargFileName)
       if (fileExists(pszTargFileName))
       {
          // 1. ensure target is writeable
+         #ifdef _WIN32
          sprintf(szCopyCmd, "attrib -R %s",pszTargFileName);
+         #else
+         sprintf(szCopyCmd, "chmod +w %s", pszTargFileName);
+         #endif
          system(szCopyCmd);
+         #ifdef _WIN32
          // 2. delete target to ensure copy will work
          sprintf(szCopyCmd, "del %s",pszTargFileName);
          system(szCopyCmd);
+         #endif
       }
       // 3. copy backup over target
       if (bGlblTouchOnRevoke) {
@@ -1031,7 +1043,11 @@ int processFileUntilDone(char *pszTargFileName)
          fclose(fdst);
          fclose(fsrc);
          // write-protect target
+         #ifdef _WIN32
          sprintf(szCopyCmd, "attrib +R %s",pszTargFileName);
+         #else
+         sprintf(szCopyCmd, "chmod -w %s", pszTargFileName);
+         #endif
          system(szCopyCmd);
          log(5, "revoked: %s, %lu bytes\n",pszTargFileName,(unsigned long)ntotal);
          nGlblRevokedFiles++;
@@ -1042,7 +1058,11 @@ int processFileUntilDone(char *pszTargFileName)
          fprintf(fdst, "tmp\n\n"); fflush(fdst);
          fclose(fdst);
          // no overwrite this with /K, keeping potential +R attributes
+         #ifdef _WIN32
          sprintf(szCopyCmd, "xcopy /Q /K /Y %s %s >nul",szProbeCmd,pszTargFileName);
+         #else
+         sprintf(szCopyCmd, "cp -p %s %s",szProbeCmd,pszTargFileName);
+         #endif
          int iRC = system(szCopyCmd);
          if (!iRC) {
             log(5, "revoked: %s\n",pszTargFileName);
@@ -1053,7 +1073,11 @@ int processFileUntilDone(char *pszTargFileName)
          }
       }
       // 4. make backup writeable, and remove
+      #ifdef _WIN32
       sprintf(szCopyCmd, "attrib -R %s",szProbeCmd);
+      #else
+      sprintf(szCopyCmd, "chmod +w %s", szProbeCmd);
+      #endif
       system(szCopyCmd);
       if (remove(szProbeCmd)) {
          log(0, "error  : cannot delete stale backup: %s\n",szProbeCmd);
@@ -1078,7 +1102,11 @@ int processFileUntilDone(char *pszTargFileName)
          // remove old backup, most probably stale
          char szCopyCmd[MAX_LINE_LEN];
          log(5, "del.bup: %s\n",szProbeCmd);
+         #ifdef _WIN32
          sprintf(szCopyCmd, "attrib -R %s",szProbeCmd);
+         #else
+         sprintf(szCopyCmd, "chmod +w %s", szProbeCmd);
+         #endif
          system(szCopyCmd);
          if (remove(szProbeCmd)) {
             log(0, "error  : cannot delete stale backup: %s\n",szProbeCmd);
@@ -1094,13 +1122,17 @@ int processFileUntilDone(char *pszTargFileName)
       #ifdef _WIN32
       if (_mkdir(szBackupDir))
       #else
-      if (mkdir(szBackupDir, S_IREAD | S_IWRITE))
+      if (mkdir(szBackupDir, S_IREAD | S_IWRITE | S_IEXEC))
       #endif
       {
          // log(0, "warning: cannot create backup dir: %s\n",szBackupDir);
          // return 1;
       }
+      #ifdef _WIN32
       sprintf(szCopyCmd,"xcopy /Q /K %s %s >nul",pszTargFileName,szBackupDir);
+      #else
+      sprintf(szCopyCmd,"cp -p %s %s",pszTargFileName,szBackupDir);
+      #endif
       iRC = system(szCopyCmd); // create backup file
       if (iRC) {log(0, "error  : creation of backup file failed: RC %d\n",iRC); return 2+4; }
       if (fileExists(szProbeCmd)) {
@@ -1127,7 +1159,7 @@ int processFileUntilDone(char *pszTargFileName)
    int isrcbuf=0, ipatmatch=0;
    aBuf[0] = 0;
    int icmd2 = 0, nLine = 0, nTargLineEndings = -1;
-	while (fgets(szBuf,sizeof(szBuf)-10,ftarg) != NULL) 
+   while (fgets(szBuf,sizeof(szBuf)-10,ftarg) != NULL) 
    {
       nLine++;
 
@@ -1193,10 +1225,10 @@ int processFileUntilDone(char *pszTargFileName)
          isrcbuf=0;
          ipatmatch=0;
       }
-	}
+   }
 
    if (icmd2 != icmd) {
-      log(0, "error  : not all blocks matched (%d/%d) in %s\n",icmd2,icmd,pszTargFileName);
+      log(0, "error  : from-pattern %d of %d mismatch, in file %s\n",icmd2+1,icmd,pszTargFileName);
       log(0, "info   : check pattern content and SEQUENCE (must match target sequence).\n");
       return 2;
    }
@@ -1214,7 +1246,11 @@ int processFileUntilDone(char *pszTargFileName)
    ftarg = fopen(pszTargFileName, pszFileMode);
    if (!ftarg) {
       // open for write failed? try switching attributes
+      #ifdef _WIN32
       sprintf(szProbeCmd, "attrib -R %s",pszTargFileName);
+      #else
+      sprintf(szProbeCmd, "chmod +w %s", pszTargFileName);
+      #endif
       system(szProbeCmd);
       bSwitchedAttrib = 1;
       ftarg = fopen(pszTargFileName, pszFileMode);
@@ -1275,15 +1311,15 @@ int processFileUntilDone(char *pszTargFileName)
          }
       }
 
-		// apply detabbing, if selected
-		if (nLocalDetabOutput) {
-			if (detabLine(szBuf, szBuf2, MAX_LINE_LEN, nLocalDetabOutput))
-				return 9;
-		}
-		if (nGlblDetabOutput) {
-			if (detabLine(szBuf, szBuf2, MAX_LINE_LEN, nGlblDetabOutput))
-				return 9;
-		}
+      // apply detabbing, if selected
+      if (nLocalDetabOutput) {
+         if (detabLine(szBuf, szBuf2, MAX_LINE_LEN, nLocalDetabOutput))
+            return 9;
+      }
+      if (nGlblDetabOutput) {
+         if (detabLine(szBuf, szBuf2, MAX_LINE_LEN, nGlblDetabOutput))
+            return 9;
+      }
 
       // apply unix conversion or not, and finally write
       if (bGlblUnixOutput) {
@@ -1301,7 +1337,11 @@ int processFileUntilDone(char *pszTargFileName)
 
    // have to re-enable write protection?
    if (bSwitchedAttrib) {
+      #ifdef _WIN32
       sprintf(szProbeCmd, "attrib +R %s",pszTargFileName);
+      #else
+      sprintf(szProbeCmd, "chmod -w %s", pszTargFileName);
+      #endif
       system(szProbeCmd);
    }
 

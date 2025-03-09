@@ -7,6 +7,13 @@
    -  general review of all things (not) copied
       from old to new view.
 
+   0.3.2
+   -  fix: added blank when clipping topline filename.
+   -  fix: while selecting block for clip copy,
+           do not jump accross search results.
+   -  fix: crash if activating path mask with non-snap file.
+   -  fix: block path mask activation on non-snap file.
+
    0.3.1
    -  fix: mouse wheel lockup on high wheel speed.
    -  fix: cleanup of behaviour on changing views by rclick:
@@ -61,8 +68,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#define VER_NUM  "0.3.1"
-#define VER_STR  "sfk snapview " VER_NUM " beta"
+#define VER_NUM  "0.3.2"
+#define VER_STR  "sfk snapview " VER_NUM
 #define INFO_STR "f1:fullscr f8:help < sfk snapview " VER_NUM
 
 #ifdef _WIN32
@@ -254,7 +261,7 @@ public:
   ~Browser  ( );
    int   create      (Browser *pLeft, ulong nid, ulong x, ulong y, ulong w, ulong h, char *apLineTable[], ulong nLines);
    void  destroy     ( );
-   void  setLine     (ulong nLine, char *pszText);
+   void  setLine     (ulong nLine, char *pszText, bool brtrim = 0);
    void  setAttr     (ulong nLine, char *pszMask);
    void  update      ( );
    LRESULT process   (HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -599,7 +606,7 @@ void Browser::updateMatchingFiles()
    }
 }
 
-void Browser::setLine(ulong nLine, char *pszText) {
+void Browser::setLine(ulong nLine, char *pszText, bool brtrim) {
    // mtklog("Browser %p setLine %u %s",this,nLine,pszText);
    if (nLine >= BROW_MAX) {
       mtklog("ERROR: nLine %u\n", nLine);
@@ -607,6 +614,16 @@ void Browser::setLine(ulong nLine, char *pszText) {
    }
    strncpy(&aText[nLine][0], pszText, BCOL_MAX);
    aText[nLine][BCOL_MAX] = '\0';
+
+   // strip trailing blanks, only used for top line:
+   if (brtrim && (nLine==0)) {
+      char *psz = aText[nLine];
+      if (strlen(psz) > 0) {
+         char *psz2 = psz + strlen(psz) - 1;
+         while ((psz2 > psz) && (*psz2 == ' '))
+            *psz2-- = '\0';
+      }
+   }
 }
 
 void Browser::setAttr(ulong nLine, char *pszText) {
@@ -778,7 +795,7 @@ void Browser::updatePanel()
             if (i1 < nClLines) 
             {
                pszClCurSubFile = apClLines[i1];
-               setLine(0, pszClCurSubFile);
+               setLine(0, pszClCurSubFile, 1);
    
                memset(aAttr, ' ', BCOL_MAX);
                aAttr[BCOL_MAX] = '\0';
@@ -792,7 +809,7 @@ void Browser::updatePanel()
             // cluster
             pszClCurSubFile = apClLines[i1]+strlen(szClSnapPrefix);
 
-            setLine(0, pszClCurSubFile);
+            setLine(0, pszClCurSubFile, 1);
    
             memset(aAttr, ' ', BCOL_MAX);
             aAttr[BCOL_MAX] = '\0';
@@ -938,12 +955,19 @@ _
    char *pszMWMode = "wlock";
    if (nClMWMode==1) pszMWMode = "wfree";
    if (nClMWMode==2) pszMWMode = "WFREE";
+
+   if (nClClipLRow != -1) {
+      // in clip block selection mode
+      sprintf(&szBuf[strlen(szBuf)], "< - select clip, wfree.");
+   }
+   else
    if (!nClMaskHits) {
       if (bClSearching)
          sprintf(&szBuf[strlen(szBuf)], "< - %c", (bClSearching<2)?'-':'*');
       else
          sprintf(&szBuf[strlen(szBuf)], "< - no hit, %s, %s.",bClCaseSearch?"case":"nocase",pszMWMode);
-   } else
+   }
+   else
       sprintf(&szBuf[strlen(szBuf)], "< - %u hits, %s, %s.",nClMaskHits,bClCaseSearch?"case":"nocase",pszMWMode);
 
    // append status, if any.
@@ -1807,26 +1831,30 @@ _
                   nClTopLine = nClLines+nClBotLines-nmax;
                break;
 
-            case 38: // crsr up
-               if (strlen(szClMask) && bClShift)
+            case 38: { // crsr up
+               bool bShift = (nClClipLRow == -1) ? bClShift : 0;
+               if (strlen(szClMask) && bShift)
                   goPreviousMaskHit();
                else
-               if (bClShift && (nClTopLine >= 5))
+               if (bShift && (nClTopLine >= 5))
                   nClTopLine -= 5;
                else
                if (nClTopLine > 0)
                   nClTopLine--;
+            }
                break;
 
-            case 40: // crsr down
-               if (strlen(szClMask) && bClShift)
+            case 40: { // crsr down
+               bool bShift = (nClClipLRow == -1) ? bClShift : 0;
+               if (strlen(szClMask) && bShift)
                   goNextMaskHit();
                else
-               if (bClShift && ((nClTopLine+nmax+5) < nClLines+nClBotLines))
+               if (bShift && ((nClTopLine+nmax+5) < nClLines+nClBotLines))
                   nClTopLine += 5;
                else
                if ((nClTopLine+nmax) < nClLines+nClBotLines)
                   nClTopLine++;
+            }
                break;
 
             case 36: // home, pos1
@@ -2050,13 +2078,22 @@ _
                break;
 
             case VK_F5:
-               bClLocalScope ^= 0x1;
-               if (bClLocalScope)
-                  bClEditFileMask = 1;
+               if (bClStdSnapFile)
+               {
+                  bClLocalScope ^= 0x1;
+                  if (bClLocalScope)
+                     bClEditFileMask = 1;
+                  else
+                     bClEditFileMask = 0;
+                  bClClearBottom = 1;
+                  setMaskModified();
+               }
                else
-                  bClEditFileMask = 0;
-               bClClearBottom = 1;
-               setMaskModified();
+               {
+                  setStatus("use an sfk snapfile please.");
+                  updatePanel();
+                  update();
+               }
                break;
 
             case VK_F6:
@@ -2117,7 +2154,11 @@ _
          break;
 
       case WM_MOUSEWHEEL:
-      {        
+      {
+         // if in block selection mode, unlock shift and mwheel.
+         bool bShift  = (nClClipLRow == -1) ? bClShift  : 0;
+         long nMWMode = (nClClipLRow == -1) ? nClMWMode : 1;
+
          short zDelta = (short)HIWORD(wParam);
          // mtklog("WHEEL %d", zDelta);
          short nStep  = WHEEL_DELTA;
@@ -2134,7 +2175,7 @@ _
          if (nClWheel >= nStep)
          {
             // mouse wheel up
-            if (!nClMWMode || bClShift) {
+            if (!nMWMode || bShift) {
                // independent from wheel speed, always step just ONE hit:
                nClWheel = 0;
                goPreviousMaskHit();
@@ -2155,7 +2196,7 @@ _
          if (nClWheel <= -nStep) 
          {
             // mouse wheel down
-            if (!nClMWMode || bClShift) {
+            if (!nMWMode || bShift) {
                // independent from wheel speed, always step just ONE hit:
                nClWheel = 0;
                goNextMaskHit();
@@ -2650,7 +2691,7 @@ void Browser::gotoFirstMaskHit()
    for (ulong i=0; i<nClLines; i++)
    {
       if (!strncmp(apClLines[i], szClSnapPrefix, nPreLen))
-         if (i<nClLines) {
+         if (i < nClLines-1) {   // fix: offb1
             pszCurFile = apClLines[i+1];
             bFileMatch = matchesFile(pszCurFile);
             if (bFileMatch)
@@ -3125,7 +3166,7 @@ void Browser::goPreviousMaskHit()
          // search next header.
          for (ulong i2=i; i2>0; i2--)
             if (!strncmp(apClLines[i2], szClSnapPrefix, nPreLen)) {
-               if (i2<nClLines) {
+               if (i2 < nClLines-1) {  // fix: offb1
                   pszCurFile = apClLines[i2+1];
                   bFileMatch = matchesFile(pszCurFile);
                }
@@ -3178,7 +3219,7 @@ void Browser::goNextMaskHit()
    for (ulong i=nCurSel+1; i<nClLines; i++) 
    {
       if (!strncmp(apClLines[i], szClSnapPrefix, nPreLen))
-         if (i<nClLines) {
+         if (i < nClLines-1) {   // fix: offb1
             pszCurFile = apClLines[i+1];
             bFileMatch = matchesFile(pszCurFile);
          }

@@ -1,5 +1,7 @@
 /*
    source instrumentation support
+
+   sfk 1.1.2: linux fixes
 */
 
 #include <stdlib.h>
@@ -40,6 +42,18 @@
 typedef __int64 mysize_t;
 #else
 typedef long mysize_t;
+#endif
+
+#ifdef _WIN32
+static const char  glblPathChar    = '\\';
+static const char *glblPathStr     = "\\";
+static const char *glblAddWildCard = "*";
+static const char *glblDotSlash    = ".\\";
+#else
+static const char  glblPathChar    = '/';
+static const char *glblPathStr     = "/";
+static const char *glblAddWildCard = "";
+static const char *glblDotSlash    = "./";
 #endif
 
 #ifdef _WIN32
@@ -572,11 +586,17 @@ int main(int argc, char *argv[])
       if (!fileExists(szBupFile)) { fprintf(stderr, "warning: cannot revoke, no backup: %s\n", pszFile); return 5; }
       if (fileExists(pszFile)) {
          // 1. ensure target is writeable
+         #ifdef _WIN32
          sprintf(szCopyCmd, "attrib -R %s",pszFile);
+         #else
+         sprintf(szCopyCmd, "chmod +w %s", pszFile);
+         #endif
          system(szCopyCmd);
+         #ifdef _WIN32
          // 2. delete target to ensure copy will work
          sprintf(szCopyCmd, "del %s",pszFile);
          system(szCopyCmd);
+         #endif
       }
       char *pszTargFileName = pszFile;
       // xcopy requires us to create a dummy, otherwise we get a prompting
@@ -584,8 +604,12 @@ int main(int argc, char *argv[])
       if (!fdst) { fprintf(stderr, "error  : cannot open %s\n",pszTargFileName); return 9; }
       fprintf(fdst, "tmp\n\n"); fflush(fdst);
       fclose(fdst);
-      // no overwrite this with /K, keeping potential +R attributes
+      // now overwrite this with /K, keeping potential +R attributes
+      #ifdef _WIN32
       sprintf(szCopyCmd, "xcopy /Q /K /Y /R %s %s >nul",szBupFile,pszTargFileName);
+      #else
+      sprintf(szCopyCmd, "cp -p %s %s",szBupFile,pszTargFileName);
+      #endif
       int iRC = system(szCopyCmd);
       if (!iRC) {
          printf("revoked: %s\n",pszTargFileName);
@@ -616,11 +640,15 @@ int main(int argc, char *argv[])
    #ifdef _WIN32
    _mkdir(szBupDir);
    #else
-   mkdir(szBupDir, S_IREAD | S_IWRITE);
+   mkdir(szBupDir, S_IREAD | S_IWRITE | S_IEXEC);
    #endif
    FILE *ftmp = fopen(szBupFile,"w");
    if (ftmp) { fprintf(ftmp,"dummy"); fclose(ftmp); }
+   #ifdef _WIN32
    sprintf(szLineBuf, "xcopy /Q /K /Y /R %s %s >nul",pszFile,szBupFile);
+   #else
+   sprintf(szLineBuf, "cp -p %s %s",pszFile,szBupFile);
+   #endif
    int iRC = system(szLineBuf);
    if (iRC) {
       fprintf(stderr, "error  : cannot backup file to: %s\n",szBupFile); 
@@ -649,7 +677,11 @@ int main(int argc, char *argv[])
    FILE *fout = fopen(pszFile, "w");
    if (!fout) {
       // probably write protected
+      #ifdef _WIN32
       sprintf(szLineBuf, "attrib -R %s", pszFile);
+      #else
+      sprintf(szLineBuf, "chmod +w %s",  pszFile);
+      #endif
       system(szLineBuf);
       // retry 
       if (!(fout = fopen(pszFile, "w"))) {
@@ -682,21 +714,27 @@ int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool 
    pszGlblInclude = pszInc;
    pszGlblMacro   = pszMac;
 
-   if (strstr(pszFile, "save_inst\\")) {
+   #ifdef _WIN32
+   if (strstr(pszFile, "save_inst\\")) 
+   #else
+   if (strstr(pszFile, "save_inst/")) 
+   #endif
+   {
       fprintf(stderr, "warning: exclude, cannot instrument: %s\n", pszFile);
       return 5;
    }
 
    // create backup infos
    strcpy(szBupDir, pszFile);
-   char *pszPath = strrchr(szBupDir, '\\');
+   char *pszPath = strrchr(szBupDir, glblPathChar);
    if (pszPath) *pszPath = '\0';
    else strcpy(szBupDir, ".");
-   char *pszRelFile = strrchr(pszFile, '\\');
+   char *pszRelFile = strrchr(pszFile, glblPathChar);
    if (pszRelFile) pszRelFile++;
    else pszRelFile = pszFile;
-   strcat(szBupDir, "\\save_inst");
-   sprintf(szBupFile, "%s\\%s", szBupDir, pszRelFile);
+   strcat(szBupDir, glblPathStr);
+   strcat(szBupDir, "save_inst");
+   sprintf(szBupFile, "%s%c%s", szBupDir, glblPathChar, pszRelFile);
    // printf("BUPDIR: %s\n", szBupDir);
    // printf("BUPFIL: %s\n", szBupFile);
 
@@ -724,11 +762,17 @@ int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool 
    
          if (fileExists(pszFile)) {
             // 1. ensure target is writeable
+            #ifdef _WIN32
             sprintf(szCopyCmd, "attrib -R %s",pszFile);
+            #else
+            sprintf(szCopyCmd, "chmod +w %s", pszFile);
+            #endif
             system(szCopyCmd);
+            #ifdef _WIN32
             // 2. delete target to ensure copy will work
             sprintf(szCopyCmd, "del %s",pszFile);
             system(szCopyCmd);
+            #endif
          }
 
          char *pszTargFileName = pszFile;
@@ -754,7 +798,11 @@ int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool 
             fclose(fdst);
             fclose(fsrc);
             // write-protect target
+            #ifdef _WIN32
             sprintf(szCopyCmd, "attrib +R %s",pszTargFileName);
+            #else
+            sprintf(szCopyCmd, "chmod -w %s", pszTargFileName);
+            #endif
             system(szCopyCmd);
             if (!bRedo) {
                printf("revoked: %s, %lu bytes\n",pszTargFileName,(unsigned long)ntotal);
@@ -768,8 +816,12 @@ int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool 
             if (!fdst) { fprintf(stderr, "error  : cannot open %s\n",pszTargFileName); return 9; }
             fprintf(fdst, "tmp\n\n"); fflush(fdst);
             fclose(fdst);
-            // no overwrite this with /K, keeping potential +R attributes
+            // now overwrite this with /K, keeping potential +R attributes
+            #ifdef _WIN32
             sprintf(szCopyCmd, "xcopy /Q /K /Y /R %s %s >nul",szBupFile,pszTargFileName);
+            #else
+            sprintf(szCopyCmd, "cp -p %s %s",szBupFile,pszTargFileName);
+            #endif
             int iRC = system(szCopyCmd);
             if (!iRC) {
                if (!bRedo) {
@@ -815,11 +867,15 @@ int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool 
    #ifdef _WIN32
    _mkdir(szBupDir);
    #else
-   mkdir(szBupDir, S_IREAD | S_IWRITE);
+   mkdir(szBupDir, S_IREAD | S_IWRITE | S_IEXEC);
    #endif
    FILE *ftmp = fopen(szBupFile,"w");
    if (ftmp) { fprintf(ftmp,"dummy"); fclose(ftmp); }
+   #ifdef _WIN32
    sprintf(szLineBuf, "xcopy /Q /K /Y /R %s %s >nul",pszFile,szBupFile);
+   #else
+   sprintf(szLineBuf, "cp -p %s %s",pszFile,szBupFile);
+   #endif
    int iRC = system(szLineBuf);
    if (iRC) { 
       fprintf(stderr, "error  : cannot backup file to: %s\n",szBupFile); 
@@ -831,7 +887,11 @@ int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool 
    FILE *fout = fopen(pszFile, "w");
    if (!fout) {
       // probably write protected
+      #ifdef _WIN32
       sprintf(szLineBuf, "attrib -R %s", pszFile);
+      #else
+      sprintf(szLineBuf, "chmod +w %s",  pszFile);
+      #endif
       system(szLineBuf);
       // retry 
       if (!(fout = fopen(pszFile, "w"))) {
