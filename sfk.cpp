@@ -8,6 +8,19 @@
    the world's fastest source code browser and editor.
 
    1.9.4
+   Revision 2:
+   -  rel: 16.02.2019, Major Update
+   -  sum: Improved office file text search
+           with options to produce UTF-8 output.
+   -  fix: .xlsx content loading showed wrong
+           output text in some cases.
+   -  add: ofind, oload, ofilter: option -utfout 
+           to keep UTF-8 encoding on output text.
+   -  add: ofind: option -utfin to allow use of
+           UTF-8 encoded search terms with -utfout.
+   -  add: oload: option -raw to show xml content.
+   -  chg: oload, ofilter: no longer shows 
+           zip file comment.
    Initial Release:
    -  rel: 10.02.2019, Major Update
    -  sum: SFK can now search and load office
@@ -1364,7 +1377,7 @@
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
 #define SFK_VERSION  "1.9.4" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  ""
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -2396,7 +2409,7 @@ uint UTF8Codec::nextChar()
 
    int iold = icur;
 
-   if ((c & 0x80) == 0)
+   if (bkeeputf == 1 || (c & 0x80) == 0)
       return c;
 
    banychars = 1;
@@ -11032,6 +11045,22 @@ int SFKChars::wlen(ushort *puni)
    ushort *pcur=puni;
    while (*pcur) pcur++;
    return (int)(pcur - puni);
+}
+
+num getAnsiToUTFSize(char *psrc)
+{
+   char szTmp[100];
+
+   num nout = 0;
+
+   while (*psrc!=0)
+   {
+      uchar cans  = *psrc++;
+      ushort nuni = sfkchars.ansitouni(cans);
+      nout += UTF8Codec::toutf8((char*)szTmp, 10, nuni);
+   }
+
+   return nout;
 }
 
 int ansiToUTF(char *pdst, int imaxdst, char *psrc)
@@ -30786,11 +30815,11 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
 }
 
 int makeServerSocket(
-   uint  &nNewPort,                // i/o parm
+   uint  &nNewPort,                 // i/o parm
    struct sockaddr_in &ServerAdr,   // i/o parm
    SOCKET &hServSock,
    cchar  *pszInfo,
-   uint  nAltPort=0                // e.g. 2121 for ftp
+   uint  nAltPort=0                 // e.g. 2121 for ftp
    )
 {
    uint nPort = nNewPort;
@@ -36447,6 +36476,9 @@ int setFilterParms(
          return 0; // pdp will process chaining further
       }
 
+      if (!strcmp(pszOpt, "-utfout")) // sfk1942 ofilt
+         { cs.utfout = 1; continue; }
+
       if (setGeneralOption(argv, argc, iPat2))
          continue;
 
@@ -37597,6 +37629,22 @@ int execLoad(Coi *pcoi)
          if (chain.addBinary(abBuf, nRead))
             return 9;
       }
+      else if (!chain.colany())
+      {
+         abBuf[nRead] = '\0';
+
+         #ifdef _WIN32
+         char *psz = szPrintBufMap;
+         // windows only: if output is NOT directed to file, map it to DOS charset,
+         // to have filenames listed with correct umlauts etc.
+         if (cs.outcconv && (cs.forcecconv || bGlblHaveInteractiveConsole))
+         {
+            sfkchars.stransitooem((char*)abBuf);
+         }
+         #endif
+
+         fwrite(abBuf, 1, nRead, stdout);
+      }
       else
       {
          uchar *pSrcCur = abBuf;
@@ -37626,10 +37674,7 @@ int execLoad(Coi *pcoi)
                szLineBuf[iCopy] = '\0';
                szAttrBuf[0] = '\0';
    
-               if (chain.colany())
-                  chain.addLine(szLineBuf, szAttrBuf);
-               else
-                  printf("%s\n", szLineBuf);
+               chain.addLine(szLineBuf, szAttrBuf);
    
                iSubLines++;
    
@@ -44225,6 +44270,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   allowing interactive search and filtering of the content.\n"
              "\n"
              "   $options\n"
+          // "      -office     include text from office files like .docx .xlsx\n"
+          // "                  .ods .odt.\n"
              "      -fileset x  instead of specifying long lists of -dir / -file\n"
              "                  statements on the command line, you may write them\n"
              "                  all into a text file, then use that. for more infos,\n"
@@ -44283,6 +44330,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "      #sfk select -text mydir <not>.bak +snapto=all.txt\n"
              "         select all text files from mydir, excluding .bak files.\n"
+             /*
+             "\n"
+             "      #sfk snapto=alldoc.txt -office mydir .docx .xlsx\n"
+             "         collect text from all .docx and .xlsx files in folder\n"
+             "         mydir into one large file alldoc.txt, which can be\n"
+             "         browsed and searched by: #dview alldoc.txt\n"
+             */
              );
       ehelp;
       // no real action here
@@ -44307,6 +44361,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       cs.precachezip = 1;
       #endif // VFILEBASE
 
+      cs.hidezipcomment = 1; // snapto
+
       const char *poutmode = "w";
 
       int iChainNext = 0;
@@ -44326,8 +44382,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             { bstat = 1; continue; }
          if (!strcmp(pszArg,"-nometa"))
             { cs.addsnapmeta = 0; continue; }
-         if (!strcmp(pszArg,"-office"))   // snapto, yet internal
+         if (!strcmp(pszArg,"-office")) // internal
             { cs.office = 1; continue; }
+         if (cs.office && !strcmp(pszArg, "-utfout")) // internal
+            { cs.utfout = 1; continue; }
          if (!strcmp(pszArg,"-raw")) {
             cs.addsnapraw = 1;
             // write snapfile in binary mode,
@@ -53558,6 +53616,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (bIsFReplace)
       printx("      -maxscan=nm   stop searching after (approximately) first n megabytes\n"
              "                    per file. can be used only with same length replace.\n");
+      if (iIsOFind)
+      printx("      -utfin        with -utfout only: search text is already given\n"
+             "                    as UTF-8, do not convert internally for search.\n");
       if (bIsXFTex || bIsXFBin)
       printx("      -tracesel     tell in detail which files are searched or ignored.\n"
              "      -quiet        do not show progress infos.\n"
@@ -53593,6 +53654,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n");
 
       printx("   $output options\n");
+      if (iIsOFind)
+      printx("      -utfout       keep raw UTF-8 encoding on output, to use it\n"
+             "                    with further commands requiring UTF-8 data.\n");
       if (!bIsHexFind && (bIsXFTex || bIsXFBin))
       printx("      -conlines=n1  show n lines of context around search hits. by default\n"
              "                    only text lines containing one or more hits are shown.\n"
@@ -54027,6 +54091,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bool bGotHex      = 0;
       bool bGotNoDump   = 0;
       bool bGotDump     = 0;
+      bool butfin       = 0;
 
       cs.usefilehead    = 0;
       cs.szfilehead[0]  = '\0';
@@ -54091,6 +54156,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       int iFirst = iDir;
       for (; iDir<argc; iDir++)
       {
+         char *pszArg = argx[iDir];
          if (!strcmp(argx[iDir], "-dir"))
          {
             // parse initial -dir ... -file ... parameters
@@ -54352,22 +54418,26 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             sprintf(cs.szseparator, "---%s", cs.szeol);
             continue;
          }
-         if (strBegins(argx[iDir], "-nosep")) {
+         if (strBegins(pszArg, "-nosep")) {
             cs.szseparator[0] = 0;
             continue;
          }
-         if (!strcmp(argx[iDir], "-stat")) {
+         if (!strcmp(pszArg, "-stat")) {
             cs.dostat = 1;
             continue;
          }
-         if (strBegins(argx[iDir], "-prog")) {
+         if (strBegins(pszArg, "-prog")) {
             cs.quiet = 0;
             continue;
          }
-         if (!strcmp(argx[iDir], "-fast")) { // no function
+         if (!strcmp(pszArg, "-fast")) { // no function
             cs.fastopt = 1;
             continue;
          }
+         if (iIsOFind && !strcmp(pszArg, "-utfout")) // sfk1942 ofind
+            { cs.utfout = 1; continue; }
+         if (iIsOFind && !strcmp(pszArg, "-utfin"))  // sfk1942 ofind
+            { butfin = 1; continue; }
          if (haveParmOption(argx, argc, iDir, "-maxscan", &pszParm)) {
             if (!bIsFReplace)
                return 9+perr("-maxscan requires sfk replace, not %s", pszCmd);
@@ -54519,6 +54589,19 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          pszRepList = strdup((char*)abBuf);
       }
  
+      // apply utfin conversion
+      if (cs.utfout && !butfin) {
+         // parms need atou
+         num nExtSize = getAnsiToUTFSize(pszRepList);
+         char *pszExt = new char[nExtSize+100];
+         if (!pszExt) return 9+perr("out of memory");
+         ansiToUTF(pszExt, nExtSize+10, pszRepList);
+         pszExt[nExtSize] = '\0';
+         // swap
+         delete [] pszRepList;
+         pszRepList = pszExt;
+      }
+
       // create replacement expression table
       if (iShowPreState==1) {
          iShowPreState = 2;
@@ -56173,6 +56256,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "     like xed and xex data is not wrapped.\n"
              "\n"
              , (int)MAX_LINE_LEN);
+      printx("   $options\n"
+             "      -utfout  keep raw UTF-8 encoding on output, to use it\n"
+             "               with further commands requiring UTF-8 data.\n"
+             "      -raw     get raw xml data, for content analysis.\n"
+             "               implies -utfout.\n"
+             "\n");
       printx("   $see also\n"
              "      #sfk help office<def>  supported office file types\n"
              "      #sfk xex<def>          extract phrases from text\n"
@@ -56191,6 +56280,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk oload in.xlsx +filt -no-empty-lines +tabtocsv\n"
              "         get records from a table, drop empty lines,\n"
              "         then convert from tabs to comma separated data.\n"
+             "      #sfk oload -raw in.docx +xmlform +view\n"
+             "         reformat and display xml content using dview.\n"
              );
       }
       else
@@ -56242,6 +56333,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             bstdin = 1;
             continue;
          }
+         if (iIsOLoad && !strcmp(pszArg, "-utfout")) // sfk1942 oload
+            { cs.utfout = 1; continue; }
+         if (iIsOLoad && !strcmp(pszArg, "-raw"))    // sfk1942 internal
+            { cs.office = 2; continue; }
          if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(pszArg))
                break; // fall through

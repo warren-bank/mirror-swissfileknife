@@ -40,7 +40,7 @@
 
 #define SFKNEWDUMP
 
-uint   glblFromTCPPort    = -1;
+uint   glblFromTCPPort    = 0;
 SOCKET glblFromTCPASocket = INVALID_SOCKET;
 SOCKET glblFromTCPCSocket = INVALID_SOCKET;
 
@@ -138,11 +138,11 @@ bool  strbeg(char *pszStr, cchar *pszPat);
 bool  stribeg(char *psz, cchar *pstart);
 void setSystemSlashes(char *pdst);
 int makeServerSocket(
-   uint  &nNewPort,                // i/o parm
+   uint  &nNewPort,                 // i/o parm
    struct sockaddr_in &ServerAdr,   // i/o parm
    SOCKET &hServSock,
    cchar  *pszInfo,
-   uint  nAltPort=0                // e.g. 2121 for ftp
+   uint  nAltPort=0                 // e.g. 2121 for ftp
    );
 
 #ifdef SFKWINST
@@ -16934,7 +16934,9 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice,
    // sfk1920: always get global zip comment for interpretation
    if (unzGetGlobalComment(uf, szGlobalComment, sizeof(szGlobalComment)-10) > 0) 
    {
-      if (!cs.yes && !cs.toziplist && !glblUnzipMask.numberOfEntries()) {
+      if (!cs.yes && !cs.toziplist && !cs.hidezipcomment
+          && !glblUnzipMask.numberOfEntries()) 
+      {
          setTextColor(nGlblTimeColor);
          printf("%s\n", szGlobalComment);
          setTextColor(-1);
@@ -17188,7 +17190,7 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice,
          if (bDir != 0 || crc != cs.njustcrc)
             bskip = 1;
       }
-      else if (iOffice == 1)
+      else if (iOffice == 1 || iOffice == 2)
       {
          // ----- office mode 1: use only .xml files -----
          if (!keepOfficeSubFile(pszInFile, szLineBuf2))
@@ -22236,6 +22238,9 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
              "      -lit[eral]      treat wildcards * and ? as normal chars (read more above).\n"
             );
       arcinf(12); // filt
+      if (ofilt)
+      printx("      -utfout         keep raw UTF-8 encoding on output, to use it\n"
+             "                      with further commands requiring UTF-8 data.\n");
       printx("      -verbose        show names of all files which are currently scanned.\n"
              "                      with wfilter: tell current proxy settings, if any.\n"
              "      -write          do not print output to console but overwrite input file(s).\n"
@@ -22272,8 +22277,7 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
              "      -upat           unix style syntax with -form, using ## instead of $$\n"
              #endif
              "      -timeout=n      with wfilt: wait up to n msec for web data.\n" // wto.wfilt
-             "\n"
-             );
+             "\n");
       if (!wfilt)
       printx("   $list of possible input sources\n"
              "      from stdin:                 type x.txt | sfk filter -+pattern\n"
@@ -29095,10 +29099,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       if (iPort==-1) 
          return 9+perr("missing port");
-      if (glblFromTCPPort != -1 && glblFromTCPPort != iPort)
+      if (glblFromTCPPort != 0 && glblFromTCPPort != iPort)
          return 9+perr("port change not supported");
 
-      if (glblFromTCPPort == -1) 
+      if (glblFromTCPPort == 0) 
       {
          glblFromTCPPort = iPort;
          prepareTCP();
@@ -29107,7 +29111,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       }
 
       // accept socket is now available.
-      if (cs.verbose) printf("fromtcp: waiting for accept on %d\n", glblFromTCPPort);
+      if (cs.verbose) printf("fromtcp: waiting for accept on %u\n", glblFromTCPPort);
 
       int nRead = 0;
 

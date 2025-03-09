@@ -1530,10 +1530,12 @@ public:
 
    int   readRaw();
    int   readSeq();
+
    int   icur, imax;
    bool  banychars;
    bool  bbadchars;
    bool  bdecodexml;
+   bool  bkeeputf;   // sfk1942
    uchar *psrc;
 };
 
@@ -1898,6 +1900,7 @@ public:
    bool catzip;
    Coi  *pOutCoi;
    bool toziplist;
+   bool hidezipcomment;
    bool addmeta;
    char *tozipname;
    uint nzipredundant;
@@ -1919,6 +1922,7 @@ public:
    int  iexecfiles;
    bool bzipto;
    bool bnoextutf;
+   bool utfout;            // sfk1942
    int  nmore;
    int  imore;
    int  morepage;
