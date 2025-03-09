@@ -3,13 +3,22 @@
 
    known issues:
    -  syncto: no empty target files supported yet
-   -  option handling is not very flexible yet,
-      often it's unclear where to specify an option.
+   -  not every option can be specified everywhere
    -  patch, inst: option -keep-dates only works
       with Win32 yet (uses xcopy command).
    -  mirrorto: zip called sometimes without any need
       to update the archive, due to file time check.
-   -  whole internal time handling not yet 64 bit based.
+
+   1.0.7
+   -  FIX: parallel write of editor and read of sfk on the
+      same cluster file led to sync-break of sfk. now, sfk
+      searches for ":cluster-end", and retries until complete.
+   -  syncto:  cluster format revision 1.0.7, obsoleting 1.0
+   -  snapto: snapfile format revision 1.0.7, obsoleting 1.0
+   -  add: sfk snapview tool, windows realtime text browser.
+   -  fix: syncto: notes section now written only on demand
+   -  fix: snapfile header now listing full [l]prefix,
+           to give snapview better infos about the format.
 
    1.0.6
    -  add: syncto: free text notes section
@@ -268,8 +277,8 @@ char *pszGlblInstInc  = "";
 char *pszGlblInstMac  = "";
 static bool bGlblTouchOnRevoke = 1;
 #endif
-char *pszGlblSnapFileStamp    = ":snapfile sfk,1.0,prefix=:";
-char *pszGlblClusterFileStamp = ":cluster sfk,1.0,prefix=:";
+char *pszGlblSnapFileStamp    = ":snapfile sfk,1.0.7,lprefix=";
+char *pszGlblClusterFileStamp = ":cluster sfk,1.0.7,prefix=:";
 bool  bGlblRefRelCmp    = 1;
 bool  bGlblRefBaseCmp   = 0;
 bool  bGlblRefWideInfo  = 0;
@@ -1852,16 +1861,23 @@ char *apBlockedKeys[] =
 {
    // input files containing these keys might break a cluster file's syntax. 
    // therefore input files containing them must be skipped.
-   pszGlblSnapFileStamp,
-   ":snapfile ", ":cluster ", ":create ", ":done ",
-   ":file: ", ":skip-begin ", ":skip-end ",
+   ":snapfile ", ":cluster ", ":create ",
+   ":done\n", ":done\r\n",
+   ":cluster-end\n", ":cluster-end\r\n",
 
-   // these keys may not be as relevant to clusters.
-   // nevertheless, by default, files with them are also skipped.
-   ":patch ", ":info ", ":root ", 
-   ":file ", ":from ", ":to ",
+   // these keys are less relevant, but also blocked by default.
+   // if sfk refuses to integrate some files into a cluster,
+   // you may try to ease restrictions by setting this flag:
+   #ifndef SFK_LESS_STRICT_KEY_BLOCKING
+   ":file:\n", ":file:\r\n",
+   ":skip-begin\n" , ":skip-begin\r\n"
+   ":skip-end\n"   , ":skip-end\r\n",
+   ":patch ", ":info ", ":root ", ":file ",
+   ":from\n", ":from\r\n",
+   ":to\n", ":to\r\n",
    ":mkdir ", ":select-replace ", ":set ",
-   ":# ", ":edit ", ":READ ", 
+   ":edit ", ":READ ",
+   #endif
 
    0 // EOT
 };
@@ -1977,7 +1993,8 @@ long fileSize(char *pszFile) {
    return sinfo.st_size;
 }
 
-char *loadFile(char *pszFile, int nLine) {
+char *loadFile(char *pszFile, int nLine) 
+{
    long lFileSize = fileSize(pszFile);
    if (lFileSize < 0)
       return 0;
@@ -1992,6 +2009,7 @@ char *loadFile(char *pszFile, int nLine) {
       delete [] pOut;
       return 0;
    }
+   // printf("%u bytes read from %s\n", nRead, pszFile);
    pOut[lFileSize] = '\0';
    return pOut;
 }
@@ -2114,7 +2132,7 @@ long TextFile::createFromMemory(char *pszRaw)
 
 class SnapShot {
 public:
-   SnapShot ( );
+   SnapShot (const char *pszID);
   ~SnapShot ( );
    long  addTarget   (char *pszFileName);
    long  addTarget   (TextFile *pTarget);
@@ -2143,7 +2161,7 @@ protected:
    void  expandTargets     (long lSoMuch);
    long  removeTargetEntry (long n);
    void  adjustNamePadding ( );
-   void  resetTargets      ( );
+   void  resetTargets      (const char *pszInfo);
    void  resetNotes        ( );
    TextFile **apClTargets;
    long  nClMaxTargets;
@@ -2152,15 +2170,17 @@ protected:
    char  *pClRootName;
    long  nClNamePadding;
    long  lClLastSavedBuild;
+   long  lClLoadedRevision;
    char  *apLastSync[MAX_SYNC_INFO];
    char  *apNotes[MAX_NOTES_LINES+10]; // used only in FileSnap
    long  nClNotes;
+   const char *pszClID;
 };
 
-SnapShot glblMemSnap;
-SnapShot glblFileSnap;
+SnapShot glblMemSnap("mem");
+SnapShot glblFileSnap("fil");
 
-SnapShot::SnapShot() {
+SnapShot::SnapShot(const char *pszID) {
    apClTargets       =  0;
    nClMaxTargets     =  0;
    nClTargets        =  0;
@@ -2172,6 +2192,8 @@ SnapShot::SnapShot() {
       apLastSync[i]  = 0;
    memset(apNotes, 0, sizeof(apNotes));
    nClNotes          = 0;
+   pszClID           = pszID;
+   lClLoadedRevision = 0;
 }
 
 SnapShot::~SnapShot() {
@@ -2187,7 +2209,7 @@ void SnapShot::addNotesLine(char *pszLine) {
 }
 
 void SnapShot::shutdown() {
-   resetTargets();
+   resetTargets("shutdown");
    resetLastSync();
    if (pClFileName)  { delete [] pClFileName; pClFileName = 0; }
    if (pClRootName)  { delete [] pClRootName; pClRootName = 0; }
@@ -2389,7 +2411,7 @@ long SnapShot::syncDownTargets(SnapShot &oMaster, long &rnSync)
    resetLastSync();
 
    if (nClTargets != oMaster.nClTargets) {
-      fprintf(stderr, "error: target number differs (%d,%d)\n", oMaster.nClTargets, nClTargets);
+      fprintf(stderr, "error: target number differs (%s %d, %s %d)\n", oMaster.pszClID, oMaster.nClTargets, pszClID, nClTargets);
       return 9;
    }
 
@@ -2443,7 +2465,7 @@ long SnapShot::syncDownTargets(SnapShot &oMaster, long &rnSync)
 
 long SnapShot::mirrorTargetsFrom(SnapShot &oMaster, long &nMissing)
 {
-   resetTargets();
+   resetTargets("mirror");
 
    nClMaxTargets  = oMaster.nClMaxTargets;
    apClTargets    = new TextFile*[nClMaxTargets];
@@ -2544,7 +2566,9 @@ long SnapShot::checkLoadTargets() {
    return lRC;
 }
 
-void SnapShot::resetTargets() {
+void SnapShot::resetTargets(const char *pszInfo) 
+{
+   if (bGlblDebug) printf("%s reset tlist due to %s\n", pszClID, pszInfo);
    if (apClTargets) {
       for (long i=0; i<nClTargets; i++)
          delete apClTargets[i];
@@ -2555,8 +2579,9 @@ void SnapShot::resetTargets() {
    }
 }
 
-long SnapShot::copyTargetsFrom(SnapShot &oSrc) {
-   resetTargets();
+long SnapShot::copyTargetsFrom(SnapShot &oSrc) 
+{
+   resetTargets("copy");
    nClMaxTargets = oSrc.nClMaxTargets;
    if (!(apClTargets = new TextFile*[nClMaxTargets]))
       return -1;
@@ -2592,11 +2617,14 @@ long SnapShot::writeToFile()
       pClRootName);
 
    // write notes, if any
-   fprintf(fout, ":notes-begin\n");
-   for (long i0=0; i0<nClNotes; i0++) {
-      fprintf(fout, "%s\n", apNotes[i0]);
+   if (nClNotes > 0)
+   {
+      fprintf(fout, ":notes-begin\n");
+      for (long i0=0; i0<nClNotes; i0++) {
+         fprintf(fout, "%s\n", apNotes[i0]);
+      }
+      fprintf(fout, ":notes-end\n\n");
    }
-   fprintf(fout, ":notes-end\n\n");
 
    // write target index
    fprintf(fout, ":# ----- %d target files -----\n", nClTargets);
@@ -2616,20 +2644,79 @@ long SnapShot::writeToFile()
       pTarget->dumpTo(fout); // writes line by line, with guranteed LF at end
       fprintf(fout, ":done\n\n");
    }
+
+   // write epilogue
+   fprintf(fout, ":cluster-end\n");
+
    fclose(fout);
    return 0;
 }
 
 long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch) 
 {
-   resetTargets();
+   resetTargets("read");
    resetNotes();
 
    if (!pClFileName) { fprintf(stderr, "error: missing filename, or root\n"); return 9; }
 
-   // load snapfile in one block
-   char *pszRaw = loadFile(pClFileName, __LINE__);
-   if (!pszRaw) return 9;
+   char *pszRaw = 0;
+   long lRetryCnt = 0;
+   long lOldLen  = -1;
+   long lOldBail = 0;
+   while (true)
+   {
+      // load snapfile in one block
+      pszRaw = loadFile(pClFileName, __LINE__);
+      if (!pszRaw) return 9;
+   
+      // NOTE: if the editor is writing to the cluster RIGHT NOW,
+      //       we get incomplete data. therefore:
+      if (   !strstr(pszRaw, ":cluster-end\n")
+          && !strstr(pszRaw, ":cluster-end\r\n")
+         ) 
+      {
+         // keep some compat to old-format clusters:
+
+         // direct revision check, if available
+         if (!strncmp(pszRaw, ":cluster sfk,1.0,", strlen(":cluster sfk,1.0,"))) {
+            printf("info : old-format cluster detected, loaded.\n");
+            printf("info : please add \":cluster-end\" line at end of file.\n");
+            break;
+         }
+
+         // if size doesn't change over 3 sec, load although
+         long lNewLen = strlen(pszRaw);
+         if (lOldLen == lNewLen) {
+            if (++lOldBail >= 3) {
+               printf("info : probably old-format cluster, loaded.\n");
+               printf("info : please add \":cluster-end\" line at end of file.\n");
+               break;
+            }
+         }
+         lOldLen = lNewLen;
+
+         // else drop current load, retry
+         delete [] pszRaw;
+         lRetryCnt++;
+         printf("info : cluster probably locked, retrying (%d) \r", lRetryCnt);
+         fflush(stdout);
+         #ifdef _WIN32
+         Sleep(1000);
+         #else
+         sleep(1);
+         #endif
+      }
+      else
+      {
+         if (lRetryCnt) printf("info : cluster read completed.               \n");
+         break; // full load done, continue
+      }
+      if (userInterrupt())
+         return 9;
+   }
+
+   long lRawSize = strlen(pszRaw);
+   if (lRawSize < 100) { fprintf(stderr, "error: insufficient bytes from %s, %u\n", pClFileName, lRawSize); return 9; }
 
    // pass 1: parse control block, build target index
    char *psz1 = pszRaw;
@@ -2643,7 +2730,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
 
    while (psz1)
    {
-      // if (bGlblDebug) printf("] \"%.10s\"\n", psz1);
+      // printf("] \"%.10s\"\n", psz1);
 
       // fetch another control line
       char *psz2 = strchr(psz1, '\n');
@@ -2671,7 +2758,8 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
                addNotesLine(szLineBuf);
          }
          else
-         if (!strncmp(szLineBuf, ":cluster ", strlen(":cluster "))) { 
+         if (!strncmp(szLineBuf, ":cluster ", strlen(":cluster "))) 
+         {
             // process header line
             char *psz1 = strstr(szLineBuf, ",build=");
             if (psz1) {
@@ -2685,6 +2773,26 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
                   }
                } else {
                   lClLastSavedBuild = lFileBuild;
+               }
+            }
+            // retrieve revision from ":cluster sfk,1.0,prefix=:"
+            char *psz2 = strstr(szLineBuf, "sfk,");
+            if (psz2) {
+               // so far, there are just a few possible revisions
+               psz2 += strlen("sfk,");
+               if (!strncmp(psz2, "1.0,", strlen("1.0,")))
+                  lClLoadedRevision = 0x010000;
+               else
+               if (!strncmp(psz2, "1.0.7,", strlen("1.0.7,")))
+                  lClLoadedRevision = 0x010007;
+               else
+               {
+                  static bool bWarned = 0;
+                  if (!bWarned) {
+                     bWarned = 1;
+                     fprintf(stderr, "warn : cluster syntax may be too new for this sfk.\n");
+                     lClLoadedRevision = 0x010007;
+                  }
                }
             }
             // if (bGlblDebug) printf("fetched :cluster\n");
@@ -2719,7 +2827,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
             }
             // add next entry, INCLUDING the :edit or :READ statement!
             apIndex[nIndexUsed++] = strdup(szLineBuf);
-            // if (bGlblDebug) printf("added index entry\n");
+            // printf("add-index %s\n",szLineBuf);
          }
          else
          if (!strncmp(szLineBuf, ":# ", strlen(":# "))) {
@@ -2748,7 +2856,7 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
    while (psz1) 
    {
       char *psz2 = strstr(psz1, "\n:create ");
-      if (psz2) 
+      if (psz2)
       {
          // found another :create, isolate target name
          char *pszTargetName = psz2 + strlen("\n:create ");
@@ -2757,6 +2865,8 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
          *psz3++ = '\0'; // remove and skip LF, go to start of content
          char *psz3b = strchr(pszTargetName, '\r');
          if (psz3b) *psz3b = '\0'; // remove possible CR
+         // printf("create %s\n", pszTargetName);
+
          // find end of content
          char *pszContentBegin = psz3;
          char *pszDone = strstr(pszContentBegin, "\n:done\n");
@@ -2806,21 +2916,27 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
 
          // continue in snapfile
          psz1 = pszContinue;
-      } else {
-         // if (strlen(psz1) > 10) {
-         //    fprintf(stderr, "error: unexpected content in %s:\n", pClFileName);
-         //    fprintf(stderr, "\"%.100s\"\n", psz1);
-         //    return 9;
-         // }
+      }
+      else 
+      {
+         // last :done, with :cluster-end
+         if (strlen(psz1) > (strlen("done\r\n\n:cluster-end\r\n")+5)) {
+            fprintf(stderr, "warn : unexpected content in %s:\n", pClFileName);
+            fprintf(stderr, "\"%.100s\"\n", psz1);
+            // return 9;
+         }
          psz1 = 0;
       }
    }
 
    // pass 3: add all files of index not yet in snapfile
-   for (long i5=0; i5<nIndexUsed; i5++) {
-      if (strlen(&apIndex[i5][lPreFix])) {
+   for (long i5=0; i5<nIndexUsed; i5++) 
+   {
+      if (strlen(&apIndex[i5][lPreFix])) 
+      {
          char *pszTargetName = &apIndex[i5][lPreFix];
-         if (fileExists(pszTargetName)) {
+         if (fileExists(pszTargetName)) 
+         {
             // create and load to file-snap
             TextFile *pTarget = new TextFile(pszTargetName);
             if (pTarget->loadFromFile()) {
@@ -2857,6 +2973,10 @@ long SnapShot::readFromFile(long &rbDroppedAny, long bForceBuildMatch)
 
    // all done, free temporary stuff
    delete [] pszRaw;
+
+   // printf("%s re-read, %u targets\n", pszClID, numberOfTargets());
+   if (numberOfTargets() < 1) { fprintf(stderr, "error: no targets found after cluster re-read\n"); return 9; }
+
    return 0;
 }
 
@@ -3903,8 +4023,8 @@ long execJamFile(char *pszFile)
       if (strlen((char*)abBuf) == nMaxLineLen)
          fprintf(stderr, "warning: max line length %d reached, splitting. file %s, line %d\n", nMaxLineLen, pszFile, nLocalLines);
 
-      if (   (!strncmp((char*)abBuf, pszGlblSnapFileStamp, strlen(pszGlblSnapFileStamp)))
-          || (!strncmp((char*)abBuf, pszGlblClusterFileStamp, strlen(pszGlblClusterFileStamp)))
+      if (   (!strncmp((char*)abBuf, ":snapfile sfk,", strlen(":snapfile sfk,")))
+          || (!strncmp((char*)abBuf, ":cluster sfk,", strlen(":cluster sfk,")))
          )
       {
          // we have either detected that we're re-reading our own output as input,
@@ -4677,7 +4797,7 @@ int main(int argc, char *argv[])
    {
       printf("sfk/" SFK_BRANCH " " SFK_VERSION " - a swiss file knife derivate.\n"); // [patch-id]
       printf("this version provided by " SFK_PROVIDER ".\n");
-      printf("based on the free sfk 1.0.6 by stahlworks art & technology.\n");
+      printf("based on the free sfk 1.0.7 by stahlworks art & technology.\n");
       printf("Distributed for free under the GNU General Public License,\n"
              "without any warranty. Use with care and on your own risk.\n");
       printf("\n"
@@ -4873,12 +4993,14 @@ int main(int argc, char *argv[])
          bstat = 1;
          iDir++;
       }
+      if (!pszGlblJamPrefix)
+           pszGlblJamPrefix = strdup(":file:");
 
       // collect dir and mask parms
       processDirParms(pszCmd, argc, argv, iDir, 1);
 
       // write global file header
-      fprintf(fGlblOut, "%s\n\n", pszGlblSnapFileStamp);
+      fprintf(fGlblOut, "%s%s\n\n", pszGlblSnapFileStamp, pszGlblJamPrefix);
       // we will scan the input if we see this content, and exclude it
 
       lRC = walkAllTrees(eFunc_JamFile, lFiles, lDirs, nBytes);
@@ -5114,7 +5236,7 @@ int main(int argc, char *argv[])
             long nSynced = 0;
             if (glblMemSnap.syncDownTargets(glblFileSnap, nSynced))
                return 9;
-            printf("> done : %d targets (re)written\n", nSynced);
+            printf("> done : %d targets (re)written [%u,%u]\n", nSynced, glblFileSnap.numberOfTargets(), glblMemSnap.numberOfTargets());
          }
       }
 
@@ -5753,12 +5875,16 @@ int main(int argc, char *argv[])
          }
          else
          if (!strncmp(argv[iDir], "-", 1)) {
-            break; // fall through
+            break; // fall through to option processing
          }
-         else {
+         else
+         if (!pszGlblRunCmd[0])
+         {
             pszGlblRunCmd = argv[iDir];
             iDir++;
          }
+         else
+            break; // fall through to short dir processing
       }
       processDirParms(pszCmd, argc, argv, iDir, 1);
       if (bGlblStdInAny) { fprintf(stderr, "error: sfk run: -i not allowed, use -ifiles or -idirs.\n"); return 9; }

@@ -334,13 +334,20 @@ static void operator delete(void *pUserMemory)
    free((char*)pUserMemory-lrs);
 }
 
-static void listMemoryLeaks( )
+static long anyMemoryLeaks()
 {
+   return (glblMem.first() != 0) ? 1 : 0;
+}
+
+static long listMemoryLeaks(FILE *fout=0)
+{
+   if (!fout) fout = stdout;
+
    long bAnyLeak = 0;
    for (SFKMemoryBlock *p=(SFKMemoryBlock*)glblMem.first(); p; p=(SFKMemoryBlock*)p->next())
    {
       bAnyLeak = 1;
-      printf("MEM LEAK: adr %lxh, size %ld, alloc'ed in %s %ld\n",
+      fprintf(fout, "MEM LEAK: adr %lxh, size %ld, alloc'ed in %s %ld\n",
          p->pAddress,
          p->lSize,
          p->file,
@@ -349,8 +356,10 @@ static void listMemoryLeaks( )
    }
    
    if (bAnyLeak)
-      printf("[SMEMDEBUG: %ld new's, %ld delete's, %ld errors, %ld leaks]\n",
+      fprintf(fout, "[SMEMDEBUG: %ld new's, %ld delete's, %ld errors, %ld leaks]\n",
          sfkmem_news, sfkmem_dels, sfkmem_errs, sfkmem_news-sfkmem_dels);
+
+   return bAnyLeak;
 }
 
 #ifdef MEMDEB_JUST_DECLARE

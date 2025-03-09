@@ -3,6 +3,7 @@
    to easily demonstrate sfk functionality.
 */
 
+
 #include "Trace.hpp"
 
 BarBottle::BarBottle( )
@@ -17,3 +18,4 @@ BarBottle::~BarBottle( )
       pClSomething = 0;
    }
 }
+
