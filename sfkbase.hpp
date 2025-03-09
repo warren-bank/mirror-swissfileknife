@@ -262,6 +262,20 @@ extern int shrinkFormTextBlock(char *psz, int &rLen, bool bstrict, bool xchars=0
  // #define USE_WEBCONCACHE
 #endif // SFKNOVFILE
 
+#if defined(SFKPRO)
+ #ifndef USE_SFK_BASE
+  #define SFKXDXE // pro compile
+ #endif
+#else
+ #ifndef USE_SFK_BASE
+  #if defined(SFKXD) // base+xd
+   #define SFKXDXE
+  #else
+   #define SFKOSE    // default
+  #endif
+ #endif // USE_SFK_BASE
+#endif // defined(SFKPRO)
+
 #define WITH_CASE_XNN
 
 #define SFKDEEPZIP   // since sfk 175
@@ -1500,6 +1514,7 @@ public:
    bool tailFollow;  // head, tail
    char *tomask;     // output filename mask
    bool  tomaskfile; // -to mask is a single filename
+   char tomake[200]; // option -tomake
    char *curcmd;     // current command
    bool rootrelname; // use filenames relative to root dir
    bool rootabsname;  // copy
@@ -2201,6 +2216,23 @@ private:
 };
 
 extern CopyCache glblCopyCache;
+
+class SFKMapArgs
+{
+public:
+      SFKMapArgs  (char *pszCmd, int argc, char *argv[], int iDir);
+     ~SFKMapArgs  ( );
+   char  *eval    (char *pszExp);
+
+   bool  bdead;
+
+   StringTable  clDynaStrings;
+   char       **clargx;
+   bool         bDoneAlloc;
+
+   char         szClEvalOut[200];   // for small results
+   char        *pszClEvalOut;       // for large results
+};
 
 #endif
 

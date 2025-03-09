@@ -1,4 +1,6 @@
 
+#ifndef SFK_JUST_OSE
+
 #define USE_DCACHE
 #define USE_SFT
 #define REDUCE_CACHE_FILE_NAMES
@@ -16486,11 +16488,15 @@ fprintf(fGlblOut,
 void printSearchReplaceCommands()
 {
 printx("   $see also\n"
+       "      #sfk xfind<def>     search  wildcard text in   text/binary files\n"
+       "      #sfk xtext<def>     search  wildcard text in   text files  only\n"
+       "      #sfk xhexfind<def>  search  in text/binary with hex dump output\n"
+       "      #sfk extract<def>   extract wildcard data from text/binary files\n"
+       "      #sfk filter<def>    filter  and edit text with simple wildcards\n"
        "      #sfk find<def>      search  fixed    text in   text/binary files\n"
        "      #sfk ftext<def>     search  fixed    text in   text        files\n"
        "      #sfk hexfind<def>   search  fixed    text in        binary files\n"
        "      #sfk replace<def>   replace fixed    text in   text/binary files\n"
-       "      #sfk filter<def>    filter and edit  text with simple wildcards\n"
        "\n");
 }
 
@@ -17487,6 +17493,15 @@ void printHelpText(char *pszSub, bool bhelp)
          "            extract foo=(any text) from in.txt, place the found\n"
          "            text into variable fooval, then print it. [19]\n"
          "\n");
+  printx("   $environment variable access\n"
+         "\n"
+         "      can be done like ##(env.varname). varname is case\n"
+         "      insensitive under windows and uses case on linux.\n"
+         "\n"
+         "      $example:\n"
+         "         sfk -var echo \"tmp contains: ##(env.TMP)\"\n"
+         "\n"
+         );
   printx("   $sfk local command variables\n"
          "\n"
          "      -  are created directly from input text\n"
@@ -17500,6 +17515,32 @@ void printHelpText(char *pszSub, bool bhelp)
          "         #sfk filter -tabform \"... <run>col1 ... <run>col2 ...\"\n"
          "            splits text lines by TAB char, allowing reformatting.\n"
          "         type #sfk run<def>, #sfk perline<def> etc. for further infos.\n"
+         "\n"
+         );
+  printx("   $sfk variable functions\n"
+         "\n"
+         "      when reading variable text like ##(varname) some extra\n"
+         "      functions can be applied using ##(func(varname,...)).\n"
+         "      available functions are:\n"
+         "\n"
+         "      $strpos(v,'text')<def>        get index of text within v\n"
+         "      $strpos(v,-case 'text')<def>  same, case sensitive\n"
+         "      $strpos(v,-spat '\\x20')<def>  using slash patterns\n"
+         "      $strrpos(v,'text')<def>       search from right side\n"
+         "      $substr(v,o[,l])<def>         substring from offset o length l.\n"
+         "                              use negative o from right side.\n"
+         "      $[l/r]trim(v)<def>            strip whitespace at sides\n"
+         "      $lpad(v,n)<def>               fill left side up to n chars\n"
+         "      $rpad(v,n)<def>               fill right side up to n chars\n"
+         "      $isset(v)<def>                tells 1 if v is set, else 0\n"
+         "      $strlen(v)<def>               number of characters in v\n"
+         "\n"
+         "      $examples:\n"
+         "      #sfk -var setvar a=\"foo bar\"\n"
+         "         #+echo \"##(substr(a,4,3))\"<def>    - prints 'bar'\n"
+         "         #+echo \"##(strpos(a,'bar'))\"<def>  - prints '4'\n"
+         "      #sfk -var setvar a=\"foo\"\n"
+         "         #+echo \"##(lpad(a,6))\"<def>        - prints '   foo'\n"
          "\n"
          );
    }
@@ -17714,4 +17755,1068 @@ printx(
    }
 }
 
+int copyFormStr(char *pszDst, int nMaxDst, char *pszSrc, int nSrcLen, uint nflags=0);
+
+// variable functions.
+// input must be writeable.
+char *SFKMapArgs::eval(char *pszExp)
+{
+   char szLitBuf[200];
+   szLitBuf[0] = '\0';
+
+   // parse generics
+   char *pfunc = pszExp;
+   char *pnext = pfunc;
+   for (; *pnext!=0 && *pnext!='('; pnext++);
+   if (!*pnext) return 0;
+   *pnext++ = '\0';
+
+   char *pvarn = pnext;
+   for (; *pnext!=0 && *pnext!=',' && *pnext!=')'; pnext++);
+   if (!*pnext) return 0;
+   char csep = *pnext; // , or )
+   *pnext++ = '\0';
+
+   char *pvart = (char*)sfkgetvar(pvarn, 0);
+   if (!pvart && strcmp(pfunc,"isset"))
+   {
+      pinf("undefined variable: %s\n", pvarn);
+      return 0;
+   }
+
+   char *pres = 0;
+   int   nres = 0;
+
+   // isset(foo)
+   if (!strcmp(pfunc, "isset"))
+   {
+      if (csep != ')') return 0;
+
+      if (pvart)
+         strcpy(szClEvalOut, "1");
+      else
+         strcpy(szClEvalOut, "0");
+
+      return szClEvalOut;
+      // NO fall through
+   }
+
+   // strlen(foo)
+   if (!strcmp(pfunc, "strlen"))
+   {
+      if (csep != ')') return 0;
+
+      snprintf(szClEvalOut, sizeof(szClEvalOut)-10,
+         "%lu", (unsigned long)strlen(pvart));
+
+      return szClEvalOut;
+      // NO fall through
+   }
+
+   // strpos(foo,'bar')
+   // strpos(foo,-spat '\x20')
+   // strpos(foo,-case 'Bar')
+   if (   !strcmp(pfunc, "strpos")
+       || !strcmp(pfunc, "strrpos")
+      )
+   {
+      if (csep != ',') return 0;
+
+      bool bcase = 0;
+      bool bspat = 0;
+      bool brite = strcmp(pfunc, "strrpos") ? 0 : 1;
+
+      while (1)
+      {
+         if (strBegins(pnext, "-case ")) {
+            pnext += 6;
+            bcase = 1;
+         }
+         else if (strBegins(pnext, "-spat ")) {
+            pnext += 6;
+            bspat = 1;
+         }
+         else break;
+      }
+
+      char *plitst = pnext;
+      if (*plitst!='\'') return 0;
+      plitst++;
+      pnext = plitst;
+      for (; *pnext!=0 && *pnext!='\''; pnext++);
+      if (!*pnext) return 0;
+      *pnext++ = '\0';
+      if (*pnext!=')') return 0;
+
+      if (bspat) {
+         if (copyFormStr(szLitBuf, sizeof(szLitBuf)-10, plitst, strlen(plitst), 2))
+            return 0;
+         plitst = szLitBuf;
+      }
+
+      int ipos   = -1;
+      char *phit = 0;
+      if (brite)
+         phit = bcase ? mystrrstr(pvart, plitst) : mystrristr(pvart, plitst);
+      else
+         phit = bcase ? strstr(pvart, plitst) : mystrstri(pvart, plitst);
+      if (phit)
+          ipos   = (int)(phit-pvart);
+      sprintf(szClEvalOut, "%d", ipos);
+      return szClEvalOut;
+   }
+
+   // substr(foo,3[,2])
+   if (!strcmp(pfunc, "substr"))
+   {
+      if (csep != ',') return 0;
+
+      char *poff = pnext;
+      for (; *pnext!=0 && *pnext!=',' && *pnext!=')'; pnext++);
+      if (!*pnext) return 0;
+      bool ball = (*pnext==')' ? 1 : 0);
+      *pnext++ = '\0';
+      int ioff = atoi(poff);
+      int ntxt = strlen(pvart);
+      if (ioff < 0) {
+         ioff = ntxt + ioff;
+         if (ioff < 0) return 0;
+      }
+      if (ioff > ntxt) return 0;
+
+      int ilen = 0;
+      if (ball) {
+         ilen = strlen(pvart+ioff);
+      } else {
+         char *plen = pnext;
+         for (; *pnext!=0 && *pnext!=')'; pnext++);
+         if (!*pnext) return 0;
+         *pnext++ = '\0';
+         ilen = atoi(plen);
+      }
+
+      nres = ilen;
+      pres = pvart+ioff;
+      // fall through
+   }
+
+   // trim(foo)
+   // ltrim(foo)
+   // rtrim(foo)
+   if (   !strcmp(pfunc, "trim")
+       || !strcmp(pfunc, "ltrim")
+       || !strcmp(pfunc, "rtrim")
+      )
+   {
+      if (csep != ')') return 0;
+
+      bool bleft = 0;
+      bool brite = 0;
+      if (!strcmp(pfunc, "trim"))
+         { bleft = brite = 1; }
+      if (!strcmp(pfunc, "ltrim"))
+         { bleft = 1; }
+      if (!strcmp(pfunc, "rtrim"))
+         { brite = 1; }
+
+      char *pleft = pvart;
+      char *prite = pvart+strlen(pvart);
+
+      if (bleft) {
+         while (*pleft==' ' || *pleft=='\t')
+            pleft++;
+      }
+      if (brite) {
+         while (prite > pleft && (prite[-1]== ' ' || prite[-1]=='\t'))
+            prite--;
+      }
+
+      nres = prite - pleft;
+      pres = pleft;
+      // fall through
+   }
+
+   // lpad(foo,10)   "    text"
+   // rpad(foo,10)   "text    "
+   if (   !strcmp(pfunc, "lpad")
+       || !strcmp(pfunc, "rpad")
+      )
+   {
+      bool brite = strcmp(pfunc, "rpad") ? 0 : 1;
+      if (csep != ',') return 0;
+
+      char *ppad = pnext;
+      for (; *pnext!=0 && *pnext!=')'; pnext++);
+      if (!*pnext) return 0;
+      *pnext++ = '\0';
+      int ipad = atoi(ppad);
+      int apad = abs(ipad);
+      int ntxt = strlen(pvart);
+      int idif = apad - ntxt;
+
+      if (idif <= 0) {
+         // nothing to pad
+         nres = ntxt;
+         pres = pvart;
+      } else {
+         // must fit into szClEvalOut
+         if (ipad+10 > sizeof(szClEvalOut)) return 0;
+   
+         char *pdst = szClEvalOut;
+         if (!brite) {
+            for (; idif > 0; idif--)
+               *pdst++ = ' ';
+         }
+         while (*pvart)
+            *pdst++ = *pvart++;
+         if (brite) {
+            for (; idif > 0; idif--)
+               *pdst++ = ' ';
+         }
+         *pdst = '\0';
+
+         return szClEvalOut;
+         // NO fall through
+      }
+   }
+
+   if (pres)
+   {
+      if (nres+10 < sizeof(szClEvalOut)) {
+         if (nres) memcpy(szClEvalOut, pres, nres);
+         szClEvalOut[nres] = '\0';
+         return szClEvalOut;
+      }
+      pszClEvalOut = new char[nres+4];
+      if (!pszClEvalOut) return 0;
+      if (nres) memcpy(pszClEvalOut, pres, nres);
+      pszClEvalOut[nres] = '\0';
+      return pszClEvalOut;
+   }
+
+   return 0;
+}
+
 #endif // USE_SFK_BASE
+
+#endif // SFK_JUST_OSE
+
+
+
+
+
+
+
+// --- xfind ose begin ---
+#if defined(SFK_JUST_OSE)
+
+int dumpWithContext(
+   uchar *aContext,
+   int    iCtxIdx,
+   int    iCtxUsed,
+    uchar *pHitOut,
+    int    iHitOut,
+     char *pHitAtt,  
+   uchar  *pPostCur,
+   uchar  *pPostMax,
+   bool    bFirstHit,
+   bool    bToOutFile,
+   bool    bIsBinaryData,
+   bool    bMatchedUntilEOL
+ )
+{
+   if (!aContext || iCtxIdx<0 || iCtxUsed<0)
+      return -1;
+   if (!pHitOut  || iHitOut<0)
+      return -2;
+   if (!pPostCur || !pPostMax || pPostCur>pPostMax)
+      return -3+perr("int. #215141,%p,%p,%d",pPostCur,pPostMax,(int)(pPostMax-pPostCur));
+   int  imaxbuf = iGlblDumpBufSize / 2;
+   int  imaxcur = imaxbuf - 2000;
+   char *atxt = (char*)pGlblDumpBuf;
+   char *aatt = (char*)pGlblDumpBuf + imaxbuf;
+   int  itxt = 0;
+   pGlblDumpBuf[iGlblDumpBufSize] = 1;
+   int iPostMax = (int)(pPostMax - pPostCur);
+   int iPre  = mymin(iCtxUsed, cs.contextchars);
+   int iCur  = mymin(iHitOut , imaxcur);
+   int iPost = mymin(iPostMax, cs.contextchars);
+   if (bIsBinaryData) {
+      if (cs.contextlines < 2) {
+         iPre   = mymin(iPre , 40);
+         iPost  = mymin(iPost, 40);
+      } else {
+         int iLines = cs.contextlines-1;
+         iPre   = mymin(iPre , 40+80*iLines);
+         iPost  = mymin(iPost, 40+80*iLines);
+      }
+   }
+   bool bToBinary = chain.coldata && chain.colbinary;
+   if (cs.contextlines > 0)
+   {
+      int iPreLines = 0;
+      int ictx = iCtxIdx;
+      for (int i=0; i<iPre; i++) {
+         ictx = ictx ? ictx-1 : SFK_CTX_MASK;
+         char c = aContext[ictx & SFK_CTX_MASK];
+         if (c == '\n') {
+            iPreLines++;
+            if (iPreLines >= cs.contextlines) {
+               ictx = (ictx+1) & SFK_CTX_MASK;
+               iPre = i;
+               break;
+            }
+         }
+      }
+      for (int i=0; i<iPre; i++) {
+         atxt[itxt] = aContext[ictx & SFK_CTX_MASK];
+         aatt[itxt] = ' ';
+         ictx = (ictx+1) & SFK_CTX_MASK;
+         itxt++;
+      }
+   }
+   char c = '\0';
+   for (int i=0; i<iCur; i++)
+   {
+      c = (char)pHitOut[i];
+      atxt[itxt] = c;
+      char catt = pHitAtt ? pHitAtt[i] : 'i';
+      if (cs.contextlines > 0 && catt == ' ')
+         catt = 'a';
+      aatt[itxt] = catt;
+      itxt++;
+   }
+   if (iCur < iHitOut)
+   {
+      strcpy(atxt+itxt, "[...]");
+      strcpy(aatt+itxt, "wwwww");
+      itxt += 5;
+   }
+   int iPostConsumed = 0;
+   if (cs.contextlines > 0)
+   {
+      int iPostLines = bMatchedUntilEOL ? 1 : 0;
+      if (iPostLines < cs.contextlines)
+      for (int i=0; i<iPost; i++)
+      {
+         c = (char)pPostCur[i];
+         atxt[itxt] = c;
+         aatt[itxt] = ' ';
+         itxt++;
+         iPostConsumed++;
+         if (c == '\n') {
+            iPostLines++;
+            if (iPostLines >= cs.contextlines)
+               break;
+         }
+      }
+   }
+   if (c != '\n') {
+      atxt[itxt] = '\n';
+      aatt[itxt] = ' ';
+      itxt++;
+   }
+   atxt[itxt] = '\0';
+   aatt[itxt] = '\0';
+   if (pGlblDumpBuf[iGlblDumpBufSize] != 1) {
+      perr("buffer overflow in dumpcontext (%d,%d)", pGlblDumpBuf[imaxbuf],imaxbuf);
+      pGlblDumpBuf[iGlblDumpBufSize] = '\0';
+   }
+   char *pSrcCur = (char*)atxt;
+   char *pSrcMax = (char*)atxt+itxt;
+   char *pAttCur = (char*)aatt;
+   int  iMaxCols = MAX_LINE_LEN;
+   if (cs.indent > 0 && cs.indent + 32 < nGlblConsColumns)
+        iMaxCols = (nGlblConsColumns - 2) - cs.indent;
+   uchar cSrc = 0;
+   char  cAtt = 0;
+   while (pSrcCur < pSrcMax)
+   {
+      int iDst = 0;
+      if (cs.indent > 0 && cs.indent < 20)
+      {
+         memset(szLineBuf, ' ', cs.indent);
+         memset(szAttrBuf, ' ', cs.indent);
+         iDst = cs.indent;
+      }
+      while (pSrcCur < pSrcMax && iDst<iMaxCols)
+      {
+         cSrc = (uchar)*pSrcCur++;
+         cAtt = *pAttCur++;
+         #ifdef _WIN32
+         if (cSrc == '\r')
+            continue;
+         #endif
+         if (cSrc == 0) {
+            if (!cs.placeholder)
+               continue;
+            cSrc = cs.placeholder;
+            cAtt = 't';
+         }
+         if (cs.rawterm==0 && cSrc<32) {
+            switch (cSrc) {
+               case '\t':
+               case '\n':
+               case 0x1B:
+                  break;
+               default:
+                  if (!cs.placeholder)
+                     continue;
+                  cSrc = cs.placeholder;
+                  cAtt = 't';
+                  break;
+            }
+         }
+         if (cSrc == '\n')
+            break;
+         szLineBuf[iDst] = (char)cSrc;
+         szAttrBuf[iDst] = (char)cAtt;
+         iDst++;
+      }
+      szLineBuf[iDst] = '\0';
+      szAttrBuf[iDst] = '\0';
+      if (!cs.justrc)
+      {
+         if (bToOutFile) {
+            if (cSrc=='\n') strcat(szLineBuf, cs.szeol);
+            if (addToExtractOutFile((uchar*)szLineBuf, strlen(szLineBuf)))
+               return -4;
+         } else if (bToBinary) {
+            if (cSrc=='\n') strcat(szLineBuf, cs.szeol);
+            if (chain.addBinary((uchar*)szLineBuf, strlen(szLineBuf)))
+               return -5;
+         }
+         else
+         if (cs.litattr) {
+            if (chain.coldata)
+               chain.addLine(szLineBuf, szAttrBuf, 0);
+            else
+               printColorText(szLineBuf, szAttrBuf, 1);
+         } else {
+            chain.print("%s", szLineBuf);
+         }
+      }
+   }
+   return iPostConsumed;
+}
+void dumpPure(uchar *pDstText, int nDstLen, char *pDstAttr)
+{
+   char *pDmpCur = (char*)pDstText;
+   char *pDmpMax = (char*)pDmpCur+nDstLen;
+   char *pAttCur = (char*)pDstAttr; 
+   int   iMaxAtt = pAttCur ? strlen(pAttCur) : 0;
+   while (pDmpCur < pDmpMax)
+   {
+      int iCopy = pDmpMax - pDmpCur;
+      if (iCopy > MAX_LINE_LEN)
+          iCopy = MAX_LINE_LEN;
+      int iDst=0;
+      for (int iSrc=0; iSrc<iCopy; iSrc++)
+      {
+         uchar cSrc = (uchar)pDmpCur[iSrc];
+         char  cAtt = (iSrc < iMaxAtt) ? pAttCur[iSrc] : ' ';
+         #ifdef _WIN32
+         if (cSrc == '\r')
+            continue;
+         #endif
+         if (cSrc == 0) {
+            if (cs.placeholder)
+               cSrc = cs.placeholder;
+            else
+               continue;
+         }
+         if (cs.rawterm==0 && cSrc<32) {
+            switch (cSrc) {
+               case '\t':
+               case '\n':
+               case 0x1B:
+                  break;
+               default:
+                  if (cs.placeholder) {
+                     cSrc = cs.placeholder;
+                     break;
+                  }
+                  continue;
+            }
+         }
+         szLineBuf[iDst] = (char)cSrc;
+         szAttrBuf[iDst] = (char)cAtt;
+         iDst++;
+      }
+      szLineBuf[iDst] = '\0';
+      szAttrBuf[iDst] = '\0';
+      if (iDst > 0) {
+         if (cs.litattr) {
+            if (chain.coldata)
+               chain.addLine(szLineBuf, szAttrBuf, 1);
+            else
+               printColorText(szLineBuf, szAttrBuf, 0);
+         } else {
+            chain.print("%s", szLineBuf);
+         }
+      }
+      pDmpCur += iCopy;
+   }
+}
+static uchar aContext[SFK_CTX_SIZE+100];
+int execXFind(Coi *pcoi, char *pszOptOutFile)
+{__
+   int  iRC = 0;
+   num  nFileSize     = 0;
+   num  nInBufferSize = cs.recordsize * 2;
+   uchar *pInBuffer   = 0;
+   num  nInputUsed    = 0;
+   num  nTotalRead    = 0;
+   num  nTotalWritten = 0;
+   bool bFileChanged  = 0;
+   num  nFound        = 0;
+   num  nBlockStartInFile = 0;
+   int  nPerc=0, nLastPerc=0;
+   bool bTold=0, bFileTold=0, bFirstHit=1;
+   num  nLastDumpOff  = -1;
+   int  iContextIdx   =  0;
+   int  iContextUsed  =  0;
+   bool bRepDump      = cs.repDump;
+   bool bWithContext  = cs.contextlines || cs.indent || cs.szseparator[0];
+   bool bSameLengthAndFile = 0;
+   bool bRepeatRun    = 0;
+   char szFileHead[SFK_MAX_PATH+100];
+   mclear(aContext);
+   szFileHead[0] = '\0';
+   if (cs.usefilehead) {
+      char *pmask = cs.szfilehead;
+      if (cs.filesChg==0) {
+         if (!strncmp(pmask, "\r\n", 2)) pmask += 2;
+         else
+         if (pmask[0] == '\n') pmask++;
+      }
+      snprintf(szFileHead, sizeof(szFileHead)-10, pmask, pcoi->name());
+   } else {
+      bFileTold=1;
+   }
+   if (cs.debug)
+      printf("execReplaceNew: %s\n", pcoi->name());
+   if (cs.recordsize < 1)
+      return 9+perr("wrong recordsize value");
+   char *pszFile = pcoi->name();
+   if (!pcoi->existsFile())
+      return 1+pwarn("unable to read: %s - skipping\n", pszFile);
+   {
+      nFileSize = pcoi->getSize();
+      if (nFileSize < 0)
+         return 1+pwarn("unable to read: %s - skipping\n", pszFile);
+      if (nFileSize == 0) {
+         if (!cs.xtext && !cs.hexfind)
+            pwarn("empty file: %s - skipping\n", pszFile);
+         return 0;
+      }
+   }
+   FileInfo finf;
+   if (finf.init(pszFile, 56)) return 9;
+   Coi *pOutCoi = 0;
+   for (int i5=0; i5<nBinRepExp; i5++)
+   {
+      apRepFlags[i5] &= (0xFF ^ (1 << 1));
+      apRepOffs[i5] = 0;
+   }
+   uchar abProbe[10];
+   uchar abStartMap[256+10];
+   mclear(abStartMap);
+   {
+      mclear(abProbe);
+      if (cs.xpat)
+      {
+         if (!apRepObj)
+            return 9+perr("int. #2168312");
+         for (int iPat=0; iPat<nBinRepExp; iPat++)
+         {
+            SFKMatch *pObj = &apRepObj[iPat];
+            for (int iCode=0; iCode<256; iCode++)
+               abStartMap[iCode] |= pObj->aClHeadMatch[iCode];
+         }
+      }
+      else
+      {
+         for (int iCode=0; iCode<256; iCode++)
+         {
+            abProbe[0] = (uchar)iCode;
+            for (int iPat=0; iPat<nBinRepExp; iPat++)
+            {
+               uchar *pPatText = apRepSrcExp[iPat];
+               int   nPatLen   = apRepSrcLen[iPat];
+               int   nPatFlags = apRepFlags[iPat];
+               bool   bUseCase = (nPatFlags & (1<<2)) ? 1 : 0;
+               if (nPatLen < 1) continue;
+               #ifdef WITH_CASE_XNN
+               uchar *pBit     = apRepSrcBit[iPat];
+               if (!sfkmemcmp2(pPatText, abProbe, 1, bUseCase, pBit))
+                  abStartMap[iCode & 0xFFU] = 1;
+               #else
+               if (!sfkmemcmp(pPatText, abProbe, 1, bUseCase))
+                  abStartMap[iCode & 0xFFU] = 1;
+               #endif
+            }
+         }
+      }
+   }
+   info.setStatus(cs.extract ? "read":"repl", pcoi->name());
+ do 
+ {
+   if (!(pInBuffer = new uchar[nInBufferSize+1024]))
+      { perr("out of memory, record size too large"); iRC=1; break; }
+   memset(pInBuffer, 0, nInBufferSize+1024);
+   {
+      if (pcoi->open("rb")) {
+         perr("cannot open: %s - skipping", pszFile);
+         iRC=1;
+         break;
+      }
+   }
+   int  bStart      = 1;
+   int  bLineStart  = 1;
+   int  bLastRecord = 0;
+   bool bStop = false;
+   bool bEOF = false;
+   bool bBinaryFile = 0;
+   bool bAllThrough = 0;
+   while (!bStop)
+   {
+      if (userInterrupt())
+         { pinf("interrupted by user.\n"); iRC=2; break; }
+      if (nInputUsed <= 0 && bEOF)
+         break;
+      num nInBufferRemainSpace = nInBufferSize - nInputUsed;
+      if (nInBufferRemainSpace > 0)
+      {
+         num nBlockSize = pcoi->read(pInBuffer+nInputUsed, nInBufferRemainSpace);
+         if (nBlockSize <= 0)
+            bEOF = true;
+         else {
+            nInputUsed += nBlockSize;
+            nTotalRead += nBlockSize;
+            if (bStart && !bBinaryFile) {
+               if (memchr(pInBuffer, '\0', nInputUsed))
+                  bBinaryFile = 1;
+            }
+         }
+      }
+      bLastRecord = (nTotalRead >= nFileSize) ? 1 : 0;
+      num nSearchRange = cs.recordsize;
+      if (nInputUsed < nSearchRange)
+         nSearchRange  = nInputUsed;
+      uchar *pCopyFrom = pInBuffer; 
+      uchar *pSrcCur   = pInBuffer; 
+      uchar *pSrcMax   = pInBuffer + nSearchRange;
+      uchar *pEndMax   = pInBuffer + nInputUsed;
+      bool bCurrentBlockChanged = 0;
+      while (!bStop && (pSrcCur <= pSrcMax))
+      {
+         if (pSrcCur == pSrcMax) {
+            if (!bLastRecord)
+               break;
+         }
+         else
+         if (!bStart) {
+            if (!abStartMap[*pSrcCur]) {
+               if (bRepDump) {
+                  aContext[iContextIdx & SFK_CTX_MASK] = *pSrcCur;
+                  iContextIdx = (iContextIdx+1) & SFK_CTX_MASK;
+                  iContextUsed++;
+               }
+               pSrcCur++;
+               continue;
+            }
+         }
+         num nCmpRemain = pEndMax - pSrcCur;
+         int iStepped = 0;
+         if (!bAllThrough)
+         for (int iPat=0; iPat<nBinRepExp; iPat++)
+         {
+            int nPatLen = apRepSrcLen[iPat];
+            if (cs.xpat == 0 && nPatLen > nCmpRemain)
+               continue;
+            uchar *pPatText = apRepSrcExp[iPat];
+            int   nPatFlags = apRepFlags[iPat];
+            bool   bUseCase = (nPatFlags & (1<<2)) ? 1 : 0;
+            bool   bMatch   = false;
+            #ifdef WITH_CASE_XNN
+            uchar *pBit     = apRepSrcBit[iPat];
+            #endif
+            int voff=0;
+            if (cs.xpat) {
+               SFKMatch *pObj = &apRepObj[iPat];
+               nPatLen = nCmpRemain;
+               if (!pObj->matches(pSrcCur, nPatLen, bStart, &bLineStart, bLastRecord)) {
+                  bMatch = true; 
+                  voff=pObj->viewOffset();
+               }
+            }
+            else
+            {
+               #ifdef WITH_CASE_XNN
+               if (!sfkmemcmp2(pSrcCur, pPatText, nPatLen, bUseCase, pBit))
+                  bMatch = true;
+               #else
+               if (!sfkmemcmp(pSrcCur, pPatText, nPatLen, bUseCase))
+                  bMatch = true;
+               #endif
+            }
+            if (!bMatch)
+               continue;
+            uchar *pDstText = apRepDstExp[iPat];
+            int   nDstLen   = apRepDstLen[iPat];
+            char  *pDstAttr = 0;
+            bool bOutHeadDone = 0;
+            bool bOutDataDone = 0;
+            bool bDumpToText  = (cs.dumpfrom==0 && (nPatFlags & (1 << 3))!=0);
+            bool bDumpSingle  = (nPatFlags & (1 << 4)) ? 1 : 0;
+            bool bDumpFromText= cs.dumpboth || (bDumpToText ? 0 : 1);
+            if (cs.xpat)
+            {
+               SFKMatch *pObj = &apRepObj[iPat];
+               int iSubRC = 0;
+               if (!(pDstText = pObj->renderOutput(nDstLen, iSubRC)))
+                  { bStop=true; iRC=9; break; }
+               pDstAttr = pObj->outAttr();
+               if (!cs.sim && cs.extract) {
+                  if (pszOptOutFile) {
+                     if (provideExtractOutFile(pszOptOutFile))
+                        { bStop=true; iRC=9; break; }
+                     if (!bFileTold) {
+                        bFileTold = 1;
+                        if (!cs.nonames)
+                           addToExtractOutFile((uchar*)szFileHead, strlen(szFileHead));
+                     }
+                     bOutHeadDone = 1;
+                     if (bWithContext) {
+                        if (!bFirstHit && cs.szseparator[0])
+                           addToExtractOutFile((uchar*)cs.szseparator, strlen(cs.szseparator));
+                     } else {
+                        if (addToExtractOutFile(pDstText, nDstLen))
+                           { bStop=true; iRC=9; break; }
+                        bOutDataDone = 1;
+                     }
+                  } else if (chain.coldata) {
+                     if (chain.colbinary) {
+                        if (!bFileTold) {
+                           bFileTold = 1;
+                           if (!cs.nonames)
+                              chain.addBinary((uchar*)szFileHead, strlen(szFileHead));
+                        }
+                        bOutHeadDone = 1;
+                        if (bWithContext) {
+                           if (!bFirstHit && cs.szseparator[0])
+                              chain.addBinary((uchar*)cs.szseparator, strlen(cs.szseparator));
+                        } else {
+                           if (chain.addBinary(pDstText, nDstLen))
+                              { bStop=true; iRC=9; break; }
+                           bOutDataDone = 1;
+                        }
+                     }
+                  }
+               }
+            }
+            if ((cs.verbose >= 2) && nDstLen && !(nPatFlags & (1<<0))) {
+               printf("replace @%s: %.*s -> %.*s\n", numtohex(nBlockStartInFile+(pSrcCur-pInBuffer),10),
+                  nPatLen, pSrcCur, nDstLen, pDstText);
+            }
+            if (cs.useJustNames) 
+            {
+               if (!bFileTold) {
+                  bFileTold = 1;
+                  if (chain.coldata) {
+                     sprintf(szLineBuf3, "%s", pcoi->name());
+                     setattr(szAttrBuf3, 'f', strlen(szLineBuf3)+2, MAX_LINE_LEN);
+                     chain.addLine(szLineBuf3, szAttrBuf3);
+                  } else {
+                     info.print("%s\n", pcoi->name());
+                  }
+               }
+            }
+            else
+            if (cs.xtext && !bOutDataDone)
+            {
+               if (!bOutHeadDone)
+               {
+                  if (!bFileTold) {
+                     bFileTold = 1;
+                     if (!cs.justrc) chain.print('f', 4, "%s", szFileHead);
+                  }
+                  if (!bFirstHit && cs.szseparator[0]) {
+                     if (!cs.justrc) chain.print('t', 4, "%s", cs.szseparator);
+                  }
+               }
+               if (bWithContext)
+               {
+                  int iPostConsumed = dumpWithContext(
+                     aContext,iContextIdx,iContextUsed,
+                     pDstText,nDstLen,pDstAttr,
+                     pSrcCur+nPatLen,pEndMax,
+                     bFirstHit,
+                     pszOptOutFile ? 1 : 0,
+                     bBinaryFile,
+                     bLineStart
+                     );
+                  if (iPostConsumed < 0)
+                     { perr("error %d on output", iPostConsumed); bStop=true; iRC=9; break; }
+                  iContextIdx = 0;
+                  iContextUsed = 0;
+                  nPatLen += iPostConsumed;
+               }
+               else
+               {
+                  dumpPure(pDstText,nDstLen,pDstAttr);
+               }
+               bFirstHit = 0;
+            }
+            else
+            if ((bRepDump || bDumpSingle) && !bOutDataDone)
+            {
+               num nctx    = nGlblDumpCtx;
+               num nAlign0 = bGlblHexDumpWide ? 16 :  8;
+               num nAlign1 = bGlblHexDumpWide ? 32+nctx : 16+nctx;
+               num nAlign2 = bGlblHexDumpWide ? 48+nctx : 18+nctx;
+               num nHitRaw = pSrcCur + voff - pInBuffer;
+               num nHitLow = nHitRaw;
+               num nHitHi  = nHitLow + (nPatLen-voff);
+               if (nHitLow > nAlign1) nHitLow -= nAlign1; else nHitLow = 0;
+               if (nHitHi  < (nInputUsed - nAlign2)) {
+                  nHitHi += nAlign2;
+                  num nDiff = nHitHi-nHitLow;
+                  nDiff = ((num)(nDiff / nAlign0)) * nAlign0; 
+                  nHitHi = nHitLow + nDiff;
+               } else {
+                  nHitHi = nInputUsed;
+               }
+               num nDumpLen = nHitHi-nHitLow;
+               if (cs.maxdump)
+                  nDumpLen = mymin(cs.maxdump,nDumpLen);
+               {
+                  int iHiOff=-1,iHiLen=-1;
+                  iHiOff = (int)(nHitRaw - nHitLow);
+                  iHiLen = nPatLen-voff;
+                  num nListOff = nBlockStartInFile + nHitLow;
+                  if (bTold) { bTold=0; finf.printBlankLine(78); }
+                  char szOffBuf1[60]; szOffBuf1[0] = '\0';
+                  char szOffBuf5[60]; szOffBuf5[0] = '\0';
+                  char szOffBuf2[60]; szOffBuf2[0] = '\0';
+                  char szOffBuf3[60]; szOffBuf3[0] = '\0';
+                  char szOffBuf6[60]; szOffBuf6[0] = '\0';
+                  num nAbsOff = nHitRaw + nBlockStartInFile;
+                  if (!cs.fullheader) {
+                     sprintf(szOffBuf1, "at offset 0x%s", numtohex(nAbsOff));
+                  } else {
+                     sprintf(szOffBuf1, "at offset %s", numtoa(nAbsOff));
+                     sprintf(szOffBuf5, "0x%s", numtohex(nAbsOff));
+                  }
+                  if (cs.reldist && nLastDumpOff >= 0) {
+                     int nRelOff = (int)(nAbsOff - nLastDumpOff);
+                     sprintf(szOffBuf2, " reldist %u (0x%x)", nRelOff, nRelOff);
+                  }
+                  if (cs.xpat != 0 && nPatLen > 0) {
+                     if (nPatFlags & (1 << 3)) {
+                        int nLenDiff = nDstLen-nPatLen;
+                        sprintf(szOffBuf3, " len %u/%u/%+d", nPatLen, nDstLen, nLenDiff);
+                        sprintf(szOffBuf6, " 0x%s", numtohex(nPatLen));
+                     } else {
+                        sprintf(szOffBuf3, " len %u", nPatLen);
+                        sprintf(szOffBuf6, " 0x%s", numtohex(nPatLen));
+                     }
+                  }
+                  if (!cs.nonames && !cs.justrc) {
+                     if (cs.astext) {
+                        if (!bFileTold) {
+                           bFileTold = 1;
+                           chain.print('f', 1, "%s",pszFile);
+                        }
+                     } else {
+                        if (!cs.fullheader)
+                           chain.print('f', 1, "%s : %s %s%s%s",pszFile,(cs.sim||cs.extract)?"hit":"change",
+                              szOffBuf1,szOffBuf2,szOffBuf3);
+                        else
+                           chain.print('f', 1, "%s : %s %s%s%s (%s%s)",pszFile,(cs.sim||cs.extract)?"hit":"change",
+                              szOffBuf1,szOffBuf2,szOffBuf3,szOffBuf5,szOffBuf6);
+                     }
+                  }
+                  if (cs.astext) {
+                     if (!cs.justrc) {
+                        if (cs.dumpboth) {
+                           chain.print(' ', 4, "FROM: %.*s", (int)iHiLen, pInBuffer+nHitRaw);
+                           chain.print('a', 4, "TO  : %.*s", (int)nDstLen, pDstText);
+                        } else {
+                           if (bDumpFromText)
+                              chain.print("%s%.*s", cs.noind ? "" : "   ", (int)iHiLen, pInBuffer+nHitRaw);
+                           if (cs.dumpboth)
+                              dumpFromToSeparator();
+                           if (bDumpToText)
+                              chain.print("%s%.*s", cs.noind ? "" : "   ", (int)nDstLen, pDstText);
+                        }
+                     }
+                  } else if (!cs.justrc) {
+                     if (bDumpFromText)
+                        execHexdump(0, pInBuffer+nHitLow, nDumpLen, iHiOff, iHiLen, 0, nListOff);
+                     if (cs.dumpboth)
+                        dumpFromToSeparator();
+                     if (bDumpToText)
+                        dumpRepOut(pInBuffer+nHitLow, nDumpLen, iHiOff, iHiLen, pDstText, nDstLen, nListOff);
+                  }
+                  nLastDumpOff = nAbsOff;
+               }
+            }  
+            iContextUsed = 0;
+            bFileChanged = 1;
+            nFound++;
+            apRepFlags[iPat] |= (1 << 1);
+            if (cs.extract)
+            { }
+            else
+            if (bSameLengthAndFile)
+            {
+               if (!cs.sim && !cs.extract) {
+                  if (nPatLen != nDstLen)
+                     { perr("int. #21211502"); iRC=9; bStop=true; break; }
+                  memcpy(pSrcCur, pDstText, nPatLen);
+                  bCurrentBlockChanged = 1;
+               }
+            }
+            if (nPatLen == 0)
+               continue;
+            if (pSrcCur[nPatLen-1] == '\n')
+               bLineStart = 1;
+            else
+               bLineStart = 0;
+            iStepped += nPatLen;
+            pSrcCur  += nPatLen;
+            pCopyFrom = pSrcCur;
+            bStart = 0;
+            if (cs.useFirstHitOnly) {
+               if (!cs.sim && !cs.extract)
+                  bAllThrough=true; 
+               else
+                  bStop=true;
+            }
+            break;
+         }  
+         bStart = 0;
+         if (pSrcCur == pSrcMax)
+            break;   
+         if (!iStepped)
+         {
+            if (*pSrcCur == '\n')
+               bLineStart = 1;
+            else
+               bLineStart = 0;
+            if (bRepDump) {
+               aContext[iContextIdx & SFK_CTX_MASK] = *pSrcCur;
+               iContextIdx = (iContextIdx+1) & SFK_CTX_MASK;
+               iContextUsed++;
+            }
+            pSrcCur++;
+         }
+      }  
+      pCopyFrom = pSrcCur;
+      num nConsumed = pCopyFrom - pInBuffer;
+      num nRemain   = nInputUsed - nConsumed;
+      if (nRemain < 0)
+         { perr("int. #21211501 (%ld)", (long)nRemain); iRC=9; bStop=true; break; }
+      if (nRemain > 0)
+         memmove(pInBuffer, pCopyFrom, nRemain); 
+      nInputUsed = nRemain;
+      nBlockStartInFile += nConsumed;
+      if (bSameLengthAndFile != 0 && cs.maxscan != 0 && nBlockStartInFile >= cs.maxscan)
+         { bStop=true; break; }
+      nPerc = (int)(nTotalRead * 100 / (nFileSize ? nFileSize : 1));
+      if (   cs.quiet==0 && pcoi->isHttp()==0
+          && nPerc!=nLastPerc && finf.timeToTell()!=0
+         )
+      {
+         info.print("%02d%% %s%s : %s %s \r",nPerc,finf.prefix(),finf.shortName(),numtoa(nFound),
+            (cs.sim||cs.extract)?"hits":"changes");
+         bTold = 1;
+         nLastPerc = nPerc;
+      }
+   }  
+   cs.files++; 
+ }
+ while (0); 
+   if (pcoi->isFileOpen())
+      pcoi->close();
+   if (bFileChanged && !bRepeatRun) {
+      if (chain.colfiles)
+         chain.addFile(pOutCoi ? *pOutCoi : *pcoi);
+      cs.filesChg++;
+   }
+   if (pInBuffer)
+      delete [] pInBuffer;
+   if (bTold)
+      info.clear();
+   perFileExtractOutCleanup();
+   int nTotPats = nBinRepExp;
+   int nHitPats = 0;
+   for (int i2=0; i2<nBinRepExp; i2++)
+   {
+      if (apRepFlags[i2] & (1 << 1))
+         nHitPats++;
+      else
+      if (cs.verbose)
+      {
+         if (cs.xpat) {
+            info.print("%s : pattern not found: %s\n",pszFile,apRepObj[i2].fromText());
+         }
+         else
+         {
+            bool bPlainText = apRepFlags[i2] & (1 << 0) ? 0 : 1;
+            uchar *pBin = apRepSrcExp[i2];
+            if (bPlainText)
+               for (int i9=0; i9<apRepSrcLen[i2]; i9++)
+                  if (!isprint(pBin[i9]))
+                     bPlainText=0;
+            info.print("%s : pattern not found: ",pszFile);
+            if (!bPlainText) {
+               info.print("hex ");
+               for (int i9=0; i9<apRepSrcLen[i2]; i9++)
+                  info.print("%02X",pBin[i9]);
+               info.print(" text ");
+               for (int i9=0; i9<apRepSrcLen[i2]; i9++)
+                  if (isprint(pBin[i9]))
+                     info.print("%c",pBin[i9]);
+                  else
+                     info.print(".");
+               info.print("\n");
+            } else {
+               info.print("%s\n",pBin);
+            }
+         }
+      }
+   }
+   int nNotPats = nTotPats - nHitPats;
+   if (cs.dostat || cs.verbose)
+   {
+      if (!nHitPats && !cs.verbose)
+      { } 
+      else
+      {
+         cchar *pszPre   = finf.prefix();
+         cchar *pszShort = finf.shortName();
+         num   nSizeDiff = nTotalWritten - nFileSize;
+         const char *pszSign = (nSizeDiff > 0) ? "+":"";
+         char szNumBuf[100];
+         info.print("[%s/%d/%d] %s%s",  
+            numtoa(nFound,3,szNumBuf),
+            (int)nHitPats,(int)nNotPats,pszPre,pszShort);
+         if (   !cs.extract && !cs.xtext && !cs.hexfind
+             && !bSameLengthAndFile && nSizeDiff)
+         {
+            setTextColor(nGlblTimeColor);
+            info.print("   %s%s bytes\n",pszSign,numtoa(nSizeDiff));
+            setTextColor(-1);
+         } else {
+            info.print("   \n");
+         }
+      }
+   }
+   return iRC;
+}
+#endif // defined(SFK_JUST_OSE)
+// --- xfind ose end ---
+

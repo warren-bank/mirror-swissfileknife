@@ -7,6 +7,34 @@
    The whole source code was created with Depeche View Professional,
    the world's fastest text file browser and editor.
 
+   1.8.2
+   Initial Release:
+   -  rel: 15.11.2016, Major Update
+   -  sum: sfk xfind, a powerful text search tool for the command line,
+           is now open source. compared to grep it features an easy, 
+           human readable pattern syntax based on the english language.
+           improved scripting by string functions like substr
+           and direct access to environment variables.
+   -  chg: sfk OSE: xfind, xhexfind, xtext and extract
+           are now open source.
+   -  add: sfk variable functions like #(substr(a,3,2)).
+           type "sfk help var" for details.
+   -  add: access to environment variables like #(env.varname).
+           type "sfk help var" for details.
+   -  chg: error text "incomplete replacement pattern"
+           changed to "imcomplete search pattern"
+           with improved correction hints.
+   -  fix: ftpserver with -usedir: empty listing in ftp clients
+           like cyberduck due to invalid rwx attribute infos.
+   -  fix: sfk ose compile: sfkbase.hpp did not define SFKOSE.
+   -  doc: xfind, xtext help reworked. improved "see also" list,
+           -enddir before -text is not needed, 
+           -text is listed before -pat.
+   -  doc: marked find, hexfind as basic commands
+           with reference to xfind, xhexfind.
+   internal:
+   -  add: list option -tomake enabling run (q)targ.
+
    1.8.1
    Revision 4:
    -  rel: 19.10.2016, Minor Update
@@ -323,205 +351,13 @@
    Initial Release:
    -  add: option -yes+ and -clog command log support
            with optional SFK_CMD_LOG configuration.
-
-   1.7.5
-   Revision 4:
-   -  add: sfk xe: support for md5gento -arc to create md5
-           checksum lists of archive file contents.
-   Revision 3:
-   -  add: udpdump: "received" info now also prints sender port.
-   -  add: udpsend: may now use host:port instead of "host port".
-   -  add: udpsend -listen: option -replyport to specify
-           a fixed reply port instead of system allocated one.
-   -  fix: sfk filter x.txt ... -write told "0 changes"
-           with -toiso, -toutf, -trim although changes exist,
-           not writing any changes unless -writeall was used.
-   -  add: md5 chaining support: sfk select ... +md5
-   -  add: sfk xhexfind, xreplace: length info of found hits
-           in case of hex dump output
-   -  add: sfk filefind: options to list sizes in kb, mb.
-   -  add: sfk list: option -skiplate=n to select all files
-           except the newest n files, for cleanups.
-   -  add: sfk replace with same length replacements:
-           option -maxscan=n to stop searching for patterns
-           at a given maximum position per file.
-   -  fix: sfk select ... +md5gento out.md5 didn't work.
-   Revision 2:
-   -  add: toclip: options to strip line end, trim text.
-   -  fix: ping on a list of ip's displayed wrong confirmation text.
-   -  fix: sfk tail on long files took very long.
-   -  add: sfk windows: print time to terminal when pressing enter,
-           for example with tail -f, to mark a place in output.
-   Initial Release:
-   -  add: sfk ping, ping multiple ip addresses in one go.
-           experimental, requires admin rights.
-   -  add: xe and base/xd: option -xarc to read contents of
-           any zip file regardless of file extension.
-           reads the first bytes of every file and therefore
-           performs slower then -arc.
-   -  add: extended list of well known archive file extensions
-           by open office file formats:
-           .odt .ods .odp .odg .odc .ott .ots .otp .otg
-   -  add: xmlform: support for multiple tags in one line,
-           may now read xml files or stdin directly.
-   -  add: automatic ip expansion now also supports .n.n
-           e.g. sfk sft .1.29 may connect to 192.168.1.29
-   -  add: sfk wget: display of msec used for download.
-   -  add: sfk today: alias of sfk list -today
-   -  add: sfk big: alias of sfk list -big
-   -  add: sfk time -from n to recalc a unix time value
-   -  add: sfk dirtime, list file system time of a folder
-           without it's sub folders or contained files
-   -  add: sfk touch under windows: option -copyctom to copy
-           creation into modification time instead of using
-           current time.
-   -  add: sfk windows: touch -date year 2038 support.
-   -  fix: diverse 32/64 bit time related fixes.
-   internal:
-   Revision 4:
-   -  fix: udpcast no double prefix, prefix extended.
-   Revision 3:
-   -  add: udpcast to forward udp messages.
-
-   1.7.4
-   Revision 5:
-   -  fix: sfk ftpserv: DELE on readonly file did not return
-           an error, now it returns code 550.
-   -  chg: sfk ftpserv: if rename fails it now returns 550
-           instead of 500.
-   -  fix: sfk for macintosh failed to run due to dlsym issues.
-   Revision 4:
-   -  fix: sfk head -follow did not work.
-   -  chg: help text: separated head and tail documentation.
-   -  add: the free sfk for ARM linux is now a Base+XD edition
-           with xfind, xtext and extract command.
-   Revision 2:
-   -  fix: sfk httpserv security: buffer overflow allowing remote
-           code execution when sending large request.
-   -  fix: sfk httpserv security: with option -deep it did not
-           detect path traversal when requesting "/file.txt".
-   -  fix: sfk httpserv security: accepted files for upload
-           without option -rw.
-   -  add: httpserv, ftpserv help text: reworked notice that
-           these are only for trusted environments.
-   -  fix: sfk help select: wrong example text.
-   Initial Release:
-   -  CHG: CHANGE OF DEFAULT OUTPUT OF: xhexfind, hexfind
-           if a full /fromtext/totext/ pattern is given
-           the hexdump output now shows the replaced
-           output text by default. use option -dumpfrom
-           to display the fromtext (search hits) in output.
-   -  CHG: CHANGE OF SIMULATION OUTPUT OF: replace, xreplace, extract
-           1. simulation mode now shows a hex dump by default
-              instead of just statistics. use -nodump for
-              the old behaviour.
-           2. hex dump output now shows the replaced
-              output text by default. use option -dumpfrom
-              to display only the fromtext (search hits)
-              as it was default before.
-           option -yes behaves as always, not showing hexdumps
-           but only statistics of the number of changes.
-   -  CHG: STRICTER PATTERN PARSING WITH: replace, extract, xreplace
-           a pattern like /from/to with missing "/" separator
-           at the end now stops with an error.
-   -  add: sfk rename, a flexible mass file rename
-           using rename expressions.
-   -  add: sfk xmlform: simple xml line text reformatter
-           for convenient viewing.
-   -  fix: linux default color with dark background:
-           theme:black no longer uses grey but now the
-           terminal default color by sequence {ESC}[0;0m
-   -  fix: linux: gindex, iname used wrong home folder.
-   -  fix: gindex: if user supplied relative dir names
-           subsequent iname produced wrong results.
-   -  fix: gindex: options -size or -qarc caused listing
-           of wrong folders.
-   -  add: snapto: option -raw to collect faster.
-   -  chg: hexdump output colors reworked.
-   -  chg: sfk cmd: now uses the actual current sfk binary name
-           instead of just "sfk" for the created command
-   -  fix: fromclip: crash on missing data.
-   -  add: base+xd: demo of xreplace allowing output preview
-           without writing to files.
-   -  chg: sfk replace: unreadable files which are skipped
-           no longer produce an error but a warning.
-   -  chg: small syntax change: sfk chars now only accepts
-           char or chars as command name.
-   -  chg: help text: full rework of web references.
-   internal:
-   Revision 4:
-   -  chg: sfk replace pro -fast option reactivated.
-   -  fix: -fast caused no search results with replace.
-   Initial Release:
-   -  add: gindex, list: option -abs to force absolute names
-   -  add: zip dir listing: rc info on message "cannot read"
-   -  chg: reworked knxdump output
-
-   1.7.3
-   Initial Release:
-   -  CHG: SYNTAX CHANGE: by default, sfk xfind and xtext now show
-           complete text lines containing one or more search hits.
-           add option -pure to show only search hits as before,
-           or change defaults by an environment variable
-           SET SFK_CONFIG=xfind:pure,xtext:pure
-           sfk xtext is now an alias of xfind -nobin,
-           i.e. it searches only in text files.
-   -  CHG: COMPLETE REWORK OF SEARCH FUNCTIONS:
-           xfind, xtext, xhexfind, extract.
-           output may look completely different now.
-           many new options. reworked help text.
-           CHECK YOUR BATCH FILES if the new outputs
-           still work for you as expected.
-   -  CHG: SYNTAX CHANGE: sfk find: patterns starting with "-"
-           are no longer supported directly but must be prefixed by "\".
-           options can now be given after search patterns.
-   -  add: sfk csvtotab to convert comma separated data.
-   -  add: sfk tabtocsv to convert tab separated data to csv.
-   -  add: sfk filter -trim, -ltrim, -rtrim to remove blanks
-           and tab characters at start or end of lines.
-   -  add: sfk fromclip: option -ltrim and alias "sfk lclip"
-           to remove blanks and tabs at start of lines.
-   -  add: sfk xfind/xex -bylinelist to specify a simplified
-           list of search terms without any totext.
-   -  add: sfk extract is now available in base/xd.
-   -  add: sfk view: improved help if dview is not found.
-   -  add: xed, xex: direct reading of zip file entries.
-   -  chg: sfk view: now passing through all non sfk options
-           and parameters as is, like "-tab 8".
-           parms with blanks are enquoted.
-   -  chg: source code cleanup: removed patch.cpp and inst.cpp,
-           integrated them into sfknet.cpp and renamed this to
-           sfkext.cpp for easy compilation.
-   -  chg: default replace color with theme:white now purple
-           on windows and linux.
-   -  chg: sfk xex -showparts now shows only part numbers
-           then stops processing.
-   -  chg: xreplace: improved [lstart] handling.
-   -  fix: xreplace: character classes at start of pattern
-           with a zero min length like in "/[0.100 white]foo/"
-           did not work in case of zero length hit.
-   -  chg: hexfind: now using wide hexdump.
-   -  chg: xed, xex: without any patterns it now passes through
-           input unmodified.
-   -  fix: filter +xed produced LF i/o CRLF under windows.
-   -  fix: (x)hexfind: did not show absolute offset in file.
-   -  fix: (x)hexfind: ignored windows console width.
-   -  fix: extract, xfind -tofile: -nofile was ignored.
-   -  add: sfk cmd n, print a command n from the help text
-           as one long line.
-   -  add: web reference info per command.
-   internal:
-   -  fix: zip sub entry direct read: missing set of size
-           and time after provideInput.
-   -  fix: line start state after [lend] match.
-   -  del: unused internal command freezeto.
 */
 
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.8.1" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "4"
+#define SFK_VERSION  "1.8.2" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1170,6 +1006,8 @@ struct tm *mygmtime(mytime_t *ptime)
  #define getcwd _getcwd
  #define rmdir  _rmdir
 #endif
+
+bool bGlblGotToMake = 0;
 
 uchar *newBitField(int iTotalEntries)
 {
@@ -1981,35 +1819,6 @@ void setxelike(bool byes) { gs.xelike = cs.xelike = byes; }
 
 #if (defined(WITH_TCP) || defined(VFILENET) || defined(DV_TCP))
 
-#ifdef SFK_DL_GETHOST
-// workaround for wrong clib gethostbyname.
-#include <dlfcn.h>
-struct hostent *dlgethost(const char *name)
-{
-   static struct hostent ohost;
-
-   typedef struct hostent *(*gethost_t)(const char *name);
-
-   void *plib = dlopen("libc.so.6", RTLD_LAZY);
-   if (!plib)
-      return 0;
-
-   gethost_t pgethost = (gethost_t)dlsym(plib, "gethostbyname");
-   if (!pgethost)
-      { dlclose(plib); return 0; }
-
-   struct hostent *phost = pgethost(name);
-   if (!phost)
-      { dlclose(plib); return 0; }
-
-   memcpy(&ohost, phost, sizeof(ohost));
-
-   dlclose(plib);
-
-   return &ohost;
-}
-#endif // SFK_DL_GETHOST
-
 // IN: flags bit 0: include port
 //           bit 1: triple digits
 char *ipAsString(struct sockaddr_in *pAddr, char *pszBuffer, int iBufferSize, uint uiFlags=0)
@@ -2377,11 +2186,6 @@ int setaddr(struct sockaddr_in *paddr, char *pstr, bool bsilent)
    {
       // must be a hostname
       struct hostent *pTarget = gethostbyname(pstr);
-
-      #ifdef SFK_DL_GETHOST
-      if (!pTarget)
-         pTarget = dlgethost(pstr); // sfk180
-      #endif // SFK_DL_GETHOST
 
       if (pTarget == NULL) {
          if (!bsilent)
@@ -12138,6 +11942,7 @@ int FileSet::checkConsistency()
             continue;
          perr("wrong -dir and -file sequence (%d)\n", i2);
          pinf("specify -dir ... before -file\n");
+         pinf("or type a single filename as first parameter.\n");
          lRC = 9;
       }
    }
@@ -13716,6 +13521,25 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
       cs.tomask = argv[iOpt];
       cs.tomaskfile = 1;
+      return true;
+   }
+   if (!strcmp(psz1, "-tomake")) {
+      // this option takes another parameter!
+      ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
+      bGlblGotToMake = 1;
+      char *pszMask = argv[iOpt];
+      // auto extend .mp4 as $path\$base.mp4
+      if (!strchr(pszMask, glblRunChar) && !isalnum(pszMask[0])
+          && !strchr(pszMask, glblPathChar)) {
+         snprintf(cs.tomake,sizeof(cs.tomake)-10,
+            "%cpath%c%cbase%s",
+            glblRunChar, glblPathChar, glblRunChar, pszMask);
+         if (cs.verbose)
+            printf("[extended -tomake as %s]\n", cs.tomake);
+      } else {
+         strcopy(cs.tomake, pszMask);
+      }
       return true;
    }
    if (!strcmp(psz1, "-tmpdir")) {
@@ -19090,7 +18914,8 @@ enum eRunExpressions
    erun_base      = 4,
    erun_ext       = 5,
    erun_since     = 6,
-   erun_text      = 7
+   erun_text      = 7,
+   erun_targ      = 8   // sfk182 with -tomake only
 };
 
 const char *apRunTokens[] =
@@ -19103,7 +18928,9 @@ const char *apRunTokens[] =
    "base"    , ""      , "purebase"    , "pbase"  , "quotbase"     , "qbase"   , "",
    "ext"     , ""      , "pureext"     , "pext"   , "quotext"      , "qext"    , "",
    "since"   , ""      , "puresince"   , "psince" , "quotsince"    , "qsince"  , "",
-   "text"    , ""       , ""            , ""       , "quottext"     , "qtext"   , "",
+   "text"    , ""      , ""            , ""       , "quottext"     , "qtext"   , "",
+   // sfk182 only with -tomake;
+   "targ"    , ""      , ""            , ""       , "quottarg"     , "qtarg"   , "",
 };
 
 #define RUNTPR 7  // run tokens per row
@@ -19113,8 +18940,12 @@ const char *apRunTokens[] =
 bool anyFileInRunCmd(char *pszCmd)
 {
    char abToken[100];
+   // starts at RUNPTR as path is not a single file
    for (uint i=RUNTPR; i<(sizeof(apRunTokens)/sizeof(apRunTokens[0])); i++)
    {
+      // skip (q)targ if no -tomake
+      if (!bGlblGotToMake && !strcmp(apRunTokens[i], "targ"))
+         { i += (RUNTPR-1); continue; }
       strcpy(&abToken[1], apRunTokens[i]);
       if (!abToken[1]) continue;
       abToken[0] = '#';
@@ -19134,6 +18965,9 @@ bool anyTextInRunCmd(char *pszCmd)
    char abToken[100];
    for (uint i=RUNTPR*7; i<(sizeof(apRunTokens)/sizeof(apRunTokens[0])); i++)
    {
+      // skip (q)targ if no -tomake
+      if (!bGlblGotToMake && !strcmp(apRunTokens[i], "targ"))
+         { i += (RUNTPR-1); continue; }
       strcpy(&abToken[1], apRunTokens[i]);
       if (!abToken[1]) continue;
       abToken[0] = '#';
@@ -19155,6 +18989,9 @@ int onRunExpression(char *psz1, int &lExpLength, bool &bquot, bool &btext)
    uint nRows = nPtrs / RUNTPR;
    for (uint irow=0; irow<nRows; irow++)
    {
+      // skip (q)targ if no -tomake
+      if (!bGlblGotToMake && !strcmp(apRunTokens[irow * RUNTPR], "targ"))
+         continue;
       for (uint icol=0; icol < RUNTPR; icol++)
       {
          strcpy(&abToken[1], apRunTokens[irow * RUNTPR +icol]);
@@ -19254,6 +19091,7 @@ int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd)
    bool bUsingText = false;
 
    char *psz1 = pDstBuf;
+   int   iexp = 0;
 
    #ifdef SFK_BOTH_RUNCHARS
    while (*psz1!=0 && *psz1!='#' && *psz1!='$') psz1++;
@@ -19271,7 +19109,7 @@ int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd)
          psz1++;
       }
       else
-      switch (onRunExpression(psz1, lTokenLen, bQuoted, bUsingText))
+      switch (iexp = onRunExpression(psz1, lTokenLen, bQuoted, bUsingText))
       {
          case erun_file:
          case erun_text:
@@ -19427,13 +19265,20 @@ int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd)
          }
 
          case erun_since:
+         case erun_targ:
          {
             // replace absolute sincedir filename incl. root
             char *pszSinceFile = pcoi->ref(1); // returns null if none
             if (!pszSinceFile) {
-               perr("missing reference name, cannot replace \"since\" token.\n");
-               pinf("-sincedir/add/diff may not have been specified before.\n");
-               pinf("a previous command may not support passing -since names.\n");
+               if (iexp == erun_targ) {
+                  perr("missing reference name, cannot replace \"targ\" token.\n");
+                  pinf("-tomake may not have been specified before.\n");
+                  pinf("a previous command may not support passing -tomake names.\n");
+               } else {
+                  perr("missing reference name, cannot replace \"since\" token.\n");
+                  pinf("-sincedir/add/diff may not have been specified before.\n");
+                  pinf("a previous command may not support passing -since names.\n");
+               }
                return 9;
             }
             memset(szLineBuf, 0, sizeof(szLineBuf));
@@ -22135,10 +21980,20 @@ int execFTPList(char *pszName)
    return 0;
 }
 
-int execVDirFTPList(char *pszName)
+// .
+int execVDirFTPList(char *pszName, char *pszDstName)
 {__
-   num nFTimePre = 0;
-   num nFileSize = 0;
+   // chg: sfk182: do not return NULL time/size with existing virtual folders
+   //      as this always shows the 1970 date.
+   int bIsDir     = 0;
+   int bCanRead   = 0;
+   int bCanWrite  = 0;
+   num  nFTimePre = 0;
+   num  nFileSize = 0;
+   if (getFileStat(pszDstName, bIsDir, bCanRead, bCanWrite, nFTimePre, nFileSize)) {
+      nFTimePre   = 0;
+      nFileSize   = 0;
+   }
 
    char szrwx[20];
    mclear(szrwx);
@@ -22176,14 +22031,11 @@ int execVDirFTPList(char *pszName)
       strcpy(abTimeStamp, "Dez 31 9999");
    }
 
-   // FTPClient::list parses binary info, and hands to Coi
-   bool cType = 'd';
-
-   // CHG: since 1.6.7 list real attributes
-   sprintf(szLineBuf2, "%c%s%c 1 ftp ftp %s %s ",
+   // fix: sfk182: -usedir virtual folders wrong rwx attributes,
+   //      always followed by 'd' causing clients to show nothing.
+   sprintf(szLineBuf2, "%c%s 1 ftp ftp %s %s ",
       'd',
       szrwx, // bGlblFTPReadWrite ? "rw-rw-rw-":"r--r--r--",
-      cType,
       numtoa_blank(nFileSize), abTimeStamp);
 
    char *pszTail = strrchr(pszName, glblPathChar);
@@ -22320,6 +22172,10 @@ int cbSFKMatchOutFN(int iFunction, char *pMask, int *pIOMaskLen, uchar **ppOut, 
  
    return 0;
 }
+
+#ifdef SFKOSE
+int execXFind(Coi *pcoi, char *pszOptOutFile);
+#endif
 
 int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
 {__ _p("sf.excfile")
@@ -22633,6 +22489,37 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
       }
    }
 
+   // -tomake specified?
+   if (cs.tomake[0])
+   {
+      int nrc = renderOutMask(szOutNameBuf, pcoi, cs.tomake, cs.curcmd); // -to generic
+      // rc 0: done with replacements
+      // rc 1: done without replacements
+      if (nrc >= 9) return nrc;
+      if (nrc > 0)
+      {
+         perr("-tomake target name did not contain any patterns.\n");
+         printx("<time>note : add or insert words like <run>file, <run>relfile, <run>base etc.<def>\n");
+         printx("<time>note : type \"sfk run\" for a list of possible patterns.\n");
+         return 9;
+      }
+      // check if output file exists or is older
+      FileStat ofsSrc, ofsDst;
+      if (ofsSrc.readFrom(pcoi->name()))
+         return 9;
+      if (!ofsDst.readFrom(szOutNameBuf)) {
+         bool bSrcIsOlder = 0;
+         bool bSameIOS = cs.syncOlder ? 0 : 1;  // same if older src?
+         if (!ofsSrc.differs(ofsDst, bSameIOS, &bSrcIsOlder)) {
+            if (cs.verbose)
+               pinf("[nopre] skip: %s\n", pcoi->name());
+            return 0;
+         }
+      }
+      // tomake check passed: register as reference
+      pcoi->setRef(szOutNameBuf);
+   }
+
    // -to specified? if so, build output filename.
    char *pszOutFile = 0;
    if (cs.tomask)
@@ -22700,6 +22587,9 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
       #ifndef SFKXEREP
       case eFunc_ReplaceFix: return execReplaceFix(pcoi);    break;
       case eFunc_ReplaceVar: return execReplaceVar(pcoi);    break;
+      #endif
+      #ifdef SFKOSE
+      case eFunc_XFind     : return execXFind(pcoi, pszOutFile);   break;
       #endif
       case eFunc_Filter    : return execFilter(pcoi, 0, 0, -1, pszOutFile); break;
       case eFunc_Delete    : return execDelFile(pszFile);    break;
@@ -23208,6 +23098,9 @@ void globalExtractOutCleanup( )
    }
 }
 
+class SFKMatch;
+SFKMatch *apRepObj  = 0;
+
 int  nGlblDumpCtx   = 0; // additional context bytes for dump
 int  nBinRepExp     = 0; // no. of replacement expressions
 uchar **apRepSrcExp = 0; // source expressions
@@ -23237,6 +23130,11 @@ void copySFKMatchOptions()
 }
 #include "sfkmatch.cpp" // sfkmatch.mod
 #endif // USE_SFK_BASE
+
+#ifdef SFKOSE
+   #define SFK_JUST_OSE
+   #include "sfkext.cpp"
+#endif
 
 int execReplaceFix(Coi *pcoi)
 {__
@@ -29134,7 +29032,7 @@ public:
 
 private:
    int   addTrailSlash     (char *pszBuf, int iMaxBuf);
-   void  stripTrailSlash   (char *pszPath);
+   void  stripTrailSlash   (char *pszPath, char cSlash);
    char *notslash          (char *pszPath);
    int   setLocalWalkDir   (char *pszPath);
    bool  pathTraversal     (char *pszPath, bool bDeep);
@@ -29157,6 +29055,7 @@ char
    szClAbsPathBuf [800],
    szClSysPathBuf [800],
    szClTmpPathBuf [800],
+   szClTmpPathBuf2[800],
    szClCmpPathBuf [800],
    szClFixSysDir  [800],
    szClRenameFrom [800],
@@ -29525,9 +29424,9 @@ int FTPServer::addTrailSlash(char *pszBuf, int iMaxBuf)
    return 0;
 }
 
-void FTPServer::stripTrailSlash(char *pszPath)
+void FTPServer::stripTrailSlash(char *pszPath, char cSlash)
 {
-   char *psz = strrchr(pszPath, '/');
+   char *psz = strrchr(pszPath, cSlash);
    if (psz!=0 && psz>pszPath)
       *psz = '\0';
 }
@@ -30666,10 +30565,13 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                hGlblTCPOutSocket = hClData;
                for (int i=0; i<iClVDir; i++) {
                   char *pvdir = aClVDirSrc[i];
+                  char *pvdst = aClVDirDst[i];
                   if (*pvdir!='/') continue;
                   strcopy(szClTmpPathBuf, pvdir+1);
-                  stripTrailSlash(szClTmpPathBuf);
-                  execVDirFTPList(szClTmpPathBuf);
+                  stripTrailSlash(szClTmpPathBuf, '/'); // vdir
+                  strcopy(szClTmpPathBuf2, pvdst);
+                  stripTrailSlash(szClTmpPathBuf2, glblPathChar); // sysdir
+                  execVDirFTPList(szClTmpPathBuf, szClTmpPathBuf2);
                }
             } else {
                // real file list
@@ -31077,10 +30979,13 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                hGlblTCPOutSocket = hClClient;
                for (int i=0; i<iClVDir; i++) {
                   char *pvdir = aClVDirSrc[i];
+                  char *pvdst = aClVDirDst[i];
                   if (*pvdir!='/') continue;
                   strcopy(szClTmpPathBuf, pvdir+1);
-                  stripTrailSlash(szClTmpPathBuf);
-                  execVDirFTPList(szClTmpPathBuf);
+                  stripTrailSlash(szClTmpPathBuf, '/'); // vdir
+                  strcopy(szClTmpPathBuf2, pvdst);
+                  stripTrailSlash(szClTmpPathBuf2, glblPathChar); // sysdir
+                  execVDirFTPList(szClTmpPathBuf, szClTmpPathBuf2);
                }
             } else {
                // real file list
@@ -31319,11 +31224,16 @@ char *TestDB::getValue(char *pszInKey) {
 extern int patchMain(int argc, char *argv[], int noffs);
 #endif // USE_SFK_BASE
 
+// flags: bit 0: convert also \, to ,
+// flags: bit 1: ignore cs.spat, assume -spat and -strict
 int copyFormStr(char *pszDst, int nMaxDst, char *pszSrc, int nSrcLen, uint nflags)
 {
-   // flags: bit 0: convert also \, to ,
-
    // printf("copyFormStr \"%.*s\" %d spat=%d\n",(int)nSrcLen,pszSrc,nflags,cs.spat);
+
+   int ispat = cs.spat;
+
+   if (nflags & 2)
+       ispat = 1;
 
    char *pszin = pszSrc;
    int iout = 0;
@@ -31332,7 +31242,7 @@ int copyFormStr(char *pszDst, int nMaxDst, char *pszSrc, int nSrcLen, uint nflag
       if (iout >= nMaxDst-10)
          return 9+perr("format string too long: \"%s\"\n", pszSrc);
 
-      if (!cs.spat)
+      if (!ispat)
          { } // skip all following interpretations
       else
       if (nSrcLen>=4 && !strncmp(pszin, "\\x", 2)) {
@@ -31345,7 +31255,7 @@ int copyFormStr(char *pszDst, int nMaxDst, char *pszSrc, int nSrcLen, uint nflag
          continue;
       }
       else
-      if (cs.spat==2 && nSrcLen>=5 && !strncmp(pszin, "\\d", 2)) {
+      if (ispat==2 && nSrcLen>=5 && !strncmp(pszin, "\\d", 2)) {
          // \dnnn - any character with decimal code nnn
          pszin+=2; nSrcLen-=2; // skip \d
          int ndec = getThreeDigitDec(pszin);
@@ -31374,6 +31284,8 @@ int copyFormStr(char *pszDst, int nMaxDst, char *pszSrc, int nSrcLen, uint nflag
          if ((nflags & 1) && !strncmp(pszin, "\\,", 2))
             { pszDst[iout++] = ','; pszin+=2; nSrcLen-=2; continue; }
       }
+      if ((nflags & 2) != 0 && *pszin == '\\')
+         return 9+perr("invalid slash pattern: %s\n", pszin);
       pszDst[iout++] = *pszin++;
       nSrcLen--;
    }
@@ -31630,8 +31542,9 @@ int reperr(cchar *pszMsg, cchar *pszObj, char *pszRepFile, int nLine)
       else
          pinf("use -text ... or -binary ...\n");
    }
-   pinf("patterns must look like \"/from/to/\" or \"_from_to_\"\n");
+   pinf("patterns must look like \"/from/to/\" or \"_from_to_\",\n");
    pinf("with three times a delimiter character like / or _\n");
+   pinf("to search text \"%s\" try \"/%s/\" or \"_%s_\" etc.\n", pszObj, pszObj, pszObj);
    pinf("if \"%s\" is a single filename, specify it as first parameter.\n", pszObj);
    if (strchr(pszObj, '\"')) {
       pinf("surround your expression by two double quotes \"\n");
@@ -36844,23 +36757,12 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
    return 0;
 }
 
-class SFKMapArgs
-{
-public:
-      SFKMapArgs  (char *pszCmd, int argc, char *argv[], int iDir);
-     ~SFKMapArgs  ( );
-
-   bool  bdead;
-
-   StringTable  clDynaStrings;
-   char       **clargx;
-   bool         bDoneAlloc;
-};
-
 SFKMapArgs::SFKMapArgs(char *pszCmd, int argc, char *argv[], int iDir)
 {
    bdead = 0;
    bDoneAlloc = 0;
+   pszClEvalOut = 0;
+   szClEvalOut[0] = '\0';
 
    bool bUseVars = gs.usevars;
 
@@ -36897,8 +36799,8 @@ SFKMapArgs::SFKMapArgs(char *pszCmd, int argc, char *argv[], int iDir)
       if (!strstr(ptok, "#("))
          continue;
  
-      char szName[100];
-      mclear(szName);
+      char szVarExp[200];
+      mclear(szVarExp);
  
       int nvar = glblSFKVar.size();
  
@@ -36925,36 +36827,76 @@ SFKMapArgs::SFKMapArgs(char *pszCmd, int argc, char *argv[], int iDir)
          }
          char *pskip = psrccur;
          psrccur += 2;
-
-         // get full var name "foo"
-         char *pnamcur = psrccur;
-         while (*psrccur!=0 && *psrccur!=')')
-            psrccur++;
-         if (*psrccur!=')')
-            { perr("wrong syntax: %s",ptok); bdead=1; return; }
-         int inamlen = psrccur-pnamcur;
-         if (inamlen+10 > sizeof(szName))
-            { perr("name too long: %s",pnamcur); bdead=1; return; }
-         memcpy(szName, pnamcur, inamlen);
-         szName[inamlen]='\0';
-         psrccur++; // skip ")"
-
-         // replace #(foo) by value
-         char *pval = (char*)sfkgetvar(szName, 0);
-         if (!pval) {
-            // sfk181 sfk filter: skip #(10.10col1)
-            if (cs.relaxedvar) {
-               // we found #( at pskip, copy that
-               psrccur = pskip;
-               *pdstcur++ = *psrccur++;
-               *pdstcur++ = *psrccur++;
+         char *pexpstart = psrccur;
+         // .
+         // search end of #(strpos(foo,'bar'))
+         int inest = 1;
+         bool blit = 0, bisfn = 0;
+         char *pend = psrccur;
+         for (; *pend; pend++) 
+         {
+            if (*pend == '\'' && blit == 0) {
+               blit = 1;
                continue;
             }
-            printx("<err>error: undefined variable:<def> #%s<def>\n",szName);
-            pinf("[nopre] within parameters: %s\n",ptok);
-            bdead=1;
-            return;
+            if (blit == 1) {
+               if (*pend != '\'')
+                  continue;
+               blit = 0;
+               continue;
+            }
+            if (*pend == '(') {
+               inest++;
+               bisfn = 1;
+               continue;
+            }
+            if (*pend == ')') {
+               inest--;
+               if (inest == 0)
+                  break;
+            }
          }
+         if (*pend != ')')
+            { perr("wrong syntax: %s",ptok); bdead=1; return; }
+         psrccur = pend;
+         int iexplen = psrccur-pexpstart;
+         if (iexplen+10 > sizeof(szVarExp))
+            { perr("variable expression too long: %s",pexpstart); bdead=1; return; }
+         memcpy(szVarExp, pexpstart, iexplen);
+         szVarExp[iexplen]='\0';
+         psrccur++; // skip ")"
+
+         char *pval = 0;
+
+         if (bisfn)
+         {
+            // evaluate #(strpos(foo,'bar'))
+            int isubrc=0;
+            if ((pval = eval(szVarExp)) == 0) {
+               perr("invalid variable expression: %s",ptok);
+               bdead=1; return; 
+            }
+         }
+         else
+         {
+            // replace #(foo) by value
+            pval = (char*)sfkgetvar(szVarExp, 0);
+            if (!pval) {
+               // sfk181 sfk filter: skip #(10.10col1)
+               if (cs.relaxedvar) {
+                  // we found #( at pskip, copy that
+                  psrccur = pskip;
+                  *pdstcur++ = *psrccur++;
+                  *pdstcur++ = *psrccur++;
+                  continue;
+               }
+               printx("<err>error: undefined variable:<def> #%s<def>\n",szVarExp);
+               pinf("[nopre] within parameters: %s\n",ptok);
+               bdead=1;
+               return;
+            }
+         }
+
          int nval = strlen(pval);
          if (pdstcur+nval+10 >= pdstmax) {
             perr("output string too long while changing: %s",ptok);
@@ -36988,6 +36930,9 @@ SFKMapArgs::SFKMapArgs(char *pszCmd, int argc, char *argv[], int iDir)
 
 SFKMapArgs::~SFKMapArgs( )
 {
+   if (pszClEvalOut)
+      delete [] pszClEvalOut;
+
    if (!bDoneAlloc)
       return;
 
@@ -38855,7 +38800,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   $options\n"
              "      -quiet    redirect terminal output to >nul\n"
-             "      -cmd=x    replace $cmd at line starts by x\n"
+             "      -cmd=x    replace $$cmd at line starts by x\n"
              "\n"
              "   $examples\n"
              "      #sfk proctest myscript.txt\n"
@@ -38931,23 +38876,60 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             { perr("missing :test"); break; }
          pTestName = pCur+6;
          if (nextLine(&pCur)) break;
-         if (!strBegins(pCur, ":from"))
-            { perr("missing :from after :test"); break; }
-         if (nextLine(&pCur)) break;
-         pFromStart = pCur;
-         pFromEnd = strstr(pCur, "\n:command");
-         if (!pFromEnd)
-            { perr("missing :command after :from"); break; }
-         pFromEnd++;
-         pCommand = pFromEnd;
+         if (strBegins(pCur, ":command")) {
+            pFromStart=str("");
+            pFromEnd=pFromStart;
+            pCommand = pCur;
+         } else {
+            if (!strBegins(pCur, ":from"))
+               { perr("missing :from after :test"); break; }
+            if (nextLine(&pCur)) break;
+            pFromStart = pCur;
+            pFromEnd = strstr(pCur, "\n:command");
+            if (!pFromEnd)
+               { perr("missing :command after :from"); break; }
+            pFromEnd++;
+            pCommand = pFromEnd;
+         }
          if (nextLine(&pCommand)) break;
          while (*pCommand == '#')
             nextLine(&pCommand);
          // auto convert ./sfk to target system
          if (pCommand[0]=='.' && pCommand[1]==glblWrongPChar)
             pCommand[1]=glblPathChar;
-         pToStart = pCommand;
-         if (nextLine(&pToStart)) break;
+         // join multi line command
+         char *pToStart=0;
+         {
+            char *psrc=pCommand;
+            char *pdst=psrc;
+            bool bstop=0;
+            bool bquotes=0;
+            while (*psrc)
+            {
+               // copy until line end
+               while (*psrc!=0 && *psrc!='\r' && *psrc!='\n') {
+                  if (*psrc=='\"') bquotes ^= 0x1;
+                  *pdst++ = *psrc++;
+               }
+               // skip line end
+               while (*psrc=='\r' || *psrc=='\n')
+                  psrc++;
+               // check for command end
+               if (*psrc==0 || *psrc==':')
+                  break;
+               // skip next line white start
+               if (!isspace(*psrc)) {
+                  perr(":command must be a single command: %s\n",pCommand);
+                  bstop=1; break; }
+               // insert blank if not quoted
+               if (!bquotes)
+                  *pdst++=' ';
+               while (isspace(*psrc)) psrc++;
+            }
+            *pdst='\0';
+            pToStart=psrc;
+            if (bstop) break;
+         }
          if (!strBegins(pToStart, ":to"))
             { perr("missing :to after :command"); break; }
          if (nextLine(&pToStart)) break;
@@ -38971,12 +38953,33 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             if (saveFile(str("tmpout.txt"), (uchar*)pFromStart, pFromEnd-pFromStart))
                break;
             // replace $cmd by -cmd parameter
+            #if 1
+            {
+               char *psrccur=pCommand;
+               char *psrcmax=psrccur+strlen(psrccur);
+               char *pdstcur=szLineBuf2;
+               char *pdstmax=pdstcur+MAX_LINE_LEN;
+               while (psrccur<psrcmax && pdstcur+100<pdstmax) {
+                  if (!strncmp(psrccur, "$cmd ", 5)) {
+                     memcpy(pdstcur, pszCmd, strlen(pszCmd));
+                     pdstcur+=strlen(pszCmd);
+                     psrccur+=5;
+                     *pdstcur++=' ';
+                     continue;
+                  }
+                  *pdstcur++ = *psrccur++;
+               }
+               *pdstcur='\0';
+               pCommand = szLineBuf2;
+            }
+            #else
             if (strBegins(pCommand, "$cmd ")) {
                if (!pszCmd)
                   return 9+perr("missing -cmd for $cmd entries in test script");
                snprintf(szLineBuf2, MAX_LINE_LEN, "%s %s", pszCmd, pCommand+5);
                pCommand = szLineBuf2;
             }
+            #endif
             if (!cs.quiet)
                printf("CMD : %s\n", pCommand);
             if (cs.quiet && !strstr(pCommand, " >")) {
@@ -40138,12 +40141,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       else
       printx("<help>$sfk find [opts] singledir word [word2] [word3] ... [-names]\n"
              "\n"
-             "   case-insensitive text search for text and binary files.\n");
-      printx("   if multiple words are given then only areas containing\n"
+             "   case-insensitive text search for text and binary files.\n"
+             "   if multiple words are given then only areas containing\n"
              "   all words are listed. sfk find tries to autodetect if a file\n"
              "   is text or binary, adapting the output text formatting.\n"
              "\n"
-             "   $options\n");
+             "   this is a basic command to search only static words.\n"
+             "   type sfk xfind or xtext to use wildcards and expressions.\n"
+             "\n"
+             );
+      printx("   $options\n");
       arcinf(7); // find
       printx("      -bin       do not autodetect file content, process all as binary.\n"
              "                 can also be used for floating text files (one linefeed per\n"
@@ -53133,11 +53140,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
           || strBegins(pszCmd, "hexfind") // or hexfindle
           || (bXdXe && !strcmp(pszCmd, "xrep"))
           || (bXdXe && !strcmp(pszCmd, "xreplace"))
-          || (bXdXe && !strcmp(pszCmd, "xfind"))
-          || (bXdXe && !strcmp(pszCmd, "xtext"))
-          || (bXdXe && !strcmp(pszCmd, "xhex") )
-          || (bXdXe && strBegins(pszCmd, "xhexfind")) // or xhexfindle
-          || (bXdXe && !strcmp(pszCmd, "extract"))
+          || (         !strcmp(pszCmd, "xfind"))
+          || (         !strcmp(pszCmd, "xtext"))
+          || (         !strcmp(pszCmd, "xhex") )
+          || (         strBegins(pszCmd, "xhexfind")) // or xhexfindle
+          || (         !strcmp(pszCmd, "extract"))
          )
    {
       // xhexfind: alias of xfind -arc
@@ -53166,7 +53173,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   search text or binary data in text and binary files.\n"
              "   if multiple patterns are given then they are searched\n"
-             "   independently (pattern1 OR pattern2).\n");
+             "   independently (pattern1 OR pattern2).\n"
+             "\n"
+             "   this is a basic command to search only static data.\n"
+             "   type sfk xhexfind to use wildcards and expressions.\n"
+             );
       else if (bIsFReplace)
       printx("<help>$sfk replace singleFile [-text] /src/dst/ [pattern2] [...] [-yes]\n"
              "$sfk replace -[s]pat -bin[ary] /A0A1A2/B5B6B7/ -dir anydir -file .ext1 [-yes]\n"
@@ -53180,33 +53191,40 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   search in text and binary files using wildcards * and ?\n"
              "   as well as SFK Simple Expressions in brackets [],\n"
              "   creating a hexadecimal dump output.\n"
-             #ifndef SFKPRO
-             "\n"
-             "   $license notice\n"
-             "      this command is freeware and not part of sfk ose.\n"
-             #endif
              );
       else if (bIsXFind)
-      printx("<help>$sfk xfind dirName \"/searchtext/totext/\"\n"
+      printx("<help>$sfk xfind singleDirName \"/searchtext/\"\n"
+             "$sfk xfind singleFileName \"/searchtext/\" [options]\n"
+             "$sfk xfind -dir mydir -file .cpp .txt -text \"/from/[totext/]\"\n"
              "\n"
              "   search in text and binary files using wildcards * and ?\n"
              "   as well as SFK Simple Expressions in brackets [].\n"
-             #ifndef SFKPRO
              "\n"
-             "   $license notice\n"
-             "      this command is freeware and not part of sfk ose.\n"
-             #endif
+             "   the search text must be $surrounded by a delimiter<def> like / or _\n"
+             "   or any other character not part of the search text.\n"
+             "\n"
+             "   by default, $full text lines<def> containing hits are shown.\n"
+             "   use option $-pure<def> to show only the found text.\n"
+             "\n"
+             "   use $sfk xtext<def> to search in $text files only<def>.\n"
+             "\n"
+             "   search text can be followed by a $totext<def> to reformat output.\n"
              );
       else if (bIsXText)
-      printx("<help>$sfk xtext dirName \"/searchtext/totext/\"\n"
+      printx("<help>$sfk xtext singleDirName \"/searchtext/\"\n"
+             "$sfk xtext singleFileName \"/searchtext/\" [options]\n"
+             "$sfk xtext -dir mydir -file .cpp .txt -text \"/from/[totext/]\"\n"
              "\n"
-             "   search in text files only using wildcards * and ?\n"
+             "   search $in text files only<def> using wildcards * and ?\n"
              "   as well as SFK Simple Expressions in brackets [].\n"
-             #ifndef SFKPRO
              "\n"
-             "   $license notice\n"
-             "      this command is freeware and not part of sfk ose.\n"
-             #endif
+             "   the search text must be $surrounded by a delimiter<def> like / or _\n"
+             "   or any other character not part of the search text.\n"
+             "\n"
+             "   by default, $full text lines<def> containing hits are shown.\n"
+             "   use option $-pure<def> to show only the found text.\n"
+             "\n"
+             "   search text can be followed by a $totext<def> to reformat output.\n"
              );
       else if (bIsXExtract)
       printx("<help>$sfk extract dirName \"/searchtext/totext/\"\n"
@@ -53218,11 +53236,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   - written to terminal as hex dump (default)\n"
              "   - written to file by option -tofile\n"
              "   - sent to xed by +xed command chaining\n"
-             #ifndef SFKPRO
-             "\n"
-             "   $license notice\n"
-             "      this command is freeware and not part of sfk ose.\n"
-             #endif
              );
       else if (bIsXReplace)
       printx("<help>$sfk xreplace dirName \"/searchtext/totext/\"\n"
@@ -53283,15 +53296,25 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                    case-sensitive comparison is faster then case-insensitive.\n"
              "      -nocase       force case-insensitive comparison ALSO on -bin patterns.\n"
              );
+      if (bIsReplace)
       printx("      -pat          starts a list of search or replace patterns of the form\n"
              "                    xsrcxdstx where x is the separator char, src the source\n"
              "                    to search for, and dst the destination to replace it with.\n"
              "                    e.g. /foo/bar/ or _foo_bar_ both replace foo by bar.\n"
-             "                    -pat is not required if a singleFile name is given.\n"
+             "                    -pat is not required if a single filename is given.\n"
              "      -text         the same as -pat, starting a text pattern list.\n"
              );
+      else
+      printx("      -text         starts a list of search patterns of the form /src/ or\n"   // sfk182
+             "                    /src/totext/ where / is the separator char, src the text\n"
+             "                    to search for, and totext a mask to reformat output.\n"
+             "                    any separator char can be used which is not part of the\n"
+             "                    search text, i.e. /foo/ or _foo_ both search \"foo\".\n"
+             "                    -text is not required if a single filename is given.\n"
+             "      -pat          the same as -text, starting a pattern list.\n"             // sfk182
+             );
       if (!bIsXPat)
-      printx("      -spat         the same, but also activates slash patterns like \\t .\n"
+      printx("      -spat         same as -pat but also activates slash patterns like \\t .\n"
              "                    type \"sfk help pat\" for the list of possible patterns.\n"
              "      -spats[trict] same as -spat, but stops with error on undefined\n"
              "                    slash patterns like \\m in C:\\myproj. every slash\n"
@@ -53311,9 +53334,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("                    -by(line)list does not support sfk variables.\n"
              "                    to use variables in patterns create an sfk script\n"
              "                    with patterns as parameters. \"sfk script\" for more.\n");
-      printx("      -enddir       to use -dir ... -file ... as first parameters, type:\n"
-             "                    sfk %s -dir ... -file ... -enddir -pat ...\n"
-             , pszCmd);
+   // printx("      -enddir       to use -dir ... -file ... as first parameters, type:\n" // sfk182
+   //        "                    sfk %s -dir ... -file ... -enddir -pat ...\n"
+   //        , pszCmd);
       if (bIsAnyFind || bIsXExtract)
          arcinf(10); // hexfind, xfind, xtext, xhexfind, extract
 
@@ -54266,6 +54289,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       memset(apRepSrcBit, 0, sizeof(uchar*) * nMaxExp);
       #endif
 
+      if (cs.xpat) {
+         if (!(apRepObj = new SFKMatch[nMaxExp]))
+            return 9+perr("out of memory (xpat)\n");
+         SFKMatch::setOutFNCallback(cbSFKMatchOutFN); // xrep
+      }
+
       // REMEMBER PATTERN MEMORY ON RETURN.
       // In case of parameter errors, nGlblError must be set,
       // to avoid memory leak checks on exit.
@@ -54313,9 +54342,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          char *pszfs = psz1; // from, start
          char cLimit = *pszfs++;
          if (!cLimit) break;
-         if (!*pszfs) return 9+reperr("incomplete replacement pattern", psz1, pszRepFile, nLine);
+         if (!*pszfs) return 9+reperr("incomplete search pattern", psz1, pszRepFile, nLine);
          char *pszfe = strchr(pszfs, cLimit);
-         if (!pszfe) return 9+reperr("incomplete replacement pattern", psz1, pszRepFile, nLine);
+         if (!pszfe) return 9+reperr("incomplete search pattern", psz1, pszRepFile, nLine);
          char *pszts = pszfe+1;
          char *pszte = strchr(pszts, cLimit);
          if (pszte) {
@@ -54339,7 +54368,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                // convenience preview of incomplete patterns
                // is not provided with replaceVar/replaceFix.
                if (!cs.xpat)
-                  return 9+reperr("incomplete replacement pattern", psz1, pszRepFile, nLine);
+                  return 9+reperr("incomplete search pattern", psz1, pszRepFile, nLine);
                #endif
                apRepFlags[nBinRepExp] |= (1 << 4); // forcedump
                if (!bGotDump)
@@ -54349,6 +54378,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                bIncomplete = 1;
                pszte = pszts;
                *pszte = '\0';
+               if (cs.xpat) {
+                  if (!cs.showpre) {
+                     cs.showpre = 1;
+                     printx("$[/.../totext/ is incomplete, showing part infos:]\n");
+                     printx("$Pat.  Range  MaxOut Memory FromText\n");
+                  }
+               } else {
+                  printx("$[one or more /.../totext/ are incomplete.]\n");
+                  bIncomplete = 2; // do not show "complete all"
+               }
             }
          }
          // check for garbage after closing delimiter
@@ -54396,6 +54435,30 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             return 9+reperr("pattern array overflow", pszfs, pszRepFile, nLine);
          if (nstate == 1) {
             // as text
+            if (cs.xpat)
+            {
+               int iSubRC = apRepObj[nBinRepExp].init(pszfs,pszts,cs.litattr ? SFKMATCH_WITHATTRIB : 0);
+               if (iSubRC < 9 && cs.showpre != 0)
+               {
+                  printx("%05d %06d %06d %06d #%s\n",
+                     nBinRepExp+1,
+                     apRepObj[nBinRepExp].objectFromRange(),
+                     apRepObj[nBinRepExp].objectToRange(),
+                     apRepObj[nBinRepExp].objectMemory(),
+                     (char*)SFKMatch::aClFromCopy
+                     );
+                  printf("                     parts %s\n",
+                     apRepObj[nBinRepExp].recentPartInfo());
+                  printx("                     <time>prios %s\n",
+                     apRepObj[nBinRepExp].recentPrioInfo());
+               }
+               if (iSubRC) {
+                  if (iSubRC!=10)
+                     reperr("invalid source or target pattern", pszfs, pszRepFile, nLine);
+                  return 9;
+               }
+            }
+            else
             {
                apRepSrcLen[nBinRepExp] = nFromLen;
                apRepDstLen[nBinRepExp] = nToLen;
@@ -54435,6 +54498,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          }
       }  // endfor RepList
 
+      copySFKMatchOptions(); // xfind
+
       if (bIncomplete) {
          if (cs.yes) {
             perr("option -yes is not possible with incomplete /from/to/ patterns.");
@@ -54453,6 +54518,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       if (!nBinRepExp)
          { nGlblError=1; return 9+perr("no patterns for replacement, nothing to do.\n"); }
+
+      // (re)alloc output buffer
+      if (cs.xpat)
+         if (SFKMatch::provideBuffer())
+            return 9;
 
       int iDirNext=0;
       if (iDir < argc) {
@@ -54539,6 +54609,27 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (cs.maxscan && bHaveDiffLen)
          { nGlblError=1; return 9+perr("-maxscan cannot be used with different length replacements"); }
 
+      if (cs.xpat) {
+         int ipat=0;
+         bool bFailed=0;
+         for (ipat=0; ipat<nBinRepExp; ipat++) {
+            // biggest object output size plus post (not pre) context
+            int iMaxAmountRaw = apRepObj[ipat].objectFromRange() + SFK_CTX_SIZE;
+            if (iMaxAmountRaw+100 > cs.recordsize) {
+               cs.recordsize = iMaxAmountRaw + 1000;
+               if (cs.verbose)
+                  pinf("-recsize extended to %s due to pattern %d input range\n",
+                     numtoa(cs.recordsize), ipat+1);
+            }
+         }
+         if (cs.verbose) {
+            for (ipat=0; ipat<nBinRepExp; ipat++)
+               apRepObj[ipat].verify(ipat+1);
+         }
+         if (bFailed)
+            return 9;
+      }
+
       #ifdef WITH_BITFILTER
       // to speed up search in some cases use a big bitfield
       if (cs.fastopt > 0)
@@ -54591,6 +54682,21 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       while (0);
       #endif // WITH_BITFILTER
 
+      if (bIsXFind || bIsXText) { // init.3
+         if (pGlblDumpBuf) {
+            delete [] pGlblDumpBuf;
+            iGlblDumpBufSize = 0;
+         }
+         // PreContext + MatchText + PostContext
+         //    4k           any         4k
+         int iBufSize1 = mymax(SFKMatch::iClOutSizeMax, 1000);
+         int iBufSize2 = (iBufSize1 + SFK_CTX_SIZE) * 2 + 1000;
+         pGlblDumpBuf  = new char[iBufSize2+1000];
+         if (!pGlblDumpBuf)
+            return 9+perr("out of memory, cannot create outbuffer (%d)\n", SFKMatch::iClOutSizeMax);
+         iGlblDumpBufSize = iBufSize2;
+      }
+
       if (cs.sim && !cs.nohead) {
          if (bIsXRepDemo)
             printx("$[xreplace demo preview of changes:]\n");
@@ -54602,6 +54708,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       if (cs.dostat || cs.verbose)
       {
+         if (cs.xpat && (cs.verbose != 0 || SFKMatchDefaultMaxLen < SFKMATCH_DEFAULT_MAXLEN || SFKMatchByteWildCards != 0)) {
+            printf("using xmaxlen=%u, case=%u\n", SFKMatchDefaultMaxLen, cs.usecase);
+         }
          chain.print('h', 0, "[total hits/matching patterns/non-matching patterns]\n");
       }
 
@@ -54612,11 +54721,51 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
  
       if (cs.memcheck) sfkmem_checklist("replace.parse");
 
+      #if defined(SFKOSE)
+
+      if (cs.xpat)
+      {
+         if (bIsXReplace) {
+            printf("xreplace demo requires SFK Base+XD.\n");
+            return 9;
+         }
+         lRC = walkAllTrees(eFunc_XFind, lFiles, lDirs, nBytes);
+      }
+      else
       {
          if (bVarMode || cs.tomask)
             lRC = walkAllTrees(eFunc_ReplaceVar, lFiles, lDirs, nBytes);
          else
             lRC = walkAllTrees(eFunc_ReplaceFix, lFiles, lDirs, nBytes);
+      }
+
+      #else
+
+      {
+         if (bVarMode || cs.tomask)
+            lRC = walkAllTrees(eFunc_ReplaceVar, lFiles, lDirs, nBytes);
+         else
+            lRC = walkAllTrees(eFunc_ReplaceFix, lFiles, lDirs, nBytes);
+      }
+
+      #endif
+
+      // best match info
+      if (cs.showpost && cs.xpat) {
+         printx("$Best pattern matches across all input data:\n");
+         for (int i=0; i<nBinRepExp; i++) {
+            SFKMatch *pObj = &apRepObj[i];
+            //     "00006 000527 000318 003515 "
+            printx("Pat.%02u matched $%02d<def> parts of: #%s\n", // xrep
+               i+1,
+               pObj->iClBestMatch,
+               pObj->fromText()
+               );
+            printx("Pat.%02u per part byte match: ", i+1);
+            for (int k=0; k<pObj->iClFrom && k<pObj->iClBestMatch; k++)
+               printf("%u/%u ", k+1, pObj->aiClBestData[k]);
+            printf("\n");
+         }
       }
 
       if (!lRC && (cs.filesChg > 0)) lRC = 1; // any hits or changes
@@ -54652,6 +54801,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             printx("$[please purchase XE to allow writing of changes.]\n");
          else if (!bIncomplete)
             printx("$[add -yes to write changes.]\n");
+      }
+
+      if (cs.xpat && apRepObj) {
+         delete [] apRepObj;
       }
 
       for (int i=0; i<nBinRepExp; i++) {
@@ -55268,9 +55421,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             char *pszfs = psz1; // from, start
             char cLimit = *pszfs++;
             if (!cLimit) break;
-            if (!*pszfs) return 9+reperr("incomplete replacement pattern", psz1, pszRepFile, nLine);
+            if (!*pszfs) return 9+reperr("incomplete search pattern", psz1, pszRepFile, nLine);
             char *pszfe = strchr(pszfs, cLimit);
-            if (!pszfe) return 9+reperr("incomplete replacement pattern", psz1, pszRepFile, nLine);
+            if (!pszfe) return 9+reperr("incomplete search pattern", psz1, pszRepFile, nLine);
             char *pszts = pszfe+1;
             char *pszte = strchr(pszts, cLimit);
             if (!pszte) {
@@ -55881,6 +56034,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             if (!pszParm) return 9;
             if (copyFromFormText(pszParm, strlen(pszParm), szInSep, sizeof(szInSep)) != 1) {
                perr("invalid or too long input separator: %s", pszParm);
+               if (pszParm[0]=='\"' && pszParm[1])
+                  pinf("try \"-insep=%c\" or -spat -insep=\\x%02x\n", pszParm[1], pszParm[1]);
                pinf("use only a single char like ; or a valid slash pattern like \\t\n");
                return 9;
             }
@@ -62525,22 +62680,22 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("   $command string format\n"
              "      each word, separated by whitespace, is a parameter.\n"
              #ifdef SFK_BOTH_RUNCHARS_HELP
-             "      to fill in the current chain text line use $$text or ##text.\n"
+             "      to fill in the current chain text line use <head>$$text<def> or <head>##text<def>.\n"
              "      perline uses a strict command format by default.\n"
-             "      to insert characters $$ or ## as is type $$$$ or ####\n"
+             "      to insert characters $$ or ## as is type <head>$$$$<def> or <head>####<def>\n"
              #else
-             "      to fill in the current chain text line use ##text.\n"
+             "      to fill in the current chain text line use <head>##text<def>.\n"
              "      perline uses a strict command format by default.\n"
-             "      to insert character ## as is type ####\n"
+             "      to insert character ## as is type <head>####<def>\n"
              #endif
-             "      with option -spat, slashpatterns like \\t \\q \\xnn are supported.\n"
-             "      to use multiple words as one parameter use -spat and \\q ... \\q\n"
+             "      with option $-spat<def>, slashpatterns like $\\t \\q \\xnn<def> are supported.\n"
+             "      to use multiple words as one parameter use $-spat<def> and $\\q ... \\q<def>\n"
              "\n");
       printx("   $quoted multi line parameters are supported in scripts\n" // perline
              "      using parm trim. type \"sfk script\" for details.\n"
              "\n");
       printx("   $see also\n"
-             "     #sfk run<def>   for the full command text syntax\n"
+             "     #sfk run<def>      for the full command string format\n"
              "\n");
       webref("perline");
       printx("   $examples\n"
@@ -63027,9 +63182,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       printHelp(
          "search and compare\n"
-         "   sfk find       - find words in text and binary files\n"
-         "   sfk ftext      - find words only in text files\n"
-         "   sfk hexfind    - find words in binary files, showing hexdump\n"
+         "   sfk xfind      - search in text and binary files using\n"
+         "                    wildcards and simple expressions\n"
+         "   sfk xtext      - search in text files only\n"
+         "   sfk xhexfind   - search with hexdump output\n"
+         "   sfk extract    - extract data from text and binary\n"
+         "   sfk find       - search static text, without wildcards\n"
+         "   sfk hexfind    - search static binary data\n"
          "   sfk md5gento   - create list of md5 checksums over files\n"
          "   sfk md5check   - verify list of md5 checksums over files\n"
          "   sfk md5        - calc md5 over a file, compare two files\n"
