@@ -199,6 +199,42 @@ int sfkmemcmp2(uint8_t *psrc1, uint8_t *psrc2, int64_t nlen, bool bGlobalCase, u
 
 // RC : 0 == match, <> 0 == no match.
 // Not suitable for sorting algorithms.
+int sfkmemcmp3(uint8_t *psrc, uint8_t *ppat, int64_t nlen, bool bGlobalCase, uint8_t *pPatFlags, int iPatOff)
+{
+   ppat += iPatOff;
+
+   if (bGlobalCase)
+      return memcmp(psrc, ppat, nlen);
+
+   int idiff=0;
+
+   // optim: compare last character first.
+   // requires at least a 2-char phrase.
+   if (nlen > 1)
+   {
+      uint8_t bCase = pPatFlags ? sfkGetBit(pPatFlags,nlen+iPatOff-1) : 0;
+      idiff =     glblNoCase.mapChar(psrc[nlen-1],bCase)
+               -  glblNoCase.mapChar(ppat[nlen-1],bCase);
+      if (idiff)
+         return idiff;
+   }
+
+   uint8_t bCase;
+
+   for (int i=0; i<nlen; i++)
+   {
+      bCase = pPatFlags ? sfkGetBit(pPatFlags,iPatOff+i) : 0;
+      idiff =     glblNoCase.mapChar(psrc[i],bCase)
+               -  glblNoCase.mapChar(ppat[i],bCase);
+      if (idiff)
+         break;
+   }
+
+   return idiff;
+}
+
+// RC : 0 == match, <> 0 == no match.
+// Not suitable for sorting algorithms.
 int sfkmemcmp(uint8_t *psrc1, uint8_t *psrc2, int64_t nlen, bool bcase)
 {
    if (bcase)
@@ -414,6 +450,10 @@ void SFKMatch::reset( )
          delete [] aClFlags[i];
       if (aClClass && aClClass[i] && aClDynaClass[i])
          delete [] aClClass[i];
+      #ifdef SFK_LOR
+      if (aClOrInf && aClOrInf[i])
+         delete [] aClOrInf[i];
+      #endif // SFK_LOR
    }
    for (int i=0; i<iClToTok; i++)
    {
@@ -436,6 +476,9 @@ void SFKMatch::reset( )
    if (aClTokOpts) delete [] aClTokOpts;
    if (aClOutOpts) delete [] aClOutOpts;
    if (aClDynaClass) delete [] aClDynaClass;
+   #ifdef SFK_LOR
+   if (aClOrInf) delete [] aClOrInf;
+   #endif // SFK_LOR
 
    if (bClFromTextWasCopied) {
       if (pszClFromText) delete [] pszClFromText;
@@ -967,6 +1010,13 @@ int SFKMatch::define(uint8_t *pSrcInfo, int iCharOff, int iToken,
 
    int ilitoff = 0;
 
+   #ifdef SFK_LOR
+   // with literals, data contains 1. found result data 2. search pattern
+   // with the search pattern after result data at offset ilitoff.
+   if (iToken == TokLiteral)
+      ilitoff = imaxlen;
+   #endif // SFK_LOR
+
    aClFrom[iClFrom]  = iToken;
    aClData[iClFrom]  = new uint8_t[imaxlen+ilitoff+iClOff];
    if (!aClData[iClFrom])
@@ -1362,6 +1412,11 @@ int SFKMatch::parseFromMask(char *pSrcIn)
       aClDynaClass = new uint8_t[iBrutto];
       memset(aClDynaClass, 0, iBrutto);
 
+      #ifdef SFK_LOR
+      aClOrInf = new int*[iBrutto];
+      memset(aClOrInf, 0, sizeof(int*) * iBrutto);
+      #endif // SFK_LOR
+
       // and render part infos
       safeStrCopy((char*)aClFromCopy, pSrcIn, sizeof(aClFromCopy)-10);
       memset(aClPartInfo, 0, sizeof(aClPartInfo));
@@ -1381,7 +1436,7 @@ int SFKMatch::parseFromMask(char *pSrcIn)
    uint8_t *pSrc10  = pSrcCur;
 
    int istate=0,ioldstate=0; // any
-   int iskip=0,iminlen=0,imaxlen=0;
+   int iskip=0,iminlen=0,imaxlen=0,bzerolen=0;
    uint8_t bClassModeChars=0,bClassModeOf=0;
    uint8_t bEscapedAny=0,bEscapedX=0;
  
@@ -1402,6 +1457,14 @@ int SFKMatch::parseFromMask(char *pSrcIn)
          {
             // end of /literal/ token, store token
             int iLitLen = iClLitBuf;
+            #ifdef SFK_LOR
+            if (aClOrInf && aClOrInf[iClFrom]) {
+               // complete foo[ortext]bar collection after bar
+               int *pOrInf = aClOrInf[iClFrom];
+               int iOrPart = pOrInf[0];
+               pOrInf[iOrPart] = iClLitBuf;
+            }
+            #endif // SFK_LOR
             if (define(pSrcCur, pSrcCur-pSrc, TokLiteral, iLitLen, iLitLen, 0, aClLitBuf, aClLitBufBit))
                return 9;
             if (bClAlloc && aClData[iClFrom])
@@ -1490,9 +1553,39 @@ int SFKMatch::parseFromMask(char *pSrcIn)
       if (istate == 1 && (uc >= INTOK_BRA && uc <= INTOK_QUE))
       {
          // [ while collecting literal
+         #ifdef SFK_LOR
+         if (!strncmp((char*)pSrcCur, "[ortext]", 8))
+         {
+            pSrcCur += 8;
+            if (bClAlloc && !aClOrInf[iClFrom]) {
+               aClOrInf[iClFrom] = new int[iClFromTok+4];
+               memset(aClOrInf[iClFrom], 0, sizeof(int) * (iClFromTok+4));
+               aClOrInf[iClFrom][0] = 1;
+            }
+            if (aClOrInf && aClOrInf[iClFrom]) {
+               // set offset/length of current literal OR section
+               int *pOrInf = aClOrInf[iClFrom];
+               int iOrPart = pOrInf[0];
+               pOrInf[iOrPart] = iClLitBuf;
+               // printf("# orinf[%d] = %d\n",iOrPart,pOrInf[iOrPart]);
+               pOrInf[0]   = pOrInf[0]+1;
+            }
+            // continue collecting as one long literal
+            continue;
+         }
+         else
+         #endif // SFK_LOR
          {
             // literal token end, store token
             int iLitLen = iClLitBuf;
+            #ifdef SFK_LOR
+            if (aClOrInf && aClOrInf[iClFrom]) {
+               // complete foo[ortext]bar collection after bar
+               int *pOrInf = aClOrInf[iClFrom];
+               int iOrPart = pOrInf[0];
+               pOrInf[iOrPart] = iClLitBuf;
+            }
+            #endif // SFK_LOR
             if (define(pSrcCur, pSrcCur-pSrc, TokLiteral, iLitLen, iLitLen, 0, aClLitBuf, aClLitBufBit))
                return 9;
             if (bClAlloc && aClData[iClFrom])
@@ -1571,6 +1664,7 @@ int SFKMatch::parseFromMask(char *pSrcIn)
          // per command init
          iminlen         = 0;
          imaxlen         = 0;
+         bzerolen        = 0;
          bClassModeChars = 2; // undefined
          bClassModeOf    = 0;
          pMaskTemplate   = 0;
@@ -1593,6 +1687,8 @@ int SFKMatch::parseFromMask(char *pSrcIn)
             } else {
                imaxlen = iminlen;
             }
+            if (!iminlen && !imaxlen)
+               bzerolen = 1; // sfk181: support zero length token
             if (*pSrcCur != ' ')
                return 9+sfkerr("missing blank: %s", pSrcCur);
             pSrcCur++;
@@ -1849,7 +1945,7 @@ int SFKMatch::parseFromMask(char *pSrcIn)
 
          // printf("others.mode=%d state=%d rec=%d\n",bClassModeChars,istate,iClRecentCharClassType);
 
-         if (imaxlen == 0) {
+         if (imaxlen == 0 && bzerolen == 0) {
             if (define(pSrcCur, pSrcCur-pSrc, TokByte, 1, 1, 10+bClassModeChars))
                return 9;
          } else {
@@ -1917,7 +2013,7 @@ int SFKMatch::parseFromMask(char *pSrcIn)
 
       if (istate == 18) // after "chars","bytes","byte","white"
       {
-         if (imaxlen == 0) {
+         if (imaxlen == 0 && bzerolen == 0) {
             if (define(pSrcCur, pSrcCur-pSrc, TokByte, 1, 1, 10+bClassModeChars))
                return 9;
          } else {
@@ -2174,9 +2270,44 @@ int SFKMatch::parseFromMask(char *pSrcIn)
          case TokLiteral:
          {
             int ilitoff = 0;
+            #ifdef SFK_LOR
+            ilitoff = iFirstLen;
+            #endif // SFK_LOR
             if (!aClData[0]) return 9+sfkerr("int. #2137241");
             if (iFirstLen<1) return 9+sfkerr("int. #2137242");
             memset(aClHeadMatch, 0, sizeof(aClHeadMatch));
+            #ifdef SFK_LOR
+            int imask = 0;
+            if (aClOrInf[imask]) {
+               // build headmatch for [ortext] literal group
+               int *pOrInf = aClOrInf[imask];
+               int iSubStr = 1; // ONE based!
+               int nSubStr = pOrInf[0];
+               int iMaxLen = iFirstLen;
+               int iCurOff = 0;
+               int iCurMax = 0;
+               int iCurLen = 0;
+               int isubrc  = 5; // no match
+               while (iSubStr<=nSubStr && iCurOff<iMaxLen)
+               {
+                  // get current substring
+                  iCurMax = pOrInf[iSubStr];
+                  iCurLen = iCurMax - iCurOff;
+                  // add current [ortext] start to head match
+                  ucFirst = aClData[0][0+ilitoff+iCurOff];
+                  if (bClUseCase) {
+                     aClHeadMatch[ucFirst] = 1;
+                  } else {
+                     aClHeadMatch[toupper(ucFirst)&0xFF] = 1;
+                     aClHeadMatch[tolower(ucFirst)&0xFF] = 1;
+                  }
+                  // goto next, if any
+                  iCurOff += iCurLen;
+                  iSubStr++;
+               }
+            }
+            else
+            #endif // SFK_LOR
             {
                ucFirst = aClData[0][0+ilitoff];
                if (bClUseCase) {
@@ -2875,14 +3006,60 @@ int SFKMatch::matchesSinglePoint(int imask, uint8_t *pSrcCur, uint8_t *pSrcMax,
       case TokLiteral:
       {
          int ilitoff = 0;
+         #ifdef SFK_LOR
+         ilitoff = imaxlen;
+         #endif // SFK_LOR
          pCurLit = aClData[imask]+ilitoff;
          if (!pCurLit)
             { sfkerr("int. #2144291"); return 19; }
          pFlags  = aClFlags[imask]; // or null, no ilitoff
+         // Note: with [ortext] this is a combined length over all literals!
          iCurLit = imaxlen;
-         if (iCurLit > iRemain) {
-            if (traceLevel() > 2) trace("match.miss%u:  literal: %s", iFrom, pCurLit);
-            return 5;
+         #ifdef SFK_LOR
+         if (aClOrInf[imask])
+         {
+            // char szBuf[100];
+            // consider [ortext] parts
+            int *pOrInf = aClOrInf[imask];
+            // printf("# match: '%s' @ %s\n",dataAsTrace(pCurLit,iCurLit),pSrcCur);
+            int iSubStr = 1; // ONE based!
+            int nSubStr = pOrInf[0];
+            int iMaxLen = iCurLit;
+            int iCurOff = 0;
+            int iCurMax = 0;
+            int iCurLen = 0;
+            int isubrc  = 5; // no match
+            // printf("# match %d substr\n",nSubStr);
+            while (iSubStr<=nSubStr && iCurOff<iMaxLen)
+            {
+               // get current substring
+               iCurMax = pOrInf[iSubStr];
+               iCurLen = iCurMax - iCurOff;
+               // check for match.
+               if (iCurLen <= iRemain) {
+                  // printf("#  check #%d: off %d len %d %s @ %s\n",iSubStr,iCurOff,iCurLen,dataAsTrace(pCurLit+iCurOff,iCurLen),dataAsTrace(pSrcCur,strlen((char*)pSrcCur),szBuf,100));
+                  if (!sfkmemcmp3(pSrcCur, pCurLit, iCurLen, bClUseCase, pFlags, iCurOff)) {
+                     isubrc = 0;
+                     break;
+                  }
+               }
+               // goto next, if any
+               iCurOff += iCurLen;
+               iSubStr++;
+            }
+            if (isubrc)
+               return isubrc;
+            // printf("#  MATCH #%d: off %d len %d %s\n",iSubStr,iCurOff,iCurLen,dataAsTrace(pCurLit+iCurOff,iCurLen));
+            rMatchLen = iCurLen;
+            return 0;
+         }
+         else
+         #endif // SFK_LOR
+         {
+            if (iCurLit > iRemain) {
+               if (traceLevel() > 2) trace("match.miss%u:  literal: %s", iFrom, pCurLit);
+               return 5;
+            }
          }
          if (sfkmemcmp2(pSrcCur, pCurLit, iCurLit, bClUseCase, pFlags)) {
             if (traceLevel() > 2) trace("match.miss%u:  literal: %s", iFrom, pCurLit);
@@ -3302,6 +3479,9 @@ int SFKMatch::matches(uint8_t *pSrcData, int &rIOLength,
          if (!matchesSinglePoint(imask, pSrcCur, pSrcMax, bLastRecord, iMatchLen, bStart, 5, bLineStart))
          {
             int iDataLen = iminlen;
+            #ifdef SFK_LOR
+            iDataLen = iMatchLen;
+            #endif // SFK_LOR
             // local match (fixlen)
             updateBestMatch(imask);
             // collect current token data (whole length)
@@ -3411,7 +3591,7 @@ void attrCopy(char *pDst, char *pSrc, int iLen)
    }
 }
 
-uint8_t *SFKMatch::renderOutput(int &rOutLength, int &rRC)
+uint8_t *SFKMatch::renderOutput(int &rOutLength, int &rRC, int nFlags)
 {
    if (!aClOutBuf)
       { sfkerr("missing call: provideBuffer"); return 0; }
@@ -3476,11 +3656,13 @@ uint8_t *SFKMatch::renderOutput(int &rOutLength, int &rRC)
            { rRC=9; sfkerr("internal #2166292"); return 0; }
          int iVarEnd = (int)(pDstCur - aClOutBuf);
          int iVarLen = iVarEnd - iVarStart;
-         sfksetvar(pVarName, aClOutBuf+iVarStart, iVarLen);
-         pVarName = 0;
-         iVarStart = 0;
+         if ((nFlags & SFKMATCH_SETNOVAR) == 0)
+            sfksetvar(pVarName, aClOutBuf+iVarStart, iVarLen);
          // strip variable text from output
          pDstCur = aClOutBuf + iVarStart;
+         // cleanup
+         pVarName = 0;
+         iVarStart = 0;
       }
       else
       if (itok == TokGetVar) {

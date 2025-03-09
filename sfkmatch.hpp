@@ -23,9 +23,7 @@ typedef long long      int64_t;
 extern int SFKMatchDefaultMaxLen;
 extern int SFKMatchByteWildCards;
 
-#ifdef SFKINT
- #define SFK_LOR
-#endif
+#define SFK_LOR // sfk181
 
 // optional user implemented callback to expand
 //    [file.name]    as current input filename with path
@@ -41,7 +39,11 @@ extern int SFKMatchByteWildCards;
 // RC 12 : missing or invalid data, cannot execute command
 typedef int (*SFKMatchOutFNCallback_t)(int iFunction, char *pMask, int *pIOMaskLen, uint8_t **ppOut, int *pOutLen);
 
+// init flags:
 #define SFKMATCH_WITHATTRIB  1  // support text color attributes
+
+// renderOutput flags:
+#define SFKMATCH_SETNOVAR    1  // interpret [setvar] but do not really set variables
 
 enum ESFKMatchOptions
 {
@@ -154,8 +156,9 @@ static
                              // returns ZERO (0) on a MATCH.
                              // returns NON ZERO 1...8 on a MISMATCH.
                              // returns 9 or higher on ERRORS.
-  uint8_t *renderOutput (int &rOutLength, int &rRC);
-                             // sets rOutLength and rRC
+  uint8_t *renderOutput (int &rOutLength, int &rRC, int nFlags=0);
+                             // sets rOutLength and rRC.
+                             // Flags can be SFKMATCH_SETNOVAR
   char    *outAttr      ( ); // only if color attributes are used
 
    int   verify         (int iPattern);
@@ -286,6 +289,11 @@ int
   *aiClFromMinLen,   // required min length or 0
   *aiClFromMaxLen;   // declared buffer size
    // length -1 means overflow
+
+#ifdef SFK_LOR
+int
+  **aClOrInf;
+#endif // SFK_LOR
 
 uint8_t
   *aClTokOpts,       // from token options

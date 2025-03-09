@@ -9,6 +9,9 @@
 
 #include "sfkbase.hpp"
 
+#define SFKMATCH_IMPORTED
+#include "sfkmatch.hpp"
+
 // in case of linking problems concerning libsocket etc.,
 // you may out-comment this to compile without tcp support:
 #ifndef USE_SFK_BASE
@@ -88,8 +91,6 @@ extern int nGlblActiveFileAgeLimit;
 
 extern bool bGlblGrepLineNum    ;
 extern bool bGlblHtml           ;
-extern bool bGlblShortSyntax    ;
-extern bool bGlblAnyUsed        ;
 extern bool bGlblAllowAllPlusPosFile;
 extern char *pszGlblSinceDir    ;
 extern bool bGlblSinceDirIncRef ;
@@ -152,8 +153,34 @@ struct SFKVarHead {
    int iDataLen;
 };
 
+bool sfkhavevars( )
+{
+   return glblSFKVar.size() ? 1 : 0;
+}
+
 int sfksetvar(char *pname, uchar *pdata, int idata)
 {
+   for (char *psz=pname; *psz; psz++)
+   {
+      if (isalpha(*psz))
+         continue;
+      if (isdigit(*psz)!=0 && psz>pname)
+         continue;
+      if (*psz=='_' && psz>pname)
+         continue;
+
+      perr("invalid variable name: %s",pname);
+      pinf("must start with a-z, then a-z0-9_\n");
+      return 9;
+   }
+
+   if (cs.debug) {
+      if (memchr(pdata, 0, idata))
+         printf("[setvar %s = (binary)]\n",pname);
+      else
+         printf("[setvar %s = %.*s]\n",pname,idata,(char*)pdata);
+   }
+
    struct SFKVarHead ohead;
    int iHeadSize = sizeof(struct SFKVarHead);
 
@@ -181,9 +208,24 @@ uchar *sfkgetvar(char *pname, int *plen)
    struct SFKVarHead ohead;
    int iHeadSize = sizeof(struct SFKVarHead);
 
+   // sfk1813: env variable access
+   if (!strncmp(pname, "env.", 4) && pname[4]) 
+   {
+      char *psz = getenv(pname+4);
+      if (!psz)
+         return 0;
+      if (plen)
+         *plen = strlen(psz);
+      return (uchar*)psz;
+   }
+
    uchar *pres = (uchar*)glblSFKVar.get(pname);
-   if (!pres)
+
+   if (!pres) {
+      if (cs.debug)
+         printf("[getvar %s finds nothing]\n",pname);
       return 0;
+   }
 
    memcpy(&ohead, pres, iHeadSize);
 
@@ -191,6 +233,9 @@ uchar *sfkgetvar(char *pname, int *plen)
 
    if (plen)
       *plen = ohead.iDataLen;
+
+   if (cs.debug)
+      printf("[getvar %s returns %d bytes]\n",pname,ohead.iDataLen);
 
    return pres;
 }
@@ -464,8 +509,8 @@ int CoiMap::put(char *pkey, Coi *pcoi, const char *pTraceFrom, int nmode)
 
    mtklog(("cache: put %s from=%s coiname=%s", pkey, pTraceFrom, pcoi->name()));
 
-	if (pcoi->bClInCache)
-		return 1+pwarn("cache-put twice, ignoring: %s", pkey);
+   if (pcoi->bClInCache)
+      return 1+pwarn("cache-put twice, ignoring: %s", pkey);
 
    num nAddSize = pcoi->getUsedBytes();
 
@@ -1435,11 +1480,11 @@ void  TCPCon::setBlocking (bool bYesNo)
 
 int TCPCon::read(uchar *pBlock, uint nLen) 
 {
-	// if a foreground thread detects the escape key:
-	if (bGlblEscape)
-		return 0; // NOT -1, size_t problem
+   // if a foreground thread detects the escape key:
+   if (bGlblEscape)
+      return 0; // NOT -1, size_t problem
 
-	IOStatusPhase ophase("read tcp");
+   IOStatusPhase ophase("read tcp");
 
    num tstart  = getCurrentTime();
 
@@ -1489,7 +1534,7 @@ int TCPCon::read(uchar *pBlock, uint nLen)
          break;
       }
 
-		countIOBytes(nRead);
+      countIOBytes(nRead);
 
       nTotal  += nRead;
       nRemain -= nRead;
@@ -1529,7 +1574,7 @@ char *TCPCon::readLine(char *poptbuf, uint noptmaxbuf, bool braw)
    // alloc internal buffer on demand:
    if (!pBuf) pBuf = buffer(nBufMax);
 
-	IOStatusPhase ophase("read tcp");
+   IOStatusPhase ophase("read tcp");
 
    int nCursor = 0;
    int nRemain = nBufMax;
@@ -1546,7 +1591,7 @@ char *TCPCon::readLine(char *poptbuf, uint noptmaxbuf, bool braw)
          mtklog(("< readline: EOD"));
          return 0;
       }
-		countIOBytes(nRead);
+      countIOBytes(nRead);
       nCursor += nRead;
       nRemain -= nRead;
       pBuf[nCursor] = '\0';
@@ -1586,7 +1631,7 @@ int TCPCon::puts(char *pline)
    if (nlen < 2 || strncmp(pBuf+nlen-2, "\r\n", 2))
       strcat(pBuf, "\r\n");
 
-	IOStatusPhase ophase("send tcp");
+   IOStatusPhase ophase("send tcp");
 
    // finally, send it:
    int nsent = send((uchar*)pBuf, strlen(pBuf));
@@ -1613,7 +1658,7 @@ int  TCPCon::putf(cchar *pmask, ...)
    if (nlen < 2 || strncmp(pBuf+nlen-2, "\r\n", 2))
       strcat(pBuf, "\r\n");
 
-	IOStatusPhase ophase("send tcp");
+   IOStatusPhase ophase("send tcp");
 
    // finally, send it:
    int nsent = send((uchar*)pBuf, strlen(pBuf));
@@ -1892,7 +1937,7 @@ int TCPCore::accept(TCPCon *pServerCon, TCPCon **ppout)
    if (nClCon >= FD_SETSIZE-2)
       return 9+perr("too many sockets, cannot accept more");
 
-	IOStatusPhase ophase("tcp accept");
+   IOStatusPhase ophase("tcp accept");
 
    struct sockaddr_in ClientAdr;
    socklen_t nSoLen = sizeof(sockaddr_in);
@@ -2001,7 +2046,7 @@ int TCPCore::connect(char *pszHost, int nportin, TCPCon **ppout)
    if (nClCon >= FD_SETSIZE-2)
       return 9+perr("too many sockets, cannot connect more");
 
-	IOStatusPhase ophase("connect tcp");
+   IOStatusPhase ophase("connect tcp");
 
    SOCKET hSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hSock == INVALID_SOCKET)
@@ -2056,7 +2101,7 @@ int  TCPCore::selectInput (TCPCon **ppNextActiveCon, TCPCon *pToQuery)
 {__
    mtklog(("tcp-core select on %d connections",nClCon));
 
-	IOStatusPhase ophase("tcp select");
+   IOStatusPhase ophase("tcp select");
 
    // fd_set is modified on select, therefore:
    memcpy(&clSetCopy, &clReadSet, sizeof(fd_set));
@@ -2569,11 +2614,11 @@ int HTTPClient::getFileHead(char *purl, Coi *pcoi, cchar *pinfo)
       purl = pcoi->name();   // take copy
       pinf("redirected to %s\n", purl);
 
-		// evaluate new url for archive extensions
-		if (endsWithArcExt(purl, 7)) {
-			mtklog(("hth: archive detected by redirect: %s", purl));
-			pcoi->setArc(1);
-		}
+      // evaluate new url for archive extensions
+      if (endsWithArcExt(purl, 7)) {
+         mtklog(("hth: archive detected by redirect: %s", purl));
+         pcoi->setArc(1);
+      }
 
       // block dup reads
       glblCircleMap.put(purl, 0); // if already set, does nothing
@@ -2694,15 +2739,15 @@ int HTTPClient::rawReadHeaders
          iClWebRC = atol(psz1);
          rwebrc = iClWebRC;
 
-			#ifdef USE_404
-			// recoverable rc?
-			if (iClWebRC == 404) {
-				// continue to load the error page,
-				// but remember rc for additional info.
+         #ifdef USE_404
+         // recoverable rc?
+         if (iClWebRC == 404) {
+            // continue to load the error page,
+            // but remember rc for additional info.
             pheads->put("webrc", "404");
-				continue;
-			}
-			#endif // USE_404
+            continue;
+         }
+         #endif // USE_404
 
          // fatal error?
          if (iClWebRC >= 400) {
@@ -2754,9 +2799,9 @@ int HTTPClient::rawReadHeaders
       // .bz2 application/x-bzip2
       // .tar application/x-tar
       // .tgz application/x-compressed
-		// however, some servers say only "application/octet-stream"
-		// for all archive files. in this case, the redirect file name
-		// must be evaluated.
+      // however, some servers say only "application/octet-stream"
+      // for all archive files. in this case, the redirect file name
+      // must be evaluated.
 
       // content-type: text/html, application/zip etc.
       if (!mystricmp(curname(), "content-type"))
@@ -2790,7 +2835,7 @@ int HTTPClient::rawReadHeaders
          int nlen  = strlen(pstr);
          if (nlen < 20) continue;
          if (pstr[14] != ':' || pstr[17] != ':') continue;
-         if (!timeFromString(pstr, ntime)) {
+         if (!timeFromString(pstr, ntime, cs.verbose?0:1)) { // http.header
             // mtklog(("coi.mtime: set %u from http header",(uint)ntime));
             pcoi->setTime(ntime); // http header
             if (fGlblWebDump)
@@ -2990,11 +3035,11 @@ int HTTPClient::open(char *purl, cchar *pmode, Coi *pcoi)
       purl = pcoi->name();   // take copy
       pinf("redirected to %s\n", purl);
 
-		// evaluate new url for archive extensions
-		if (endsWithArcExt(purl, 8)) {
-			mtklog(("hto: archive detected by redirect: %s", purl));
-			pcoi->setArc(1);
-		}
+      // evaluate new url for archive extensions
+      if (endsWithArcExt(purl, 8)) {
+         mtklog(("hto: archive detected by redirect: %s", purl));
+         pcoi->setArc(1);
+      }
 
       // block dup reads
       glblCircleMap.put(purl, 0); // if already set, does nothing
@@ -3053,16 +3098,16 @@ int HTTPClient::readraw(uchar *pbuf, int nbufsize)
 
 int HTTPClient::readrawfull(uchar *pBlock, uint nLen)
 {
-	// if a foreground thread detects the escape key:
-	if (bGlblEscape)
-		return 0; // NOT -1, size_t problem
+   // if a foreground thread detects the escape key:
+   if (bGlblEscape)
+      return 0; // NOT -1, size_t problem
 
    if (!pClCurCon)
       { perr("int. #175294 missing connection"); return 0; }
 
    SOCKET osock = pClCurCon->clSock;
 
-	IOStatusPhase ophase("read tcp");
+   IOStatusPhase ophase("read tcp");
 
    num tstart  = getCurrentTime();
 
@@ -3093,7 +3138,7 @@ int HTTPClient::readrawfull(uchar *pBlock, uint nLen)
       if (nRead <= 0)
          break;
 
-		countIOBytes(nRead);
+      countIOBytes(nRead);
 
       nTotal  += nRead;
       nRemain -= nRead;
@@ -3490,7 +3535,7 @@ int FTPClient::setPassive(TCPCon **ppout)
    if (setaddr(&ClntAdr,szIP,1))
       return 9+perr("set passive failed: cannot get host %s", szIP);
 
-	IOStatusPhase ophase("connect ftp");
+   IOStatusPhase ophase("connect ftp");
 
    if ((::connect(hSock, (struct sockaddr *)&ClntAdr, sizeof(struct sockaddr_in))) == -1)
       return 9+perr("set passive failed: cannot establish connection to %s", szIP);
@@ -3669,11 +3714,11 @@ int FTPClient::list(char *pdir, CoiTable **ppout, char *pRootURL)
       // if (bGlblFTPSetAttribs)
       {
          if (bHaveFlatTime) {
-            timeFromString(pszMonTS, nFileTime);
+            timeFromString(pszMonTS, nFileTime); // ftp.list
          } else {
             if (apcol[5] && apcol[6] && apcol[7]) {
                sprintf(szTmpBuf2, "%s %s %s",apcol[5],apcol[6],apcol[7]);
-               timeFromString(szTmpBuf2, nFileTime);
+               timeFromString(szTmpBuf2, nFileTime); // ftp.list
             }
          }
       }
@@ -4192,6 +4237,9 @@ int HTTPClient::sendReq
       , szAuth1
       , getHTTPUserAgent()
       );
+
+   if (cs.showreq)
+      printx("<file>http://%s%s/%s\n", phost, szPort, pfile);
 
    if (cs.headers & 2) {
       char *psz = (char*)aClIOBuf;
@@ -5057,7 +5105,7 @@ int Coi::preload(cchar *pszFromInfo, bool bsilent, int iStopMode, bool bfile)
       bClWebText   = bClWebBinary ? 0 : 1;
    }
 
-	bool bIsKnownBinary = ((nClHave & COI_HAVE_BINARY) && bClBinary) ? 1 : 0;
+   bool bIsKnownBinary = ((nClHave & COI_HAVE_BINARY) && bClBinary) ? 1 : 0;
    bool bIsKnownArc    = ((nClHave & COI_HAVE_ARC   ) && bClArc   ) ? 1 : 0;
 
    switch (iStopMode)
@@ -5066,22 +5114,22 @@ int Coi::preload(cchar *pszFromInfo, bool bsilent, int iStopMode, bool bfile)
          break;
 
       case 1: // load no binaries except archives
-		   if (bIsKnownBinary && !bIsKnownArc)
-		   {
-		      if (cs.debug)
-		         printf("preload stop: binary and no archive\n");
-		      close();
-		      return 2; // skip download and caching as it's not text, and no archive
-		   }
+         if (bIsKnownBinary && !bIsKnownArc)
+         {
+            if (cs.debug)
+               printf("preload stop: binary and no archive\n");
+            close();
+            return 2; // skip download and caching as it's not text, and no archive
+         }
          break;
 
       case 2: // load no binaries
          if (bIsKnownBinary)
          {
-		      if (cs.debug)
-		         printf("preload stop: binary\n");
-		      close();
-		      return 3; // skip download and caching as it's not text, and no archive
+            if (cs.debug)
+               printf("preload stop: binary\n");
+            close();
+            return 3; // skip download and caching as it's not text, and no archive
          }
          break;
    }
@@ -5180,23 +5228,23 @@ Coi *Coi::getElementByAbsName(char *pabsname)
 
 bool Coi::isFtp() {
    #ifdef VFILENET
-	if (nGlblCoiConfig & COI_CAPABILITY_NET)
-	   return strBegins(name(), "ftp://");
+   if (nGlblCoiConfig & COI_CAPABILITY_NET)
+      return strBegins(name(), "ftp://");
    #endif // VFILENET
-	return 0;
+   return 0;
 }
 
 bool Coi::isHttp(char *pszOptURL) {
    #ifdef VFILENET
    char *psz = pszOptURL ? pszOptURL : name();
-	if (nGlblCoiConfig & COI_CAPABILITY_NET) {
+   if (nGlblCoiConfig & COI_CAPABILITY_NET) {
       if (strBegins(psz, "http://"))
          return 1;
       if (strBegins(psz, "https://"))
          return 1;
    }
    #endif // VFILENET
-	return 0;
+   return 0;
 }
 
 bool Coi::isNet() {
@@ -8184,7 +8232,7 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
    {
       c1 = *psz1; // incl. null at eol
 
-		mtklog(("inst: %c %d",c1,nstate));
+      mtklog(("inst: %c %d",c1,nstate));
 
       if (isatoz(c1)) {
          switch (nstate) {
@@ -8270,7 +8318,7 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
    {
       char *pszMethodStartLine = abline[ibackscope];
 
-		mtklog(("inst:   msline \"%.20s\"", pszMethodStartLine));
+      mtklog(("inst:   msline \"%.20s\"", pszMethodStartLine));
 
      if (bdebug)
      {
@@ -8289,10 +8337,10 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
 
       // the current line contains the relevant "{" somewhere.
       // for now, we instrument only simple lines:
-		mtklog(("inst:   lbuf2  \"%s\"", szLineBuf2));
-		// accept "{" but also "[anywhitespace]{"
-		char *pszs = szLineBuf2;
-		while (*pszs && (*pszs==' ' || *pszs=='\t')) pszs++;
+      mtklog(("inst:   lbuf2  \"%s\"", szLineBuf2));
+      // accept "{" but also "[anywhitespace]{"
+      char *pszs = szLineBuf2;
+      while (*pszs && (*pszs==' ' || *pszs=='\t')) pszs++;
       if (!strcmp(pszs, "{")) {
          reduceSignature(pszMethodStartLine, szLineBuf3);
          sprintf(pszs, "{%s(\"%s\");", pszGlblMacro, szLineBuf3);
@@ -8349,7 +8397,7 @@ void SrcParse::addRemark() { addtok('r'); }
 
 void SrcParse::addtok(char c)
 {
-	mtklog(("inst:  addtok %c", c));
+   mtklog(("inst:  addtok %c", c));
 
    atok[itok] = c;
    atokline[itok] = ibline;
@@ -8391,9 +8439,9 @@ bool SrcParse::hasFunctionStart(uint &rnline)
    char c1 = pretok(itok2, ncnt, ntline);
    if (!c1) return false;
    if (c1 != '{') {
-		mtklog(("inst:   hasfs %c, false", c1));
-		return false;
-	}
+      mtklog(("inst:   hasfs %c, false", c1));
+      return false;
+   }
 
    // have a curly braket:
 
@@ -8432,9 +8480,9 @@ bool SrcParse::hasFunctionStart(uint &rnline)
    }
 
    if (nrc == 1) {
-		mtklog(("inst:   hasfs true"));
+      mtklog(("inst:   hasfs true"));
       return true;
-	}
+   }
 
    if (bdebug) {
       printf("MISS.%d: %s %d %d\n", nrc, (char*)atok,nBra,nKet);
@@ -11199,8 +11247,8 @@ int UDPCore::makeSocket(int iMode, char *pszHost, int nportin)
 int UDPCore::selectInput(int *pIndex, int iMaxWaitMSec)
 {
    struct timeval tv;
-	tv.tv_sec  = iMaxWaitMSec/1000;
-	tv.tv_usec = (iMaxWaitMSec < 1000) ? iMaxWaitMSec * 1000 : 0;
+   tv.tv_sec  = iMaxWaitMSec/1000;
+   tv.tv_usec = (iMaxWaitMSec < 1000) ? iMaxWaitMSec * 1000 : 0;
 
    memcpy(&clSetCopy, &clReadSet, sizeof(fd_set));
 
@@ -11229,7 +11277,55 @@ int UDPCore::selectInput(int *pIndex, int iMaxWaitMSec)
    return 1; // nothing to do
 }
 
-void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile)
+static unsigned char webdemo_abRawBlock[1358] = {
+80,75,3,4,10,0,0,0,0,0,170,162,60,73,0,0,0,0,0,0,0,0,0,0,0,0,8,0,17,0,119,101,
+98,100,101,109,111,47,85,84,13,0,7,32,10,236,87,224,235,234,87,250,181,236,87,80,75,3,4,20,0,0,0,8,
+0,170,162,60,73,168,198,156,182,122,0,0,0,144,0,0,0,18,0,17,0,119,101,98,100,101,109,111,47,105,110,100,
+101,120,46,104,116,109,108,85,84,13,0,7,32,10,236,87,224,235,234,87,19,182,236,87,53,142,193,10,194,48,16,68,
+239,133,254,195,208,15,104,193,115,92,16,61,42,8,30,244,154,198,173,27,76,154,146,236,65,255,222,84,232,101,46,243,
+120,51,70,52,6,50,99,122,126,169,109,140,236,232,230,227,18,24,119,30,113,112,142,75,193,137,99,194,213,190,216,12,
+181,175,212,178,134,133,100,158,246,157,75,179,242,172,165,255,196,208,209,49,120,247,134,112,174,176,37,76,41,67,133,241,
+184,156,177,129,8,190,104,191,105,134,255,116,53,175,63,218,230,7,80,75,3,4,20,0,0,0,8,0,170,162,60,73,
+158,225,250,98,89,0,0,0,222,0,0,0,20,0,17,0,119,101,98,100,101,109,111,47,99,111,110,116,101,110,116,115,
+46,120,109,108,85,84,13,0,7,32,10,236,87,224,235,234,87,27,182,236,87,179,41,202,47,47,182,227,229,82,176,73,
+78,44,73,77,207,47,170,4,113,20,108,50,83,236,12,13,12,109,244,129,52,152,159,151,152,155,106,231,86,84,154,89,
+82,108,163,15,230,128,244,232,35,107,194,102,130,17,154,9,97,169,233,169,37,137,73,57,169,36,153,98,140,102,138,83,
+106,89,106,81,98,58,78,67,108,244,161,190,2,0,80,75,3,4,20,0,0,0,8,0,170,162,60,73,169,45,180,0,
+91,0,0,0,13,1,0,0,28,0,17,0,119,101,98,100,101,109,111,47,112,114,111,100,117,99,116,95,108,105,115,116,
+95,49,48,49,46,120,109,108,85,84,13,0,7,32,10,236,87,224,235,234,87,37,182,236,87,179,41,202,47,47,182,227,
+229,82,80,80,176,1,50,237,108,242,18,115,83,237,28,11,10,114,82,139,109,244,193,28,176,36,24,216,20,20,101,38,
+167,218,25,233,25,216,232,67,152,54,250,32,77,232,218,157,18,243,128,16,167,126,67,61,83,252,250,189,51,203,51,241,
+232,54,199,175,219,189,40,177,0,159,227,141,209,181,131,105,80,32,0,0,80,75,3,4,20,0,0,0,8,0,170,162,
+60,73,107,16,183,103,79,0,0,0,205,0,0,0,28,0,17,0,119,101,98,100,101,109,111,47,112,114,111,100,117,99,
+116,95,108,105,115,116,95,49,48,50,46,120,109,108,85,84,13,0,7,32,10,236,87,224,235,234,87,39,182,236,87,179,
+41,202,47,47,182,227,229,82,80,80,176,1,50,237,108,242,18,115,83,237,2,242,75,18,75,242,83,139,109,244,193,92,
+176,52,24,216,20,20,101,38,167,218,25,234,25,217,232,67,152,54,250,32,109,232,6,56,165,38,230,225,209,109,129,95,
+119,64,106,34,30,205,134,232,154,193,52,200,19,0,80,75,3,4,20,0,0,0,8,0,170,162,60,73,53,38,55,212,
+83,0,0,0,208,0,0,0,28,0,17,0,119,101,98,100,101,109,111,47,112,114,111,100,117,99,116,95,108,105,115,116,
+95,49,48,51,46,120,109,108,85,84,13,0,7,32,10,236,87,224,235,234,87,41,182,236,87,179,41,202,47,47,182,227,
+229,82,80,80,176,1,50,237,108,242,18,115,83,237,194,19,75,82,139,108,244,193,108,176,28,24,216,20,20,101,38,167,
+218,25,232,153,218,232,67,152,54,250,32,61,232,186,157,243,115,18,113,107,182,196,175,217,177,160,32,39,85,193,171,20,
+168,2,183,25,230,232,102,128,105,144,63,0,80,75,1,2,23,11,10,0,0,0,0,0,170,162,60,73,0,0,0,0,
+0,0,0,0,0,0,0,0,8,0,9,0,0,0,0,0,0,0,16,0,255,65,0,0,0,0,119,101,98,100,101,109,
+111,47,85,84,5,0,7,32,10,236,87,80,75,1,2,23,11,20,0,0,0,8,0,170,162,60,73,168,198,156,182,122,
+0,0,0,144,0,0,0,18,0,9,0,0,0,0,0,1,0,32,0,182,129,55,0,0,0,119,101,98,100,101,109,111,
+47,105,110,100,101,120,46,104,116,109,108,85,84,5,0,7,32,10,236,87,80,75,1,2,23,11,20,0,0,0,8,0,
+170,162,60,73,158,225,250,98,89,0,0,0,222,0,0,0,20,0,9,0,0,0,0,0,1,0,32,0,182,129,242,0,
+0,0,119,101,98,100,101,109,111,47,99,111,110,116,101,110,116,115,46,120,109,108,85,84,5,0,7,32,10,236,87,80,
+75,1,2,23,11,20,0,0,0,8,0,170,162,60,73,169,45,180,0,91,0,0,0,13,1,0,0,28,0,9,0,0,
+0,0,0,1,0,32,0,182,129,142,1,0,0,119,101,98,100,101,109,111,47,112,114,111,100,117,99,116,95,108,105,115,
+116,95,49,48,49,46,120,109,108,85,84,5,0,7,32,10,236,87,80,75,1,2,23,11,20,0,0,0,8,0,170,162,
+60,73,107,16,183,103,79,0,0,0,205,0,0,0,28,0,9,0,0,0,0,0,1,0,32,0,182,129,52,2,0,0,
+119,101,98,100,101,109,111,47,112,114,111,100,117,99,116,95,108,105,115,116,95,49,48,50,46,120,109,108,85,84,5,0,
+7,32,10,236,87,80,75,1,2,23,11,20,0,0,0,8,0,170,162,60,73,53,38,55,212,83,0,0,0,208,0,0,
+0,28,0,9,0,0,0,0,0,1,0,32,0,182,129,206,2,0,0,119,101,98,100,101,109,111,47,112,114,111,100,117,
+99,116,95,108,105,115,116,95,49,48,51,46,120,109,108,85,84,5,0,7,32,10,236,87,80,75,5,6,0,0,0,0,
+6,0,6,0,204,1,0,0,108,3,0,0,0,0,
+};
+
+uchar *getWebDemoData(int &isize) { isize = sizeof(webdemo_abRawBlock); return webdemo_abRawBlock; }
+
+void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, int iSystem)
 {
       /*
          sfk fromclip +filt -srep "_\\_\\\\_" -srep "_\q_\\\q_" -sform "          \q$col1\\n\q"
@@ -11392,75 +11488,70 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile)
       case 6:
       chain.print(
          "@echo off\n"
-         "sfk script %s -from begin %%*\n"
+         "sfk script %%~f0 -from begin %%*\n"
+         "rem %%~f0 is the absolute batch file name\n"
          "GOTO xend\n"
          "\n"
-         "sfk label begin\n"
-         "\n"
-         "   // select text files from testfiles:\n"
-         "   +select testfiles .txt\n"
-         "\n"
-         "   // filter words foo, and user-supplied:\n"
-         "   +ffilter\n"
-         "      -+foo\n"
-         "      %%1\n"
-         "      %%2\n"
-         "\n"
-         "   // display results in depeche view:\n"
-         "   +view\n"
-         "\n"
-         "   // end of sfk script:\n"
+         "sfk label begin -var\n"
+         "   +if \"%%1 = \" call help\n"
+         "   +echo \"main got parameters: %%1 %%2 %%3\"\n"
+         "   +then setvar \"a=the quick brown fox\"\n"
+         "   +call myfunc foo bar %%1\n"
          "   +end\n"
          "\n"
-         "sfk label showmany -qtrim\n"
-         "\n"
-         "   // a long command, easily editable, joined by -qtrim.\n"
-         "   // sfk script %s -from showmany /status.xml\n"
-         "   // will load /status.xml from 5 different ip's.\n"
-         "   +run -yes\n"
-         "      \"\n"
-         "         start dview\n"
-         "            http://192.168.1.100%%1\n"
-         "            http://192.168.1.101%%1\n"
-         "            http://192.168.1.102%%1\n"
-         "            http://192.168.1.103%%1\n"
-         "            http://192.168.1.104%%1\n"
-         "      \"\n"
-         "\n"
+         "sfk label myfunc\n"
+         "   +echo \"func got parameters: %%1 %%2 %%3\"\n"
+         "   +echo -var \"variable a contains: #(a)\"\n"
+         "   +echo -var \"#(a)\"\n"
+         "      +tcall substr 4 5\n"
+         "      +setvar b\n"
+         "   +echo -var \"variable b contains: #(b)\"\n"
          "   +end\n"
          "\n"
-         ":xend\n",
-         pszOutFile ? pszOutFile : "thisfile.bat",
-         pszOutFile ? pszOutFile : "thisfile.bat"
+         "sfk label substr\n"
+         "   +xex \"/[start][%%1 chars][%%2 chars]/[part3]/\"\n"
+         "   +tend\n"
+         "\n"
+         "sfk label help\n"
+         "   +echo \"supply one or more parameters.\"\n"
+         "   +stop -all\n"
+         "   +end\n"
+         "\n"
+         ":xend\n"
          );
          break;
 
       case 7:
       chain.print(
          "#!/bin/bash\n"
-         "sfk script %s -from begin $@\n"
+         "sfk script $0 -from begin $@\n"
          "function skip_block\n"
          "{\n"
          "sfk label begin\n"
-         "\n"
-         "   // select text files from testfiles:\n"
-         "   +select testfiles .txt\n"
-         "\n"
-         "#  // filter words foo, and user-supplied.\n"
+         "#  +echo \"main got parameters: %%1 %%2 %%3\"\n"
+         "#  +then setvar \"a=the quick brown fox\"\n"
+         "#  +call myfunc foo bar %%1\n"
+         "#  +end\n"
          "#  // note that # lines are skipped by bash,\n"
          "#  // but not by sfk.\n"
-         "#  +ffilter\n"
-         "#     -+foo\n"
-         "#     $1\n"
-         "#     $2\n"
          "\n"
-         "   // display results in depeche view:\n"
-         "   +view\n"
-         "\n"
-         "   // end of sfk script:\n"
+         "sfk label myfunc\n"
+         "   +echo \"func got parameters: %%1 %%2 %%3\"\n"
+         "   +echo -var \"variable a contains: #(a)\"\n"
+         "   +echo -var \"#(a)\"\n"
+         "      +tcall substr 4 5\n"
+         "      +setvar b\n"
+         "   +echo -var \"variable b contains: #(b)\"\n"
          "   +end\n"
+         "\n"
+         "sfk label substr\n"
+         "   +xex \"/[start][%%1 chars][%%2 chars]/[part3]/\"\n"
+         "   +tend\n"
+         "\n"
+         "#  // if bash produces errors with \\r you must:\n"
+         "#  //   sfk remcr %s\n"
          "}\n",
-         pszOutFile ? pszOutFile : "thisfile.bat"
+         pszOutFile ? pszOutFile : "thisfile.sh"
          );
          break;
 
@@ -11960,52 +12051,6 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile)
         );
         break;
 
-      case 15:
-      chain.printFile(
-"myext@mydomain.org\\chrome\\content\\myext.xul", bWriteFile,
-"<overlay id=\"myextOverlay\" xmlns=\"http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul\">\n"
-"   <script type=\"application/x-javascript\" src=\"chrome://myext/content/myextOverlay.js\"/>\n"
-"   <popup id=\"contentAreaContextMenu\">\n"
-"      <menuitem id=\"myext-sayhello\" label=\"Say Hello\" oncommand=\"sayHello(event);\" />\n"
-"   </popup>\n"
-"</overlay>\n"
-         );
-      chain.printFile(
-"myext@mydomain.org\\chrome\\content\\myextOverlay.js", bWriteFile,
-"function sayHello(event) {\n"
-"   alert(\"hello.\");\n"
-"}\n"
-         );
-      chain.printFile(
-"myext@mydomain.org\\chrome.manifest", bWriteFile,
-"content myext chrome/content/\n"
-"overlay chrome://browser/content/browser.xul chrome://myext/content/myext.xul\n"
-         );
-      chain.printFile(
-"myext@mydomain.org\\install.rdf", bWriteFile,
-"<?xml version=\"1.0\"?>\n"
-"<RDF xmlns=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"\n"
-"     xmlns:em=\"http://www.mozilla.org/2004/em-rdf#\">\n"
-"  <Description about=\"urn:mozilla:install-manifest\">\n"
-"    <em:id>myext@mydomain.org</em:id>\n"
-"    <em:version>0.1.0</em:version>\n"
-"    <em:type>2</em:type>\n"
-"    <em:targetApplication>\n"
-"      <Description>\n"
-"        <em:id>{ec8030f7-c20a-464f-9b0e-13a3a9e97384}</em:id> <!-- Firefox -->\n"
-"        <em:minVersion>1.0</em:minVersion>\n"
-"        <em:maxVersion>3.0.*</em:maxVersion>\n"
-"      </Description>\n"
-"    </em:targetApplication>\n"
-"    <em:name>MyExt</em:name>\n"
-"    <em:description>A very simple demo extension</em:description>\n"
-"    <em:creator>My Self</em:creator>\n"
-"    <em:homepageURL>http://mydomain.org/myext/</em:homepageURL>\n"
-"  </Description>      \n"
-"</RDF>\n"
-         );
-         break;
- 
       case 16:
       chain.print(
           "/*\n"
@@ -12213,6 +12258,82 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile)
             printf("// to write .java file use:\n"
                    "// sfk samp javanetlog netlog.java\n");
          break;
+
+         case 18:
+         if (iSystem==1)
+         chain.print(
+            "@echo off\n"
+            "sfk -var script %%~f0 -from begin %%*\n"
+            "rem \"-var\" enables variables everywhere.\n"
+            "rem \"%%~f0\" is the absolute batch file name.\n"
+            "GOTO xend\n"
+            "\n");
+         else
+         chain.print(
+            "#!/bin/bash\n"
+            "sfk -var script $0 -from begin $@\n"
+            "# \"-var\" enables variables everywhere.\n"
+            "function skip_block\n"
+            "{\n");
+
+         chain.print(
+            "sfk label begin\n"
+            "   +setvar \"baseurl=http://stahlworks.com/webdemo\"\n"
+            "   +web \"#(baseurl)/contents.xml\"\n"
+            "   +xex \"_<category>**<id>*</id>**<name>*<\n"
+            "         _[part4] [part8]\\n_\"\n"
+            "   +perline \"call listCategory #text\" -yes\n"
+            "   +end\n"
+            "\n"
+            "sfk label listCategory\n"
+            "   +echo \"[green]=== List of %%2: ===[def]\"\n"
+            "   +echo -spat \"[yellow]Name         Price[def]\"\n"
+            "   +then web \"#(baseurl)/product_list_%%1.xml\"\n"
+            "   // +xmlform +stop -all\n"
+            "   +xex \"=<row>**<name>*<**<price>*<\n"
+            "         =[part4]\\t[part8] \\x24\\n=\"\n"
+            "   +filter -upat -stabform \"#(-12col1) #col2\"\n"
+            "   +end\n"
+            "\n");
+
+         if (iSystem==1)
+         chain.print(
+            "rem a longer example with input, output and detail\n"
+            "rem explanations is available in the SFK Book.\n"
+            "\n"
+            ":xend\n");
+         else
+         chain.print(
+            "# a longer example with input, output and detail\n"
+            "# explanations is available in the SFK Book.\n"
+            "\n"
+            "}\n");
+         break;
+
+         case 19:
+         {
+            if (!pszOutFile)
+               { perr("missing output filename\n"); return; }
+            if (!strEnds(pszOutFile, ".zip"))
+               { perr("output filename must end with .zip\n"); return; }
+            if (!cs.force && fileExists(pszOutFile)) {
+               perr("file already exists: %s\n", pszOutFile);
+               pinf("add -force to overwrite.\n");
+               return;
+            }
+            printf("writing: %s\n", pszOutFile);
+            int    isize = 0;
+            uchar *pdata = getWebDemoData(isize);
+            saveFile(pszOutFile, pdata, isize);
+            printf("you may now:\n"
+                   "- unzip %s\n"
+                   "- sfk httpserv -deep\n"
+                   "- open a different shell, then adapt the batch\n"
+                   "  from \"sfk samp http\" to use localhost.\n",
+                   pszOutFile
+                   );
+            break;
+         }
       }
 }
 
@@ -12289,10 +12410,10 @@ struct ip { // IPHeader {
 
 #endif
 
-#define	DEFDATALEN	(64-ICMP_MINLEN)	/* default data length */
-#define	MAXIPLEN	60
-#define	MAXICMPLEN	76
-#define	MAXPACKET	(65536 - 60 - ICMP_MINLEN)/* max packet size */
+#define  DEFDATALEN  (64-ICMP_MINLEN)  /* default data length */
+#define  MAXIPLEN 60
+#define  MAXICMPLEN  76
+#define  MAXPACKET   (65536 - 60 - ICMP_MINLEN)/* max packet size */
 
 static ushort in_cksum(ushort *addr, unsigned len)
 {
@@ -12347,30 +12468,30 @@ int UDPCore::sendPing(int i)
 
    struct icmp *icp = (struct icmp *)outpack;
 
-	icp->icmp_type   = ICMP_ECHO;
-	icp->icmp_code   = 0;
-	icp->icmp_cksum  = 0;
-	icp->icmp_seq    = 123+i;	/* seq and id must be reflected */
-	icp->icmp_id     = getpid()+i;
+   icp->icmp_type   = ICMP_ECHO;
+   icp->icmp_code   = 0;
+   icp->icmp_cksum  = 0;
+   icp->icmp_seq    = 123+i;  /* seq and id must be reflected */
+   icp->icmp_id     = getpid()+i;
 
-	int cc = datalen + ICMP_MINLEN;
-	icp->icmp_cksum = in_cksum((unsigned short *)icp,cc);
+   int cc = datalen + ICMP_MINLEN;
+   icp->icmp_cksum = in_cksum((unsigned short *)icp,cc);
 
    num tstart = getCurrentTime();
 
-	int isent = sendto(aClCon[i].sock, (char *)outpack, cc, 0,
+   int isent = sendto(aClCon[i].sock, (char *)outpack, cc, 0,
       (struct sockaddr*)&aClCon[i].addr, (socklen_t)sizeof(struct sockaddr_in));
 
    aClCon[i].tsent = getCurrentTime();
 
-	if (isent != cc)
-	{
+   if (isent != cc)
+   {
       perr("ping: send error (%d/%d) to %s\n", isent, cc, aClCon[i].ipstr);
       return -5;
-	}
+   }
 
    if (bverbose)
-	  printf("ping: sent to #%u at %s\n", i, ipAsString(&aClCon[i].addr, szSenderInfo, sizeof(szSenderInfo)-10, 1));
+     printf("ping: sent to #%u at %s\n", i, ipAsString(&aClCon[i].addr, szSenderInfo, sizeof(szSenderInfo)-10, 1));
 
    return 0;
 }
@@ -12378,7 +12499,7 @@ int UDPCore::sendPing(int i)
 int UDPCore::recvPing(int i, int *pDelay)
 {
    int packlen = DEFDATALEN + MAXIPLEN + MAXICMPLEN;
-	u_char packet[DEFDATALEN + MAXIPLEN + MAXICMPLEN + 10];
+   u_char packet[DEFDATALEN + MAXIPLEN + MAXICMPLEN + 10];
    char szSenderInfo[200];
 
    struct sockaddr_in from;
@@ -12388,48 +12509,48 @@ int UDPCore::recvPing(int i, int *pDelay)
    mclear(packet);
    mclear(szSenderInfo);
 
-	int fromlen = sizeof(sockaddr_in);
-	int ret = 0;
-	if ((ret = recvfrom(aClCon[i].sock, (char *)packet, packlen, 0,(struct sockaddr *)&from, (socklen_t*)&fromlen)) < 0)
-	   return -7+perr("ping: receive error\n");
-	
+   int fromlen = sizeof(sockaddr_in);
+   int ret = 0;
+   if ((ret = recvfrom(aClCon[i].sock, (char *)packet, packlen, 0,(struct sockaddr *)&from, (socklen_t*)&fromlen)) < 0)
+      return -7+perr("ping: receive error\n");
+   
    if (bverbose)
-	  printf("%d = recv\n", ret);
+     printf("%d = recv\n", ret);
 
-	struct ip *ip = (struct ip *)((char*)packet);
-	
-	hlen = sizeof(struct ip);
-	
-	if (ret < (hlen + ICMP_MINLEN))
-	   return -8+perr("ping: reply too short\n");
-	
-	struct icmp *icp = (struct icmp *)(packet + hlen);
+   struct ip *ip = (struct ip *)((char*)packet);
+   
+   hlen = sizeof(struct ip);
+   
+   if (ret < (hlen + ICMP_MINLEN))
+      return -8+perr("ping: reply too short\n");
+   
+   struct icmp *icp = (struct icmp *)(packet + hlen);
 
    char *pszfrom = ipAsString(&from, szSenderInfo, sizeof(szSenderInfo)-10, 1);
-	
-	if (icp->icmp_type != ICMP_ECHOREPLY)
+   
+   if (icp->icmp_type != ICMP_ECHOREPLY)
    {
-	   if (bverbose)
-			printf("ping: got an invalid reply type %u from %s\n", icp->icmp_type, pszfrom);
+      if (bverbose)
+         printf("ping: got an invalid reply type %u from %s\n", icp->icmp_type, pszfrom);
          return 7;
    }
 
    if (bverbose)
-		printf("ping: got an echo reply from %s\n", pszfrom);
+      printf("ping: got an echo reply from %s\n", pszfrom);
 
-	if (icp->icmp_seq != 123+i)
-	{
+   if (icp->icmp_seq != 123+i)
+   {
       if (bverbose)
-			printf("ping: received invalid sequence (%u/%u) from %s\n", icp->icmp_seq, 123+i, pszfrom);
+         printf("ping: received invalid sequence (%u/%u) from %s\n", icp->icmp_seq, 123+i, pszfrom);
       return 5;
-	}
+   }
 
-	if (icp->icmp_id != getpid()+i)
-	{
+   if (icp->icmp_id != getpid()+i)
+   {
       if (bverbose)
-			printf("ping: received id %u from %s\n", icp->icmp_id, pszfrom);
+         printf("ping: received id %u from %s\n", icp->icmp_id, pszfrom);
       return 6;
-	}
+   }
 
    aClCon[i].idelay = (int)(getCurrentTime() - aClCon[i].tsent);
 
@@ -12650,7 +12771,10 @@ int ExtProgram::readFull(uchar **ppBuf, int *pBufSize)
 {
    *ppBuf = 0;
 
-   int   iBufSize = *pBufSize;
+   int iBufSize = *pBufSize;
+
+   if (iBufSize < 100)
+      return 9+perr("extprog: wrong input buffer size");
 
    uchar *pBuf = new uchar[iBufSize+100];
    if (!pBuf)
@@ -12862,11 +12986,11 @@ int ExtProgram::stop()
 {
 #ifdef _WIN32
    if (hOutputRead && !CloseHandle(hOutputRead))
-      return 9+perr("xrun: CloseHandle failed%s",winSysError());
+      return 9+perr("rerun: CloseHandle failed%s",winSysError());
    hOutputRead = 0;
 
    if (hInputWrite && !CloseHandle(hInputWrite))
-      return 9+perr("xrun: CloseHandle failed%s",winSysError());
+      return 9+perr("rerun: CloseHandle failed%s",winSysError());
    hInputWrite = 0;
 
    if (clXPid != 0) {
@@ -15993,6 +16117,1601 @@ int execPhraser(char *pszAll, char *pszSrc, int iNumRec)
    delete p;
 
    return 0;
+}
+
+extern FILE *fGlblOut;
+
+int dumpBlock(uchar *pCur, int lSize, int nmode)
+{
+   FILE *fout = fGlblOut;
+   int i=0;
+   switch (nmode)
+   {
+      case 2:
+      {
+         bool bAddPad = ((lSize & 1) != 0);
+         fprintf(fout, "\t\"");
+         uchar u1, u2;
+         for (i=0; i<lSize; i += 2) {
+            // if input has uneven size, the very last byte
+            // is not read from input, but filled with dummy 0xFF.
+            u1 = pCur[i+0];
+            if (i < lSize-2 || !bAddPad)
+               u2 = pCur[i+1];
+            else
+               u2 = 0xFF;
+            fprintf(fout, "\\u%02x%02x", u1, u2);
+         }
+         fprintf(fout, "\",");
+      }
+         break;
+
+      case 1:
+         for (i=0; i<lSize; i++) {
+            if (pCur[i])
+               fprintf(fout, "0x%x,", pCur[i]);
+            else
+               fprintf(fout, "0,");
+         }
+         break;
+
+      default:
+         for (i=0; i<lSize; i++)
+            fprintf(fout, "%u,", (unsigned int)pCur[i]);
+         break;
+   }
+   fprintf(fout,"\n");
+   return 0;
+}
+
+uchar *binPack(uchar *pIn, uint nInSize, ulong &rnOutSize)
+{__
+   ulong nOutSize = 0;
+   uchar *pOut = 0;
+   uchar *pMem = 0;
+   uchar *pMax = pIn + nInSize;
+   uchar *pCur = 0;
+   uchar *pOld = 0;
+   uchar *pNul = 0;
+
+   for (uchar npass=1; npass <= 2; npass++)
+   {
+      if (npass == 1)
+         pOut = pNul;
+      else {
+         pMem = new uchar[nOutSize];
+         pOut = pMem;
+      }
+
+      pCur = pIn;
+      pOld = pCur;
+
+      while (pCur < pMax)
+      {
+         // detect repetition of patterns up to size 3
+         uchar nbestsize = 0;
+         uchar nbestgain = 0;
+         uchar nbestrep  = 0;
+         for (uchar isize = 1; isize <= 3; isize++) {
+            uchar nrep  = 0;
+            uchar bbail = 0;
+            for (; (pCur+(nrep+1)*isize < pMax) && (nrep < 60) && !bbail; nrep++)
+            {
+               for (uchar i1=0; (i1<isize) && !bbail; i1++)
+                  if (pCur[nrep*isize+i1] != pCur[i1])
+                     bbail = 1;
+               if (bbail)
+                  break;
+            }
+            // this always results in nrep >= 1.
+            uchar ngain = (nrep-1)*isize;
+            if (ngain >= 3) {
+               // there is a repetition, saving at least 3 bytes.
+               // determine max savings accross all sizes.
+               if (ngain > nbestgain) {
+                  nbestgain = ngain;
+                  nbestsize = isize;
+                  nbestrep  = nrep;
+               }
+            }
+         }
+         // if (nbestrep > 0)
+         //   printf("size %02u rep %02u gain %02u at %x\n", nbestsize, nbestrep, nbestgain, pCur-pIn);
+
+         // if repeat pattern found,
+         // OR if non-repeat exceeds maxsize
+         if ( (nbestrep > 0) || ((pCur - pOld) >= 60) ) {
+            // flush non-packable, if any
+            if (pCur > pOld) {
+               // printf("[flush non-pack %x]\n", pCur-pOld);
+               uchar nDist = pCur-pOld;
+               if (npass == 1) {
+                  pOut++;
+                  pOut += (pCur - pOld);
+               } else {
+                  *pOut++ = 0x00 | nDist;
+                  while (pOld < pCur)
+                     *pOut++ = *pOld++;
+               }
+               pOld  = pCur;
+            }
+            // flush packable, if any
+            if (nbestrep > 0) {
+               // printf("[pack %x %x]\n", nbestsize, nbestrep);
+               if (npass == 1) {
+                  pOut++;
+                  pOut += nbestsize;
+                  pCur += nbestsize;
+               } else {
+                  *pOut++ = (nbestsize << 6) | nbestrep;
+                  for (uchar i1=0; i1<nbestsize; i1++)
+                     *pOut++ = *pCur++;
+               }
+               pCur += (nbestrep-1)*nbestsize;
+               pOld  = pCur;
+            }
+         } else {
+            // count non-packable
+            pCur++;
+         }
+      }
+
+      // flush remainder, if any
+      if (pCur > pOld) {
+         // printf("[flush trailer %x]\n", pCur-pOld);
+         uchar nDist = pCur-pOld;
+         if (npass == 1) {
+            pOut++;
+            pOut += (pCur - pOld);
+         } else {
+            *pOut++ = 0x00 | nDist;
+            while (pOld < pCur)
+               *pOut++ = *pOld++;
+         }
+         pOld  = pCur;
+      }
+
+      if (npass == 1) {
+         nOutSize = (ulong)(pOut - pNul);
+         // printf("packsize %lu\n", nOutSize);
+      }
+   }
+
+   rnOutSize = nOutSize;
+   return pMem;
+}
+
+uchar *binUnpack(uchar *pIn, uint nInSize, ulong &rnOutSize)
+{__
+   ulong nOutSize = 0;
+   uchar *pOut = 0;
+   uchar *pMem = 0;
+   uchar *pMax = pIn + nInSize;
+   uchar *pCur = 0;
+   uchar *pOld = 0;
+   uchar *pNul = 0;
+
+   for (uchar npass=1; npass <= 2; npass++)
+   {
+      if (npass == 1)
+         pOut = pNul;
+      else {
+         pMem = new uchar[nOutSize];
+         pOut = pMem;
+      }
+
+      pCur = pIn;
+      pOld = pCur;
+
+      while (pCur < pMax)
+      {
+         uchar ncmd = *pCur++;
+         if (ncmd >= 64) {
+            // unpack repeat block
+            uchar nsiz = ncmd >> 6;
+            uchar nrep = ncmd & 0x3F;
+            // printf("[upack-rep %x %x (%x)]\n", nsiz, nrep, ncmd);
+            // reproduce reference pattern nrep times
+            if (npass == 1)
+               pOut += nrep * nsiz;
+            else
+            for (; nrep > 0; nrep--)
+               for (uchar i1=0; i1<nsiz; i1++)
+                  *pOut++ = *(pCur+i1);
+            // skip reference pattern
+            pCur += nsiz;
+         } else {
+            // unpack skip block
+            uchar nrep = ncmd;
+            // printf("[upack-skip %x]\n", nrep);
+            if (npass == 1) {
+               pOut += nrep;
+               pCur += nrep;
+            }
+            else
+            for (; (nrep > 0) && (pCur < pMax); nrep--)
+               *pOut++ = *pCur++;
+         }
+      }
+
+      if (npass == 1) {
+         nOutSize = (ulong)(pOut - pNul);
+         // printf("unpacksize %lu\n", nOutSize);
+      }
+   }
+
+   rnOutSize = nOutSize;
+   return pMem;
+}
+
+int execBinToJava(uchar *pIn, int lInSize, bool bPack, char *pszNameBase, bool bClass, int nRecSize)
+{__
+   FILE *fout = fGlblOut;
+
+   if (bClass)
+   fprintf(fout,
+      "\n"
+      "import java.io.*;\n"
+      "\n"
+      "public class %s {\n"
+      "\n"
+      "\tpublic static void main(String args[]) throws Throwable {\n"
+      "\t\tbyte abData[] = %s_getBlock();\n"
+      "\t\tFileOutputStream fout = new FileOutputStream(args[0]);\n"
+      "\t\tfout.write(abData, 0, abData.length);\n"
+      "\t}\n"
+      "\n"
+      ,pszNameBase,pszNameBase
+      );
+
+   fprintf(fout,
+      "\tpublic static int %s_BlockSize = %d;\n"
+      "\tstatic String %s_RawBlock[] = {\n"
+      ,pszNameBase,lInSize,pszNameBase);
+
+   int lRemain = lInSize;
+   uchar *pCur  = pIn;
+   while (lRemain > nRecSize) {
+      dumpBlock(pCur, nRecSize, 2);
+      lRemain -= nRecSize;
+      pCur += nRecSize;
+   }
+   if (lRemain > 0)
+      dumpBlock(pCur, lRemain, 2);
+
+   fprintf(fout, "\t};\n\n");
+
+   char *pname=pszNameBase;
+   fprintf(fout,
+      "\tpublic static byte[] %s_getBlock() {\n"
+      "\t   int iout=0, nblen=%s_BlockSize;\n"
+      "\t   char atmp[] = new char[%d];\n"
+      "\t   byte aout[] = new byte[nblen];\n"
+      "\t   for (int i=0; i<%s_RawBlock.length; i++) {\n"
+      "\t      String stmp = %s_RawBlock[i];\n"
+      "\t      int nlen = stmp.length();\n"
+      "\t      stmp.getChars(0,nlen,atmp,0);\n"
+      "\t      for (int k=0; k<nlen; k++) {\n"
+      "\t         char c = atmp[k];\n"
+      "\t         byte bhi = (byte)(c >> 8);\n"
+      "\t         byte blo = (byte)(c >> 0);\n"
+      "\t         aout[iout++] = bhi;\n"
+      "\t         if (iout < nblen)\n"
+      "\t            aout[iout++] = blo;\n"
+      "\t      }\n"
+      "\t   }\n"
+      "\t   return aout;\n"
+      "\t}\n\n"
+      ,pname,pname,nRecSize,pname,pname
+      );
+
+   if (bClass)
+   fprintf(fout,
+      "}\n\n"
+      );
+
+   return 0;
+}
+
+int execBinToCpp(uchar *pIn, int lInSize, bool bPack, char *pszNameBase, bool bHex)
+{__
+   int lOldInSize = lInSize;
+
+   if (bPack) {
+      ulong nPackSize = 0;
+      // binPack alloc's mem block with packed data
+      pIn = binPack(pIn, lInSize, nPackSize);
+      lInSize = (int)nPackSize;
+   }
+
+   fprintf(fGlblOut,"#define %s_BLOCK_SIZE %u\n\n", pszNameBase, lOldInSize);
+   fprintf(fGlblOut,"static unsigned char %s_abRawBlock[%u] = {\n", pszNameBase, lInSize);
+   int lRemain = lInSize;
+   uchar *pCur  = pIn;
+   while (lRemain > 32) {
+      dumpBlock(pCur, 32, bHex ? 1 : 0);
+      lRemain -= 32;
+      pCur += 32;
+   }
+   if (lRemain > 0)
+      dumpBlock(pCur, lRemain, bHex ? 1 : 0);
+   fprintf(fGlblOut,"};\n");
+
+   if (bPack) {
+fprintf(fGlblOut,
+   "\n"
+   "// input : target buffer and buffer size.\n"
+   "//         must have size >= %s_BLOCK_SIZE.\n"
+   "// result: 0 if OK, 9 on buffer overflow.\n"
+   "// note  : output data is not null terminated.\n"
+   "int %s_getBlock(uchar *pOut, uint nOutSize)\n",
+   pszNameBase, pszNameBase
+   );
+fprintf(fGlblOut,
+   "{\n"
+   "   uchar *pCur    = %s_abRawBlock;\n"
+   "   uint nInSize  = %u;\n"
+   "   uchar *pMax    = pCur + nInSize;\n"
+   "   uchar *pOutMax = pOut + nOutSize;\n"
+   "   while (pCur < pMax)\n"
+   "   {\n"
+   "      uchar ncmd = *pCur++;\n"
+   "      if (ncmd >= 64) {\n"
+   "         uchar nsiz = ncmd >> 6;\n"
+   "         uchar nrep = ncmd & 0x3F;\n"
+   "         for (; nrep > 0; nrep--)\n"
+   "            for (uchar i1=0; i1<nsiz; i1++) {\n"
+   "               if (pOut >= pOutMax) return 9;\n"
+   "               *pOut++ = *(pCur+i1);\n"
+   "            }\n"
+   "         pCur += nsiz;\n"
+   "      } else {\n"
+   "         uchar nrep = ncmd;\n"
+   "         for (; (nrep > 0) && (pCur < pMax); nrep--) {\n"
+   "            if (pOut >= pOutMax) return 9;\n"
+   "            *pOut++ = *pCur++;\n"
+   "         }\n"
+   "      }\n"
+   "   }\n"
+   "   return 0;\n"
+   "}\n",
+   pszNameBase, lInSize
+      );
+      delete [] pIn;
+   }
+
+   return 0;
+}
+
+void printSearchReplaceCommands()
+{
+printx("   $see also\n"
+       "      #sfk find<def>      search  fixed    text in   text/binary files\n"
+       "      #sfk ftext<def>     search  fixed    text in   text        files\n"
+       "      #sfk hexfind<def>   search  fixed    text in        binary files\n"
+       "      #sfk replace<def>   replace fixed    text in   text/binary files\n"
+       "      #sfk filter<def>    filter and edit  text with simple wildcards\n"
+       "\n");
+}
+
+void printSFKMatchHelp(bool bRepHelp, bool bFullHelp=1)
+{
+printx("   $wildcards and SFK expressions\n"
+       "      SFK Expressions are simple patterns containing literal text,\n"
+       "      wildcards * and ? and character classes in square brackets [].\n"
+       "      basically, the syntax provides extended wilcards but no\n"
+       "      further logic and is not related to regular expressions.\n"
+       "\n"
+       "      search patterns are surrounded by a separator character which\n"
+       "      can be anything not contained in the search text, like / or _\n"
+       "\n");
+if (bRepHelp)
+printx("      $within a pattern #/fromtext/totext/<def> $the #fromtext<def> $may contain:\n");
+else
+printx("      $within a search pattern #/fromtext/<def> $the #fromtext<def> $may contain:\n");
+printx("\n"
+       "        $*<def>                       - 0 to 4000 characters in the same\n"
+       "                                  text line or paragraph, i.e. all\n"
+       "                                  bytes not being CR, LF or NULL.\n"
+       "                                  4000 is just a default maximum\n"
+       "                                  that can be changed by:\n"
+       "        $[0.100000 chars]<def>        - 0 to 100000 characters in the same\n"
+       "                                  text line or paragraph, i.e. the\n"
+       "                                  same as * but with a larger range.\n"
+       "        $?<def>                       - one character.\n"
+       "        $???\x3f\x3f<def>                   - same as $[5.5 chars]<def> or $[5 chars]<def>\n"
+       "        $[bytes]<def>                 - 0 to 4000 bytes (with CR,LF,NULL)\n"
+       "                                  i.e. it collects stream text\n"
+       "                                  across lines, even in binary data\n"
+       "        $**<def>                      - the same as [bytes].\n"
+       "        $[0.100 bytes]<def>           - 0 to 100 bytes\n"
+       "        $[.100000 bytes]<def>         - up to 100000 bytes\n"
+       "        $[1.* bytes]<def>             - 1 to default maximum bytes\n"
+       "        $[30 bytes]<def>              - exactly 30 bytes\n"
+       "        $[byte of aeiou]<def>         - one vocal (a OR A OR e OR ...),\n"
+       "                                  case insensitive by default.\n"
+       "                                  \"aeiou\" is a character list.\n"
+       "        $[byte of \\\\\\x2f]<def>        - a backslash \\ or forw. slash /\n"
+       "        $[bytes of \\r\\n \\t]<def>      - whitespace incl. line ends\n"
+       "        $[bytes of (\\r\\n \\t)]<def>    - the same, () are optional\n"
+       "        $[bytes not \\r\\n\\0]<def>      - up to 4000 bytes as long as no\n"
+       "                                  CR, LF or NULL byte appears\n"
+       );
+printx("        $[chars]<def>                 - the same as $[bytes not \\r\\n\\0]<def>,\n"
+       "                                  i.e. collect text in a line\n"
+       "        $[char not ( \\t)]<def>        - same as $[byte not ( \\r\\n\\0\\t)]<def>,\n"
+       "                                  everything not blanks and tabs\n"
+       "        $[char not )( \\t]<def>        - not brackets, blanks and tabs,\n"
+       "                                  same as $not (\\(\\) \\t)<def>\n"
+       "        $[chars of a-z0-9]<def>       - means a-zA-Z0-9 as search is\n"
+       "                                  case insensitive by default\n"
+       "        $[chars of \\x61-\\x7A]<def>    - search a-z but not A-Z, or use\n"
+       "                                  option -case for case search\n"
+    // "        $[others]<def>                - all chars or bytes NOT searched\n"
+    // "                                  by previous part\n"
+       "        $[eol]<def>                   - end of line by characters:\n"
+       "                                  CRLF or LF or CR\n"
+    // "        $[start or byte of \\r\\n]<def> - start of file or CR or LF.\n"
+    // "        $[end or byte of \\r\\n]<def>   - end of file or CR or LF.\n"
+       "\n"
+       );
+printx("        $[white]<def>     = chars of (\\t )     - 0 or more whitespaces\n"
+       "        $[xwhite]<def>    = bytes of (\\t \\r\\n) - same but across lines\n"
+       "        $[1 white]<def>   = byte  of (\\t )     - 1 whitespace\n"
+       "        $[digit]<def>     = byte  of (0-9)     - 1 digit\n"
+       "        $[digits]<def>    = bytes of (0-9)     - 0 or more digits\n"
+       "        $[hexdigit]<def>  = byte  of (0-9a-f)  - 1 hexadecimal digit\n"
+       "        $[hexdigits]<def> = bytes of (0-9a-f)  - 0 or more hex digits\n"
+       "\n"
+       );
+#ifdef SFK_LOR
+printx("        special keywords that do not count as tokens:\n"
+       "        $[keep]<def>   - search also the following text but keep it\n"
+       "                   in the input data, without consuming it\n"
+       "        $[ortext]<def> - foo[ortext]bar searches word foo or bar.\n"
+       "                   [ortext] is allowed only between literals.\n"
+       "\n"
+       );
+#endif // SFK_LOR
+printx("        anchors that have no length of their own:\n"
+       "        $[start]<def>  - start of file\n"
+       "        $[end]<def>    - end of file\n"
+       "        $[lstart]<def> - line start, i.e. start or CRLF or CR or LF\n"
+       "        $[lend]<def>   - logical line end, i.e. eol or end of file\n"
+       "\n"
+       );
+printx("        $how to search or replace special characters:\n"
+       "        - to search or replace text containing the literal characters\n"
+       "          $* ? \\ [ ]<def> then these must be escaped like #\\\\* \\? \\\\ \\[ \\]<def>\n"
+       "        - $( )<def> are escaped only within character lists, like #\\( \\)<def>\n"
+       "        - to search or replace the $forward slash '/'<def> type $\\x2f<def> or use\n"
+       "          another char around from/to text, e.g. #_fromtext_totext_<def>\n"
+       "        - parameters with #blanks and non trivial characters<def> need double\n"
+       "          quotes \"\", see also \"about Shell Command Characters\" below.\n"
+       "\n"
+       );
+printx("        $expansion priorities:<def> (highest first)\n"
+       "        if two search parts are side by side, and the same input\n"
+       "        character matches both, then these priorities apply:\n"
+       "\n"
+       "          5: start, end, lstart, lend\n"
+       "          4: literal text, eol\n"
+       "          3: whitelist classes: byte of, bytes of\n"
+       "          2: blacklist classes: chars not, bytes not\n"
+       "          1: plain wildcards: ?, *, **, byte, bytes, chars\n"
+       "\n"
+       "        this means in \"/[bytes]foo/\" the [bytes] will stop to collect\n"
+       "        characters as soon as \"foo\" is found, as \"foo\" is a literal.\n"
+       "        on same or higher priority the right side stops the left side.\n"
+       "\n"
+       );
+if (bRepHelp)
+printx("      $the #totext<def> $may contain:\n"
+       "\n"
+       "        $[part 1]<def>          - use first text part of the fromtext.\n"
+       "                            e.g. the fromtext #/*foo[.100 chars]bar*/<def>\n"
+       "                            contains parts    # 1 2         3    4 5\n"
+       "        $[part1]<def>           - the same (blank is optional).\n"
+       "        $[parts 1,2,3]<def>     - use parts 1, 2 and 3.\n"
+       "        $[parts 1-10]<def>      - use parts 1 to 10.\n"
+       "        $[strip(part1,\\0)]<def> - use part 1 but remove zero bytes.\n"
+       "                            only zero bytes \"\\0\" can be removed.\n"
+       "        $[file.name]<def>       - full input filename with path\n"
+       "        $[file.relname]<def>    - input filename without path\n"
+       "        $[file.path]<def>       - input file's path\n"
+       "        $[file.base]<def>       - relname without last .extension\n"
+       "        $[file.ext]<def>        - input filename extension\n"
+       "        $[all]<def>             - use all parts from fromtext.\n"
+       "\n"
+       "        $[setvar name]...[endvar]<def> - set variable \"name\" with data\n"
+       "                                   between setvar and endvar.\n"
+       "        $[getvar name]<def>            - fill in data from variable \"name\"\n"
+       "\n"
+       "        although anchors like lstart, lend count as a separate part\n"
+       "        they need NOT be specified in the totext. this means that\n"
+       "        /[lstart]foo[lend]/bar/ just changes the word \"foo\".\n"
+       "\n"
+       );
+printx("   $supported slash patterns\n"
+       "      $\\t<def>    = TAB\n"
+       "      $\\r<def>    = CR\n"
+       "      $\\n<def>    = LF\n"
+       "      $\\x00<def>  = one byte with code 00 hexadecimal\n"
+       "      $\\0<def>    = short form for \\x00\n"
+       "      $\\q<def>    = a double quote \"\n"
+       "      $\\\\ <def>   = the backslash character \\ itself\n"
+       "      $\\[<def>    = the bracket open character [\n"
+       "      $\\]<def>    = the bracket close character ]\n"
+       "      $\\\\*<def>    = the literal star character *\n"
+       "      $\\?<def>    = the literal question mark  ?\n"
+       "      $\\-<def>    = to use literal \"-\" in a command\n"
+       "      Within multi line -bylist files:\n"
+       "      $\\ <def>    = slash+blank is changed to a single blank\n"
+       "      Only within \"char of\" or \"byte not\" lists:\n"
+       "      $\\(<def>    = to use literal character \"(\"\n"
+       "      $\\)<def>    = to use literal character \")\"\n"
+       "\n"
+       );
+printx("   $SFK expression options\n"
+       "      -showpart(s)  print /from/ part numbers, range statistics\n"
+       "                    and expansion priority points per part.\n"
+       "                    done automatically if a required /to/ text\n"
+       "                    is not given with a command.\n"
+       "      -showbest     if a /from/ pattern finds nothing, use this to\n"
+       "                    see how many parts would match so far, and with\n"
+       "                    up to how many bytes per part. anchors like [lstart]\n"
+       "                    may show a non zero length when matching (CR)LF.\n"
+       "      -showlist     with -bylist, show the internal joined list if\n"
+       "                    commands are spread across multiple lines.\n"
+       "      -showall      show all of the above.\n"
+       "      -xmaxlen=n    set default maximum length for chars or bytes commands,\n"
+       "                    e.g. -xmaxlen=10000 means /foo*bar/ matches with up to\n"
+       "                    10000 characters between foo and bar. the default max\n"
+       "                    length without this option is 4000 characters.\n"
+       "\n"
+       );
+printx("   $performance notes\n"
+       "    - always use a string literal, or single byte or char, at the start\n"
+       "      of your search expressions, like in $/foo*bar/ starting with 'f'.\n"
+       "      #Do not use a wildcard like * at the start like in #/*foobar/<def>\n"
+       "      when searching huge input data, as your search will #slow down by\n"
+       "      #factor 256.<def> Use $/[lstart]*foobar/<def> instead.\n"
+       "    - the system may cache output file(s), writing to disk in background\n"
+       "      after sfk has finished. subsequent batch commands may execute slower.\n"
+       "\n"
+       );
+}
+
+void printAboutBracketExamples()
+{
+printx("   $about example numbers with [brackets]\n"
+       "      if you see [1] type \"sfk cmd 1\" for whole command in one line.\n"
+       "\n");
+}
+
+void printXRepExamples(char *pszCmd, bool bFind, bool bRep)
+{
+printAboutBracketExamples();
+printx("   $bad examples with corrections\n"
+       "      #if input text contains:\n"
+       "         bool bClFoo;\n"
+       "         bool bClBar   ;\n"
+       "      #sfk xfind in.txt \"/bool[xwhite]bCl*[xwhite];/\"\n"
+       "         does NOT match \"bool bClFoo;\" because * eats the\n"
+       "         whole input line including \";\" so no input is left\n"
+       "         for \"[xwhite];\" and the whole expression fails.\n"
+       "      #sfk xfind in.txt \"/bool[xwhite]bCl[* not ;][xwhite];/\"\n"
+       "         does both match \"bool bClFoo;\" and \"bool bClBar   ;\".\n"
+       "         this means whenever your search fails to work write\n"
+       "         in detail which characters (not) to collect where.\n"
+       "      #sfk xex in.txt \"/[lstart]foo/[lstart]goo/\"\n"
+       "         there is no need to write an anchor like [lstart]\n"
+       "         within totext as it contains no data. use instead:\n"
+       "            sfk xex in.txt \"/[lstart]foo/goo/\"\n"
+       "      #sfk xex in.txt \"/foo[lend]bar/goo[part2]bar/\"\n"
+       "         anchors like [lend] must be at start or end of fromtext\n"
+       "         and cannot be referenced within totext. use instead:\n"
+       "            sfk xex in.txt \"/foo[eol]bar/goo[part2]bar/\"\n"
+       "\n"
+       );
+
+printx("   $working examples\n");
+
+if (bRep)
+{
+printx("      #sfk xrep mydir \"/foo*bar/\"\n"
+       "         an incomplete command (missing \"totext\" part in pattern).\n"
+       "         sfk shows an info text telling about part numbers\n"
+       "         and runs a search for \"foo*bar\" in all files of mydir.\n"
+       "         nothing is changed so far.\n"
+       "      #sfk xrep mydir \"/foo*bar/[part1]goo[part3]/\"\n"
+       "         same as above, but now the /fromtext/totext/ is complete.\n"
+       "         again sfk runs a search for \"foo*bar\", but now it displays\n"
+       "         the changed output text (totext), with everything between\n"
+       "         \"foo\" and \"bar\" being changed to \"goo\". add option\n"
+       "         -dumpfrom to display the original found text instead.\n"
+       "      #sfk xrep -text \"/class* CFoo/[part1][part3]/\" -dir mydir -file .hpp\n"
+       "         search only .hpp files within mydir, and replace for example\n"
+       "         \"class IMPORT CFoo\" by \"class CFoo\".\n"
+       "      #sfk xrep -pat \"/[byte not \\n][end]/[part1]\\n/\"\n"
+       "       #-dir mydir -file .cpp .hpp -dumpall\n"
+       "         find all .cpp or .hpp files in mydir whose last line is not\n"
+       "         ending with a linefeed, and add the linefeed. to check exactly\n"
+       "         what is changed dump both input and output text. [23]\n"
+       "      #sfk xrep -dir mydir -file .hpp -enddir\n"
+       "       #-text \"/[byte not \\n][end]/[part1]\\n/\" -dumpall\n"
+       "         same as above but with dir parameters first. [25]\n"
+       "      #sfk xrep io.txt \"/[lstart][20 chars]*/[part3]/\"\n"
+       "         cut first 20 characters in every line of io.txt.\n"
+       );
+printx("      #sfk xrep io.txt \"/[lstart][9 bytes]1001*/[part2]9009[part4]/\"\n"
+       "         in fixed position text file data like:\n"
+       "            rec. 001:5318 aef3 2751 1001\n"
+       "            rec. 002:1001 aef5 275a 1001\n"
+       "            rec. 003:ef49 aef7 2763 1001\n"
+       "         replace \"1001\" where it appears in columns 10 to 13,\n"
+       "         in this example only the first \"1001\" in record 2.\n");
+printx("      #sfk xrep in.dat \"/\\xFF\\xFE[1 byte]\\x80\\x81/\\xFF\\xFE\\x00\\x80\\x81/\"\n"
+       "         replace byte sequences (not ASCII text strings) in binary data.\n"
+       "         searches byte groups starting with values 0xFF 0xFE, then any\n"
+       "         single byte, then 0x80 0x81, and replaces the variable byte\n"
+       "         by always a binary 0x00 value.\n"
+       );
+}
+if (bFind)
+{
+printx("      #sfk xfind -text \"/class [bytes]{[bytes]}/[all]\\n\\n/\"\n"
+       "       #-dir mydir -file .hpp +tofile out.txt\n"
+       "         collect class definitions from mydir and write output\n"
+       "         indirectly (via command chaining) to out.txt [13]\n");
+printx("      #sfk %s in.txt -text \"/foo*bar/\"\n"
+       "         search in.txt for patterns starting with foo and ending\n"
+       "         with bar, in the same line, with up to 4000 characters inbetween.\n"
+       "      #sfk xhex -text \"/foo[0.100000 bytes]bar/\" -dir mydir\n"
+       "         search all text and binary files of mydir for patterns of\n"
+       "         foo and bar with 0 to 100000 bytes (including NULL, CR\n"
+       "         and LF) inbetween and print output as hex dump.\n"
+       "      #sfk %s -text \"/printf(**);/\" -dir mydir -file .cpp\n"
+       "         find all printf statements in source code, including statements\n"
+       "         across multiple lines.\n"
+       , pszCmd, pszCmd
+       );
+}
+}
+
+// for filter
+void printBewareWide( )
+{
+   printx("   $beware of Shell Command Characters.\n" // filter, wide
+          "      to find or replace text containing #spaces<def> or special characters like #<>|!&?*<def>\n"
+          "      you #must add quotes \"\" around parameters or the shell will #destroy your command<def>.\n"
+          "      it splits the command into parts and gives SFK only one part, causing errors.\n"
+          "      therefore #-replace _ _&nbsp;_<def> must be written like: #-replace \"_ _&nbsp;_\"\n"
+          #ifdef _WIN32
+          "      within a $.bat or .cmd file<def> the #percent %%<def> must be escaped like #%%%%<def> even\n"
+          "      within quoted strings: #sfk echo -spat \"percent %%%% is a percent \\x25\"<def>\n"
+          #else
+          "      within a $bash batch file the #dollar $$ must<def> be escaped like #\\$$<def> even\n"
+          "      within quoted strings: #sfk echo -spat \"dollar \\$$ is a dollar \\x24\"<def>\n"
+          #endif
+          "\n"
+          );
+}
+
+// for replace, xed
+void printBewareLean( )
+{
+   printx("   $beware of Shell Command Characters.\n" // replace, lean
+          "      to find or replace text patterns containing #spaces<def> or special\n"
+          "      characters like #<>|!&?*<def> you #must add quotes \"\"<def> around parameters\n"
+          "      or the shell environment will #destroy your command<def>. for example,\n"
+          "      pattern #/foo bar/other/<def> must be written like #\"/foo bar/other/\"\n"
+          #ifdef _WIN32
+          "      within a $.bat or .cmd file<def> the #percent %%<def> must be escaped like #%%%%<def>\n"
+          "      even within quotes: #sfk echo -spat \"percent %%%% is a percent \\x25\"<def>\n"
+          #else
+          "      within a $bash batch file the #dollar $$ must<def> be escaped like #\\$$<def> even\n"
+          "      within quoted strings: #sfk echo -spat \"dollar \\$$ is a dollar \\x24\"<def>\n"
+          #endif
+          "\n"
+          );
+}
+
+extern int  nGlblConsColumns;
+extern bool bGlblConsColumnsSet;
+
+void webref(cchar *pszIn);
+
+void printHelpText(char *pszSub, bool bhelp)
+{
+   if (!strncmp(pszSub, "color", 5))
+   {
+      printx("<exp> SFK_COLORS=off|on,err:n,warn:n,head:n,examp:n,file:n,hit:n,rep:n,pre:n\n");
+      printx("<exp> SFK_COLORS=bright|dark,theme:black|theme:white\n");
+      printx("\n"
+             "   color identifiers are\n"
+             #ifndef _WIN32
+             "      def       default color (black by default)\n"
+             #endif
+             "      err       error   messages\n"
+             "      warn      warning messages\n"
+             "      head      headlines in help text\n"
+             "      examp     examples  in help text\n"
+             "      file      filename listings in find\n"
+             #ifndef _WIN32
+             "      link      symbolic link files or directories\n"
+             #endif
+             "      hit       text pattern hits in find and filter\n"
+             "      rep       replaced patterns in filter\n"
+             "      pre       line prefix symbols in find\n"
+             "      time      time or low-prio status infos\n"
+             "      traceinc  with -tracesel, included names\n"
+             "      traceexc  with -tracesel, excluded names\n"
+             "\n"
+             "   color code n is a combination of these values:\n"
+             "      0 = black\n"
+             "      1 = bright\n"
+             "      2 = red\n"
+             "      4 = green\n"
+             "      8 = blue\n"
+             "\n"
+             "   some commands like \"sfk echo\" also accept direct color names:\n"
+             "   red,green,blue,yellow,cyan,magenta,default,Red,Green,Blue...\n"
+             "   sfk for windows tries to autoselect color brightness if a black\n"
+             "   or white shell background is found. otherwise the spelling matters:\n"
+             "   red means dark red, and Red means bright red.\n"
+             "   you may also set SFK_COLORS to bright or dark, or specify options\n"
+             "   -bright or -dark in your command, to force all plain text colors\n"
+             "   to the same brightness, regardless of spelling.\n"
+             "\n"
+             "   examples for color schemes:\n"
+             "\n"
+             );
+      printx("      neutral, compatible to black and white backgrounds:\n"
+             "         <exp> SFK_COLORS=head:5,examp:11,file:11,hit:5,rep:7\n"
+             "\n");
+      printx("      black background optimized theme:\n"
+             "         <exp> SFK_COLORS=theme:black\n"
+             "\n");
+      printx("      white background optimized theme:\n"
+             "         <exp> SFK_COLORS=theme:white\n"
+             "\n");
+      printx("      switch off colored output:\n"
+             "         <exp> SFK_COLORS=off\n\n");
+      #ifdef _WIN32
+      printx("   to switch off colors per command, use general option -nocol .\n");
+      #else
+      printx("   by default, colors are inactive on unix, as there are some potential problems\n"
+             "   depending on the background color of your shell, and if you want to post-process\n"
+             "   command output. if you feel lucky, add -col in front of a command, or say\n"
+             "\n"
+             "      export SFK_COLORS=on,def:0      or    export SFK_COLORS=on,def:14\n"
+             "      with bright shell backgrounds         with black shell backgrounds\n"
+             );
+      #endif
+
+      printx("\n"
+             "   to TEST current active colors, type: sfk colortest\n"
+             );
+   }
+
+   if (!strncmp(pszSub, "opt", 3))
+   {
+      printx("$sfk general options reference%s:\n",
+             bhelp ? " (type \"sfk help options\")":"");
+      printx("\n"
+         "   Please note: some of these options are supported only by some commands.\n"
+         );
+      printx("\n"
+         "   $-var<def>       insert SFK variables by using ##(varname). type this\n"
+         "              option directly after \"sfk\" to use it globally with all\n"
+         "              commands in a chain or script. to print \"##(\" literally\n"
+         "              then escape it like ####(\n"
+         #ifdef _WIN32
+         "   $-upat<def>      unix compatible file or text selection and patterns.\n"
+         "              allows to use -subdir :tmp instead of !tmp, filter -:foo\n"
+         "              instead of -!foo and run \"##file\" instead of \"$$file\",\n"
+         "              to create unified .sh batch files for Windows and Linux.\n"
+         "   $-upat2<def>     same as -upat but also support wildcard %% instead of *\n"
+         "              you may also set this by an environment variable like:\n"
+         "              <exp> SFK_CONFIG=upat2\n"
+         #endif
+         "   $-nosub<def>     or -norec does not include subdirectories (subfolders).\n"
+         "              processing of subdirs is DEFAULT with most commands,\n"
+         "              therefore you must specify -nosub to switch it off.\n"
+         "   $-withsub<def>   include subdirs. is DEFAULT with most commands.\n"
+         /*
+         "   $-strict<def>    with run, perline, -to: produce an error if unknown\n"
+         "              tokens like <run>foo are found. these must then be\n"
+         "              escaped like <run><run>foo\n"
+         "   $-nostrict<def>  with run, perline, -to: keep unknown tokens as is.\n"
+         "              may cause script failures with future versions of sfk\n"
+         "              that may add new sfk builtin tokens.\n"
+         */
+         "   $-verbose<def>   print additional infos while running a command.\n"
+         "              helpful if a command doesn't work as expected.\n"
+         "              only some commands support -verbose. try also -verbose=2.\n"
+         #if (!defined(SFK_LIB5))
+         "   $-nofollow<def>  or -nofo does not follow symbolic directory links.\n"
+         "              this option may NOT work with older Linux versions,\n"
+         "              esp. those needing the \"lib5\" binary version of sfk.\n"
+         #endif
+         #ifndef _WIN32
+         "   $-showskip<def>  tell whenever directory contents are skipped to avoid\n"
+         "              double processing caused by symbolic links.\n"
+         "   $-allowdups<def> disable detection of duplicate directory contents.\n"
+         "                 may cause endless recursion on links like \"X11\"->\".\"\n"
+         #endif
+         "   $-quiet<def>     reduce output on some commands. e.g. the find command will\n"
+         "              not display the \"scan\" status info while searching files.\n"
+         "   $-quiet=2<def>   reduce output even more on some commands.\n"
+         #ifdef SFK_MEMTRACE
+         "   $-memcheck<def>  check memory list at the end of every command\n"
+         "              to detect overwrites. reduces performance.\n"
+         #endif
+         "   $-debug<def>     print extra program flow infos to track errors.\n"
+         #ifdef SFK_MEMTRACE
+         "              also activates -memcheck under Windows.\n"
+         #endif
+         );
+  printx("   $-nohead<def>    no not list header/trailer info on some commands: the run cmd\n"
+         "              will not tell \"simulating\" even if it's in simulation mode.\n"
+         "   $-case<def>      activate case sensitive text comparison with some commands.\n"
+         "              most text processing commands are case-insensitive by default.\n"
+         "              filename comparison is always case insensitive.\n"
+         "   $-hidden<def>    include hidden and system files.\n"
+         "   $-nohidden<def>  exclude hidden and system files.\n"
+         "   $-yes<def>       fully execute the command. some commands like \"run\" are\n"
+         "              running in simulation mode by default, to avoid damage to your\n"
+         "              files, as long as you're unsure which files and dirs to select.\n"
+         "              as soon as you add -yes, however, everything is fully executed.\n"
+      // "   $-nonames<def>   or -nofile[names] does not create :file name records when\n"
+      // "              chaining text data from one command to another.\n"
+         );
+  printx("   $-minsize=s<def> select only files >= size, like 10b or 100k\n"
+         "   $-maxsize=s<def> select only files <= size, like 10m or 4g\n"
+         "              b=bytes k=kbytes m=megabytes g=gigabytes=10^9 bytes\n"
+         "              K=2^10 bytes M=2^20 bytes G=2^30 bytes\n"
+         "   $-weblimit=n<def>  change web access download limit to n mbytes,\n"
+         "              with functions like sfk web, filter, xex. default is 10 mb.\n"
+         "              you may also <exp> SFK_CONFIG=weblimit:20\n"
+         "   $-webtimeout=n<def>  web access timeout in msec. default is 10000.\n" // wto.general
+         "              you may also <exp> SFK_CONFIG=webtimeout:3000\n"
+         "   $-headers<def>   print http headers with commands accessing the web.\n"
+      // "   $-showreq<def>   print sent http request url with web commands.\n"
+      // "   $-ftptimeout=n<def>  ftp access timeout in msec. default is 10000.\n"
+         "   $-textfiles<def> process only text files, no binaries. -text is the same,\n"
+         "              but this may interfere with some command's local -text option.\n"
+         "              text/binary detection only checks the file's first 4 kbytes.\n"
+         "   $-binfiles<def>  process only binary files. -bin is the same, but this may\n"
+         "              interfere with some command's local -bin option.\n"
+         "   $-umlauts<def>   with binary-to-text conversion, include german characters.\n"
+         "   $-nocol<def>     disable all colored output. important if your shell has\n"
+         "              a background color incompatible to the default color scheme,\n"
+         "              or (under linux) if the sfk output text must be processed\n"
+         "              further through pipelining, and needs to be stripped from\n"
+         "              the color escape sequences.\n"
+         "   $-col<def>       switch on colored output. \"sfk help colors\" for more.\n"
+         "   $-html<def>      dump sfk help text (color control) in html format.\n"
+         "              -html must be typed directly after \"sfk\".\n"
+         "   $-htmlpage<def>  the same, but include a header to view it in a browser.\n"
+         );
+  printx("   $-sincedir<def>  or -sincedif/add/chg: compare directory tree against\n"
+         "              a reference tree, process only changed or added files.\n"
+         "              see \"sfk list\" for details.\n"
+         "   $-tracesel<def>  give verbose infos why directories and files have been\n"
+         "              selected or excluded. -tracedirs lists only directories,\n"
+         "              -tracefiles lists only files.\n"
+         "   $-since<def>     process only files changed on or after the supplied\n"
+         "              date/timestamp. \"sfk list\" for details.\n"
+         "   $-before<def>    process only files changed before that date/timestamp.\n"
+         "   $-flist fn<def>  or \"-fl fn\" reads list of filenames from file fn.\n"
+      // "   $-fileset<def>   use a textfile with dir- and filenames, instead of\n"
+      // "              providing them as parameters. \"sfk help fileset\" for more.\n"
+         "   $-spat<def>      activates interpretation of slash patterns:\n"
+         "              \\t=TAB \\q=\" \\r=CR \\n=LF \\\\=\\ \\xnn=any char w/hex code nn\n"
+         "              with some commands like replace, filter -form and -replace.\n"
+         "   $-literal<def>   or -lit disables interpretation of wildcards * and ?\n"
+         "              and slash patterns, if they were activated previously.\n"
+         "   $-nospat<def>    disables only slash patterns.\n"
+         );
+         #ifdef _WIN32
+  printx("   $-nocconv<def>   when printing output to the windows console, sfk tries\n"
+         "              to convert umlaut and accent characters to display them\n"
+         "              correctly with codepage 850. set -nocconv to disable this.\n"
+         "              whenever output is redirected to file, no conversion is done.\n"
+         "   $-cconv<def>     force codepage conversions: if command output is redirected\n"
+         "              to a file, codepage conversion is disabled by default.\n"
+         "              use this option to activate, e.g. when post-processing\n"
+         "              sfk run output which produced filename lists.\n"
+         );
+         #endif
+  printx("   $-noipex<def>    disable automatic IP expansion with some commands.\n");
+  printx("   $-wchar<def>     activate EXPERIMENTAL utf-16 (ucs-2, wide char) decoding,\n"
+         "              allowing sfk find or filter to search text in utf-16 files.\n"
+         "              should not be used when (re)writing files. get more infos\n"
+         "              by typing \"sfk help unicode\".\n"
+         "   $-to mask<def>   specify where to write output files with some commands.\n"
+         "              mask supports <run>file, <run>path, <run>base, <run>ext and more,\n"
+         "              like -to outdir<sla><run>base-modified.<run>ext\n"
+         "              say \"sfk run\" for a list of possible keywords.\n"
+         "   $-tofile x<def>  specify a single output filename, which is taken as is\n"
+         "              and not checked for any <run> patterns.\n"
+         "   $-tmpdir x<def>  set directory x as temporary file directory. default is\n"
+         #ifdef _WIN32
+         "              to use the path specified by TEMP or TMP env variable.\n"
+         #else
+         "              to use the path specified by TEMP or TMP env variable,\n"
+         "              or the /tmp directory, if no such variable is defined.\n"
+         #endif
+         "   $-showtmp<def>   tell verbosely which temporary files are created.\n"
+         "   $-keeptmp<def>   do not delete the temporary files, if possible.\n"
+         "   $-nowarn<def>    and -noerr, -nonote disable warn, error and note messages.\n");
+  printx("   $-memlimit=n<def> set the caching memory limit to n mbytes (default=%d).\n"
+         "              used if a function needs to load whole files into memory.\n"
+         ,(int)(nGlblMemLimit / 1048576));
+         #ifdef VFILEBASE
+  printx("              if zip etc. archive processing is very slow, it may be caused by\n"
+         "              a cache overflow. try to increase the -memlimit then.\n"
+         "              if you think sfk uses too much memory while processing files,\n"
+         "              try to reduce -memlimit (values below 200 are not recommended).\n"
+         "              you may also set SFK_CONFIG (see end of this text).\n"
+         "   $-cachestat<def> tell amount of memory used by archive file cache.\n"
+         "   $-nocache<def>   disable the disk cache (for network files).\n"
+         );
+         #endif // VFILEBASE
+  printx("   $-exectime<def>  tell command execution time at program end.\n");
+         #ifdef _WIN32
+  printx("   $-noesckey<def>  disable stop by escape key. (windows only)\n");
+         #endif
+  printx("\n"
+         "   $shell return code handling and error processing:\n"
+         "\n"
+         "   $-showrc<def>    print sfk return code at program end. may not print anything\n"
+         "              in case of fatal errors, like wrong syntax (usually rc 9).\n"
+         "   $-exterr<def>    in case of operating system related errors like file access,\n"
+         "              prints extended error information, if available.\n"
+         "   $-waitonerr<def> wait for user input on every error.\n"
+         "   $-waitonend<def> wait for user input at program end.\n"
+         "   $-stoponerr<def> stop directory tree processing on first unreadable file.\n"
+         "              default is to process as many files as possible, skipping\n"
+         "              unreadable files and directories.\n"
+         "   $-rcfromerr<def> some commands like filter, find, hexfind tell by shell rc\n"
+         "              that something was found. by default, skipped errors like\n"
+         "              unreadable files do NOT change this rc. with -rcfromerr,\n"
+         "              skipped errors do override the resulting shell rc.\n"
+         "   $-echoonerr<def> echo whole command to stderr when an error occurs.\n"
+         "              see also the SFK_CONFIG setting \"echoonstart\" below.\n"
+         "\n"
+         "   to experiment with the above options, try \"sfk errortest\".\n"
+         "\n");
+
+  printx("   $command local versus global scope:\n"
+         "\n"
+         "      within a command chain, many options have an effect only locally\n"
+         "      with the command where they are specified, e.g. in\n"
+         "\n"
+         "         #sfk filt x.txt -case -high red FooCase +filt -high blue TheBar\n"
+         "\n"
+         "      the \"-case\" is valid only for the first filter command.\n"
+         "      but the following options can also be used globally, if specified\n"
+         "      directly after \"sfk\":\n"
+         "\n"
+         "         $-nohead -noinfo -nofile -case -literal -spat\n"
+         "\n"
+         "      for example, in\n"
+         "\n"
+         "         #sfk -case filt x.txt -high red FooCase +filt -high blue TheBar\n"
+         "\n"
+         "      the \"-case\" is valid for ALL commands in the command chain.\n"
+         "\n"
+         );
+
+  printx("   $environment configuration:\n"
+         "\n"
+         "      $<exp> SFK_CONFIG=columns:n,active-file-age:n,memlimit:n,...\n"
+         "        columns:\n"
+         "          sfk (for windows) tries to autodetect the no. of console columns,\n"
+         "          but you may also set this value through this config parm.\n");
+  printx("        active-file-age:n\n"
+         "          some functions need to tell if a file is 'recently edited' or rather\n"
+         "          old and inactive. by default, files > 30 days of age are considered\n"
+         "          non-active. reconfigure the no. of days threshold here.\n"
+         "        memlimit:\n"
+         "          set memory limit to n mbytes.\n"
+         "        echoonstart:\n"
+         "          echo the whole sfk command on start, to stderr.\n"
+         "        echoonerr:\n"
+         "          echo the whole sfk command on errors, to stderr.\n"
+         "        tmpdir:path\n"
+         "          set folder for temporary files, used by some commands.\n"
+         #ifdef _WIN32
+         "          e.g. set SFK_CONFIG=tmpdir:d:\\tmp,memlimit:500\n"
+         #else
+         "          e.g. set SFK_CONFIG=tmpdir:~/mytmp,memlimit:500\n"
+         #endif
+         "\n"
+         );
+         if (bGlblIgnore3600)
+            printx("   info: files with a time difference of 1 hour AND an age > %d days\n"
+                   "         are skipped by some commands, e.g. list -sincedir.\n\n", nGlblActiveFileAgeLimit);
+
+         if (nGlblActiveFileAgeLimit != 30)
+            printx("   info: active file age limit is currently set to %d days.\n", nGlblActiveFileAgeLimit);
+
+         #ifdef _WIN32
+         if (glblWildChar != '*')
+         #else
+         if (glblWildChar != '%')
+         #endif
+         {
+            setTextColor(nGlblWarnColor);
+            printx("   info: wildcard star '*' is currently configured as %c\n", glblWildChar);
+            setTextColor(-1);
+         }
+
+  printx("      $<exp> SFK_ZIP_EXT=\".foo .bar .myext\"\n"
+         "        set additional, user defined zip file extensions. in this example,\n"
+         "        files ending with .foo, .bar or .myext are also treated like zip files.\n"
+         "        for the list of default extensions, look above at the -arc option.\n"
+         "\n");
+ 
+         if (bGlblConsColumnsSet)
+            printx("   sfk currently uses %d console columns for output with some commands.\n", nGlblConsColumns);
+   }
+
+   if (!strncmp(pszSub, "sel", 3))
+   {
+  printx("$sfk file selection reference%s:\n"
+         "\n"
+         "   $default principles of most sfk commands:\n"
+         "\n"
+         "      - subdirectory (subfolder) processing is done by default.\n"
+         "      - filename comparison is case insensitive.\n"
+         "      - hidden and system files are not processed,\n"
+         "        except for some commands like copy.\n"
+         "      - symbolic links are followed.\n"
+         "\n"
+         "        type \"sfk help options\" on how to change that.\n"
+         "\n"
+         "   $how to select directories and contained filenames:\n"
+         "\n"
+         "   sfk provides many ways of specifying which files you want to process,\n"
+         "   from very simple but unflexible to very detailed.\n"
+         "\n",
+         bhelp ? " (type \"sfk help select\")":""
+         );
+  printx("   $1. short format file selection:\n"
+         "\n"
+         "      $dirname [filemask1] [filemask2] [<not>fileexcludemask] [...]\n"
+         "\n"
+         "      this format supports ONE directory name, followed by many file masks.\n"
+         "      it can be used with most commands processing directory trees.\n"
+         "\n"
+         "      example:\n"
+         "\n"
+         "      #sfk list mydir foo bar .txt .zip <not>-tmp\n"
+         "         selects all files\n"
+         "         - in directory mydir and all its subdirectories\n"
+         "         - having foo OR bar in their filename (no * required)\n"
+         "         - OR which are ending with .txt OR .zip (no *.txt required)\n"
+         "         - but not having -tmp in their filename\n"
+         "\n"
+         "      supported by commands:\n"
+         "         list, select, stat, run, detab, scantab, hexdump and some more.\n"
+         "\n"
+         );
+  printx("   $2. long format file selection:\n"
+         "\n"
+         "      $-dir root1 [root2] [<wild>pathmask<wild>] [...] [-file mask1 [mask2] [...]]\n"
+         "         $[-dir root3 root4 <not>direxcludemask -file mask3 <not>xmask4] [...]\n"
+         "\n"
+         "      this format supports\n"
+         "\n"
+         "      - several root directory sets, starting with -dir, each of them\n"
+         "        containing many directories, path masks or dir exclusion masks.\n"
+         "        a path mask is an expression in a directory set containing a\n"
+         "        wildcard character \"<wild>\". a dir exclusion mask is started\n"
+         "        by <not> and may be surrounded by <sla> to select exact dir names.\n"
+         "\n"
+         "      - a file mask set per root directory set, starting with -file.\n"
+         "        this may also contain file exclusions starting with <not>\n"
+         "\n"
+         "      supported by:\n"
+         "         nearly every command than can process file sets.\n"
+         "\n");
+  printx("      $to select all dirs of current dir except something:\n"
+         "      #-dir . <not>foo       <def>-> exclude subdirs like *foo*\n"
+         "      #-dir . <not>.foo      <def>-> exclude with extension .foo\n"
+         "      #-dir . <not><sla>foo      <def>-> exclude starting with foo\n"
+         "      #-dir . <not>foo<sla>      <def>-> exclude ending with foo\n"
+         "      #-dir . <not><sla>foo<sla>     <def>-> exclude exactly foo\n"
+         "      #-dir . <not><sla>foo<sla>bar<sla> <def>-> exclude subdir combi\n"
+         "      #-dir . <not><wild>.foo<wild>    <def>-> exclude with .foo anywhere\n"
+         "\n"
+         "      $to select only sub dirs of current dir with something:\n"
+         "\n"
+         "      using wide sub dir expressions:\n"
+         "      #-dir . -subdir foo       <def>-> include paths having *foo*\n"
+         "      #-dir . -subdir <sla>foo      <def>-> include paths having *<sla>foo\n"
+         "      #-dir . -subdir foo<sla>      <def>-> include paths having *foo\n"
+         "      #-dir . -subdir <sla>foo<sla>     <def>-> include paths exactly foo\n"
+         "      #-dir . -subdir .foo      <def>-> include with extension .foo\n"
+         "      #-dir . -subdir <sla>foo<sla>bar<sla> <def>-> include subdir combi\n"
+         "      instead of -subdir, you may also type just -sub\n"
+         "\n"
+         "      using compact sub dir expressions:\n"
+         "      #-dir . <wild>foo<wild>      <def>-> include paths having *foo*\n"
+         "      #-dir . <wild><sla>foo      <def>-> include paths having <sla>foo\n"
+         "      #-dir . <wild>foo<sla>      <def>-> include paths having foo<sla>\n"
+         "      #-dir . <wild><sla>foo<sla>     <def>-> include paths exactly foo\n"
+         "      #-dir . <wild>.foo      <def>-> include with extension .foo\n"
+         "      #-dir . <wild><sla>foo<sla>bar<sla> <def>-> include subdir combi\n"
+         "\n"
+         "      $exclusion by filename:\n"
+         "      #-file <not>foo        <def>-> exclude all files like *foo*\n"
+         "      #-file <not><sla>foo       <def>-> exclude starting with foo\n"
+         "      #-file <not>foo<sla>       <def>-> exclude ending with foo\n"
+         "      #-file <not><sla>foo<sla>      <def>-> exclude exactly foo\n"
+         "      #-file <not>.foo       <def>-> exclude extension foo\n"
+         "\n"
+         "      $inclusion by filename:\n"
+         "      #-file foo         <def>-> include all files like *foo*\n"
+         "      #-file <sla>foo        <def>-> include starting with foo\n"
+         "      #-file foo<sla>        <def>-> include ending with foo\n"
+         "      #-file <sla>foo<sla>       <def>-> include exactly foo\n"
+         "      #-file .foo .bar   <def>-> select .foo and .bar files\n"
+         "\n"
+         "      $examples\n"
+         "\n"
+         "      #sfk scantab -dir mydir1 mydir2 <wild>include<wild> -file foo bar .hpp\n"
+         "         scans all files for TAB characters\n"
+         "         - in directory mydir1 and all its subdirectories\n"
+         "           AND\n"
+         "         - in directory mydir2 and all its subdirectories\n"
+         "           IF\n"
+         "           - 1. the file path contains the word \"include\",\n"
+         "             e.g. mydir1\\core\\include\\foosys.hpp\n"
+         "           - 2. the filename contains foo OR bar\n"
+         "           - 3. or the filename ends with .hpp\n"
+         "\n"
+         "      #sfk scantab -dir mydir1 <not>include -file <not>.tmp <not>.save\n"
+         "         scans all files for TAB characters in folder mydir1,\n"
+         "         excluding all sub dirs having \"include\" in their name,\n"
+         "         and excluding all .tmp and .save files.\n"
+         "\n"
+         "      #sfk list -dir source include -subdir save <not>.svn -file .bak\n"
+         "         list .bak files from directory trees source and include,\n"
+         "         within in sub directories having \"save\" in their name,\n"
+         "         excluding sub directories ending with \".svn\".\n"
+         "\n"
+         "      #sfk list -dir source include <wild>save <not>.svn -file .bak\n"
+         "         the same as above, written in compact subdir format:\n"
+         "         subdir inclusion masks require a wildcard <wild> anywhere\n"
+         "         to make it clear they're no root directories.\n"
+         "         subdir exclusion masks can stay as they are.\n"
+         "\n"
+         );
+  printx("   $3. single parameter file set selection:\n"
+         "\n"
+         "      some commands like find, filter or tail do not accept the full\n"
+         "      short format, but only a single file or dir parameter, as it\n"
+         "      would get too complicated mixing the short format with local\n"
+         "      options. find more on that in the command's local help.\n"
+         "\n"
+         );
+  printx("   $4. passing filename lists in command chains:\n"
+         "\n"
+         "      instead of selecting files in the current command, you may use\n"
+         "      a filename list created by a previous command, for example:\n"
+         "\n"
+         "      #sfk select mydir .txt +detab=3\n"
+         "         selects all .txt files from directory mydir, then passes\n"
+         "         this file list to detab, where the files are detabbed.\n"
+         "\n"
+         "      command chaining is more intuitive, as you can play around\n"
+         "      with different file sets before executing actual changes\n"
+         "      on the selected files.\n"
+         "\n"
+         "      #sfk filter names.txt +texttofilenames +list -late\n"
+         "         provided that names.txt contains a list of filenames,\n"
+         "         this command chain lists the most recent of these files.\n"
+         "         note that in this case, it is unclear if to pass\n"
+         "         - the filename \"names.txt\" or\n"
+         "         - the line contents from within names.txt\n"
+         "         as filenames to \"list\", therefore we need to insert\n"
+         "         +texttofilenames or +ttf to enforce a conversion.\n"
+         "\n"
+         "      supported by:\n"
+         "         some commands. check each command's local help for more.\n"
+         "\n"
+         );
+  printx("   $see also\n"
+         "      #sfk help options<def>  general options for most commands.\n"
+         "      #sfk list<def>          for more file selection examples.\n"
+         );
+   }
+
+   if (!strcmp(pszSub, "chain"))
+   {
+      printx("$sfk command chaining reference%s:\n",
+             bhelp ? " (type \"sfk help chain\")":"");
+      printx("\n"
+         "   several commands can be combined in a so-called \"command chain\".\n"
+         "   this is done by appending command names prefixed by \"+\", for example:\n"
+         "\n"
+         "   #sfk list docs .txt +ffilter -+foo\n"
+         "      \"list\" produces a filename list and passes this to \"filefilter\".\n"
+         "      ffilter reads the contents of these files, looking for the word \"foo\".\n"
+         "\n"
+         "   $chain data types\n"
+         "      three types of data can be passed from one command to another:\n"
+         "\n"
+         "         #- filename lists.\n"
+         "         #- plain text records (lines).\n"
+         "         #- stream text or binary data.\n"
+         "\n"
+         "      output is dependent on command. for example, sfk select produces\n"
+         "      filename lists, sfk filter makes plain text records, xex/xed can\n"
+         "      produce streams of text or binary data.\n"
+         "\n"
+         "   $chain data type conversion\n"
+         "      vice versa, some commands accept filenames, or text input, or even both.\n"
+         "      depending on what you want to do, it may be necessary to convert between\n"
+         "      this types of data. this can be done by the keywords:\n"
+         "\n"
+         "         #+texttofilenames<def> or #+ttf<def>\n"
+         "         #+filenamestotext<def> or #+ftt<def>\n"
+         "\n"
+         "      however, most sfk commands try to do such conversions automatically.\n"
+         "\n"
+         "   $using chain data between commands\n"
+      // "      #sfk cmd1 ... +to cmd2<def>     must pass data to cmd2. use with +call\n"
+      // "                                and +end where it is unclear if the next\n"
+      // "                                command may need the chain data.\n"
+         "      #sfk cmd1 ... +then cmd2<def>   does not pass any data to cmd2,\n"
+         "                                prints cmd1 output to terminal.\n"
+         "      #sfk ... +toterm<def>           dumps current chain content to terminal.\n"
+         "      #sfk ... +tofile outfile<def>   dumps chain content to file outfile.\n"
+         "      #sfk ... +tovoid +cmd2<def>     does not pass any data to cmd2,\n"
+         "                                drops cmd1 chain text silently.\n"
+         "      in all cases, the chain is cleared. if another command is following,\n"
+         "      it will receive no input from the chain.\n"
+         "\n"
+         "   $using chain data with call / label / end\n"
+         "      #sfk ... +call myfunc<def>      passes no chain data into myfunc\n"
+         "      #sfk ... +tcall myfunc<def>     passes text data into myfunc\n"
+         "      #sfk ... +fcall myfunc<def>     passes filenames into myfunc\n"
+         "      #sfk label ... +end<def>        returns no chain data\n"
+         "      #sfk label ... +tend<def>       returns text data\n"
+         "      #sfk label ... +fend<def>       returns a filename list\n"
+         "\n"
+         "   $scope and lifetime of options\n"
+         "      most options are valid only for the command where they are specified.\n"
+         "      if another command follows in the chain, the option is reset.\n"
+         "      but some options may also be specified on a global scope.\n"
+         "      read more on that under \"$sfk help options<def>\".\n"
+         "\n"
+         /*
+         "   $tracing a data flow within a script\n"
+         "      set global option $-iotrace<def> like:\n"
+         "\n"
+         "         #sfk -iotrace script myfile.bat -from begin<def>\n"
+         "\n"
+         "      which produces a mixed command output and iotrace.\n"
+         "      to get only the clean iotrace without command output use\n"
+         "\n"
+         #ifdef _WIN32
+         "         #myfile.bat >nul\n"
+         #else
+         "         #myfile.bat >/dev/null\n"
+         #endif
+         "\n"
+         "      as iotrace goes to stderr instead of normal output.\n"
+         "\n"
+         "      if iotrace tells \"=> send to +cmd\" and you don't want\n"
+         "      data being passed to that command, but instead want it\n"
+         "      printed on terminal, use \"+then cmd\" in the chain.\n"
+         "\n"
+         */
+         "   $more in the SFK Book\n"
+         "      the #SFK Book<def> contains long examples with input,\n"
+         "      output, script and detailed command explanations.\n"
+         "      type \"#sfk book<def>\" for more.\n"
+         "\n"
+         "   $see also\n"
+         "      #sfk batch<def>     create an example script\n"
+         "      #sfk help var<def>  how to use sfk variables\n"
+         "      #sfk script<def>    about sfk scripting\n"
+         "      #sfk call<def>      calling a function in a script\n"
+         "      #sfk label<def>     possible options with label\n"
+         "      #sfk if<def>        conditional execution\n"
+         "      #sfk goto<def>      jump to a local label\n"
+         );
+   }
+
+   if (!strncmp(pszSub, "var", 3))
+   {
+  printx("$sfk parameters and variables support\n"
+         "\n"
+         "   $sfk script parameters\n"
+         "\n"
+         "      -  look like #%%1 %%2 %%3<def> to #%%9<def>,\n"
+         "         or with sfk for windows also like #$$1 $$2 $$3<def>.\n"
+         "\n"
+         "      -  are used with sfk #script<def> and #call / label<def>.\n"
+         "\n"
+         "      -  are passed into the script or label command chain\n"
+         "         wherein they are never changed.\n"
+         "\n");
+  webref("helpvar");
+  printx("      $example:\n"
+         "         $--- file filt.bat begin ---\n"
+         "         sfk #script<def> %%~f0 -from begin %%*\n"
+         "         GOTO end\n"
+         "         sfk #label<def> begin\n"
+         "            +filter %%1 %%2\n"
+         "            +end\n"
+         "         :end\n"
+         "         $--- file filt.bat end ---\n"
+         "         typing \"#filt.bat in.txt -+foo<def>\" will run sfk filter\n"
+         "         using the parameters \"in.txt\" and \"-+foo\".\n"
+         "         under windows %%~f0 is the absolute batch filename\n"
+         "         itself including extension .bat or .cmd.\n"
+         "\n");
+  printx("   $sfk global variables\n"
+         "\n"
+         "      -  are set like:\n"
+         "         sfk #setvar<def> myvar=\"the test text\" ...\n"
+         "         sfk echo foo #+setvar<def> myvar ...\n"
+         "         sfk xed in.txt \"/foo*bar/#[setvar myvar][part2][endvar]<def>/\" ...\n"
+         "\n"
+         "      -  are used by further commands in the chain like:\n"
+         "         sfk ... #+getvar myvar\n"
+         "         sfk ... +echo -var \"using <examp>##(myvar)<def>\"\n"
+         "         sfk ... +xed \"_<foo>*</foo>_[part1]#[getvar myvar]<def>[part3]_\"\n"
+         "         $note:<def>\n"
+         "           to read or use variable contents by a pattern <examp>##(name)\n"
+         "           option #-var<def> must be given. this is to avoid unwanted\n"
+         "           side effects with commands that get \"##(\" in their\n"
+         "           input files or input text streams.\n"
+         "\n"
+         "      -  allowed variable names:\n"
+         "         must start with a-z, then a-z0-9_\n"
+         "\n"
+         "      $examples:\n"
+         "         #sfk setvar file=in.txt +filter -var \"##(file)\" -+foo\n"
+         "            runs sfk filter, giving the input filename by variable.\n"
+         "         #sfk xex in.txt \"/foo=*/[setvar fooval][part2][endvar]/\"\n"
+         "          #+echo -var \"foo is: ##(fooval)\"\n"
+         "            extract foo=(any text) from in.txt, place the found\n"
+         "            text into variable fooval, then print it. [19]\n"
+         "\n");
+  printx("   $sfk local command variables\n"
+         "\n"
+         "      -  are created directly from input text\n"
+         "         produced by a previous command in the command chain\n"
+         "\n"
+         "      -  are suppported only within some commands like\n"
+         "         #sfk run \"... <run>text ....\"\n"
+         "            runs an external program once for every input line.\n"
+         "         #sfk perline \"... <run>text ...\"\n"
+         "            runs sfk internal commands once for every input line.\n"
+         "         #sfk filter -tabform \"... <run>col1 ... <run>col2 ...\"\n"
+         "            splits text lines by TAB char, allowing reformatting.\n"
+         "         type #sfk run<def>, #sfk perline<def> etc. for further infos.\n"
+         "\n"
+         );
+   }
+
+   if (!strcmp(pszSub, "shell"))
+   {
+      printx(
+         "$Configure the windows Command Prompt this way:\n"
+         "\n"
+         "  1. create a shell shortcut on your desktop:\n"
+         "     - Start/Programs/Accessories/Command Prompt,\n"
+         "       right mouse button, select Copy.\n"
+         "     - go to an empty place on the desktop.\n"
+         "     - select Paste.\n"
+         "\n"
+         "  2. on the new desktop shortcut,\n"
+         "     - right mouse button, select Properties.\n"
+         "\n"
+         "  3. in the Command Prompt Properties, set\n"
+         "     - #Options: activate QuickEdit and Insert mode\n"
+         "     - #Font   : select 8 x 12\n"
+         "     - #Layout : Screen buffer size: Width 160, Height 3000\n"
+         "       #         Window size       : Width 160, Height   30\n"
+         "\n"
+         "  4. close Properties by clicking OK.\n"
+         "\n"
+         "  5. double-click on the Command Prompt icon to open a shell.\n"
+         "\n"
+         "$Now you have a well configured power shell:\n"
+         "\n"
+         "   - any command output is remembered #up to 3000 lines<def>.\n"
+         "\n"
+         "   - you may select command output anytime with left mouse button,\n"
+         "     then click right button #to copy to clipboard<def>.\n"
+         "     right click again to #paste clipboard as a command<def>.\n"
+         "\n"
+         "   - to #pause<def> a program that prints output to the screen,\n"
+         "     do a #dummy-select<def> of text with the left mouse button.\n"
+         "     to continue program execution, press right button, or enter.\n"
+         "\n"
+         "$Automatic Command Completion\n"
+         "\n"
+         "   Question: #how do you enter the directory VeryMuchToTypeFooBarSystem ?\n"
+         "\n"
+         "   Answer 1: type \"cd verymuchtotypefoobarsystem\"\n"
+         "\n"
+         "             this is actually what most users do, and it's a waste of time.\n"
+         "\n"
+         "   Answer 2: #type \"cd very\" and then press the TAB key.\n"
+         "\n"
+         "             since Windows XP, command completion is default.\n"
+         "\n"
+         "   Under Win98 and Win2k, completion it is NOT default. As a workaround,\n"
+         "   you may type \"cd very*\", or run regedit and set the registry key value\n"
+         "   HKEY_CURRENT_USER\\Software\\Microsoft\\Command Processor\\CompletionChar to 9.\n"
+         );
+   }
+
+   if (!strcmp(pszSub, "pat"))
+   {
+      printx("$sfk wildcards and text patterns%s:\n",
+             bhelp ? " (type \"sfk help patterns\")":"");
+      printx("\n"
+         "   $available wildcards:\n"
+         "      * = any number of characters.\n"
+         "      ? = a single character.\n"
+         "\n"
+         "   $available slash patterns:\n"
+         "      \\t   = TAB\n"
+         "      \\q   = double quote \"\n"
+         "      \\r   = carriage return\n"
+         "      \\n   = linefeed\n"
+         "      \\xnn = any character with hexadecimal value nn,\n"
+         "             e.g. \\x09 is the same as \\t (TAB)\n"
+         "      \\\\   = the backslash \\ itself\n"
+         "      \\\\*   = the star '*' itself     [only with some commands]\n"
+         "      \\?   = quotation mark '?'      [only with some commands]\n"
+         "\n"
+         "   $support by commands:\n"
+         "\n"
+         "      if any command supports slash patterns,\n"
+         "\n"
+         "      - they are not active by default, except for commands\n"
+         "        starting with \"x\" that use SFK Expressions.\n"
+         "\n"
+         "      - to use, say -spat directly after the command name:\n"
+         "        #sfk echo -spat \"three\\tlittle\\ttabs\\t.\"\n"
+         "        prints: #three   little  tabs    .\n"
+         "\n"
+         "      - to activate slash patterns globally over multiple commands\n"
+         "        of a command chain, say -spat directly after \"sfk\":\n"
+         "        #sfk -spat echo \"two\\ttabs\" +filter -rep \"x\\tx_x\"\n"
+         "        prints: #two_tabs\n"
+         "\n"
+         "      if any command supports wildcards,\n"
+         "\n"
+         "      - they are active by default.\n"
+         "\n"
+         "      - they can be deactivated by option -literal or -lit,\n"
+         "        if you need to find/replace '*' or '?' characters themselves:\n"
+         "        #sfk echo \"*** ok ***\" +filter -lit -rep \"_*_=_\"\n"
+         "        prints: #=== ok ===\n"
+         "\n"
+         "      - to deactivate globally over multiple commands of a chain,\n"
+         "        say -literal directly after \"sfk\":\n"
+         "        #sfk -literal echo \"*** ok ???\" +filter -lit -rep \"_?_!_\"\n"
+         "        prints: #*** ok !!!\n"
+         "\n"
+         "      - another way to find/replace '*' or '?' is to say -spat\n"
+         "        and then to use \\\\* and \\? patterns:\n"
+         "        #sfk echo \"*** ok ***\" +filter -spat -rep \"_\\\\*_=_\"\n"
+         "        prints: #=== ok ===\n"
+         "\n"
+         "      further reading:\n"
+         "\n"
+         "         $sfk help options<def> - general options reference\n"
+         "         $sfk help chain<def>   - about command chaining\n"
+         );
+   }
+
+   if (!strcmp(pszSub, "faq"))
+   {
+      printx(
+"start of filename comparison: use \"\\pattern\". see also \"name start\"\n"
+"traveling, walking subdirectories or subfolders: is default. type \"sfk help select\"\n"
+"find in text files: \"sfk find\", \"sfk hexfind\", \"sfk filter\"\n"
+"find text, data in binary files, binaries: \"sfk find\", \"sfk hexfind\"\n"
+"find same, identical, duplicate files: \"sfk dupfind\"\n"
+"compare directories, folders, differences: \"sfk list\" with -sincedir option\n"
+"find different files, differences: \"sfk md5check\", \"sfk list\" with -sincedir\n"
+"list, find newest, oldest, latest files of dir: \"sfk list\" with -late, -old\n"
+"list, find most recent files of dir: \"sfk list\" with -late, -old\n"
+"list, sort, order dir files by date, timestamp: \"sfk list\" with -late, -old\n"
+"list, find largest, biggest, smallest dir files: \"sfk list\" with -big, -small\n"
+"list, find files changed today, since a date: \"sfk list\" with -since\n"
+"sort dir contents by date, time, size: \"sfk list\" with -late, -big\n"
+"symbolic links: no option under windows. under linux (not lib5) see \"sfk help opt\"\n"
+"regular expressions: not supported, but see \"sfk help patterns\"\n"
+"list, show files, directory tree size, largest dirtree: see \"sfk stat\"\n"
+"split text lines, column data by characters: \"sfk filter\" with -sep, -form\n"
+"extract, remove text blocks between marker lines: \"sfk filter\" with -inc, -cut\n"
+"create, verify md5sum, md5 checksum for dir, files: \"sfk md5gento\", \"sfk md5check\", \"sfk md5\"\n"
+"convert binary to c++, cpp, java sourcecode: \"sfk bin-to-src\"\n"
+"split large text or binary files: \"sfk split\"\n"
+"transfer files from windows host to linux vmware: \"sfk ftpserv\", \"sfk ftp\"\n"
+"find, where are classes inside, within jar files tree: \"sfk list\" with -arc\n"
+"all class packages in jar dirs: \"sfk list\" with -arc\n"
+"list, get all files in jars in all dirs: \"sfk list -arc . .jar\"\n"
+"find, replace words in text, binary files: \"sfk replace\", \"sfk filter\"\n"
+"find, replace hex pattern in binary files: \"sfk hexfind\", \"sfk replace\"\n"
+"patch binary file contents: \"sfk replace\"\n"
+"convert text file, dos, windows, linux crlf line endings, format: \"sfk addcr\", \"sfk remcr\"\n"
+"replace, add, remove, strip, convert text file crlf line endings: \"sfk addcr\", \"sfk remcr\"\n"
+"find, print, read first, last lines of text files: \"sfk head\", \"sfk tail\"\n"
+"print, read head or tail of files: \"sfk head\", \"sfk tail\"\n"
+"find command, cmd, bat, exe file in path: \"sfk pathfind\"\n"
+"remove, replace tabs by spaces in text file lines: \"sfk detab\"\n"
+"insert, remove text in files: \"sfk replace\", \"sfk filter\" with -write\n"
+"find, list files in a dir sorted by size, time: \"sfk list\" with -big, -late\n"
+"copy content, extract, view text of a binary file: \"sfk partcopy\", \"sfk strings\"\n"
+"run user defined command, processing many files: \"sfk run\"\n"
+"run a command on each file, line of file: \"sfk run\", \"sfk filter thefile.txt +run \"mycmd <run>text\"\"\n"
+"replace, remove spaces in filenames, dir names: \"sfk deblank\"\n"
+"join, add text, binary files: \"sfk snapto\", \"sfk join\"\n"
+"adding delay, pause to command file: \"sfk sleep\", \"sfk pause\"\n"
+"set, create, define alias for .cmd, .bat, command path in shell: \"sfk alias\"\n"
+"delete .bak, .tmp, temporary files: \"sfk sel . .bak +del\"\n"
+"convert binary file to text, source code: \"sfk hexdump\", \"sfk bin-to-src\"\n"
+"hex to byte, convert hex dump, file into binary file: \"sfk hextobin\"\n"
+"count files in dir tree: \"sfk list ... +count\"\n"
+"create text file from dir listing: \"sfk list ... +tofile\"\n"
+"create large text, binary file for tests: \"sfk make-random-file\"\n"
+"delete files by extension: \"sfk del mydir .ext\"\n"
+"trace, hexdump, dump TCP data, browser connection: \"sfk tcpdump\"\n"
+"tcpdump of http request in plain text: \"sfk tcpdump\" with -flat\n"
+"echo staying on same line, without lf: \"sfk echo\" with -noline\n"
+"shell echo with colored words in red, green, blue: \"sfk echo\"\n"
+"open, read text from clipboard: \"sfk fromclip\"\n"
+"file copy to clipboard: \"sfk filter ... +toclip\"\n");
+printx(
+"find unprintable, nonprintable characters : \"sfk hexfind\" with -bin\n"
+"find duplicate lines in a text file: \"sfk count\" with -samelines\n"
+"find data, hex numbers in binary files: \"sfk hexfind\"\n"
+"find, replace text with wildcards: \"sfk filter\"\n"
+"find, get, list files matching patterns: \"sfk list\"\n"
+"cut, remove, filter empty, blank lines from text files: \"sfk filter\" with -no-blank-lines\n"
+"replace any, accent, umlaut characters in text files: \"sfk replace\"\n"
+"check, find dependencies of binaries, executables files: \"sfk deplist\"\n"
+"find, list number of files in a directory: \"sfk list mydir +count\"\n"
+"add current, any dir to a file list: \"sfk list . >>myfilelist.txt\"\n"
+"strip, skip text file lines by filter, markers: \"sfk filter\" with -!mypattern or -cut\n"
+"cut, strip, exclude lines by words from text files: \"sfk filter\" with -!word1 -!word2\n"
+"list files of dir needing no wildcard: \"sfk list mydir *foo*\" == \"sfk list mydir foo\"\n"
+"write shell script with command chaining: \"sfk script\", \"sfk samp\"\n"
+#ifdef _WIN32
+"to create multi line commands, use ^ at the end of .bat lines, or \"sfk script\"\n"
+#else
+"to create multi line commands, use \"sfk script\"\n"
+#endif
+"if content(s) are too large to load, see -memlimit under \"sfk help opt\"\n"
+"replace colors in text lines: \"sfk filter\" with -highlight\n"
+"jpeg, jpg, png image processing, conversion: \"sfk samp javaimg\", \"sfk samp phpimg\""
+ " or google for imagemagick.\n"
+"all zip tar gz bz2 file extensions recognized by sfk: type \"sfk help opt\"\n"
+"process files changed from, until a date: see option -since and -before\n"
+      );
+#ifdef _WIN32
+      printx(
+"print, get, dump clipboard contents: \"sfk fromclip\"\n"
+      );
+#endif
+   }
 }
 
 #endif // USE_SFK_BASE

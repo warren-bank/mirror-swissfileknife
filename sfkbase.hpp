@@ -59,8 +59,8 @@
   #endif
   #ifndef SHUT_RD
    #define  SHUT_RD   SD_RECEIVE
-   #define	SHUT_WR   SD_SEND
-   #define	SHUT_RDWR SD_BOTH
+   #define  SHUT_WR   SD_SEND
+   #define  SHUT_RDWR SD_BOTH
   #endif
   #define vsnprintf _vsnprintf
   #define snprintf  _snprintf
@@ -310,7 +310,7 @@ num   atonum         (char *psz);   // decimal only
 num   myatonum       (char *psz);   // with 0x support
 char *numtoa         (num n, int nDigits=1, char *pszBuf=0);
 char *numtohex       (num n, int nDigits=1, char *pszBuf=0);
-int  timeFromString (char *psz, num &nRetTime);
+int  timeFromString  (char *psz, num &nRetTime, bool bsilent=0);
 void  doSleep        (int nmsec);
 uchar *loadBinaryFile(char *pszFile, num &rnFileSize);
 bool  infoAllowed    ( );
@@ -319,13 +319,13 @@ int   setaddr(struct sockaddr_in *paddr, char *pszHostOrIPPart, bool bsilent=0);
 
 class IOStatusPhase {
 public:
-		IOStatusPhase	(cchar *pinfo);
-	  ~IOStatusPhase	( );
+      IOStatusPhase  (cchar *pinfo);
+     ~IOStatusPhase  ( );
 };
 
-void	resetIOStatus	( );
-num   countIOBytes	(num nbytes);
-char	*getIOStatus	(num &nagemsec, num &nbytes, num &nmaxbytes);
+void  resetIOStatus  ( );
+num   countIOBytes   (num nbytes);
+char  *getIOStatus   (num &nagemsec, num &nbytes, num &nmaxbytes);
 // returns NULL if no status is set
 
 class CharAutoDel {
@@ -822,7 +822,7 @@ public:
    void   setBinaryFile (bool bYesNo);
    bool   isBinaryFile  ( );
    uchar  isUTF16       ( ); // 0x00==none 0xFE==le 0xEF==be
-   bool	 isSnapFile		( );
+   bool   isSnapFile    ( );
    void   probeFile     ( ); // read file header if not done yet
 
    // readLine alloc's another I/O buffer on demand:
@@ -857,7 +857,7 @@ public:
 
    num   getUsedBytes   ( );  // info for the cache
 
-	int	 prefetch		(bool bLoadNonArcBinaries, num nFogSizeLimit, num nHardSizeLimit);
+   int    prefetch      (bool bLoadNonArcBinaries, num nFogSizeLimit, num nHardSizeLimit);
 
    // direct query of http header fields, if any given
    StringMap &headers     ( );            // creates on demand
@@ -981,7 +981,7 @@ public:
    bool  bClBinary;
    bool  bClArc;
    uchar nClUCS;     // 0:none 0xFE:LE 0xEF:BE
-   bool	bClSnap;		// sfk snapfile
+   bool  bClSnap;    // sfk snapfile
    bool  bClSetWriteCloseTime;
    // after close(), set file time using MTime and/or CTime
    uint  nClAttr;    // file attributes
@@ -1024,7 +1024,7 @@ public: // not really
 
    #ifdef VFILEBASE
    bool   bClInCache;
-	bool	 isCached	( );
+   bool   isCached   ( );
    bool   hasContent ( );  // has CoiData AND cached data
    #endif // VFILEBASE
 
@@ -1445,6 +1445,9 @@ public:
    int debug     ;
    int memcheck  ;
    int verbose   ;  // 0,1,2
+   int iotrace   ;
+   bool shortsyntax        ; // sfk1812 i/o bGlblShortSyntax
+   bool anyused            ; // sfk1812 i/o bGlblAnyUsed
    bool delStaleFiles      ;
    bool skipOwnMetaDir     ;
    bool blockAutoComplete  ;
@@ -1623,7 +1626,7 @@ public:
    bool copyLinks;         // copy symlinks     , windows only, untested
    bool copyNoBuf;         // copy w/o buffering, windows only, untested
    bool copyDecrypt;       // copy and decrypt  , windows only, untested
-   bool intrun;            // sfk run -internal option
+   bool extrun;            // sfk run -re
    bool textfiles;         // process only textfiles
    bool binaryfiles;       // process only binaryfiles
    bool packalnum;         // deblank: reduce filenames to alnum
@@ -1729,10 +1732,18 @@ public:
    bool trimscript;
    char mlquotes;          // multi line quotes format
    int  headers;           // print web headers
+   bool showreq;           // print web requests
    num  maxwebsize;        // web download limit
    bool execweb;
    int  maxlines;          // max lines to read
    int  taillines;         // lines from eof
+   bool usevars;
+   bool sellines;          // select lines from input
+   int  linesfrom;         // if sellines
+   int  linesto;           // if sellines
+   int  strict;            // run, -to, perline mask
+   bool relaxedvar;        // for filter
+   bool fullheader;        // (x)hexfind, (x)rep etc.
 };
 
 // extern struct CommandStats gs;
@@ -1748,7 +1759,7 @@ enum eWalkTreeFuncs {
    eFunc_SnapAdd     ,
    eFunc_FileStat    ,
    eFunc_FileTime    ,
-   eFunc_Touch       ,
+   eFunc_Touch       ,  // 10
    eFunc_Find        ,
    eFunc_Mirror      ,  // deprecated
    eFunc_Run         ,
@@ -1758,14 +1769,14 @@ enum eWalkTreeFuncs {
    eFunc_RefColDst   ,  // collect reflist targets
    eFunc_Deblank     ,
    eFunc_FTPList     ,
-   eFunc_FTPNList    ,
+   eFunc_FTPNList    ,  // 20
    eFunc_FTPLocList  ,
    eFunc_Hexdump     ,
    eFunc_Copy        ,
    eFunc_Cleanup     ,
    eFunc_AliasList   ,
-   eFunc_ReplaceFix  ,
-   eFunc_ReplaceVar  ,
+   eFunc_ReplaceFix  ,  // 26
+   eFunc_ReplaceVar  ,  // 27
    eFunc_MetaUpd     ,
    eFunc_MetaCheck   ,
    eFunc_Scantab     ,
@@ -1776,7 +1787,8 @@ enum eWalkTreeFuncs {
    eFunc_Media       ,
    eFunc_XHexDemo    ,
    eFunc_Rename      ,
-   eFunc_GetPic
+   eFunc_GetPic      ,
+   eFunc_XFind
 };
 
 // temporary file class, REMOVING THE FILE IN DESTRUCTOR.
@@ -2038,9 +2050,9 @@ public:
 
    int   readFull (uchar *pBuf, int iToRead);
 
-   int   readFull (uchar **ppBuf, int *pBufSize);
-   // this will (temporarily) alloc *pBufSize.
-   // RC 0: OK *pBufSize contains data size
+   int   readFull (uchar **ppBuf, int *pIOBufSize);
+   // Note: this will alloc given *pIOBufSize.
+   // RC 0: OK *pBufSize contains data size, caller is owner.
    // RC 5: timeout
    // RC 9: error
 
@@ -2074,12 +2086,13 @@ char  szClXLineBuf   [1000+20];
 char *aClXCmdParms   [100];
 };
 
-int sfksetvar(char *pname, uchar *pdata, int idata);
+extern KeyMap glblSFKVar;
+bool   sfkhavevars();
+int    sfksetvar(char *pname, uchar *pdata, int idata);
 uchar *sfkgetvar(char *pname, int *plen);
 uchar *sfkgetvar(int i, char **ppname, int *plen);
-void sfkfreevars();
-bool isHttpURL(char *psz);
-extern KeyMap glblSFKVar;
+void   sfkfreevars();
+bool   isHttpURL(char *psz);
 
 #ifndef USE_SFK_BASE
 

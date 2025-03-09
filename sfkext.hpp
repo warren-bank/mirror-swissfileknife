@@ -694,7 +694,7 @@ extern UDPIO sfkNetSrc;
 
 extern int netErrno();
 extern char *netErrStr();
-extern void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile);
+extern void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, int iSystem);
 
 #define MAX_UDP_CON (mymin(300, FD_SETSIZE))
 
