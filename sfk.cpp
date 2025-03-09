@@ -13,6 +13,24 @@
    -  german umlauts not supported in grep.
    -  sfk ftp put from linux may sometimes wait endless
       until connection is closed by pressing CTRL+C.
+   -  linux binaries compiled for one distribution often
+      don't work on another (incompatible lib versions).
+
+   1.2.0
+   -  fix: bin to text: dynamic nMinWord adaption. by default,
+           short words accepted, but whenever binary appears,
+           it's incremented to at least 3 chars.
+   -  fix: help text: md5gento: wildcard removed.
+   -  fix: find/grep: multi-pattern hits across two soft-wrapped
+           lines are also detected now, listing both lines.
+           hard-wrapped lines (ending with LF) are not included.
+   -  add: line prefix color, used with find, for slash symbols
+           marking combined soft-wrapped lines.
+   -  fix: find -text now also produces colored output,
+           and supports -c option for case-sensitive search.
+   -  chg: rework of sfk patch -example help text.
+   -  fix: binary to text conversion: missing word flush on CR.
+   -  fix: ditto: CR may produce a blank only in jamfile mode.
 
    1.1.9
    -  fix: help text, sfk snapto examples.
@@ -171,7 +189,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.1.9"
+#define SFK_VERSION  "1.2.0"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -538,6 +556,7 @@ long nGlblHitColor       =  5; // green
 long nGlblRepColor       =  7; // yellow
 long nGlblErrColor       =  3; // red
 long nGlblWarnColor      =  7; // magenta
+long nGlblPreColor       =  8; // dark blue
 // help part
 long nGlblHeadColor      =  5; // white
 long nGlblExampColor     =  7; // magenta
@@ -550,6 +569,7 @@ long nGlblHitColor       =  4; // green
 long nGlblRepColor       =  8; // blue
 long nGlblErrColor       =  2; // red
 long nGlblWarnColor      =  2; // red
+long nGlblPreColor       =  8; // blue
 long nGlblHeadColor      =  4; // green
 long nGlblExampColor     = 10; // magenta
 long nGlblDefColor       =  0; // default
@@ -652,6 +672,8 @@ void setColorScheme(char *psz1)
    if (psz2) { nGlblHeadColor = atol(psz2+5); }
    psz2 = strstr(psz1, "examp:");
    if (psz2) { nGlblExampColor = atol(psz2+6); }
+   psz2 = strstr(psz1, "pre:");
+   if (psz2) { nGlblPreColor = atol(psz2+4); }
    #ifndef _WIN32
    psz2 = strstr(psz1, "def:");
    if (psz2) { nGlblDefColor = atol(psz2+4); }
@@ -791,6 +813,7 @@ void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1)
          case 'r': setTextColor(nGlblRepColor);   break;
          case 'x': setTextColor(nGlblExampColor); break;
          case 'e': setTextColor(nGlblErrColor);   break;
+         case 'p': setTextColor(nGlblPreColor);   break;
          default : setTextColor(-1); break;
       }
       if (bGlblHtml)
@@ -2375,6 +2398,10 @@ void FileSet::setBaseLayer() {
    clFileMasks.setRow(0, __LINE__);
 }
 
+// find: BinTexter remembers so many chars from previous line
+//       to detect AND patterns spawning across soft-wraps.
+#define BT_LASTLINE_LEN 80
+
 class BinTexter
 {
 public:
@@ -2389,14 +2416,16 @@ public:
 
    // uses szLineBuf, szLineBuf2.
    long  process     (int nDoWhat);
-   long  processLine (char *pszBuf, int nDoWhat, long nLine);
+   long  processLine (char *pszBuf, int nDoWhat, long nLine, bool bHardWrap);
 
 private:
    FILE *pClInFile;
    char *pszClFileName;
-   char  szOutBuf[200];
-   char  szAttBuf[200];
-   bool  bDumpedFileName;
+   char  szClLastLine[BT_LASTLINE_LEN+40];
+   char  szClPreBuf[80];
+   char  szClOutBuf[200];
+   char  szClAttBuf[200];
+   bool  bClDumpedFileName;
 };
 
 BinTexter::BinTexter(FILE *fIn, char *pszFileName)
@@ -2405,8 +2434,11 @@ BinTexter::BinTexter(FILE *fIn, char *pszFileName)
    pszClFileName = pszFileName;
    if (!strncmp(pszClFileName, glblDotSlash, 2))
       pszClFileName += 2;
-   memset(szOutBuf, 0, sizeof(szOutBuf));
-   bDumpedFileName = false;
+   memset(szClOutBuf  , 0, sizeof(szClOutBuf));
+   memset(szClPreBuf  , 0, sizeof(szClPreBuf));
+   memset(szClAttBuf  , 0, sizeof(szClAttBuf));
+   memset(szClLastLine, 0, sizeof(szClLastLine));
+   bClDumpedFileName = false;
 }
 
 BinTexter::~BinTexter()
@@ -2444,11 +2476,14 @@ long BinTexter::process(int nDoWhat)
    bool bisbin = 0;
    bool bishi  = 0;
    bool bispunct = 0;
+   bool bhardwrap = 0;
+   bool babineol = 0; // helper flag, add blank if not at end of line
    char c = 0;
    unsigned char uc = 0;
    long nLine = 0;
+   long nMinWord = 1; // min word length adapted dynamically below
 
-   szOutBuf[0] = '\0';
+   szClOutBuf[0] = '\0';
 
    bool bbail = 0;
    while (!bbail)
@@ -2472,15 +2507,14 @@ long BinTexter::process(int nDoWhat)
             bflush = 0;
          }
 
-         if (c=='\r')
-            continue;
-
          if (c=='\n') {
             nLine++;
             if (nDoWhat == eBT_Print)
                c = ' ';
-            else
+            else {
                bflush = 1;
+               bhardwrap = 1;
+            }
          }
 
          bisbin = ((uc >= 0x80) && (uc < nGlblBinTextBinRange)) || (uc < 0x20);
@@ -2495,8 +2529,8 @@ long BinTexter::process(int nDoWhat)
          {
             // printable char
             if (istate == 1) {
-               istate = 0;
                // start collecting next word
+               istate = 0;
                iword = 0;
                ihi   = 0;
             }
@@ -2517,31 +2551,46 @@ long BinTexter::process(int nDoWhat)
                bflush = 1;
          } else {
             // non-printable (binary) char
-            if (istate == 0)
-               bflush = 1;
+            if (istate == 0)  // if collecting a word
+               bflush = 1;    // then flush the word
+            // start skipping non-word data (binary etc.)
             istate = 1;
             bwasws = 0;
             bisws  = 0;
             bispunct = 0;
+            // increment min word length needed to add to buffer.
+            nMinWord = 3;
          }
 
          // dump current word?
          if (bflush) 
          {
             bflush = 0;
-            if ((iword > 2 || nword > 2) || c == '\n' || bbail)
+            if ((iword >= nMinWord || nword >= nMinWord) || c == '\n' || bbail)
             {
+               // reset "add blank if not at end of line"
+               babineol = 0;
+
                szLineBuf2[iword] = '\0';
 
                if (bisws || bispunct || c == '\n' || bbail) {
-                  // do not add blank
+                  // do not add blank, except:
+                  if (nDoWhat == eBT_JamFile && c == '\n')
+                     if (iword > 0 || nword > 0)
+                        babineol = 1;
                } else {
-                  // add blank
-                  strcat(szLineBuf2, " ");
+                  if (c == '\r') {
+                     // CR may produce a blank only on jamfile mode
+                     if (nDoWhat == BinTexter::eBT_JamFile)
+                        babineol = 1; // if not at end of line
+                  } else {
+                     // add blank between isolated expressions
+                     babineol = 1; // if not at end of line
+                  }
                }
 
-               if (strlen(szOutBuf) + strlen(szLineBuf2) < sizeof(szOutBuf)-10)
-                  strcat(szOutBuf, szLineBuf2);
+               if (strlen(szClOutBuf) + strlen(szLineBuf2) < sizeof(szClOutBuf)-10)
+                  strcat(szClOutBuf, szLineBuf2);
 
                icol += (iword+1);
 
@@ -2551,11 +2600,20 @@ long BinTexter::process(int nDoWhat)
                if (icol >= nGlblWrapBinCol || c == '\n' || bbail)
                {
                   // line flush.
-                  if (processLine(szOutBuf, nDoWhat, nLine))
+                  if (processLine(szClOutBuf, nDoWhat, nLine, bhardwrap))
                      return 9;
+                  bhardwrap = 0;
                   icol = 0;
-                  szOutBuf[0] = '\0';
+                  szClOutBuf[0] = '\0';
                   nword = 0;
+                  nMinWord = 1;
+               }
+               else
+               if (babineol)
+               {
+                  // no line flush, further stuff will be added,
+                  // and remembered to insert a blank before that.
+                  strcat(szClOutBuf, " ");
                }
             }
             iword  = 0;
@@ -2578,22 +2636,22 @@ long BinTexter::process(int nDoWhat)
 long (*pGlblJamLineCallBack)(char *pszLine, long nLineLen, bool bAddLF) = 0;
 long (*pGlblJamStatCallBack)(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes, ulong nSkipped, char *pszSkipInfo) = 0;
 
-long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine)
+long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine, bool bHardWrap)
 {
    if (nDoWhat == eBT_Print)
-      printf("%s\n", szOutBuf);
+      printf("%s\n", szClOutBuf);
    else
    if (nDoWhat == eBT_JamFile) 
    {
       long dumpJamLine(char *pszLine, long nLineLen, bool bAddLF); // len 0: zero-terminated
 
       // strip empty lines from binary text:
-      if (!strlen(szOutBuf) || szOutBuf[0] == '\n')
+      if (!strlen(szClOutBuf) || szClOutBuf[0] == '\n')
          return 0;
 
-      long lRC = dumpJamLine(szOutBuf, 0, 1);
+      long lRC = dumpJamLine(szClOutBuf, 0, 1);
 
-      nGlblBytes += strlen(szOutBuf);
+      nGlblBytes += strlen(szClOutBuf);
       nGlblLines++;
 
       // only for callback: check per line if stat update is required.
@@ -2609,44 +2667,123 @@ long BinTexter::processLine(char *pszBuf, int nDoWhat, long nLine)
    else
    if (nDoWhat == eBT_Grep)
    {
-      long nMatch = 0;
+      // 1. count no. of hits across current AND last line
+      long nMatchCur = 0;
+      long nMatchPre = 0;
       long nGrepPat = glblGrepPat.numberOfEntries();
-      for (long i=0; (nMatch < nGrepPat) && (i<nGrepPat); i++)
-         if (mystrhit((char*)pszBuf, glblGrepPat.getString(i), bGlblUseCase, 0))
-            nMatch++;
-
-      if (nMatch == nGrepPat) 
+      for (long i=0; ((nMatchCur+nMatchPre) < nGrepPat) && (i<nGrepPat); i++) 
       {
-         if (!bDumpedFileName) {
-            bDumpedFileName = 1;
+         if (mystrhit((char*)pszBuf, glblGrepPat.getString(i), bGlblUseCase, 0))
+            nMatchCur++;
+         else
+         if (szClLastLine[0] && 
+             mystrhit(szClLastLine, glblGrepPat.getString(i), bGlblUseCase, 0))
+            nMatchPre++;
+      }
+
+      // 2. if ALL pattern parts have a match somewhere, list both lines
+      if ((nMatchCur+nMatchPre) == nGrepPat) 
+      {
+         // list filename first
+         if (!bClDumpedFileName) {
+            bClDumpedFileName = 1;
             setTextColor(nGlblFileColor);
             printf("%s :\n", pszClFileName);
             setTextColor(-1);
          }
-         // create coloured display of hits
-         if (bGlblGrepLineNum)
-            printf("   %04lu ", nLine);
-         else
-            printf("   ");
-         memset(szAttBuf, ' ', sizeof(szAttBuf));
-         szAttBuf[sizeof(szAttBuf)-1] = '\0';
-         long k=0;
-         for (k=0; k<nGrepPat; k++) {
-            char *pszPat = glblGrepPat.getString(k);
-            long nPatLen = strlen(pszPat);
-            long nBufLen = strlen(pszBuf);
-            long nCur = 0, nRel = 0;
-            while (mystrhit(pszBuf+nCur, pszPat, bGlblUseCase, &nRel)) {
-               // printf("%ld.%ld ",nCur,nRel);
-               if (nCur+nRel+nPatLen < sizeof(szAttBuf)-10)
-                  memset(&szAttBuf[nCur+nRel], 'i', nPatLen);
-               nCur += nRel+nPatLen;
-               if (nCur >= nBufLen-1)
-                  break;
+
+         // create coloured display of hits of PREVIOUS line
+         if (nMatchPre)
+         {
+            char *pszTmp = szClLastLine;
+
+            memset(szClAttBuf, ' ', sizeof(szClAttBuf));
+            szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
+            if (bGlblGrepLineNum)
+               sprintf(szClPreBuf, " / %04lu ", (nLine > 0) ? (nLine-1) : nLine);
+            else
+               sprintf(szClPreBuf, " / ");
+            szClAttBuf[1] = 'p';
+            printColorText(szClPreBuf, szClAttBuf, 0); // w/o LF
+
+            memset(szClAttBuf, ' ', sizeof(szClAttBuf));
+            szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
+            for (long k=0; k<nGrepPat; k++) 
+            {
+               char *pszPat = glblGrepPat.getString(k);
+               long nPatLen = strlen(pszPat);
+               long nTmpLen = strlen(pszTmp);
+               long nCur = 0, nRel = 0;
+               while (mystrhit(pszTmp+nCur, pszPat, bGlblUseCase, &nRel))
+               {
+                  // printf("%ld.%ld ",nCur,nRel);
+                  if (nCur+nRel+nPatLen < sizeof(szClAttBuf)-10)
+                     memset(&szClAttBuf[nCur+nRel], 'i', nPatLen);
+                  nCur += nRel+nPatLen;
+                  if (nCur >= nTmpLen-1)
+                     break;
+               }
             }
+            printColorText(pszTmp, szClAttBuf);
          }
-         printColorText(pszBuf, szAttBuf);
-         // printf("   %s\n", pszBuf);
+
+         // create coloured display of hits of CURRENT line
+         if (nMatchCur)
+         {
+            char *pszTmp = pszBuf;
+
+            memset(szClAttBuf, ' ', sizeof(szClAttBuf));
+            szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
+            if (bGlblGrepLineNum)
+               sprintf(szClPreBuf, "   %04lu ", nLine);
+            else
+               sprintf(szClPreBuf, "   ");
+            if (nMatchPre) {
+               szClPreBuf[1] = '\\';
+               szClAttBuf[1] = 'p';
+            }
+            printColorText(szClPreBuf, szClAttBuf, 0); // w/o LF
+
+            memset(szClAttBuf, ' ', sizeof(szClAttBuf));
+            szClAttBuf[sizeof(szClAttBuf)-1] = '\0';
+            for (long k=0; k<nGrepPat; k++) 
+            {
+               char *pszPat = glblGrepPat.getString(k);
+               long nPatLen = strlen(pszPat);
+               long nTmpLen = strlen(pszTmp);
+               long nCur = 0, nRel = 0;
+               while (mystrhit(pszTmp+nCur, pszPat, bGlblUseCase, &nRel)) 
+               {
+                  // printf("%ld.%ld ",nCur,nRel);
+                  if (nCur+nRel+nPatLen < sizeof(szClAttBuf)-10)
+                     memset(&szClAttBuf[nCur+nRel], 'i', nPatLen);
+                  nCur += nRel+nPatLen;
+                  if (nCur >= nTmpLen-1)
+                     break;
+               }
+            }
+            printColorText(pszTmp, szClAttBuf);
+            // printf("   %s\n", pszBuf);
+         }
+
+         // line was listed, do NOT remember
+         szClLastLine[0] = '\0';
+      }
+      else
+      {
+         // line was NOT listed
+         szClLastLine[0] = '\0';
+         if (!bHardWrap) {
+            // and it's a soft-wrap line (no LF), so remember it.
+            long nCurLen = strlen(pszBuf);
+            long nCopyIndex = 0;
+            if (nCurLen > BT_LASTLINE_LEN) {
+               nCopyIndex = nCurLen - BT_LASTLINE_LEN;
+               nCurLen    = BT_LASTLINE_LEN;
+            }
+            // mystrcopy guarantees a zero terminator if nCurLen > 0.
+            mystrcopy(szClLastLine, pszBuf+nCopyIndex, nCurLen+1);
+         }
       }
    }
    return 0;
@@ -5145,17 +5282,46 @@ long execGrep(char *pszFileName)
          long nMatch = 0;
          long nGrepPat = glblGrepPat.numberOfEntries();
          for (long i=0; (nMatch < nGrepPat) && (i<nGrepPat); i++)
-            if (mystrstri((char*)abBuf, glblGrepPat.getString(i)))
+            if (mystrhit((char*)abBuf, glblGrepPat.getString(i), bGlblUseCase, 0))
                nMatch++;
    
-         if (nMatch == nGrepPat) {
+         if (nMatch == nGrepPat) 
+         {
             if (!bDumpedFileName) {
                bDumpedFileName = 1;
                if (!strncmp(pszFileName, glblDotSlash, 2))
                   pszFileName += 2;
+               setTextColor(nGlblFileColor);
                printf("%s :\n", pszFileName);
+               setTextColor(-1);
             }
-            printf("   %s\n", abBuf);
+
+            // list the line
+            if (bGlblGrepLineNum)
+               printf("   %04lu ", nLocalLines);
+            else
+               printf("   ");
+
+            char *pszTmp = (char*)abBuf;
+            memset(szAttrBuf, ' ', sizeof(szAttrBuf)-10);
+            szAttrBuf[sizeof(szAttrBuf)-10] = '\0';
+            for (long k=0; k<nGrepPat; k++) 
+            {
+               char *pszPat = glblGrepPat.getString(k);
+               long nPatLen = strlen(pszPat);
+               long nTmpLen = strlen(pszTmp);
+               long nCur = 0, nRel = 0;
+               while (mystrhit(pszTmp+nCur, pszPat, bGlblUseCase, &nRel)) 
+               {
+                  if (nCur+nRel+nPatLen < sizeof(szAttrBuf)-10)
+                     memset(&szAttrBuf[nCur+nRel], 'i', nPatLen);
+                  nCur += nRel+nPatLen;
+                  if (nCur >= nTmpLen-1)
+                     break;
+               }
+            }
+            printColorText((char*)abBuf, szAttrBuf);
+            // printf("   %s\n", abBuf);
          }
       }
    
@@ -9566,10 +9732,10 @@ int main(int argc, char *argv[])
              "       list contents of a single zip file:\n"
              "          #sfk list -norec -zip . myarc.zip\n"
              "   $sfk find [-c] singledir pattern [pattern2] [pattern3] ...\n"
-             "   $sfk find [-c] -pat pattern [pattern2] -dir dir1 [-file] [.ext1] ...\n"
+             "   $sfk grep [-c] -pat pattern [pattern2] -dir dir1 [-file] [.ext1] ...\n"
              "       case-insensitive pattern search for text and binary.\n"
              "       only lines containing all patterns are listed.\n"
-             "       type \"sfk find\" for details. you may also say \"sfk grep\".\n"
+             "       type \"sfk find\" for details. \"sfk grep\" is the same.\n"
              "          #sfk find . foobar docs\n"
              "          #sfk find -pat text1 text2 -dir src1 src2 -file .cpp .hpp\n"
              "          #sfk grep -pat mytext -dir . -file .txt -norec\n"
@@ -9622,10 +9788,10 @@ int main(int argc, char *argv[])
              "       edit many files in parallel, by editing a single collection file.\n"
              "       type \"sfk syncto\" for details.\n"
             );
-      printx("   $sfk md5gento=outfile dir mask [mask2] [<not>mask3] [...]\n"
+      printx("   $sfk md5gento=outfile dir [mask] [mask2] [<not>mask3] [...]\n"
              "   $sfk md5gento=outfile -dir dir1 dir2 -file mask1 mask2 <not>mask3 [...]\n"
              "       create list of md5 checksums over all files.\n"
-             "          #sfk md5gento=md5.dat . *\n"
+             "          #sfk md5gento=md5.dat .\n"
              "   $sfk md5check=infile [-skip=n] [-skip n]\n"
              "       verify list of md5 checksums. to speed up verifys by spot checking,\n"
              "       specify -skip=n: after every checked file, n files will be skipped.\n"
@@ -9725,9 +9891,9 @@ int main(int argc, char *argv[])
          char *pszSet = "export";
          #endif
          #ifdef _WIN32
-         printf("%s SFK_COLORS=off|on,err:n,warn:n,head:n,examp:n,file:n,hit:n,rep:n\n");
+         printf("%s SFK_COLORS=off|on,err:n,warn:n,head:n,examp:n,file:n,hit:n,rep:n,pre:n\n", pszSet);
          #else
-         printf("%s SFK_COLORS=off|on,def:n,err:n,warn:n,head:n,examp:n,file:n,hit:n,rep:n\n");
+         printf("%s SFK_COLORS=off|on,def:n,err:n,warn:n,head:n,examp:n,file:n,hit:n,rep:n,pre:n\n", pszSet);
          #endif
          printf("\n"
                 "   color identifiers are\n"
@@ -9741,6 +9907,7 @@ int main(int argc, char *argv[])
                 "      file   filename listings in find\n"
                 "      hit    text pattern hits in find and filter\n"
                 "      rep    replaced patterns in filter\n"
+                "      pre    line prefix symbols in find\n"
                 "\n"
                 "   color code n is a combination of these values:\n"
                 "      0 = black\n"

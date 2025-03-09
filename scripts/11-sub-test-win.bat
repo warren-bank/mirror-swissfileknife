@@ -73,3 +73,9 @@
 
 ..\sfk snapto=all-src-4.cpp testfiles\Formats 11-wide-line.txt 13-eof-null.txt 14-all-codes.txt >nul
 ..\sfk test %TCMD% T08.1.snapform all-src-4.cpp
+
+..\sfk find testfiles\Formats scope01 quarter03 lead05 >res-21.txt
+..\sfk test %TCMD% T09.1.findwrap res-21.txt
+
+..\sfk find testfiles\Formats the wrap >res-22.txt
+..\sfk test %TCMD% T09.2.findwrap res-22.txt
