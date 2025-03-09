@@ -4,6 +4,10 @@ sfk: working practices by examples
 
 this is a more detailed addition to readme.txt.
 
+NOTE: all examples use windows syntax. the sfk linux syntax differs
+      in the use of two characters ( ! => :  and  $ => # )
+      and some other details.
+
 
 use case 01: adding features to project FooBank
 -----------------------------------------------
@@ -45,7 +49,7 @@ a new file "BarObject.". step by step:
    through command line autocomplete. let's say your editor is "edit",
    then you type this
    
-      edit 110{TAB}
+      edit 110{PRESS TABKEY}
    
    and this is instantly expanded to 
    

@@ -1,7 +1,7 @@
 <html><body>
 <font face="verdana" size=2>
 
-<font size=3><b>the way of sfk: power development without IDE</b></font>
+<font size=3><b>the way of sfk - command line text file processing</b></font>
 <p>
 <b>how to speed up your working process by use of the command shell, a set of batchfiles, and the swiss file knife.</b>
 <p>
@@ -21,6 +21,8 @@ which will be discussed here in a short overview. furthermore, this document con
 <li><a href="#general-syntax">sfk general command syntax.</a>
 <li><a href="#run-syntax">sfk run syntax.</a>
 <li><a href="#patch-syntax">sfk patch syntax.</a>
+<li><a href="#ftp">sfk instant ftp server.</a>
+<li><a href="#win-ux">windows vs. linux syntax differences.</a>
 </lu>
 <p>
 but first of all, let's talk about the command line principle, which is a prerequisite for using sfk efficiently.
@@ -747,11 +749,78 @@ patchfile example, containing all supported patchfile commands:
 :skip-begin
 this is outcommented stuff. the skip-end is optional.
 :skip-end
+</pre></font>
+<hr> <a name="ftp">
+<br>
+<b>SFK instant ftp server, and client </b> &nbsp;&nbsp;&nbsp; <a href="#top">back to top</a>
+<p>
+Why an ftp server? because
+<ul>
+<li>far too often, connecting two machines is a configuration nightmare, and ftp is the only thing working.
+<li>to exchange files with other colleagues, sometimes ftp is even easier then a temporary exchange folder on the network.
+</ul>
+<p>
+Anyway, just say "sfk ftpserv" on one machine, e.g. yourpc, and you have an instant ftp server - no installation, no configuration, no nothing. Then, on the other machine, say "ftp yourpc". You get instant read access to the directory where sfk ftpserv is running in.
+<p>
+FTP is a slightly complicated protocol, creating an extra connection for every file transfer. This mechanism may fail sometimes, due to firewall problems. In this case, using "sfk ftp yourpc" may help: the sfk client is detecting an sfk server, and uses an easier transfer protocol. Furthermore, a different port may be specified.
+<p>
+For example, I actually need sfk ftp everytime I want to compile the linux version of sfk. my linux is running on the same machine as windows, under vmware; from linux, I can ping to my host system, and I can even connect to the IP address using ftp. But with a normal ftp client, I can NOT transfer any files. All data connections are blocked due to reasons (windows service pack, network config, firewall...) I will <i>not</i> invest any further time to find out. Instead, I use "sfk ftp ipnumber get src.zip", and after compilation, I say "sfk ftp ipnumber put sfk-linux" to write the result back to the host.
+<p>
+SFK ftpserv is very simple, and only <b>one user can connect at a time</b>. I.e. if you're connecting with two clients to the same server, you will be blocked until the 1st connection times out. If you need more power, download and install a full ftp server like filezilla.
+<p>
+<font face="courier" size="3"><pre>
+sfk ftpserv [-h[elp]] [-port=nport] [-rw] [-maxsize=n]
+
+   creates an instant ftp server to enable easy file transfer.
+   * the CURRENT DIRECTORY is made accessible, without subdirs.
+   * any kind of directory traversal (.., / etc.) is blocked.
+   * just ONE CLIENT (browser etc.) can connect at a time.
+   * after 30 seconds of inactivity, the connection is closed.
+   port: use other port than default, e.g. -port=30199.
+   rw  : allow read+write access. default is readonly.
+   maxsize: increment size limit per file write to n mbytes.
+
+   NOTE: be aware that ANYONE may connect to your server.
+         with -rw specified, ANYONE may also write large files.
+         if this is a problem, do NOT use sfk ftpserv, but download
+         and install a full-scale ftp server like filezilla.
+
+   if you login to the server using a regular ftp client, but you cannot
+   transfer any files, it's usually a firewall vs. ftp protocol problem.
+   in this case, the sfk ftp client may help. type "sfk ftp" for info.
+
+sfk ftp host[:port] put|get filename
+
+   simple anonymous ftp client. if connected to sfk server,
+   this uses sfk/sft protocol, requiring fewer connections.
+
+      sfk ftp farpc put test.zip
+         send test.zip to farpc
+
+      sfk ftp 192.168.1.99:30199 get test.zip
+         receive test.zip from 192.168.1.99 port 30199
+
+      sfk ftp hostname
+         enter interactive mode, supporting commands:
+            dir, get filename, put filename.
 
 </pre></font>
 
-<hr>
-<b>ABOUT THIS DOCUMENTATION:</b> this document is a quick hack, and I haven't tested each example yet if it's exactly working that way. Furthermore, all file names and code examples are random inventions, and have nothing to do with any real project.
+<hr> <a name="win-ux">
+<p>
+<b>sfk windows vs. sfk linux: syntax differences</b>
+<p>
+the syntax of all commands listed above is for the windows version of sfk. under linux (and all other unix systems), the bash is making problems with several characters, especially ! and $.
+<p>
+therefore, sfk linux uses these replacements:
+<p>
+<ul>
+<li>the exclusion-char ! is replaced by :
+<li>the run pattern identifier $ is replaced by #
+</ul>
+<p>
+for the correct unix syntax of all commands, type "sfk" under linux.
+
 <p>
 <a href="#top">back to top</a>
 <br>&nbsp;<br>

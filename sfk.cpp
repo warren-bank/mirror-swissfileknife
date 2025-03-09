@@ -11,6 +11,17 @@
    -  ntfs handling of links is not yet tested.
    -  unix bash interprets $, ! and probably other chars.
 
+   1.1.3
+   -  add: filter: pattern replacement using -rep _src_dst_.
+   -  fix: filter: options beginning with + not recognized.
+   -  fix: many options can now be specified more flexible.
+   -  add: ftpserv: support for mget/mput * by clients.
+   -  chg: ftpserv: client timeout now 30 seconds.
+   -  add: (internal) sfk test function, for selftest.
+   -  chg: new order of command listing in help.
+   -  fix: filter: -ls! and -ls+ now also case-insensitive.
+   -  add: inter-platform regression test, see scripts/ dir.
+
    1.1.2
    -  add: linux: run: using # instead of $ due to bash.
    -  add: linux: all: using : instead of ! due to bash.
@@ -376,6 +387,7 @@ enum eWalkTreeFuncs {
    eFunc_Deblank     ,
    #ifdef WITH_TCP
    eFunc_FTPList     ,
+   eFunc_FTPNList    ,
    #endif
 };
 
@@ -571,6 +583,7 @@ public:
    long addEntry        (char *psz);
    long numberOfEntries ( );
    char *getEntry       (long iIndex, int nTraceLine);
+   long  setEntry       (long iIndex, char *psz);
    void resetEntries    ( );
    bool isSet           (long iIndex);
    void dump            (long nIndent=0);
@@ -660,6 +673,17 @@ long StringTable::addEntryPrefixed(char *psz, char cPrefix) {
    // add this copy
    apClArray[nClArrayUsed++] = pszCopy;
    if (bGlblDebug) printf("]  stringtable %p added %s, have %d\n",this,pszCopy,nClArrayUsed);
+   return 0;
+}
+
+long StringTable::setEntry(long nIndex, char *psz) {
+   if (nIndex >= nClArrayUsed) {
+      fprintf(stderr, "error: illegal set index: %d\n", nIndex);
+      return 9;
+   }
+   if (apClArray[nIndex])
+      delete [] apClArray[nIndex];
+   apClArray[nIndex] = strdup(psz);
    return 0;
 }
 
@@ -2206,6 +2230,18 @@ long mystrstri(char *psz1, char *psz2)
       szCmpBuf2[i2] = tolower(szCmpBuf2[i2]);
 
    return (strstr(szCmpBuf1, szCmpBuf2) != 0) ? 1 : 0;
+}
+
+// returns 0 if equal.
+long mystrncmp(char *psz1, char *psz2, long nLen, bool bCase)
+{
+   if (bCase)
+      return strncmp(psz1, psz2, nLen);
+   else
+   for (long i=0; i<nLen; i++)
+      if (tolower(psz1[i]) != tolower(psz2[i]))
+         return 1;
+   return 0;
 }
 
 #ifdef _WIN32
@@ -4452,6 +4488,42 @@ long getFileMD5(char *pszFile, SFKMD5 &md5, bool bSilent)
    return 0;
 }
 
+// uses szLineBuf. pOutBuf must be >= 16 bytes.
+long getFuzzyTextSum(char *pszFile, uchar *pOutBuf)
+{
+   // this function reads a text file line by line, and
+   // - strips line endings
+   // - turns all \\ slashes into /
+   // - ignores the SEQUENCE of lines
+   // to make result files of sfk commands comparable
+   // both accross platforms, and independent from the sequence
+   // in which files happen to be read from the file system.
+   FILE *fin = fopen(pszFile, "r");
+   if (!fin) { fprintf(stderr, "error: cannot read: %s\n", pszFile); return 9; }
+   uchar abSum[16];
+   memset(abSum, 0, sizeof(abSum));
+   while (fgets(szLineBuf, sizeof(szLineBuf)-10, fin))
+   {
+      szLineBuf[sizeof(szLineBuf)-10] = '\0';
+      removeCRLF(szLineBuf);
+      ulong nLen = strlen(szLineBuf);
+      // turn all non-/ slashes into /
+      for (ulong i=0; i<nLen; i++)
+         if (szLineBuf[i] == '\\')
+             szLineBuf[i] = '/';
+      // build local checksum over line
+      SFKMD5 md5;
+      md5.update((uchar*)szLineBuf, nLen);
+      // xor this with overall checksum
+      unsigned char *pmd5 = md5.digest();
+      for (ulong k=0; k<16; k++)
+         abSum[k] ^= pmd5[k];
+   }
+   fclose(fin);
+   memcpy(pOutBuf, abSum, 16);
+   return 0;
+}
+
 ulong getLong(uchar ab[], ulong noffs) {
    return  (((ulong)ab[noffs+3])<<24)
           |(((ulong)ab[noffs+2])<<16)
@@ -4626,7 +4698,7 @@ long execMD5check(char *pIn)
       printf("spot-checking %02u%% of files (skip=%u).\n", nCover, nGlblMD5Skip);
    }
 
-   // main run, check md5, optionally sped up through skips
+   // check md5, optionally sped up through skips
    for (;pszLine;pszLine=pszNext)
    {
       pszNext = strchr(pszLine, '\n');
@@ -4759,13 +4831,14 @@ long execJamFile(char *pszFile)
          break;
       }
 
-      if (nLocalLines == 1) {
+      if (nLocalLines == 1)
+      {
          // first local line: also write header
-         if (pszGlblJamPrefix)
-            fprintf(fGlblOut, "%s\n%s\n", pszGlblJamPrefix, pszFile);
-         else
          if (!bGlblJamPure)
-            fprintf(fGlblOut, ":file:\n%s\n", pszFile);
+            if (pszGlblJamPrefix)
+               fprintf(fGlblOut, "%s\n%s\n", pszGlblJamPrefix, pszFile);
+            else
+               fprintf(fGlblOut, ":file:\n%s\n", pszFile);
       }
 
       if (bWrapMode && (strlen((char*)abBuf) > nGlblSnapWrap))
@@ -5126,6 +5199,11 @@ long execFTPList(char *pszFileName)
       return 9;
    return 0;
 }
+
+long execFTPNList(char *pszFileName)
+{
+   return sendLine(hGlblTCPOutSocket, pszFileName, 1);
+}
 #endif
 
 long execSingleFile(char *pszFile, long lLevel, long &lFiles, long nDirFileCnt, long &lDirs, num &lBytes, num &nLocalMaxTime, num &ntime2)
@@ -5165,6 +5243,7 @@ long execSingleFile(char *pszFile, long lLevel, long &lFiles, long nDirFileCnt, 
       case eFunc_Deblank : return execDeblank(pszFile); break;
       #ifdef WITH_TCP
       case eFunc_FTPList  : return execFTPList(pszFile); break;
+      case eFunc_FTPNList : return execFTPNList(pszFile); break;
       #endif
       default: break;
    }
@@ -5698,7 +5777,9 @@ long execTextJoinLines(char *pIn) {
       }
       nLineChars++;
    }
-   printf("[line break near %d]\n",nLineCharMax);
+
+   if (!bGlblQuiet)
+      printf("[line break near %d]\n", nLineCharMax);
 
    // 2. join lines which are broken, pass-through others
    psz = pIn;
@@ -6657,7 +6738,7 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
       // read client commands
       while (1)
       {
-         long lTimeout = 15000;
+         long lTimeout = 1000 * 30;
          num t1 = getCurrentTime();
          while (getCurrentTime() < t1 + lTimeout)
          {
@@ -6814,6 +6895,24 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
             if (sendLine(hClient, "226 Closing data connection")) break; // 226, 250
          }
          else
+         if (!strcmp(szLineBuf, "NLST *"))
+         {
+            if (hData == INVALID_SOCKET) {
+               sendLine(hClient, "500 internal error 1");
+               continue;
+            }
+            // path is ignored. list only current dir.
+            strcpy(szLineBuf2, szLineBuf);
+            if (sendLine(hClient, "150 Listing Directory")) break;
+            long lFiles=0, lDirs=0, lRC=0;
+            num nBytes=0;
+            hGlblTCPOutSocket = hData;
+            lRC = walkAllTrees(eFunc_FTPNList, lFiles, lDirs, nBytes);
+            closesocket(hData); hData = INVALID_SOCKET;
+            printf("dir done, RC %ld\n", lRC);
+            if (sendLine(hClient, "226 Closing data connection")) break; // 226, 250
+         }
+         else
          if (!strncmp(szLineBuf, "RETR ", 5)) 
          {
             if (hData == INVALID_SOCKET) {
@@ -6935,7 +7034,155 @@ long ftpServ(ulong nPort, bool bRW, char *pszPath)
 
 #endif // WITH_TCP
 
+class TestDB
+{
+public:
+   TestDB   (char *pszFile);
+  ~TestDB   ( );
+   long     load     (bool bSilent);
+   long     write    ( );
+   void     shutdown ( );
+
+   long     update   (char *pszInKey, char *pszInVal);
+   char    *getValue (char *pszInKey);
+
+private:
+   char  *pszClFile;
+   StringTable clKeys;
+   StringTable clVals;
+};
+
+TestDB::TestDB(char *pszFile)
+{
+   pszClFile = strdup(pszFile);
+}
+
+TestDB::~TestDB() { shutdown(); }
+
+void TestDB::shutdown() {
+   if (pszClFile) { delete [] pszClFile; pszClFile = 0; }
+}
+
+// uses szLineBuf
+long TestDB::load(bool bSilent) {
+   FILE *fin = fopen(pszClFile, "r");
+   if (!fin) {
+      if (!bSilent)
+         fprintf(stderr, "error: unable to load %s\n", pszClFile); 
+      return 9; 
+   }
+   long nLine = 0;
+   while (fgets(szLineBuf, sizeof(szLineBuf)-10, fin)) {
+      nLine++;
+      removeCRLF(szLineBuf);
+      char *psz = strchr(szLineBuf, ':');
+      if (!psz) {
+         fprintf(stderr, "error: wrong record format in %s line %ld\n", pszClFile, nLine); 
+         fclose(fin);
+         return 9; 
+      }
+      *psz = '\0';
+      char *pszVal = psz+1;
+      char *pszKey = szLineBuf;
+      clKeys.addEntry(pszKey);
+      clVals.addEntry(pszVal);
+   }
+   fclose(fin);
+   return 0;
+}
+
+long TestDB::write() {
+   FILE *fout = fopen(pszClFile, "w");
+   if (!fout) { fprintf(stderr, "error: unable to write %s\n", pszClFile); return 9; }
+   long nRec = clKeys.numberOfEntries();
+   for (long i=0; i<nRec; i++) {
+      char *pszKey = clKeys.getEntry(i, __LINE__);
+      char *pszVal = clVals.getEntry(i, __LINE__);
+      if (!pszKey || !pszVal) { fclose(fout); return 9; }
+      fprintf(fout, "%s:%s\n", pszKey, pszVal);
+   }
+   fclose(fout);
+   return 0;
+}
+
+long TestDB::update(char *pszInKey, char *pszInVal) {
+   long nRec = clKeys.numberOfEntries();
+   for (long i=0; i<nRec; i++) {
+      char *pszKey = clKeys.getEntry(i, __LINE__);
+      char *pszVal = clVals.getEntry(i, __LINE__);
+      if (!pszKey || !pszVal) return 9;
+      if (!strcmp(pszKey, pszInKey)) {
+         clVals.setEntry(i, pszInVal);
+         return 0;
+      }
+   }
+   // not yet contained:
+   clKeys.addEntry(pszInKey);
+   clVals.addEntry(pszInVal);
+   return 0;
+}
+
+char *TestDB::getValue(char *pszInKey) {
+   long nRec = clKeys.numberOfEntries();
+   for (long i=0; i<nRec; i++) {
+      char *pszKey = clKeys.getEntry(i, __LINE__);
+      char *pszVal = clVals.getEntry(i, __LINE__);
+      if (!pszKey || !pszVal) return 0;
+      if (!strcmp(pszKey, pszInKey))
+         return pszVal;
+   }
+   return 0;
+}
+
 extern int patchMain(int argc, char *argv[], int noffs);
+
+// in: szLineBuf. also uses szLineBuf2.
+long applyReplace(char *pszPat)
+{
+   // _src_dest_
+   char szSrc[100];
+   char szDst[100];
+   // isolate source and destination.
+   char *psz1 = pszPat;
+   char cbnd = '\0'; // boundary char
+   if (*psz1) cbnd = *psz1++;
+   char *pszSrc1 = psz1;
+   while (*psz1 && (*psz1 != cbnd))
+      psz1++;
+   if (!*psz1) { fprintf(stderr, "error: illegal replacement string \"%s\"\n", pszPat); return 9; }
+   char *pszSrc2 = psz1;
+   psz1++;
+   char *pszDst1 = psz1;
+   while (*psz1 && (*psz1 != cbnd))
+      psz1++;
+   if (!*psz1) { fprintf(stderr, "error: illegal replacement string \"%s\"\n", pszPat); return 9; }
+   char *pszDst2 = psz1;
+   int nSrcLen = pszSrc2-pszSrc1;
+   int nDstLen = pszDst2-pszDst1;
+   if (nSrcLen > sizeof(szSrc)-10) { fprintf(stderr, "error: source pattern too large \"%.*s\"\n", nSrcLen, pszSrc1); return 9; }
+   if (nDstLen > sizeof(szDst)-10) { fprintf(stderr, "error: destination pattern too large \"%.*s\"\n", nDstLen, pszDst1); return 9; }
+   strncpy(szSrc, pszSrc1, nSrcLen);
+   szSrc[nSrcLen] = '\0';
+   strncpy(szDst, pszDst1, nDstLen);
+   szDst[nDstLen] = '\0';
+   // apply replacements.
+   psz1 = szLineBuf;
+   while (psz1 = strstr(psz1, szSrc))
+   {
+      memset(szLineBuf2, 0, sizeof(szLineBuf2));
+      strncpy(szLineBuf2, szLineBuf, psz1-szLineBuf);
+      // middle
+      char *psz2 = psz1+nSrcLen;
+      strcat(szLineBuf2, szDst);
+      // remember position past insert
+      psz1 = szLineBuf+strlen(szLineBuf2);
+      // right
+      strcat(szLineBuf2, psz2);
+      // copy back result
+      strncpy(szLineBuf, szLineBuf2, sizeof(szLineBuf));
+   }
+   return 0;
+}
 
 int main(int argc, char *argv[])
 {
@@ -6949,46 +7196,20 @@ int main(int argc, char *argv[])
    {
       printf("sfk/" SFK_BRANCH " " SFK_VERSION " - a swiss file knife derivate.\n"); // [patch-id]
       printf("this version provided by " SFK_PROVIDER ".\n");
-      printf("based on the free sfk 1.1.2 by stahlworks art & technology.\n");
+      printf("based on the free sfk 1.1.3 by stahlworks art & technology.\n");
       printf("Distributed for free under the GNU General Public License,\n"
              "without any warranty. Use with care and on your own risk.\n");
+
+      #ifdef _WIN32
+      if (sizeof(mytime_t) < 8) {
+         // if you see this warning, sfk list -time may fail on file dates > 2038.
+         // 64-bit times with unix are an sfk issue left open, so there is no warning.
+         printf("\ninfo: compile with latest msvc for 64-bit time and size support.\n");
+      }
+      #endif
+
       printf("\n"
              "usage:\n"
-             "   sfk snapto=outfile [-pure] [-norec] -dir mydir1 -file .ext1 .ext2\n"
-             "       collect many files into one large text file.\n"
-             "       -pure: don't insert filenames. -prefix=x: insert this before every block.\n"
-             "       -norec: do not recurse into subdirs. -stat: show time stats at end.\n"
-             "       -wrap=n: auto-wrap long lines near column n, e.g. -wrap=80\n"
-             "       many dirs may be specified. names beginning with %c are excluded.\n"
-             "          sfk snapto=all-src.cpp . .cpp .hpp\n"
-             "          sfk snapto=all-src.cpp -dir src1 src2 %csrc2%cold -file .cpp .hpp .xml\n",
-             glblNotChar, glblNotChar, glblPathChar
-            );
-      printf("   sfk syncto=dbfile dir mask [%cmask2]\n"
-             "       gather files into one large editable clusterfile.\n"
-             "       changes in the cluster are written back to sourcefiles automatically.\n"
-             "       changes in the source files are synced into the cluster automatically.\n"
-             "          sfk syncto=cluster.cpp . .cpp .hpp\n", glblNotChar
-            );
-      printf("   sfk syncto=dbfile [-up]\n"
-             "       reuse an existing clusterfile.\n"
-             "       on start, by default, cluster diffs are written to the sourcefiles.\n"
-             "       on start, with -up, sourcefile diffs are written into the cluster.\n"
-             "          sfk syncto=cluster.cpp\n"
-             "   sfk syncto=dbfile -from=myconfig.sfk\n"
-             "       read command line parameters from config file, e.g.\n"
-             "          -dir\n"
-             "             foosys\\bar1\\include\n"
-             "             foosys\\bar1\\source\n"
-             "             %csave_patch\n"
-             "          -file\n"
-             "             .cpp .hpp\n"
-             "   mapping of compiler error output line numbers:\n"
-             "       make yoursys.mak >err.txt 2>&1\n"
-             "       sfk mapto=yourcluster.cpp [-nomix] [-cmd=...] <err.txt\n"
-             "          nomix: list only the mapped output lines. cmd: on first mapped line,\n"
-             "          call supplied command, with clustername and line as parameters.\n"
-             "\n", glblNotChar
              );
       printf("   sfk detab=tabsize dir mask [%cmask2]\n"
              "       replace tabs by spaces within file(s).\n"
@@ -7036,8 +7257,10 @@ int main(int argc, char *argv[])
              "       -ls%c this pattern must NOT be start of a result line\n"
              "       -no-empty-lines removes all empty lines from stream\n"
              "       -lnum preceed all result lines by input line number\n"
-             "       -c   compare case-sensitive (not default)\n"
-             "          anyprog | sfk filter -+mypat -%cotherpat\n",
+             "       -case compare case-sensitive (not default)\n"
+             "       -replace|-rep xSrcxDestx  =replace string Src by Dest\n"
+             "          anyprog | sfk filter -+mypat -%cotherpat\n"
+             "          sfk filter result.txt -rep _\\_/_ -rep xC:\\xD:\\x\n",
              glblNotChar, glblNotChar, glblNotChar, glblNotChar
              );
       printf("   sfk addhead <in >out [-noblank] string1 string2 ...\n"
@@ -7054,6 +7277,42 @@ int main(int argc, char *argv[])
              "       command only simulates. specify -yes to really rename.\n"
              "\n"
              );
+      printf("   sfk snapto=outfile [-pure] [-norec] -dir mydir1 -file .ext1 .ext2\n"
+             "       collect many files into one large text file.\n"
+             "       -pure: don't insert filenames. -prefix=x: insert this before every block.\n"
+             "       -norec: do not recurse into subdirs. -stat: show time stats at end.\n"
+             "       -wrap=n: auto-wrap long lines near column n, e.g. -wrap=80\n"
+             "       many dirs may be specified. names beginning with %c are excluded.\n"
+             "          sfk snapto=all-src.cpp . .cpp .hpp\n"
+             "          sfk snapto=all-src.cpp -dir src1 src2 %csrc2%cold -file .cpp .hpp .xml\n",
+             glblNotChar, glblNotChar, glblPathChar
+            );
+      printf("   sfk syncto=dbfile dir mask [%cmask2]\n"
+             "       gather files into one large editable clusterfile.\n"
+             "       changes in the cluster are written back to sourcefiles automatically.\n"
+             "       changes in the source files are synced into the cluster automatically.\n"
+             "          sfk syncto=cluster.cpp . .cpp .hpp\n", glblNotChar
+            );
+      printf("   sfk syncto=dbfile [-up]\n"
+             "       reuse an existing clusterfile.\n"
+             "       on start, by default, cluster diffs are written to the sourcefiles.\n"
+             "       on start, with -up, sourcefile diffs are written into the cluster.\n"
+             "          sfk syncto=cluster.cpp\n"
+             "   sfk syncto=dbfile -from=myconfig.sfk\n"
+             "       read command line parameters from config file, e.g.\n"
+             "          -dir\n"
+             "             foosys\\bar1\\include\n"
+             "             foosys\\bar1\\source\n"
+             "             %csave_patch\n"
+             "          -file\n"
+             "             .cpp .hpp\n"
+             "   mapping of compiler error output line numbers:\n"
+             "       make yoursys.mak >err.txt 2>&1\n"
+             "       sfk mapto=yourcluster.cpp [-nomix] [-cmd=...] <err.txt\n"
+             "          nomix: list only the mapped output lines. cmd: on first mapped line,\n"
+             "          call supplied command, with clustername and line as parameters.\n"
+             "\n", glblNotChar
+             );
       printf("   sfk md5gento=outfile dir mask [mask2] [%cmask3] [...]\n"
              "   sfk md5gento=outfile -dir dir1 dir2 -file mask1 mask2 %cmask3 [...]\n"
              "       create list of md5 checksums over all files.\n"
@@ -7062,7 +7321,8 @@ int main(int argc, char *argv[])
              "       verify list of md5 checksums. to speed up verifys by spot checking,\n"
              "       specify -skip=n: after every checked file, n files will be skipped.\n"
              "          sfk md5check=md5.dat\n"
-             "   use \"sfk md5 filename\" to create md5 for a single file.\n"
+             "   sfk md5 filename\n"
+             "       create md5 of a single file.\n"
              "\n", glblNotChar, glblNotChar
              );
 
@@ -7116,14 +7376,6 @@ int main(int argc, char *argv[])
              #endif
             );
 
-      #ifdef _WIN32
-      if (sizeof(mytime_t) < 8) {
-         // if you see this warning, sfk list -time may fail on file dates > 2038.
-         // 64-bit times with unix are an sfk issue left open, so there is no warning.
-         printf("   \ninfo: compile with latest msvc to make sfk list y2040 compliant.\n");
-      }
-      #endif
-
       return 0;
    }
 
@@ -7152,26 +7404,20 @@ int main(int argc, char *argv[])
       if (!pInFile) { fprintf(stderr, "error: cannot read %s\n", pszInFile); return 9; }
 
       int iDir = 2;
-      while (iDir < argc) 
+      for (; iDir < argc; iDir++)
       {
          if (!strncmp(argv[iDir],"-skip=",strlen("-skip="))) {
             nGlblMD5Skip = atol(argv[iDir]+strlen("-skip="));
-            iDir++;
          }
          else
          if (!strcmp(argv[iDir],"-skip")) {
-            iDir++;
             if (iDir < argc)
                nGlblMD5Skip = atol(argv[iDir]);
             else
                { fprintf(stderr, "error: missing parm after -skip\n"); return 9; }
          }
          else
-         if (!strcmp(argv[iDir],"-quiet")) {
-            bGlblQuiet = 1;
-            iDir++;
-         }
-         else
+         if (!setGeneralOption(argv[iDir]))
             break;
       }
       lRC = execMD5check(pInFile);
@@ -7184,14 +7430,135 @@ int main(int argc, char *argv[])
    {
       if (checkArgCnt(argc, 3)) return 9;
 
-      SFKMD5 md5;
-      if (getFileMD5(argv[2], md5))
-         return 9;
+      char *pszFile = 0;
+      int iDir = 2;
+      bool bText = 0;
+      bool bUnifySlashes = 0;
+      for (; iDir < argc; iDir++)
+         if (strncmp(argv[iDir], "-", 1)) {
+            pszFile = argv[iDir++];
+            break;
+         } 
+         else
+         if (!setGeneralOption(argv[iDir]))
+            break;
 
+      if (!pszFile) { fprintf(stderr, "error: supply filename for reading\n"); return 9; }
+
+      SFKMD5 md5;
+      if (getFileMD5(pszFile, md5))
+         return 9;
       unsigned char *pmd5 = md5.digest();
       for (int i=0; i<16; i++)
-         printf("%02x",pmd5[i]);
-      printf("\n");
+         sprintf(&szLineBuf[i*2], "%02x", pmd5[i]);
+
+      printf("%s\n", szLineBuf);
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "test"))
+   {
+      if (argc < 3) {
+      printf("usage:\n"
+             "   sfk test mode dbfile tctitle infile\n"
+             "      mode  :\n"
+             "         rec   record checksum of infile\n"
+             "         upd   record only if not yet contained in db\n"
+             "         cmp   compare checksum against db entry\n"
+             "      dbfile: a database file, created by sfk in mode -rec\n"
+             "      tctitle: name of the testcase, e.g. T01.1.mytest\n"
+             "      infile: an output file resulting from a testcase\n"
+             "\n"
+             "   example:\n"
+             "      sfk test rec mycrc.db T01.1.encoding out1.dat\n"
+             "      -> creates checksum of out1.dat, writes to mycrc.db\n"
+             "         under the title T01.1.encoding\n"
+             "      sfk test cmp mycrc.db T01.1.encoding out1.dat\n"
+             "      -> creates checksum of out1.dat, reads 2nd checksum\n"
+             "         from mycrc.db, and compares both.\n"
+             );
+         return 9;
+      }
+
+      if (argc >= 3 && !strcmp(argv[2], "workdir"))
+      {
+         #ifdef _WIN32
+         _getcwd(szLineBuf,sizeof(szLineBuf)-10);
+         #else
+         getcwd(szLineBuf,sizeof(szLineBuf)-10);
+         #endif
+         char *psz = strrchr(szLineBuf, glblPathChar);
+         if (!psz) return 9;
+         psz++;
+         char *pszRelWorkDir = psz;
+         if (argc == 4) {
+            if (!strcmp(argv[3], pszRelWorkDir))
+               return 0;
+            else
+               return 9;
+         } else {
+            printf("%s\n", pszRelWorkDir);
+         }
+         return 0;
+      }
+
+      if (argc < 6) { fprintf(stderr, "error: missing arguments. type \"sfk test\" for help.\n"); return 9; }
+
+      char *pszMode   = argv[2];
+      char *pszDBFile = argv[3];
+      char *pszTitle  = argv[4];
+      char *pszInFile = argv[5];
+
+      // create checksum of infile in szLineBuf.
+      if (getFuzzyTextSum(pszInFile, abBuf))
+         return 9;
+      for (int i=0; i<16; i++)
+         sprintf(&szLineBuf2[i*2], "%02x", abBuf[i]);
+
+    {
+      TestDB tdb(pszDBFile);
+
+      // select command
+      if (!strcmp(pszMode, "rec")) {
+         tdb.load(1); // silent: ignore rc, create on 1st use
+         // write unconditional, overwrite existing vals
+         if (tdb.update(pszTitle, szLineBuf2)) return 9;
+         if (tdb.write()) return 9;
+         int tlen = strlen(pszTitle);
+         if (tlen > 15) tlen = 15;
+         printf(":REC : %s%.*s %s\n", pszTitle, (int)(15-tlen), pszGlblBlank, szLineBuf2);
+      }
+      else
+      if (!strcmp(pszMode, "upd")) {
+         tdb.load(1); // silent: ignore rc, create on 1st use
+         // write only if not yet contained
+         if (!tdb.getValue(pszTitle)) {
+            if (tdb.update(pszTitle, szLineBuf2)) return 9;
+            if (tdb.write()) return 9;
+            int tlen = strlen(pszTitle);
+            if (tlen > 15) tlen = 15;
+            printf(":ADD : %s%.*s %s\n", pszTitle, (int)(15-tlen), pszGlblBlank, szLineBuf2);
+         }
+      }
+      else
+      if (!strcmp(pszMode, "cmp")) {
+         if (tdb.load(0)) return 9;
+         char *pszVal = tdb.getValue(pszTitle);
+         if (!pszVal) { fprintf(stderr, "error: no such entry: %s\n", pszTitle); return 9; }
+         if (!strcmp(pszVal, szLineBuf2)) {
+            // match
+            printf(": OK : %s\n", pszTitle);
+         } else {
+            // mismatch
+            printf(":FAIL: %s   - mismatch of %s\n", pszTitle, pszInFile);
+            lRC = 9;
+         }
+      }
+      else {
+         fprintf(stderr, "error: unknown test mode: %s\n", pszMode); return 9;
+      }
+    }
 
       bDone = 1;
    }
@@ -7204,27 +7571,24 @@ int main(int argc, char *argv[])
 
       bool bstat = 0;
       int iDir = 2;
-      while (iDir < argc) {
+      for (; iDir < argc; iDir++) {
          if (!strncmp(argv[iDir],"-prefix=",strlen("-prefix="))) {
             pszGlblJamPrefix = strdup(argv[iDir]+strlen("-prefix="));
-            iDir++;
          }
          else
          if (!strcmp(argv[iDir],"-pure")) {
             bGlblJamPure = 1;
-            iDir++;
          }
          else
          if (!strcmp(argv[iDir],"-stat")) {
             bstat = 1;
-            iDir++;
          }
          else
          if (!strncmp(argv[iDir],"-wrap=",strlen("-wrap="))) {
             nGlblSnapWrap = atol(argv[iDir]+strlen("-wrap="));
-            iDir++;
          }
          else
+         if (!setGeneralOption(argv[iDir]))
             break;
       }
       if (!pszGlblJamPrefix)
@@ -7267,10 +7631,15 @@ int main(int argc, char *argv[])
 
    if (!strcmp(pszCmd, "text-join-lines"))
    {
-      if (checkArgCnt(argc, 4)) return 9;
+      int iDir = 2;
+      for (; iDir < argc; iDir++)
+         if (!setGeneralOption(argv[iDir]))
+            break;
 
-      char *pszInFile  = argv[2];
-      char *pszOutFile = argv[3];
+      if (iDir >= argc-1) { fprintf(stderr, "error: missing arguments\n"); return 9; }
+
+      char *pszInFile  = argv[iDir+0];
+      char *pszOutFile = argv[iDir+1];
 
       char *pInFile = loadFile(pszInFile, __LINE__);
       if (!pInFile) { fprintf(stderr, "error: cannot read %s\n", pszInFile); return 9; }
@@ -7324,7 +7693,7 @@ int main(int argc, char *argv[])
    {
       if (checkArgCnt(argc, 3)) return 9;
       nGlblConvTarget = eConvFormat_CRLF;
-      if (argc == 3) {
+      if (argc == 3 && strcmp(argv[2], "-i")) {
          // single file name given
          char *pszFile = argv[2];
          if (execFormConv(pszFile))
@@ -7341,7 +7710,7 @@ int main(int argc, char *argv[])
    {
       if (checkArgCnt(argc, 3)) return 9;
       nGlblConvTarget = eConvFormat_LF;
-      if (argc == 3) {
+      if (argc == 3 && strcmp(argv[2], "-i")) {
          // single file name given
          char *pszFile = argv[2];
          if (execFormConv(pszFile))
@@ -7381,7 +7750,7 @@ int main(int argc, char *argv[])
       pszGlblRepDst = strdup(pszDst);
       // printf("replace: \"%s\" by \"%s\"\n",pszGlblRepSrc,pszGlblRepDst);
 
-      if (argc == 4) {
+      if (argc == 4 && strcmp(argv[3], "-i")) {
          // single file name given
          char *pszFile = argv[3];
          lRC = execBinPatch(pszFile);
@@ -7419,13 +7788,18 @@ int main(int argc, char *argv[])
       glblFileSnap.setRootDir(pszGlblJamRoot);
 
       bool bInitialUpSync = 0;
+      bool bSelfTest      = 0;
       int iDir = 2;
-      while (iDir < argc) {
+      for (; iDir < argc; iDir++) {
          if (!strcmp(argv[iDir], "-up")) {
-            iDir++;
             bInitialUpSync = 1;
          }
          else
+         if (!strcmp(argv[iDir], "-stest")) {
+            bSelfTest = 1; // stop after collecting files
+         }
+         else
+         if (!setGeneralOption(argv[iDir]))
             break;
       }
 
@@ -7487,7 +7861,7 @@ int main(int argc, char *argv[])
       char *pszInfo  = "";
       num  lSnapFileTime = getFileTime(glblFileSnap.getFileName());
       long bLFDone = 0;
-      long bbail = 0;
+      long bbail = bSelfTest; // 0 by default
       while (!bbail)
       {
          #ifdef _WIN32
@@ -7625,17 +7999,16 @@ int main(int argc, char *argv[])
       bool bMix = 1;
       char *pszCmd = 0;
 
-      while (iDir < argc) {
+      for (; iDir < argc; iDir++) {
          if (!strcmp(argv[iDir], "-nomix")) {
             bMix = 0;
-            iDir++;
          }
          else
          if (!strncmp(argv[iDir], "-cmd=", strlen("-cmd="))) {
             pszCmd = argv[iDir] + strlen("-cmd=");
-            iDir++;
          }
          else
+         if (!setGeneralOption(argv[iDir]))
             break;
       }
 
@@ -7676,13 +8049,13 @@ int main(int argc, char *argv[])
       nGlblListMode = 1;
 
       int iDir = 2;
-      while (iDir < argc) {
+      for (; iDir < argc; iDir++) {
          if (!strncmp(argv[iDir], "-minsize=", strlen("-minsize="))) {
             char *pszMinSize = &argv[iDir][strlen("-minsize=")];
             nGlblListMinSize = atol(pszMinSize);
-            iDir++;
          }
          else
+         if (!setGeneralOption(argv[iDir]))
             break;
       }
 
@@ -7707,16 +8080,14 @@ int main(int argc, char *argv[])
    {
       nGlblListMode = 2;
       int iDir = 2;
-      while (iDir < argc) {
+      for (; iDir < argc; iDir++) {
          if (!strcmp(argv[iDir], "-twinscan")) {
             nGlblListMode = 3;
-            iDir++;
          }
          else
          if (!strcmp(argv[iDir], "-size")) {
             // do not just remember the flag, but also option sequence.
             nGlblListForm = ((nGlblListForm << 8) | 0x01);
-            iDir++;
          }
          else
          if (!strncmp(argv[iDir], "-size=", strlen("-size="))) {
@@ -7724,15 +8095,14 @@ int main(int argc, char *argv[])
             nGlblListForm   = ((nGlblListForm << 8) | 0x01);
             char *psz1 = argv[iDir] + strlen("-size=");
             nGlblListDigits = atol(psz1);
-            iDir++;
          }
          else
          if (!strcmp(argv[iDir], "-time")) {
             // do not just remember the flag, but also option sequence.
             nGlblListForm = ((nGlblListForm << 8) | 0x02);
-            iDir++;
          }
          else
+         if (!setGeneralOption(argv[iDir]))
             break;
       }
 
@@ -7774,12 +8144,11 @@ int main(int argc, char *argv[])
 
       bool bPack = 0;
       int iDir = 2;
-      while (iDir < argc) {
-         if (!strcmp(argv[iDir], "-pack")) {
-            iDir++;
+      for (; iDir < argc; iDir++) {
+         if (!strcmp(argv[iDir], "-pack"))
             bPack = 1;
-         }
          else
+         if (!setGeneralOption(argv[iDir]))
             break;
       }
 
@@ -7815,24 +8184,30 @@ int main(int argc, char *argv[])
       int iPat = 2;
       int nPat = argc - 2;
 
-      bool bWithLineNumbers = 0;
-      bool bCaseSensitive = 0;
+      bool bLNum = 0;
+      bool bCase = 0;
       char *pszInFile = 0;
 
       while (iPat < argc) {
          if (!strcmp(argv[iPat], "-lnum")) {
-            bWithLineNumbers = 1;
+            bLNum = 1;
             iPat++;
             nPat--;
          }
          else
-         if (!strcmp(argv[iPat], "-c")) {
-            bCaseSensitive = 1;
+         if (   !strcmp(argv[iPat], "-case")
+             || !strcmp(argv[iPat], "-c")
+            ) 
+         {
+            bCase = 1;
             iPat++;
             nPat--;
          }
          else
-         if (strncmp(argv[iPat], "-", 1)) {
+         if (   strncmp(argv[iPat], "-", 1)
+             && strncmp(argv[iPat], "+", 1)  // fix 1.1.3
+            )
+         {
             // non-option: take as input file and proceed
             pszInFile = argv[iPat];
             iPat++;
@@ -7863,7 +8238,7 @@ int main(int argc, char *argv[])
             char *pszPat = argv[iPat+i];
             if (!strncmp(pszPat, "-+", 2)) {
                bHavePosFilt = 1;
-               if (bCaseSensitive) {
+               if (bCase) {
                   if (strstr(szLineBuf, pszPat+2))
                      bHasPositive = 1;
                } else {
@@ -7874,13 +8249,13 @@ int main(int argc, char *argv[])
             else
             if (!strncmp(pszPat, "-ls+", 4)) {
                bHavePosFilt = 1;
-               if (!strncmp(szLineBuf, pszPat+4, strlen(pszPat)-4))
+               if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase))
                   bHasPositive = 1;
             }
             else
             if (!strncmp(pszPat, "++", 2)) {
                bHavePosFilt = 1;
-               if (bCaseSensitive) {
+               if (bCase) {
                   if (strstr(szLineBuf, pszPat+2))
                      bHasPositive = 1;
                   else {
@@ -7899,7 +8274,7 @@ int main(int argc, char *argv[])
             else
             if (!strncmp(pszPat, "+ls+", 4)) {
                bHavePosFilt = 1;
-               if (!strncmp(szLineBuf, pszPat+4, strlen(pszPat)-4))
+               if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase))
                   bHasPositive = 1;
                else {
                   bHasNegative = 1;
@@ -7909,7 +8284,7 @@ int main(int argc, char *argv[])
             else
             if (!strncmp(pszPat, SFK_FILT_NOT1, 2)) {
                bHaveNegFilt = 1;
-               if (bCaseSensitive) {
+               if (bCase) {
                   if (strstr(szLineBuf, pszPat+2)) {
                      bHasNegative = 1;
                      break;
@@ -7924,7 +8299,7 @@ int main(int argc, char *argv[])
             else
             if (!strncmp(pszPat, SFK_FILT_NOT2, 4)) {
                bHaveNegFilt = 1;
-               if (!strncmp(szLineBuf, pszPat+4, strlen(pszPat)-4)) {
+               if (!mystrncmp(szLineBuf, pszPat+4, strlen(pszPat)-4, bCase)) {
                   bHasNegative = 1;
                   break;
                }
@@ -7937,6 +8312,21 @@ int main(int argc, char *argv[])
                   bHasNegative = 1;
                   break;
                }
+            }
+            else
+            if (!strncmp(pszPat, "-rep", 4)) {
+               // next argument is a sed-like replacement pattern
+               if (i >= nPat-1) { fprintf(stderr, "error: -rep must be followed by a pattern\n"); return 9; }
+               char *pszRep = argv[iPat+i+1];
+               // in+out: szLineBuf. also uses szLineBuf2.
+               if (applyReplace(pszRep)) return 9;
+               i++;
+               continue;
+            }
+            else
+            {
+               fprintf(stderr, "error: unknown option or wrong position: %s\n", pszPat);
+               return 9;
             }
          }
 
@@ -7952,7 +8342,7 @@ int main(int argc, char *argv[])
             bMatch = 1;
 
          if (bMatch) {
-            if (bWithLineNumbers)
+            if (bLNum)
                printf("%03u %s\n", nLine, szLineBuf);
             else
                printf("%s\n", szLineBuf);
@@ -8125,13 +8515,6 @@ int main(int argc, char *argv[])
          strcat(pszGlblDstRoot, glblPathStr);
 
       int iDir = 2;
-      // while (iDir < argc) {
-      //    if (!strcmp(argv[iDir], "-quiet"))
-      //       { iDir++; bGlblQuiet = 1; }
-      //    else
-      //       break;
-      // }
-
       if (processDirParms(pszCmd, argc, argv, iDir, 1))
          return 9;
 
@@ -8380,12 +8763,11 @@ int main(int argc, char *argv[])
          return 0;
       }
       int iDir = 2;
-      while (iDir < argc)
+      for (; iDir < argc; iDir++)
       {
          if (!strcmp(argv[iDir], "-ifiles")) {
             if (bGlblStdInDirs) { fprintf(stderr, "error: cannot use -ifiles and -idirs together.\n"); return 9; }
             bGlblStdInFiles = 1;
-            iDir++;
          }
          else
          if (!strcmp(argv[iDir], "-idirs"))  {
@@ -8393,7 +8775,6 @@ int main(int argc, char *argv[])
             if (anyFileInRunCmd(pszGlblRunCmd)) { fprintf(stderr, "error: -idirs only allowed with #ppath, not with file commands.\n"); return 9; }
             bGlblStdInDirs    = 1;
             bGlblWalkJustDirs = 1;
-            iDir++;
          }
          else
          if (!strncmp(argv[iDir], "-", 1)) {
@@ -8403,9 +8784,9 @@ int main(int argc, char *argv[])
          if (!pszGlblRunCmd[0])
          {
             pszGlblRunCmd = argv[iDir];
-            iDir++;
          }
          else
+         if (!setGeneralOption(argv[iDir]))
             break; // fall through to short dir processing
       }
       processDirParms(pszCmd, argc, argv, iDir, 1);
@@ -8439,25 +8820,23 @@ int main(int argc, char *argv[])
       }
 
       int iDir = 2;
-      while ((iDir < argc) && !strncmp(argv[iDir], "-", 1))
+      for (; (iDir < argc) && !strncmp(argv[iDir], "-", 1); iDir++)
       {
          // inst-specific prefix options
          if (!strcmp(argv[iDir], "-revoke")) {
             bGlblInstRevoke = 1;
-            iDir++; 
          }
          else
          if (!strcmp(argv[iDir], "-redo")) {
             bGlblInstRevoke = 1;
             bGlblInstRedo   = 1;
-            iDir++; 
          }
          else
          if (!strcmp(argv[iDir], "-keep-dates")) {
             bGlblTouchOnRevoke = 0;
-            iDir++; 
          }
          else
+         if (!setGeneralOption(argv[iDir]))
             break; // other option, fall through
       }
       if (!bGlblInstRevoke || bGlblInstRedo) {
@@ -8578,15 +8957,12 @@ int main(int argc, char *argv[])
       int iDir = 2;
       char *pszCmd = 0;
 
-      while (iDir < argc) {
-         if (!strcmp(argv[iDir], "-quiet"))
-            bGlblQuiet = 1;
-         else
-         if (!strcmp(argv[iDir], "-debug"))
-            bGlblDebug = 1;
-         else
+      for (; iDir < argc; iDir++) {
+         if (strncmp(argv[iDir], "-", 1))
             pszCmd = argv[iDir];
-         iDir++;
+         else
+         if (!setGeneralOption(argv[iDir]))
+            break;
       }
       if (!pszCmd) { fprintf(stderr, "error: supply a command name to search within PATH.\n"); return 9; }
 
@@ -8637,23 +9013,21 @@ int main(int argc, char *argv[])
       }
 
       int iDir = 2;
-      while (iDir < argc) {
+      for (; iDir < argc; iDir++) {
          if (!strcmp(argv[iDir], "-abs")) {
             bGlblRefRelCmp = 0;
-            iDir++; 
          }
          else
          if (!strcmp(argv[iDir], "-wide")) {
             bGlblRefWideInfo = 1;
             nGlblRefMaxSrc   = 20;
-            iDir++; 
          }
          else
          if (!strcmp(argv[iDir], "-base")) {
             bGlblRefBaseCmp = 1;
-            iDir++; 
          }
          else
+         if (!setGeneralOption(argv[iDir]))
             break;
       }
       processDirParms(pszCmd, argc, argv, iDir, 1);
@@ -8740,7 +9114,7 @@ int main(int argc, char *argv[])
          "   * the CURRENT DIRECTORY is made accessible, without subdirs.\n"
          "   * any kind of directory traversal (.., / etc.) is blocked.\n"
          "   * just ONE CLIENT (browser etc.) can connect at a time.\n"
-         "   * after 15 seconds of inactivity, the connection is closed.\n"
+         "   * after 30 seconds of inactivity, the connection is closed.\n"
          "   port: use other port than default, e.g. -port=30199.\n"
          "   rw  : allow read+write access. default is readonly.\n"
          "   maxsize: increment size limit per file write to n mbytes.\n"
@@ -8778,10 +9152,13 @@ int main(int argc, char *argv[])
                nGlblTCPMaxSizeMB = atol(argv[iDir]+strlen("-maxsize="));
                nState = 2;
             }
-            else {
+            else
+            if (strncmp(argv[iDir], "-", 1)) {
                pszPath = argv[iDir];
-               break;
             }
+            else
+            if (!setGeneralOption(argv[iDir]))
+               break;
          }
          if (!pszPath) { fprintf(stderr, "error: missing path.\n"); return 9; }
          // ftp server may act on current dir only.

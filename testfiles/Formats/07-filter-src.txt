@@ -3,14 +3,12 @@
    to easily demonstrate sfk functionality.
 */
 
-#include "Trace.hpp"
-
-BarBottle::BarBottle( )
+BarMug::BarMug( )
 {
    pClSomething = 0;
 }
 
-BarBottle::~BarBottle( )
+BarMug::~BarMug( )
 {
    if (pClBotte) {
       delete pClSomething = 0;

@@ -1,8 +1,10 @@
 
 The Swiss File Knife is a text file processor intended for developers,
-allowing some high performance working techniques, based purely
-on the Windows Command Shell (sfk should also compile under Unix,
-however the functionality there must be considered alpha).
+allowing some high performance working techniques, based on working
+with the command line.
+
+NOTE: all examples use windows syntax. the sfk linux syntax differs
+      at least in the use of two characters ( ! => :  and  $ => # ).
 
 
 Chapter 1: cluster file editing by examples
