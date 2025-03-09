@@ -639,7 +639,8 @@ bool
       bClContinuedStream,
       bClForceNextInput,
       bClAppendLFOnRaw,
-      bClDecodeColor;
+      bClDecodeColor,
+      bClIPWasExpanded;
 
 char
       cClTellColor,
@@ -688,7 +689,6 @@ struct UCPClientState
 };
 
 #ifndef USE_SFK_BASE
-extern UDPIO sfkNetIO;
 extern UDPIO sfkNetSrc;
 #endif // USE_SFK_BASE
 

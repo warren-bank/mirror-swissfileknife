@@ -329,7 +329,7 @@ void  doSleep        (int nmsec);
 uchar *loadBinaryFile(char *pszFile, num &rnFileSize);
 bool  infoAllowed    ( );
 struct hostent *sfkhostbyname(const char *pstr, bool bsilent=0);
-int   setaddr(struct sockaddr_in *paddr, char *pszHostOrIPPart, bool bsilent=0);
+int   setaddr(struct sockaddr_in *paddr, char *pszHostOrIPPart, int iflags=0);
 
 class IOStatusPhase {
 public:
@@ -1658,6 +1658,7 @@ public:
    int  dumptrail;         // hexdump: trailing chars at line end
    int  bytesperline;      // hexdump: when using hex/decsrc
    num  recordsize;        // for some commands
+   int  replaceold;        // use old replace algorithm
    bool usetmp;            // use temporary file
    bool knx;               // internal
    char *knxtext;          // internal
@@ -1803,7 +1804,8 @@ enum eWalkTreeFuncs {
    eFunc_XHexDemo    ,
    eFunc_Rename      ,
    eFunc_GetPic      ,
-   eFunc_XFind
+   eFunc_XFind       ,
+   eFunc_SumFiles
 };
 
 // temporary file class, REMOVING THE FILE IN DESTRUCTOR.
@@ -2234,7 +2236,204 @@ public:
    char        *pszClEvalOut;       // for large results
 };
 
+#ifdef SFKINT
+ #define WITH_FTP_LIMITS
 #endif
+
+#define MAX_FTP_VDIR 10
+
+class FTPServer
+{
+public:
+      FTPServer   ( );
+     ~FTPServer   ( );
+
+   int run           (uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uint nPasvPort);
+   char *absPath     (char *pszFilePath=0);
+   char *sysPath     (char *pszFilePath=0, int *piVDir=0);
+   int   mapPath     (char *pszRelPath, bool bAllowRoot=0, bool bCheckDiskSpace=0);
+   int   reply       (cchar *pszMask, ...);
+   int   replyFromRC (int iSubRC);
+   int   readLine    ( );
+   void  setStart    ( );
+   int   isTimeout   (int iTimeout);
+   int   addUseDir   (char *psz);
+   int   setFixDir   (char *psz);
+
+private:
+   int   addTrailSlash     (char *pszBuf, int iMaxBuf);
+   void  stripTrailSlash   (char *pszPath, char cSlash);
+   char *notslash          (char *pszPath);
+   int   setLocalWalkDir   (char *pszPath);
+   bool  pathTraversal     (char *pszPath, bool bDeep);
+   int   checkPath         (char *pszPath, bool bDeep);
+   int   copyNormalized    (char *pdst, int imaxdst, char *psrc);
+
+public:
+char
+   szClAuthUser      [50],
+   szClAuthPW        [50],
+   szClRunPW         [50],
+   szClEnvInfoUser   [50],
+   szClEnvInfoPW     [50],
+   szClEnvInfoRunPW  [50];
+
+private:
+char
+   szClWorkDir    [800],
+   szClOldWorkDir [800],
+   szClAbsPathBuf [800],
+   szClSysPathBuf [800],
+   szClTmpPathBuf [800],
+   szClTmpPathBuf2[800],
+   szClCmpPathBuf [800],
+   szClFixSysDir  [800],
+   szClRenameFrom [800],
+   szClReplyBuf   [1024];
+
+int
+   xrerun   (char *pszCmd, int iTimeout),
+   xpipe    ( ),
+   xstop    ( );
+
+// #define WITH_FTP_EXTPROG
+// linux: unexpected "command completed by eod"
+
+#ifdef WITH_FTP_EXTPROG
+ExtProgram
+   clXProg;
+#else
+
+#ifdef _WIN32
+int winFork(char *pszCmd,HANDLE hChildStdOut,HANDLE hChildStdIn,HANDLE hChildStdErr);
+HANDLE hOutputReadTmp,hOutputRead,hOutputWrite;
+HANDLE hInputWriteTmp,hInputRead,hInputWrite;
+HANDLE hErrorWrite;
+HANDLE clXPid;
+#else
+pid_t mypopen2    (char *commandin[], int *infp, int *outfp);
+int   mysystemio  (char *pszCmd, int iTimeout);
+pid_t
+   clXPid;
+int
+   clXFin;
+#endif
+
+#endif
+
+int
+   clXTimeout;
+num
+   clXRunStart;
+char
+   szClXCmdBuf    [1000+20],
+   szClXDataBuf   [4000+20];
+char
+   *aClXCmdParms  [100];
+
+int  iClVDir;
+char aClVDirSrc[MAX_FTP_VDIR+2][100];
+char aClVDirDst[MAX_FTP_VDIR+2][200];
+
+#ifdef WITH_FTP_LIMITS
+char aClVDirLimMode[MAX_FTP_VDIR+2];    // null, 'd'eep, 'f'lat
+int  aClVDirLimFreeMB[MAX_FTP_VDIR+2];  // with 'd'eep and 'flat'
+int  aClVDirLimUsedMB[MAX_FTP_VDIR+2];  // 'f'lat only
+int  aClVDirLimUsedFil[MAX_FTP_VDIR+2]; // 'f'lat only
+#endif
+
+struct sockaddr_in
+   clServerAdr,
+   clPasServAdr,
+   clClientAdr,
+   clDataAdr;
+
+SOCKET
+   hClServer,
+   hClClient,
+   hClPasServ,
+   hClData;
+ 
+num
+   nClStart,
+   nClDiskFree;
+
+bool
+   bClSendFailed,
+   bClTimeout,
+   bClDeep;
+};
+
+#endif
+
+// SFK home dir creation and filename building
+class SFKHome
+{
+public:
+      SFKHome  ( );
+
+bool
+      noHomeDir   ( );
+char
+      *makePath   (char *pszRelPath, bool bReadOnly=0),
+       // also creates required folders.
+       // returns NULL on any error.
+      *getPath    (char *pszRelPath);
+       // for readonly access.
+       // returns NULL on any error.
+
+bool  bClTold;
+char  szClDir     [SFK_MAX_PATH+10];
+char  szClPathBuf [SFK_MAX_PATH+10];
+};
+
+// find: BinTexter remembers so many chars from previous line
+//       to detect AND patterns spawning across soft-wraps.
+#define BINTEXT_RECSIZE 3000
+// 600 * 2 = 1200, 1200 * 2 = 2400
+
+class BinTexter
+{
+public:
+   BinTexter         (Coi *pcoi);
+  ~BinTexter         ( );
+
+   enum eDoWhat {
+      eBT_Print   = 1,  // floating output, LFs blanked
+      eBT_Grep    = 2,  // LFs lead to hard line break
+      eBT_JamFile = 3   // floating output, LFs blanked
+   };
+
+   // uses szLineBuf, szLineBuf2.
+   int  process     (int nDoWhat);
+   int  processLine (char *pszBuf, int nDoWhat, int nLine, bool bHardWrap);
+
+private:
+   Coi  *pClCoi;
+   char  szClPreBuf[80];   // just a short per line prefix
+   char  szClOutBuf[BINTEXT_RECSIZE+100]; // fix: 1703: buffer too small.
+   char  szClAttBuf[BINTEXT_RECSIZE+100]; // fix: 1703: buffer too small
+   char  szClLastLine[BINTEXT_RECSIZE+100];
+   bool  bClDumpedFileName;
+};
+
+class NoCaseText
+{
+public:
+   NoCaseText    ( );
+   void reinit (bool bISO);
+
+   inline  char lowerChar ( char c) { return aClLowerTab[(uchar)c]; }
+   inline uchar lowerUChar(uchar c) { return (uchar)aClLowerTab[(uchar)c]; }
+   inline  char upperChar ( char c) { return aClUpperTab[(uchar)c]; }
+   inline uchar upperUChar(uchar c) { return (uchar)aClUpperTab[(uchar)c]; }
+
+   inline uchar mapChar   (uchar c, uchar bCase) { return bCase ? c : (uchar)aClLowerTab[(uchar)c]; }
+   void  setStringToLower(char *psz);
+
+   char aClLowerTab[256+10];
+   char aClUpperTab[256+10];
+};
 
 extern void sfkmem_checklist(const char *pszCheckPoint);
 
