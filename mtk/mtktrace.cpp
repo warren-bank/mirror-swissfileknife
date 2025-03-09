@@ -1,0 +1,738 @@
+/*
+   Micro Tracing Kernel 0.5.5 by stahlworks technologies.
+   Unlimited Open Source License, free for use in any project.
+
+   the following line protects this file against instrumentation:
+   [instrumented]
+
+   So far, this kernel was mainly tested with a Unix derivate.
+   Win32 functionality is still alpha.
+
+   Known Issues:
+   -  Win32: most mtk-internal error infos are not shown with GUI apps
+   -  Win32: logging to file in a slow, primitive way using "a"ppend
+
+   20060420 Win32 adaptions, currently rather primitive
+   20060412 fix: tracePre/Post: wrong mask check
+*/
+
+#ifdef _WIN32
+ #define pthread_self GetCurrentThreadId
+ #define vsnprintf _vsnprintf
+#else
+ #include <pthread.h>
+#endif
+
+#define MTKMAXTHREADS 300  // by default, threadid's are listed as 2-byte hex
+#define MTKMAXLEVEL   200  // max. block nesting level supported for tracing
+#define ulong unsigned long
+#define uchar unsigned char
+
+#define MTKMAXMSG   10000  // 1000 (0.1 MB) to 10000 (1.2 MB)
+#define MTKMSGSIZE    118
+
+// some projects provide their own printf implementation
+#ifdef PROJECT_PRINTF
+extern "C" int PROJECT_PRINTF(const char *format, ...);
+#else
+ #define PROJECT_PRINTF printf
+#endif
+
+// =============================
+// ===== MTK internal core =====
+// =============================
+
+#define MTKLBUFSIZE 1024  // output line buffer
+
+class MTKMain
+{
+public:
+   MTKMain ();
+
+   void traceMethodEntry(void *pRefInst, const char *pszFile, int nLine, const char *pszfn);
+   void traceMethodExit (void *pRefInst, const char *pszFile, int nLine, const char *pszfn);
+   void traceMessageRaw (const char *pszFile, int nLine, char cPrefix, char *pszRaw);
+   uchar tracePre       (const char *pszFile, int nLine, char cPrefix);
+   // returns non-zero (OK) if there is an interest in this kind of message
+
+   void dumpStackTrace  (bool bOnlyOfCurrentThread);
+   void dumpLastSteps   (bool bOnlyOfCurrentThread);
+   void setRingTrace    (char *pszMask);
+   void setTermTrace    (char *pszMask);
+
+   ulong nthreads;
+   ulong asysid[MTKMAXTHREADS+2];
+   ulong alevel[MTKMAXTHREADS+2];
+   const char *apprefile[MTKMAXTHREADS+2];
+   ulong anpreline[MTKMAXTHREADS+2];
+   char  acpreprefix[MTKMAXTHREADS+2];
+   const char *apfile[MTKMAXTHREADS+2][MTKMAXLEVEL+2];
+   const char *apfunc[MTKMAXTHREADS+2][MTKMAXLEVEL+2];
+   ulong anline[MTKMAXTHREADS+2][MTKMAXLEVEL+2];
+   ulong iclmsg;  // counts endless, modulo past read
+   char  amsg[MTKMAXMSG+2][MTKMSGSIZE+2];
+   char  alinebuf[MTKLBUFSIZE+10];
+   char  alinebuf2[MTKLBUFSIZE+10];
+   ulong ncurthrsid;
+   ulong ncurthridx;
+   uchar nlockmode;
+   ulong ntracex; // trace extended interface input into ringbuffer
+   ulong ndumpx;  // dump  extended interface input onto terminal
+   const char *pszFilename;
+};
+
+static const char *glblPszBlank =
+   "                                                  "
+   "                                                  "
+   "                                                  "
+   "                                                  ";
+
+static uchar glblMTKAlive = 0;
+static MTKMain glblMTKInst;
+
+MTKMain::MTKMain()
+{
+   nthreads = 0;
+   memset(asysid, 0, sizeof(asysid));
+   memset(alevel, 0, sizeof(alevel));
+   memset(apprefile, 0, sizeof(apprefile));
+   memset(anpreline, 0, sizeof(anpreline));
+   memset(acpreprefix, 0, sizeof(acpreprefix));
+   memset(apfile, 0, sizeof(apfile));
+   memset(apfunc, 0, sizeof(apfunc));
+   memset(anline, 0, sizeof(anline));
+   iclmsg = 0;
+   memset(amsg, 0, sizeof(amsg));
+   memset(alinebuf, 0, sizeof(alinebuf));
+   memset(alinebuf2, 0, sizeof(alinebuf2));
+   ncurthrsid = 0xFFFFFFFF;
+   ncurthridx = 0;
+   nlockmode = 0;
+
+   ntracex = 0;
+   ndumpx  = 0;
+
+   const char *pszEnv = getenv("MTK_TRACE");
+   if (pszEnv)
+   {
+      // by default, only some messages are stored in the ring.
+      // allow extended settings here:
+      const char *psz1 = strstr(pszEnv, "ring:");
+      if (psz1)
+      {
+         psz1 += strlen("ring:");
+         setRingTrace((char*)psz1);
+      }
+         
+      // by default, only some messages are dumped onto terminal.
+      // allow extended settings here:
+      if ((psz1 = strstr(pszEnv, "term:")) != 0)
+      {
+         psz1 += strlen("term:");
+         setTermTrace((char*)psz1);
+      }
+
+      if ((psz1 = strstr(pszEnv, "filename:")) != 0) {
+         psz1 += strlen("filename:");
+         pszFilename = psz1;
+      } else {
+         pszFilename = "mtktrace.log";
+      }
+   }
+
+   glblMTKAlive = 1;
+}
+
+void MTKMain::setRingTrace(char *psz1) 
+{
+   ntracex = 0;
+   while (*psz1 && (*psz1 != ','))
+      switch (*psz1++) {
+         case 't': ntracex |=  1; break;
+         case 'b': ntracex |=  2; break;
+         case 'x': ntracex |=  4; break;
+         case 'w': ntracex |=  8; break;
+         case 'e': ntracex |= 16; break;
+         default:
+            fprintf(stderr, "ERROR: MTK unsupported ring settings, use tbxwe\n");
+            break;
+      }
+}
+
+void MTKMain::setTermTrace(char *psz1)
+{
+   ndumpx = 0;
+   while (*psz1 && (*psz1 != ','))
+      switch (*psz1++) {
+         case 't': ndumpx |=  1; break;
+         case 'b': ndumpx |=  2; break;
+         case 'x': ndumpx |=  4; break;
+         case 'w': ndumpx |=  8; break;
+         case 'e': ndumpx |= 16; break;
+         default:
+            fprintf(stderr, "ERROR: MTK unsupported term settings, use tbxwe\n");
+            break;
+      }
+}
+
+void MTKMain::traceMethodEntry(void *pRefInst, const char *pszFile, int nLine, const char *pszFunc)
+{
+   if (nlockmode >= 2)
+      return;
+
+   ulong nthreadid = (ulong)(pthread_self());
+
+   // assume we still have the same thread context
+   ulong ithread = ncurthridx;
+
+   // if thread context changed, find new index
+   if (ncurthrsid != nthreadid)
+   {
+      for (ithread=0; ithread<nthreads; ithread++)
+         if (asysid[ithread] == nthreadid)
+            break;
+
+      // if no index found, add a new thread index
+      if (ithread==nthreads) {
+         if (nthreads >= MTKMAXTHREADS) {
+            fprintf(stderr, "ERROR: INSTR: too many threads, cannot trace\n");
+            glblMTKAlive = 0;
+            return;
+         }
+         nthreads++;
+         asysid[ithread] = nthreadid;
+         alevel[ithread] = 0;
+      }
+
+      // cache the current thread's system id and index mapping
+      ncurthrsid = nthreadid;
+      ncurthridx = ithread;
+   }
+
+   ulong ilevel = alevel[ithread];
+   if (ilevel >= MTKMAXLEVEL) {
+      fprintf(stderr, "ERROR: INSTR: max stack level reached, cannot trace\n");
+      glblMTKAlive = 0;
+      return;
+   }
+
+   // store current stack location
+   apfile[ithread][ilevel] = pszFile;
+   anline[ithread][ilevel] = nLine;
+   apfunc[ithread][ilevel] = pszFunc;
+   // if (strstr(pszFile, "BHDiag"))
+   //   printf("tme %x %u %u %s %u\n", nthreadid, ithread, ilevel, pszFile, nLine);
+
+   // increment and write back current stack level
+   ilevel++;
+   alevel[ithread] = ilevel;
+
+   // trace block entry event?
+   if (ntracex & 2) {
+      traceMessageRaw(pszFile, nLine, 'B', (char*)pszFunc);
+   }
+}
+
+void MTKMain::traceMethodExit(void *pRefInst, const char *pszFile, int nLine, const char *pszFunc)
+{
+   if (nlockmode >= 2)
+      return;
+
+   ulong nthreadid = (ulong)(pthread_self());
+
+   // assume we still have the same thread context
+   ulong ithread = ncurthridx;
+
+   // if thread context changed, find new index
+   if (ncurthrsid != nthreadid)
+   {
+      for (ithread=0; ithread<nthreads; ithread++)
+         if (asysid[ithread] == nthreadid)
+            break;
+
+      // if no index found, there is an internal error
+      if (ithread==nthreads) {
+         fprintf(stderr, "ERROR: INSTR: non-matching method exit, cannot trace\n");
+         glblMTKAlive = 0;
+         return;
+      }
+
+      // cache the current thread's system id and index mapping
+      ncurthrsid = nthreadid;
+      ncurthridx = ithread;
+   }
+
+   ulong ilevel = alevel[ithread];
+   if (ilevel == 0) {
+      fprintf(stderr, "ERROR: INSTR: stack underflow, cannot trace\n");
+      glblMTKAlive = 0;
+      return;
+   }
+   apfile[ithread][ilevel] = 0;
+   anline[ithread][ilevel] = 0;
+   apfunc[ithread][ilevel] = 0;
+   // if (strstr(pszFile, "BHDiag"))
+   //   printf("tmx %x %u %u %s %u\n", nthreadid, ithread, ilevel, pszFile, nLine);
+   ilevel--;
+   alevel[ithread] = ilevel;
+}
+
+void MTKMain::traceMessageRaw(const char *pszFile, int nLine, char cPrefix, char *pszRaw)
+{
+   // IN: pszFile can be NULL!
+
+   if (nlockmode >= 1)
+      return;
+
+   ulong nthreadid = (ulong)(pthread_self());
+
+   // assume we still have the same thread context
+   ulong ithread = ncurthridx;
+
+   // if thread context changed, find new index
+   if (ncurthrsid != nthreadid)
+   {
+      for (ithread=0; ithread<nthreads; ithread++)
+         if (asysid[ithread] == nthreadid)
+            break;
+
+      // if no index found, add a new thread index
+      if (ithread==nthreads) {
+         if (nthreads >= MTKMAXTHREADS) {
+            fprintf(stderr, "ERROR: INSTR: too many threads, cannot trace\n");
+            glblMTKAlive = 0;
+            return;
+         }
+         nthreads++;
+         asysid[ithread] = nthreadid;
+         alevel[ithread] = 0;
+      }
+
+      // cache the current thread's system id and index mapping
+      ncurthrsid = nthreadid;
+      ncurthridx = ithread;
+   }
+
+   ulong ilevel = alevel[ithread];
+
+   // single nearly-atomic operation across all threads.
+   // we expect that some messages can get lost.
+   ulong imsg = (iclmsg++) % MTKMAXMSG;
+
+   // if any context infos are missing, take them from the precache
+   if (!pszFile) pszFile = apprefile[ithread];
+   if (!nLine  ) nLine   = anpreline[ithread];
+   if (!cPrefix) cPrefix = acpreprefix[ithread];
+
+   // store thread-index and nesting level
+   ulong nprelen = 3;
+   amsg[imsg][0] = (uchar)ithread;
+   amsg[imsg][1] = (uchar)ilevel;
+   amsg[imsg][2] = (uchar)cPrefix;
+
+   // store actual message
+   ulong imax = MTKMSGSIZE-nprelen-2;
+   strncpy(&amsg[imsg][nprelen], pszRaw, imax);
+   amsg[imsg][imax] = '\0';
+
+   // strip cr/lf, if any
+   char *pszLF = 0;
+   if ((pszLF = strchr(&amsg[imsg][nprelen], '\n')) != 0)
+      *pszLF = '\0';
+   if ((pszLF = strchr(&amsg[imsg][nprelen], '\r')) != 0)
+      *pszLF = '\0';
+
+   // if there is space left, append location info with a linefeed
+   if (pszFile != 0) {
+      ulong ilen = strlen(&amsg[imsg][nprelen]);
+      if (ilen < (imax-1)) {
+         strcat(&amsg[imsg][nprelen+ilen+0], "\n");
+         // make relative filename, full paths are too long
+         const char *pszRel = 0;
+         #ifdef _WIN32
+         if ((pszRel = strrchr(pszFile, '\\')) != 0) pszFile = pszRel+1;
+         #else
+         if ((pszRel = strrchr(pszFile, '/')) != 0)  pszFile = pszRel+1;
+         #endif
+         strncpy(&amsg[imsg][nprelen+ilen+1], pszFile, (imax-1)-ilen);
+         amsg[imsg][imax] = '\0';
+      }
+   }
+
+   // instant tracing to terminal selected?
+   if (ndumpx != 0)
+   {
+      bool bRet = 0;
+      switch (cPrefix) {
+         case 'X': if (!(ndumpx &  4)) bRet = 1; break; // extended input, general
+         case 'W': if (!(ndumpx &  8)) bRet = 1; break; // extended input, warnings
+         case 'E': if (!(ndumpx & 16)) bRet = 1; break; // extended input, errors
+         case 'B': if (!(ndumpx &  2)) bRet = 1; break; // block entry
+         default : if (!(ndumpx &  1)) bRet = 1; break; // all other messages
+      }
+      if (bRet) {
+         // if (!strncmp(pszRaw, "P:", 2))
+         //    printf("SKIP.1: %s %c %x\n", pszRaw, cPrefix, ndumpx);
+         return;
+      }
+      #ifdef _WIN32
+      // Win32 GUI apps cannot dump to terminal, therefore write to log this primitive way:
+      FILE *fout = fopen(pszFilename, "a");
+      if (fout) {
+         fprintf(fout, "[%02lX:%c] %.*s%s\n", ithread, cPrefix, (int)ilevel, glblPszBlank, pszRaw);
+         fclose(fout);
+      }
+      #endif
+      PROJECT_PRINTF("[%02lX:%c] %.*s%s\n", ithread, cPrefix, (int)ilevel, glblPszBlank, pszRaw);
+   }
+   else
+   {
+      // if (!strncmp(pszRaw, "P:", 2))
+      //    printf("SKIP.2: %s\n", pszRaw);
+   }
+
+   // reset prelocation data to avoid reuse
+   apprefile[ithread]   = 0;
+   anpreline[ithread]   = 0;
+   acpreprefix[ithread] = 0;
+}
+
+uchar MTKMain::tracePre(const char *pszFile, int nLine, char cPrefix)
+{
+   if (nlockmode >= 1)
+      return 0;
+
+   ulong nthreadid = (ulong)(pthread_self());
+
+   // assume we still have the same thread context
+   ulong ithread = ncurthridx;
+
+   // if thread context changed, find new index
+   if (ncurthrsid != nthreadid)
+   {
+      for (ithread=0; ithread<nthreads; ithread++)
+         if (asysid[ithread] == nthreadid)
+            break;
+
+      // if no index found, add a new thread index
+      if (ithread==nthreads) {
+         if (nthreads >= MTKMAXTHREADS) {
+            fprintf(stderr, "ERROR: INSTR: too many threads, cannot trace\n");
+            glblMTKAlive = 0;
+            return 0;
+         }
+         nthreads++;
+         asysid[ithread] = nthreadid;
+         alevel[ithread] = 0;
+      }
+
+      // cache the current thread's system id and index mapping
+      ncurthrsid = nthreadid;
+      ncurthridx = ithread;
+   }
+
+   // we expect that this thread will issue a call to traceMessageRaw next,
+   // where the following infos are used:
+   apprefile[ithread]   = pszFile;
+   anpreline[ithread]   = nLine;
+   acpreprefix[ithread] = cPrefix;
+
+   // are we currently interested in this kind of trace messages?
+   bool bRC = 0, bRCSet = 0;
+   if (cPrefix == 'X') { bRC = ((ntracex &  4) != 0) ? 1 : 0; bRCSet = 1; }
+   if (cPrefix == 'W') { bRC = ((ntracex &  8) != 0) ? 1 : 0; bRCSet = 1; }
+   if (cPrefix == 'E') { bRC = ((ntracex & 16) != 0) ? 1 : 0; bRCSet = 1; }
+   if (cPrefix == 'B') { bRC = ((ntracex &  2) != 0) ? 1 : 0; bRCSet = 1; }
+   if (bRCSet) {
+      // if (cPrefix == 'E')
+      //    printf("tracePre.1 %c %u\n", cPrefix, bRC);
+      return bRC;
+   }
+
+   // all other message types: depends on general flag
+   if (ntracex & 1) {
+      // if (cPrefix == 'E')
+      //    printf("tracePre.2 %c 1\n", cPrefix);
+      return 1;
+   } else {
+      // if (cPrefix == 'E')
+      //    printf("tracePre.3 %c 0\n", cPrefix);
+      return 0;
+   }
+}
+
+void MTKMain::dumpStackTrace(bool bJustCurrentThread)
+{
+   if (bJustCurrentThread) {
+      // lockmode 1: do not accept further traceMessage calls.
+      nlockmode = 1;
+   } else {
+      // lockmode 2: also do not accept block entry/exit events.
+      // in most cases, mtk tracing cannot be used afterwards.
+      nlockmode = 2;
+   }
+
+   ulong nthreadid = (ulong)(pthread_self());
+   ulong ithread;
+   for (ithread=0; ithread<nthreads; ithread++)
+      if (asysid[ithread] == nthreadid)
+         break;
+   if (ithread==nthreads) {
+      fprintf(stderr, "ERROR: INSTR: thread not found, cannot dump stack trace\n");
+      nlockmode = 0;
+      return;
+   }
+
+   FILE *fout = 0;
+   if (!(fout = fopen(pszFilename, "a"))) {
+      printf("error: cannot open %s\n", pszFilename);
+      fout = stdout;
+   } else {
+      printf("> DUMPING STACKTRACE OF %s TO %s\n", bJustCurrentThread?"CURRENT THREAD":"ALL THREADS", pszFilename);
+      fflush(stdout);
+   }
+
+   if (!bJustCurrentThread) {
+      fprintf(fout, "==================================================\n");
+      fprintf(fout, "= current stack trace of ALL threads, %lu in total:\n", nthreads);
+      fprintf(fout, "==================================================\n");
+   }
+
+   for (ulong ithread2=0; ithread2<nthreads; ithread2++)
+   {
+      if (bJustCurrentThread)
+         ithread2 = ithread;
+
+      ulong ilevel = alevel[ithread2];
+      ulong nsysid = asysid[ithread2];
+      fprintf(fout, "> ------- stack trace, thread %lx%s, sysid %lx, %lu levels -------\n", ithread2, (!bJustCurrentThread && (ithread2==ithread))?" (OWN)":"", nsysid, ilevel);
+
+      for (ulong ilev=0; ilev<ilevel; ilev++)
+      {
+         const char *pszFile = apfile[ithread2][ilev];
+         ulong nLine = anline[ithread2][ilev];
+         const char *pszFunc = apfunc[ithread2][ilev];
+         const char *pszRel = strrchr((char*)pszFile, '/');
+         if (pszRel) pszRel++; else pszRel = pszFile;
+         fprintf(fout, "> %02lX %.*s%s %s:%lu\n", ithread2, (int)ilev, glblPszBlank, pszFunc, pszRel, nLine);
+      }
+
+      if (bJustCurrentThread)
+         break;
+   }
+   fprintf(fout, "> ---------------------- stack trace end ---------------------\n");
+
+   if (fout != stdout) {
+      fclose(fout);
+      printf("> DUMPING OF STACKTRACE DONE.\n");
+      fflush(stdout);
+   }
+
+   nlockmode = 0;
+}
+
+void MTKMain::dumpLastSteps(bool bJustCurrentThread)
+{
+   nlockmode = 1;
+
+   // identify our own thread
+   ulong nthreadid = (ulong)(pthread_self());
+   ulong iown;
+   for (iown=0; iown<nthreads; iown++)
+      if (asysid[iown] == nthreadid)
+         break;
+
+   FILE *fout = 0;
+   if (!(fout = fopen(pszFilename, "a"))) {
+      printf("error: cannot open %s\n", pszFilename);
+      fout = stdout;
+   } else {
+      printf("> DUMPING LAST STEPS OF %s TO %s\n", bJustCurrentThread?"CURRENT THREAD":"PROCESS", pszFilename);
+      fflush(stdout);
+   }
+
+   if (bJustCurrentThread)
+   fprintf(fout, "> ------ last steps of current thread, index %02lX sysid %04lX: -----\n", iown, nthreadid);
+   else
+   fprintf(fout, "> ------ last system steps, own thread = %02lX sysid %04lX: -----\n", iown, nthreadid);
+
+   // read out ringbuffer backwards
+   ulong imsg = iclmsg % MTKMAXMSG;
+
+   // first, step FORWARD to oldest line, skipping empty entries
+   ulong icur = (imsg+1) % MTKMAXMSG;
+   while ((icur != imsg) && (!amsg[icur][0]))
+      icur = (icur+1) % MTKMAXMSG;
+
+   ulong nrec = 0;
+
+   // now walk icur forward until imsg, dumping the messages
+   while (icur != imsg)
+   {
+      uchar *pmsg = (uchar*)amsg[icur];
+      ulong nprelen = 3;
+      uchar ithr  = pmsg[0];
+      uchar ilev  = pmsg[1];
+      char  cPre  = (char)pmsg[2];
+      if (bJustCurrentThread && (iown != ithr)) {
+         // skip record
+      } else {
+         // stored messages are zero-terminated.
+         // if there is a linefeed, there is location info afterwards.
+         strncpy((char*)alinebuf, (const char*)pmsg+nprelen, MTKLBUFSIZE);
+         alinebuf[MTKLBUFSIZE] = '\0';
+         char *pszLoc = strchr(alinebuf, '\n');
+         if (pszLoc) {
+            *pszLoc++ = '\0';
+         }
+         // format main content, yet w/o location
+         sprintf(alinebuf2, "[%02X:%c%c %.*s%s", ithr, cPre, (iown==ithr)?'*':']', (int)ilev, glblPszBlank, alinebuf);
+         // if available, add location info
+         if (pszLoc) {
+            ulong ilen = strlen(alinebuf2);
+            ulong iloc = 90;
+            if (iloc < ilen)
+                iloc = ilen;
+            iloc += 3;
+            iloc += (6 - (iloc % 6));
+            if (iloc < (MTKLBUFSIZE-10)) {
+               for (ulong iins=ilen; iins<iloc; iins++)
+                  alinebuf2[iins] = ' ';
+               // add at least 3 chars of location info
+               sprintf(&alinebuf2[iloc], "[%.*s]", (int)((MTKLBUFSIZE-5)-iloc), pszLoc);
+            }
+         }
+         // finally, dump whole formatted line
+         fprintf(fout, "%s\n", alinebuf2);
+         nrec++;
+      }
+      icur = (icur+1) % MTKMAXMSG;
+   }
+
+   if (bJustCurrentThread)
+   fprintf(fout, "> ------------- last thread steps end, %lu records ---------------\n", nrec);
+   else
+   fprintf(fout, "> ------------- last system steps end, %lu records ---------------\n", nrec);
+
+   if (fout != stdout) {
+      fclose(fout);
+      printf("> DUMPING OF LAST STEPS DONE.\n");
+      fflush(stdout);
+   }
+
+   nlockmode = 0;
+}
+
+// block entry registration, used by MTKBlock
+void mtkTraceMethodEntry(void *pRefInst, const char *pszFile, int nLine, const char *pszfunc) {
+   if (glblMTKAlive)
+      glblMTKInst.traceMethodEntry(pRefInst, pszFile, nLine, pszfunc);
+}
+
+// block exit registration, used by MTKBlock
+void mtkTraceMethodExit(void *pRefInst, const char *pszFile, int nLine, const char *pszfunc) {
+   if (glblMTKAlive)
+      glblMTKInst.traceMethodExit(pRefInst, pszFile, nLine, pszfunc);
+}
+
+// ============================================
+// ===== MTK public interface C functions =====
+// ============================================
+
+/*
+extern void mtkTraceRaw(const char *pszFile, int nLine, char cPrefix, char *pszRaw);
+extern void mtkTraceForm(const char *pszFile, int nLine, char cPrefix, const char *pszFormat, ...);
+extern int  mtkTracePre(const char *pszFile, int nLine, char cPrefix);
+extern void mtkTracePost(const char *pszFormat, ...);
+extern void mtkDumpStackTrace(int bOnlyOfCurrentThread);
+extern void mtkDumpLastSteps(int bOnlyOfCurrentThread);
+extern void mtkSetRingTrace(char *pszMask);
+extern void mtkSetTermTrace(char *pszMask);
+*/
+
+// all-in-one tracing entry for preformatted message buffers
+void mtkTraceRaw(const char *pszFile, int nLine, char cPrefix, char *pszRaw) {
+   if (glblMTKAlive)
+      glblMTKInst.traceMessageRaw(pszFile, nLine, cPrefix, pszRaw);
+}
+
+// all-in-one tracing entry supporting printf-like parameters
+void mtkTraceForm(const char *pszFile, int nLine, char cPrefix, const char *pszFormat, ...)
+{
+   if (glblMTKAlive)
+   {
+   	va_list argList;
+   	va_start(argList, pszFormat);
+      char szBuffer[1024];
+      ::vsnprintf(szBuffer, sizeof(szBuffer)-10, pszFormat, argList);
+      glblMTKInst.traceMessageRaw(pszFile, nLine, cPrefix, szBuffer);
+   }
+}
+
+// the tracePre/Post combination is a workaround for complex caller macros
+// that are unable to provide location and prefix together with the message
+// in a single call. in this case, the caller first calls tracePre, storing
+// context info for the current thread, and then tracePost with the message.
+
+int mtkTracePre(const char *pszFile, int nLine, char cPrefix) {
+   if (glblMTKAlive)
+      return (int)glblMTKInst.tracePre(pszFile, nLine, cPrefix);
+   else
+      return (int)0;
+}
+
+void mtkTracePost(const char *pszFormat, ...)
+{
+   if (glblMTKAlive)
+   {
+   	va_list argList;
+   	va_start(argList, pszFormat);
+      char szBuffer[1024];
+      // szBuffer[0] = 'P';
+      // szBuffer[1] = ':';
+      ::vsnprintf(szBuffer, sizeof(szBuffer)-10, pszFormat, argList);
+      // the 0,0,0 are expected to be set through tracePre before.
+      glblMTKInst.traceMessageRaw(0,0,0, szBuffer);
+   }
+}
+
+void mtkDumpStackTrace(int bOnlyOfCurrentThread) {
+   if (glblMTKAlive)
+      glblMTKInst.dumpStackTrace((uchar)bOnlyOfCurrentThread);
+}
+
+void mtkDumpLastSteps(int bOnlyOfCurrentThread) {
+   if (glblMTKAlive)
+      glblMTKInst.dumpLastSteps((uchar)bOnlyOfCurrentThread);
+}
+
+void mtkSetRingTrace(char *pszMask) {
+   if (glblMTKAlive)
+      glblMTKInst.setRingTrace(pszMask);
+}
+
+void mtkSetTermTrace(char *pszMask) {
+   if (glblMTKAlive)
+      glblMTKInst.setTermTrace(pszMask);
+}
+
+void mtkHexDump(const char *pszLinePrefix, const char *pDataIn, long lSize, const char *pszFile, int nLine, char cPrefix)
+{
+   char szBuf[128];
+   uchar *pData = (uchar *)pDataIn;
+   long iRead = 0;
+   for (long nRow=0; iRead<lSize; nRow++)
+   {
+      szBuf[0] = '\0';
+
+      for (long nCol=0; nCol<16 && iRead<lSize; nCol++)
+      {
+         sprintf(&szBuf[nCol*3], "%02X ", pData[iRead++]);
+      }
+
+      if (strlen(szBuf))
+      {
+         mtkTraceForm(pszFile, nLine, cPrefix, "%s%s", pszLinePrefix, szBuf);
+      }
+   }
+}
