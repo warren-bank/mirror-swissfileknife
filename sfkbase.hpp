@@ -34,6 +34,7 @@
 #include <sys/timeb.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <limits.h>
 
 #ifdef _WIN32
   #define FD_SETSIZE 300
@@ -324,9 +325,10 @@ num   atonum         (char *psz);   // decimal only
 num   myatonum       (char *psz);   // with 0x support
 char *numtoa         (num n, int nDigits=1, char *pszBuf=0);
 char *numtohex       (num n, int nDigits=1, char *pszBuf=0);
-int  timeFromString  (char *psz, num &nRetTime, bool bsilent=0);
+int  timeFromString  (char *psz, num &nRetTime, bool bsilent=0, bool bUTC=0);
 void  doSleep        (int nmsec);
 uchar *loadBinaryFile(char *pszFile, num &rnFileSize);
+uchar *loadBinaryFlex(char *pszFile, num &rnFileSize);
 bool  infoAllowed    ( );
 struct hostent *sfkhostbyname(const char *pstr, bool bsilent=0);
 int   setaddr(struct sockaddr_in *paddr, char *pszHostOrIPPart, int iflags=0);
@@ -1562,6 +1564,7 @@ public:
    num  selMinSize;  // consider only files >= so many bytes
    bool nowarn;      // disable all warning output
    bool noerr;       // disalbe all error output
+   bool showerr;     // sft
    bool nonotes;     // disalbe all note output
    bool skipLinks;   // do not follow symbolic directory links
    bool traceFileFlags;
@@ -1762,6 +1765,9 @@ public:
    bool relaxedvar;        // for filter
    bool fullheader;        // (x)hexfind, (x)rep etc.
    bool winver;
+   bool nosft;             // force ftp protocol
+   bool allowsft;          // allow sft protocol
+   bool showprotocol;
 };
 
 // extern struct CommandStats gs;
@@ -2033,7 +2039,7 @@ enum eConvTargetFormats
 
 int joinPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2, int *pFlexible=0);
 void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1);
-char *timeAsString(num nTime, int iMode=0);
+char *timeAsString(num nTime, int iMode=0, bool bUTC=0);
 void dumpRepOut(uchar *pSrcCtxData, int iSrcCtxLen,
    int iHitOff, int iHitLen,
    uchar *pDstData, int iDstLen,
@@ -2055,7 +2061,7 @@ int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot);
 
 #ifdef _WIN32
 char *winSysError();
-int makeWinFileTime(num nsrctime, FILETIME &rdsttime, num nSrcNanoSec=0);
+int makeWinFileTime(num nsrctime, FILETIME &rdsttime, num nSrcNanoSec=0, bool bUTC=0);
 #endif
 
 class ExtProgram // call external program
@@ -2240,6 +2246,7 @@ public:
 
 #ifdef SFKINT
  #define WITH_FTP_LIMITS
+ #define SFKPIC
 #endif
 
 #define MAX_FTP_VDIR 10
@@ -2436,8 +2443,46 @@ public:
    char aClUpperTab[256+10];
 };
 
-extern void sfkmem_checklist(const char *pszCheckPoint);
+#ifdef SFKPIC
 
+#include "sfkpicio.hpp"
+
+class SFKPic
+{
+public:
+   SFKPic   ( );
+  ~SFKPic   ( );
+
+   int   load     (char *pszFile);
+   int   load     (uchar *pPacked, int nPacked);
+   int   save     (char *pszFile);
+   int   allocpix (uint w, uint h);
+   void  freepix  ( );
+
+   uint  width    ( )   { return octl.width;  }
+   uint  height   ( )   { return octl.height; }
+
+   uint  pix      (uchar a,uchar r,uchar g,uchar b);
+   uchar red      (uint c) { return (uchar)(c >> 16); }
+   uchar grn      (uint c) { return (uchar)(c >>  8); }
+   uchar blu      (uint c) { return (uchar)(c >>  0); }
+   uchar alp      (uint c) { return (uchar)(c >> 24); }
+
+   void  setpix   (uint x, uint y, uint c);
+   uint  getpix   (uint x, uint y);
+   void  copyFrom (SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst, uint x1src, uint y1src, uint wsrc, uint hsrc);
+
+   int   getErrNum   ( );
+   char *getErrStr   ( );
+
+   int   getObjectSize  ( );  // for internal checks
+
+struct SFKPicData
+   octl;
+};
+#endif // SFKPIC
+
+extern void sfkmem_checklist(const char *pszCheckPoint);
 extern int prepareTCP();
 extern void shutdownTCP();
 

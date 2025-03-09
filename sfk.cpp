@@ -5,7 +5,77 @@
    Provided under the BSD license.
 
    The whole source code was created with Depeche View Professional,
-   the world's fastest text file browser and editor.
+   the world's fastest source code browser and editor.
+
+   1.8.5
+   Revision 3:
+   -  rel: 18.05.2017, Minor Update
+   -  sum: sfk version output fixed, which was wrong
+           especially under linux.
+   -  fix: sfk version: did not work esp. on linux.
+   -  add: ftpserv: console connect time infos.
+   Revision 2:
+   -  rel: 06.05.2017, Minor Update
+   -  sum: reduced ftp terminal output on error replies.
+   -  chg: ftp server: no longer printing 5xx replies
+           to terminal by default. added option -showerror
+           to print them, except for 550 no such file.
+   -  chg: ftp: protocol info is now shown only with 
+           ftp(server) but not with sft commands.
+   -  doc: xed: example how to replace a line by file content.
+   Initial Release:
+   -  rel: 26.04.2017, Major Update
+   -  sum: fix of FTP server which blocked folder transfers
+           with many ftp clients. rework of FTP server 
+           and client for improved connectivity under Windows.
+           improved scripting by for loop.
+           added listle to list line end infos for text files.
+           detail improvements of udpdump, list, setbytes.
+   -  CHG: FTP Client Change under Windows: when using "sfk ftp" 
+           with an sfk ftp server, via port 21, the client now
+           uses plain FTP protocol by default to avoid firewall
+           restrictions. use option -sft or SFK_CONFIG=usesft
+           for the old behaviour if no firewall interferes.
+   -  FIX: ftp server: transfer of folders with most ftp
+           clients was blocked as CWD /mydir/ was not possible,
+           since sfk 1.8.4. (side effect from dir traversal fix)
+   -  fix: ftp server: unexpected close connection errors
+           at client on QUIT command. QUIT now produces 
+           a reply 221 before closing the connection.
+   -  fix: ftp client: missing display of error reply from
+           server on ftp put, mput, sel ... +ftp mput.
+   -  add: ftp client: options -raw to force plain ftp
+           and -sft to allow sft even via port 21.
+   -  chg: ftp server: 5xx error replies are now always shown
+           on console unless -quiet is given.
+   -  chg: ftp: now tells protocol used (ftp/sft)
+           on every file transfer.
+   -  add: ftp server: display of verify in verbose mode.
+   -  add: sfk for, like for var from s to e +... +endfor.
+   -  add: sfk listle, list line end infos for text files.
+   -  fix: sfk for windows: absolute paths with forward slash
+           like /tmp were not detected with some commands like
+           sfk sel /mydir +copy -ltarg /outdir
+   -  add: sfk setbytes: option -repeat=n to repeat data
+           n times.
+   -  add: sfk list: option -abs to list full absolute paths.
+   -  add: sfk udpdump: now accepts both "," or blank separator
+           for multi ip mask.
+   -  add: sfk udpdump: warning on wrong chars in ip mask.
+   -  chg: sfk view: changed some colors to look more like
+           the white color theme.
+   -  fix: sfk ask -abs used only -ab
+   -  doc: sfk replace: help now always lists the possible
+           shell return codes.
+   -  doc: sfk script: improved infos on parameter name collision.
+   -  doc: sfk filter: -format examples improved.
+   -  doc: sfk udpdump: examples for multi ip filtering.
+   -  doc: sfk xfind: windows return code handling example.
+   -  doc: sfk addcr/remcr: reference to listle.
+   -  doc: sfk ftpserv and ftp: help text rework.
+   internal:
+   -  opt: +setvar reuse of memory on same length.
+   -  fix: isAbsolutePath now also detects /tmp etc.
 
    1.8.4
    Revision 2:
@@ -16,7 +86,7 @@
            when output is sent to another command
    -  add: sfk version: support for windows binary version infos.
    -  doc: encode/decode was not contained in dumphelp.
-   -  doc: version, main, ver
+   -  doc: main
    Initial Release:
    -  rel: 28.02.2017, Major Update
    -  sum: security fix for windows ftp and http server.
@@ -521,8 +591,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.8.4" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "2"
+#define SFK_VERSION  "1.8.5" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  "3"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -641,6 +711,10 @@ static const char *pszGlblVerType = SFK_VERTYPE;
 
 // #define SFK_STRICT_MATCH
 #define SFKVAR // 1770
+
+#ifdef SFKINT
+ #define WITH_XCALC
+#endif
 
 #ifdef SFKINT2
  #define SFKPRINTREDIR
@@ -1186,6 +1260,8 @@ double getcalcval(char *psz, char **pcont)
       return strtod(psz, pcont);
    }
 }
+
+extern cchar *pszGlblBlank;
 
 struct tm *mylocaltime(mytime_t *ptime)
 {
@@ -2795,7 +2871,6 @@ bool  bGlblMirrorByDate = 0;  // inofficial, might be removed.
 int nGlblTCPMaxSizeMB   = 500; // MB
 SOCKET hGlblTCPOutSocket = 0;
 bool bGlblFTPReadWrite   = 0;
-bool bGlblFTPSetAttribs  = 0;
 bool bGlblFTPListFlatTS  = 0; // server: send flat timestamp on list
 bool bGlblFTPListAsHTML  = 0;
 bool bGlblFTPListTextBin = 0;
@@ -7276,6 +7351,7 @@ bool isAbsolutePath(char *psz1)
    // e.g. /tmp
    // e.g. \\machine\path
    if (psz1[0] == glblPathChar) return 1;
+   if (psz1[0] == '/') return 1; // sfk185 always
    return 0;
 }
 
@@ -13726,7 +13802,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       if (tryGetRelTime(psz2, pcs->sincetime))
       { }
       else
-      if (timeFromString(psz2, pcs->sincetime)) // option -since
+      if (timeFromString(psz2, pcs->sincetime)) // local option -since
          exit(9);
       if (pcs->untiltime && pcs->untiltime <= pcs->sincetime)
          {  perr("-before lower or equal than -since was specified.\n"); exit(9); }
@@ -13740,7 +13816,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       if (tryGetRelTime(psz2, pcs->untiltime))
       { }
       else
-      if (timeFromString(psz2, pcs->untiltime)) // option -before
+      if (timeFromString(psz2, pcs->untiltime)) // local option -before
          exit(9);
       if (pcs->sincetime && pcs->sincetime >= pcs->untiltime)
          {  perr("-since greater or equal than -before was specified.\n"); exit(9); }
@@ -14168,6 +14244,8 @@ cchar *aGlblChainCmds[] =
    "2spell",        // sfk1833 text
    "6setbytes",     // sfk1840
    "6chars",        // sfk1840
+   "0for",          // internal
+   "0endfor",       // internal
    // sfk1833:
    "8fromnet", "8color", "8make-random-file",
    "8time", "8data", "8home", "8ruler",
@@ -15482,6 +15560,14 @@ int walkAllTrees(int nFunc, int &rlFiles, int &rlDirs, num &rlBytes)
    return lRC;
 }
 
+void sendCollectStats( )
+{
+   if (pGlblJamStatCallBack != 0)
+   {
+      pGlblJamStatCallBack(0, glblFileCount.value(), cs.lines, (uint)(nGlblBytes/1000000UL), glblFileCount.skipped(), glblFileCount.skipInfo());
+   }
+}
+
 int walkAllTreesInt(int nFunc, int &rlFiles, int &rlDirs, num &rlBytes)
 {__ _p("sf.walkall")
 
@@ -16002,6 +16088,27 @@ num getFileTime(char *pszName)
    return nFileTime;
 }
 
+int mySetFileTime(char *pszFile, num nTime)
+{
+   FileStat ofs;
+   if (ofs.readFrom(pszFile)) {
+      pinf("cannot read file time: %s\n", pszFile);
+      if (nTime)
+         return 9;
+   } else {
+      if (nTime) {
+         ofs.src.nMTime = nTime;
+         ofs.src.nCTime = nTime;
+         #ifdef _WIN32
+         ofs.src.nHaveWFT = 0;
+         #endif
+      }
+      ofs.writeTo(pszFile, __LINE__, 1); // 1: write just time
+   }
+
+   return 0;
+}
+
 // get file age in seconds
 num getFileAge(char *pszName)
 {
@@ -16209,7 +16316,8 @@ num getFreeSpace(char *pszPath)
    return nFree;
 }
 
-char *timeAsString(num nTime, int iMode)
+// result is always non NULL but can be empty string.
+char *timeAsString(num nTime, int iMode, bool bUTC)
 {
    static char szTimeStrBuf[200];
 
@@ -16218,7 +16326,7 @@ char *timeAsString(num nTime, int iMode)
    struct tm *pLocTime = 0;
    mytime_t nTime2 = (mytime_t)nTime;
 
-   if (cs.useutc) {
+   if (bUTC || cs.useutc) {
       pLocTime = mygmtime(&nTime2);    // may be NULL
    } else {
       pLocTime = mylocaltime(&nTime2); // may be NULL
@@ -16340,14 +16448,33 @@ bool tryGetRelTime(cchar *psz, num &nRetTime)
    return brc;
 }
 
-int timeFromString(char *pszin, num &nRetTime, bool bsilent)
+num localTimeZoneOffset(mytime_t t1)
+{
+   struct tm *ptm = mygmtime(&t1);
+
+   // we want pure tzo without dst
+   ptm->tm_isdst = 0;
+
+   // mktime expects LOCAL time.
+   mytime_t t2 = mymktime(ptm);
+   // so now t2 differs from t1.
+
+   num t3 = (num)difftime(t1, t2);
+
+   return t3;
+}
+
+int timeFromString(char *pszin, num &nRetTime, bool bsilent, bool bUTC)
 {
    char *psz = pszin;
 
-   // get local time (zone)
+   // get local time
    mytime_t now = mytime(NULL);
+
    struct tm *tm = 0;
    tm = mylocaltime(&now);
+
+   // mktime below must figure out DST automatically
    tm->tm_isdst = -1;
 
    // accept formats:
@@ -16466,7 +16593,15 @@ int timeFromString(char *pszin, num &nRetTime, bool bsilent)
    if (nyear == 70 && nmon == 0 && nday == 1)
         bNearEpoch = 1;
 
+   // mktime USES LOCAL TIME ONLY.
+   // mkgmtime is no standard and available nowhere.
    mytime_t nTime = mymktime(tm);
+
+   // if the string was UTC then nTime is now TOO SMALL
+   // as the zone offset and DST was subtracted.
+   // so if we need the UTC value we MUST do this:
+   if (bUTC) nTime += localTimeZoneOffset(nTime);
+
    num nTime2 = (num)nTime;
    if (     nTime2 < 0
        || (!bNearEpoch && (nTime2 == 0))
@@ -16989,6 +17124,8 @@ int FileStat::readFrom(char *pszSrcFile, bool bWithFSInfo, bool bSilent)
    src.nCTime = aExtTimes[0];
    src.nATime = aExtTimes[1];
 
+   src.bIsUTCTime = 0;
+
    num   nTotalBytes = 0;
    num   nFreeBytes  = 0;
 
@@ -17058,10 +17195,6 @@ int FileStat::readFrom(char *pszSrcFile, bool bWithFSInfo, bool bSilent)
       if (cs.debug)
          printf("\"%s\" => %s, %s\n",szClSrcPath, szClSrcFSName, szClSrcVolID);
       #endif
- 
-      src.bIsUTCTime = 0;
-      if (!strcmp(szClSrcFSName, "NTFS"))
-         src.bIsUTCTime = 1;
    }
 
    #ifdef _WIN32
@@ -17115,14 +17248,18 @@ num calcSumTime(num nRawTime, int nTimeDiff, char *pszInfo)
 }
 
 #ifdef _WIN32
-int makeWinFileTime(num nsrctime, FILETIME &rdsttime, num nSrcNanoSec)
+int makeWinFileTime(num nsrctime, FILETIME &rdsttime, num nSrcNanoSec, bool bUTC)
 {
    mytime_t ftime = (mytime_t)nsrctime;
    struct tm *loctm;
    SYSTEMTIME st;
    FILETIME locft, modft;
 
-   loctm = mylocaltime(&ftime);
+   if (bUTC)
+      loctm = mygmtime(&ftime);
+   else
+      loctm = mylocaltime(&ftime);
+
    if (loctm == NULL)
       return 9+perr("cannot convert time %s (%u)\n",numtoa(nsrctime),(uint)GetLastError());
 
@@ -17135,9 +17272,16 @@ int makeWinFileTime(num nsrctime, FILETIME &rdsttime, num nSrcNanoSec)
    st.wSecond       = (WORD)loctm->tm_sec;
    st.wMilliseconds = 0;
 
-   if (!SystemTimeToFileTime(&st, &locft) ||
-      !LocalFileTimeToFileTime(&locft, &modft))
-      return 9+perr("cannot convert time %s (%u)\n",numtoa(nsrctime),(uint)GetLastError());
+   if (bUTC)
+   {
+      SystemTimeToFileTime(&st, &modft);
+   } 
+   else 
+   {
+      if (!SystemTimeToFileTime(&st, &locft) ||
+         !LocalFileTimeToFileTime(&locft, &modft))
+         return 9+perr("cannot convert time %s (%u)\n",numtoa(nsrctime),(uint)GetLastError());
+   }
 
    if (nSrcNanoSec > 0)
    {
@@ -17198,15 +17342,17 @@ int FileStat::writeTo(char *pszDstFile, int nTraceLine, bool bWriteJustTime)
    if (src.nHaveWFT)
    {
       memcpy(&nDstMTime, &src.ftMTime, sizeof(nDstMTime));
+
       if (src.nHaveWFT > 1)
          memcpy(&nDstCTime, &src.ftCTime, sizeof(nDstCTime));
+
       if (src.nHaveWFT > 1)
          memcpy(&nDstATime, &src.ftATime, sizeof(nDstATime));
    }
    else
    {
       if (!nrc && src.nMTime)
-         if (makeWinFileTime(src.nMTime, nDstMTime))
+         if (makeWinFileTime(src.nMTime, nDstMTime, 0, src.bIsUTCTime))
             nrc = 9;
  
       if (!nrc && src.nCTime)
@@ -21430,6 +21576,8 @@ int execJamFile(Coi *pcoi)
       if (!bIsBinary && cs.rewrap) bProcess = 1;
 
       if (!bProcess) {
+         // binary.whitelist: force binary loading
+         // if listed in a white list file mask.
          char *pszRel = pcoi->relName();
          if (matchesFileMask(pszRel, pcoi->name()) > 1) // matches by non-wildcard pattern
             bProcess = 1;
@@ -22199,6 +22347,12 @@ int execFTPList(char *pszName)
    getFileStat(pszName, bIsDir, bCanRead, bCanWrite, nFTimePre, nFileSize,
                0, &ostat, sizeof(ostat));
 
+   char *pszTail = strrchr(pszName, glblPathChar);
+   if (pszTail)
+      pszTail++;
+   else
+      pszTail = pszName;
+
    char szrwx[20];
    mclear(szrwx);
    strcpy(szrwx, "---------");
@@ -22268,12 +22422,6 @@ int execFTPList(char *pszName)
       pszType,
       numtoa_blank(nFileSize), abTimeStamp);
 
-   char *pszTail = strrchr(pszName, glblPathChar);
-   if (pszTail)
-      pszTail++;
-   else
-      pszTail = pszName;
-
    char *pszPart = szLineBuf2+strlen(szLineBuf2);
    if (bGlblFTPListAsHTML) {
       strcat(szLineBuf2, "<a href=\"");
@@ -22311,6 +22459,12 @@ int execVDirFTPList(char *pszName, char *pszDstName)
       nFTimePre   = 0;
       nFileSize   = 0;
    }
+
+   char *pszTail = strrchr(pszName, glblPathChar);
+   if (pszTail)
+      pszTail++;
+   else
+      pszTail = pszName;
 
    char szrwx[20];
    mclear(szrwx);
@@ -22354,12 +22508,6 @@ int execVDirFTPList(char *pszName, char *pszDstName)
       'd',
       szrwx, // bGlblFTPReadWrite ? "rw-rw-rw-":"r--r--r--",
       numtoa_blank(nFileSize), abTimeStamp);
-
-   char *pszTail = strrchr(pszName, glblPathChar);
-   if (pszTail)
-      pszTail++;
-   else
-      pszTail = pszName;
 
    char *pszPart = szLineBuf2+strlen(szLineBuf2);
    if (bGlblFTPListAsHTML) {
@@ -24534,13 +24682,14 @@ int execVersion(Coi *pcoi)
    char  szver2[100]; mclear(szver2);
    char  sztime[100]; mclear(sztime);
 
+   StringMap omap; // fix sfk1853
+
    if (pver)
    {
       // calc max parse range
       num nmax = nsize - (pver - pdata);
       if (nmax <= 0) return 9+perr("int. #28281250");
 
-      StringMap omap;
       if (parseVersion((char*)pver, (int)nmax, omap)) return -1;
 
       pnam = omap.get(str("name"  ), str(""));
@@ -24552,12 +24701,6 @@ int execVersion(Coi *pcoi)
       pdat = omap.get(str("date"  ), str(""));
       pinf = omap.get(str("info"  ), str(""));
 
-      /*
-      num ntime=0;
-      if (cs.winver!=0 && strlen(pdat)>=8
-          && timeFromString(pdat, ntime, 1)==0 && ntime!=0)
-         pdat=timeAsString(ntime,0);
-      */
       if (cs.winver) {
          num ntime=pcoi->getTime();
          char *ptime=timeAsString(ntime,0);
@@ -26031,7 +26174,7 @@ int sendNum(SOCKET hSock, num nOut, cchar *pszInfo)
 }
 
 // Note: caller must set info.status
-int sendFileRaw(SOCKET hSock, char *pszFile, bool bSentStdPath=0, uchar *pmd5=0)
+int sendFileRaw(cchar *pszProto, SOCKET hSock, char *pszFile, bool bSentStdPath=0, uchar *pmd5=0)
 {__
    num nLen = getFileSize(pszFile);
    if (nLen < 0) return 9+perr("cannot get size of %s\n", pszFile);
@@ -26061,8 +26204,11 @@ int sendFileRaw(SOCKET hSock, char *pszFile, bool bSentStdPath=0, uchar *pmd5=0)
  
          if (nSentCur <= 0)
          {
-            perr("connection closed while sending %s %s\n", pszFile, netErrStr());
-            perr("the file cannot be written at receiver.\n");
+            perr("%s connection closed while sending %s %s\n", pszProto, pszFile, netErrStr());
+            if (netErrno() == 10053 && strcmp(pszProto,"sft") == 0)
+               perr("transfer may be blocked by firewall.\n"); // sfk185
+            else
+               perr("the file cannot be written at receiver.\n");
             fclose(fin);
             return 9;
          }
@@ -26091,6 +26237,11 @@ int sendFileRaw(SOCKET hSock, char *pszFile, bool bSentStdPath=0, uchar *pmd5=0)
 
    char szBuf1[100], szBuf2[100];
 
+   char szProtInfo[100];
+   szProtInfo[0] = '\0';
+   if (cs.showprotocol) // sfk1852
+      sprintf(szProtInfo, " by %s", pszProto);
+
    if (nLen2 != nLen) {
       perr("> send incomplete: %s (%s/%s)\n",
          pszFile,
@@ -26100,9 +26251,11 @@ int sendFileRaw(SOCKET hSock, char *pszFile, bool bSentStdPath=0, uchar *pmd5=0)
    else
    if (cs.quiet < 2) {
       if (bSentStdPath)
-         info.print("< %s sent, %s bytes.       \n", remoteStandardPath(pszFile), numtoa(nLen2));
+         info.print("< %s sent%s, %s bytes.       \n", 
+            remoteStandardPath(pszFile), szProtInfo, numtoa(nLen2));
       else
-         info.print("< %s sent, %s bytes.       \n", pszFile, numtoa(nLen2));
+         info.print("< %s sent%s, %s bytes.       \n", 
+            pszFile, szProtInfo, numtoa(nLen2));
    }
 
    return 0;
@@ -26264,13 +26417,13 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
 
    if (nSFTVer < 102) {
       // if receiver can't write file, this will fail.
-      if (sendFileRaw(hSock, pszFile, 0, abmd5))
+      if (sendFileRaw("sft", hSock, pszFile, 0, abmd5))
          return 9;
    }
    else
    if (!bBlockMode) {
       // sft 102 bulk transfer, send all in one
-      if (sendFileRaw(hSock, pszFile, 0, cs.verify ? abmd5 : 0))
+      if (sendFileRaw("sft", hSock, pszFile, 0, cs.verify ? abmd5 : 0))
          return 9;
       if (cs.verify) {
          // 16 bytes md5 AFTER content
@@ -26404,7 +26557,7 @@ int putFileBySFT(SOCKET hSock, Coi *pcoi, int nSFTVer, bool bQuiet=0, bool bIgno
 // MODE 1: receive until END OF DATA (nMaxBytes < 0)
 // MODE 2: receive until nMaxBytes   (nMaxBytes > 0)
 // Note: caller must set info.status
-int receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes,
+int receiveFileRaw(cchar *pszProto, SOCKET hSock, char *pszFile, num nMaxBytes,
    bool bQuiet, uchar *pmd5, num nFlags, num nDiskFree=-1)
 {__
    int iRC = 0;
@@ -26487,6 +26640,11 @@ int receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes,
  
    char szBuf1[100], szBuf2[100];
 
+   char szProtInfo[100];
+   szProtInfo[0] = '\0';
+   if (cs.showprotocol) // sfk1852
+      sprintf(szProtInfo, " by %s", pszProto);
+
    if (nMaxBytes >= 0 && nLen2 != nMaxBytes)
       bCleanup = 1;
  
@@ -26500,7 +26658,8 @@ int receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes,
    }
    else
    if (cs.quiet < 2)
-      info.print("> %s received, %s bytes.       \n", pszFile, numtoa(nLen2));
+      info.print("> %s received%s, %s bytes.       \n", 
+         pszFile, szProtInfo, numtoa(nLen2));
  
    return iRC;
 }
@@ -26576,7 +26735,7 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer,
 
    if (nSFTVer < 102) {
       // if this fails, return w/o ack, connection will be dropped.
-      if (receiveFileRaw(hSock, pszFile, nLen, bQuiet, abMD5Local, nFlags, nDiskFree)) // sft
+      if (receiveFileRaw("sft", hSock, pszFile, nLen, bQuiet, abMD5Local, nFlags, nDiskFree)) // sft
          return 9;
    }
    else
@@ -26584,7 +26743,7 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer,
       // sft 102 bulk transfer, receive all in one.
       // do NOT build checksum of received data, as we will
       // re-read the whole file anyway in verify case.
-      if (receiveFileRaw(hSock, pszFile, nLen, bQuiet, 0, nFlags, nDiskFree)) // sft
+      if (receiveFileRaw("sft", hSock, pszFile, nLen, bQuiet, 0, nFlags, nDiskFree)) // sft
          return 9;
       if (cs.verify)
          if (receiveBlock(hSock, abMD5Remote, 16, "md5"))
@@ -26708,21 +26867,7 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer,
 
    if (nSFTVer >= 102 && !cs.noclone)
    {
-      // update file's timestamp and attributes
-      FileStat ofs;
-      if (ofs.readFrom(pszFile)) {
-         pinf("cannot read file time: %s\n", pszFile);
-      } else {
-         if (nTime) {
-            ofs.src.nMTime = nTime;
-            ofs.src.nCTime = nTime;
-            #ifdef _WIN32
-            ofs.src.nHaveWFT = 0;
-            #endif
-         }
-         ofs.writeTo(pszFile, __LINE__, 1); // 1: write just time
-         // printf("time set: %d %s\n",(int)nTime,pszFile);
-      }
+      mySetFileTime(pszFile, nTime);
    }
 
    // sender will wait now until we confirm successful transfer.
@@ -26750,6 +26895,9 @@ int getFileBySFT(SOCKET hSock, char *pszFile, int nSFTVer,
          pinf("check if the file is in use by another process.\n");
          return 9;
       }
+
+      if (cs.verbose)
+         info.print("> %s verified, ok.\n", pszFile); // sfk185
    }
 
    info.clear();
@@ -26765,7 +26913,7 @@ int ftpLogin(char *pszHost, uint nPort, SOCKET &hSock, bool &bSFT, int &nOutSFTV
 {__
    prepareTCP();
 
-   int nSFTVer  = 105;  // may be downgraded below
+   int nSFTVer  = 105;  // sfk185, may be downgraded below
    int nServVer = 0;    // yet unknown
  
    hSock = socket(AF_INET, SOCK_STREAM, 0);
@@ -26787,13 +26935,25 @@ int ftpLogin(char *pszHost, uint nPort, SOCKET &hSock, bool &bSFT, int &nOutSFTV
    // SFT: first handle FTP handshake
    if (readLine(hSock)) return 9; // 220
    char *psz1 = strstr(szLineBuf, ". sft ");
-   if (psz1) {
+   if (cs.nosft==0 && psz1!=0) {  // sfk185
       nServVer = atol(psz1+6);
       if (nServVer >= 100) {
-         bSFT = 1;
-         if (cs.verbose)
-            printf("> server speaks sft %d.\n", nServVer);
-         nOutSFTVer = nServVer;
+         #ifdef _WIN32
+         if (nPort==21 && cs.allowsft==0) // sfk185
+         {
+            if (cs.verbose) {
+               printf("> server speaks sft %d but using ftp due to port 21.\n", nServVer);
+               printf("> add option -sft if no firewall requires ftp.\n");
+            }
+         } 
+         else
+         #endif
+         {
+            bSFT = 1;
+            if (cs.verbose)
+               printf("> server speaks sft %d.\n", nServVer);
+            nOutSFTVer = nServVer;
+         }
       } else {
          printf("> unexpected sft info \"%s\"\n", psz1);
       }
@@ -26822,7 +26982,7 @@ int ftpLogin(char *pszHost, uint nPort, SOCKET &hSock, bool &bSFT, int &nOutSFTV
    if (sendLine(hSock, "TYPE I")) return 9;
    if (readLine(hSock)) return 9; // 200 OK
  
-   if (cs.verify && (nServVer >= 103))
+   if (bSFT && cs.verify && (nServVer >= 103))
    {
       // have to enable verify explicitely with new server.
       // it was default with older servers.
@@ -26860,26 +27020,31 @@ int setPassive(SOCKET &hSock, struct sockaddr_in &SoAdr, SOCKET &hData)
    return 0;
 }
 
-bool canSkipFile(SOCKET hSock, char *pszFileName, num ndsttime, bool bput)
+bool canSkipFile(SOCKET hSock, char *pszFileName, num ndsttime, bool bput, int nSFTVer)
 {
    bool bskip = 0;
 
    // check if target file at server has different time.
-   // so far works only with SFT, as normal ftp servers
-   // may return UTC time which is of no help here.
    sprintf(szLineBuf2, "MDTM %s", pszFileName);
+
    if (sendLine(hSock, szLineBuf2)) return 0;
    if (readLine(hSock)) return 0; // 213 TimeString, 500 Error
+
    // may return: 550 no such file
-   if (!strncmp(szLineBuf, "213 ", 4)) {
-      char *ptime = szLineBuf+4;  // 20060604111037
+   if (!strncmp(szLineBuf, "213 ", 4))
+   {
+      // sft: MDTM returns local time
+      // ftp: MDTM returns UTC time
+      char *ptime = szLineBuf+4;
       num   nfartime = 0;
       removeCRLF(ptime);
-      if (!timeFromString(ptime, nfartime)) { // skip file by time
+      bool bUTC=0;
+      if (!timeFromString(ptime, nfartime, 0, bUTC)) { // skip file by time
          num nowntime = ndsttime;
          num ndiff = bput ? (nfartime - nowntime) : (nowntime - nfartime);
          if (cs.verbose)
-            printf("time: local=%u far=%u diff=%d\n",(uint)nowntime,(uint)nfartime,(int)ndiff);
+            printf("time: local=%u far=%u diff=%d %s\n",
+               (uint)nowntime,(uint)nfartime,(int)ndiff,bUTC?"utc":"local");
          if (ndiff >= 0)
             bskip = 1;
       }
@@ -26887,13 +27052,15 @@ bool canSkipFile(SOCKET hSock, char *pszFileName, num ndsttime, bool bput)
    return bskip;
 }
 
-static void showFtpError(char *pszFor)
+static bool showFtpError(char *pszFor)
 {
    int icode=atoi(szLineBuf);
-   if (icode<500 || icode>=600) return;
+   if (icode<500 || icode>=600)
+      return 0;
    strcopy(szLineBuf3,szLineBuf);
    removeCRLF(szLineBuf3);
    printx("<err>%s: %s\n", szLineBuf3, pszFor); // has CRLF
+   return 1;
 }
 
 int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszAuthPW, bool bChained)
@@ -26947,7 +27114,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
       {
          printf("client commands:\n");
          printf("   cd lcd dir !dir put get mput mget bye\n");
-         printf("   run (with sfk sft server)\n");
+         printf("   run (with sft only)\n");
          printf("\n");
          printf("server commands:\n");
          sprintf(szLineBuf2, "HELP");
@@ -27026,6 +27193,22 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                if (!strncmp(szLineBuf, "226 ", 4))
                   break;
          }
+      }
+      else
+      if (strBegins(szLineBuf, "mlsd")) { // sfk185 client
+         // just for info with plain ftp.
+         // szLineBuf is reused in setPassive.
+         snprintf(szLineBuf2, sizeof(szLineBuf2)-10,
+            "MLSD%s", szLineBuf+4);
+         // either create pasv connection or reuse existing
+         if (setPassive(hSock, DataAdr, hData)) break;
+         if (sendLine(hSock, szLineBuf2)) break;
+         if (readLine(hSock)) break; // 150 Listing
+         while (readLine(hData, szLineBuf, 4) == 0)
+            if (!strncmp(szLineBuf, "226 ", 4))
+               break;
+         if (readLine(hSock)) break; // 226 Closing
+         closesocket(hData); hData = INVALID_SOCKET;
       }
       else
       if (strBegins(szLineBuf, "ls")) {
@@ -27146,9 +27329,11 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
             sprintf(szLineBuf2, "STOR %s", remoteStandardPath(pszFileName));
             if (sendLine(hSock, szLineBuf2)) break;
             if (readLine(hSock)) break; // 150 Receiving
-            if (sendFileRaw(hData, localPath(pszFileName), 1)) break;
+            showFtpError(pcoi->name()); // sfk185 if any
+            if (sendFileRaw("ftp", hData, localPath(pszFileName), 1)) break;
             closesocket(hData); hData = INVALID_SOCKET;
             if (readLine(hSock)) break; // 226 Closing
+            // if (setFtpModTime(pcoi, pszFileName, hSock)) break;
          } else {
             sprintf(szLineBuf2, "SPUT %s", pszFileName); // put
             if (sendLine(hSock, szLineBuf2)) break;
@@ -27174,6 +27359,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
+         if (!bSFT       ) bupdate = 0; // sfk185 no cput/cget w/o SFT
 
          char *pparms = szLineBuf+strlen("mput");
          skipWhite(&pparms);
@@ -27223,7 +27409,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                num ndsttime = getFileTime(pszFile);
 
                if (   bupdate && (ndsttime > 0)
-                   && canSkipFile(hSock, pszFile, ndsttime, 1))
+                   && canSkipFile(hSock, pszFile, ndsttime, 1, nSFTVer)) // ftp cput
                {
                   if (cs.verbose)
                      printf("skip: %s - unchanged. (or use -all)\n", pszFile);
@@ -27245,11 +27431,13 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                      sprintf(szLineBuf2, "STOR %s", remoteStandardPath(pszFile));
                      if (sendLine(hSock, szLineBuf2)) break;
                      if (readLine(hSock)) break; // 150 Receiving
-                     if (sendFileRaw(hData, localPath(pszFile), 1)) break;
+                     showFtpError(pcoi->name()); // sfk185 if any
+                     if (sendFileRaw("ftp", hData, localPath(pszFile), 1)) break;
                      closesocket(hData); hData = INVALID_SOCKET;
                      if (readLine(hSock)) break; // 226 Closing
                      nSent++;
                      bfail = 0;
+                     // if (setFtpModTime(pcoi, pszFile, hSock)) break;
                   } else {
                      sprintf(szLineBuf2, "SPUT %s", pszFile); // mput.nochain
                      if (sendLine(hSock, szLineBuf2, 1)) break;
@@ -27299,7 +27487,6 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
 
          // chained multi file put (after select)
 
-         // with SFT, update is default.
          // with FTP, update isn't supported.
          // simulate is always default.
  
@@ -27307,6 +27494,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
+         if (!bSFT       ) bupdate = 0; // sfk185 no cput/cget w/o SFT
 
          char *pparms = szLineBuf+strlen("mput");
          skipWhite(&pparms);
@@ -27336,8 +27524,8 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
             char *pszFileName = pcoi->name();
             num ndsttime = pcoi->getTime();
 
-            if (   bupdate && bSFT && (ndsttime > 0)
-                && canSkipFile(hSock, pszFileName, ndsttime, 1))
+            if (   bupdate && (ndsttime > 0) // sfk185 NOT "&& bSFT"
+                && canSkipFile(hSock, pszFileName, ndsttime, 1, nSFTVer)) // sel +ftp cput
             {
                if (cs.verbose)
                   printf("skip: %s - unchanged. (or use -all)\n", pszFileName);
@@ -27359,11 +27547,13 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                   sprintf(szLineBuf2, "STOR %s", remoteStandardPath(pszFileName));
                   if (sendLine(hSock, szLineBuf2)) break;
                   if (readLine(hSock)) break; // 150 Receiving
-                  if (sendFileRaw(hData, localPath(pszFileName), 1)) break;
+                  showFtpError(pcoi->name()); // sfk185 if any
+                  if (sendFileRaw("ftp", hData, localPath(pszFileName), 1)) break;
                   closesocket(hData); hData = INVALID_SOCKET;
                   if (readLine(hSock)) break; // 226 Closing
                   nSent++;
                   bfail = 0;
+                  // if (setFtpModTime(pcoi, pszFileName, hSock)) break;
                } else {
                   // FIX 1654: redundant pcoi for file access
                   sprintf(szLineBuf2, "SPUT %s", pszFileName); // mput.chain
@@ -27417,7 +27607,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
             if (readLine(hSock)) break; // 150 Sending
             if (strBegins(szLineBuf, "150")) {
                createOutDirTree(localPath(pszFileName));
-               if (receiveFileRaw(hData, localPath(pszFileName), -1, 0,0,0)) // client
+               if (receiveFileRaw("ftp", hData, localPath(pszFileName), -1, 0,0,0)) // client
                   break;
                if (readLine(hSock)) break; // 226 Closing
             } else {
@@ -27450,6 +27640,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
+         if (!bSFT       ) bupdate = 0; // sfk185 no cput/cget w/o SFT
 
          char *pparms = szLineBuf+strlen("mget");
          skipWhite(&pparms);
@@ -27544,19 +27735,6 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
             char *pszFile = pszFileRaw + (apcol[iName]-szRefNameBuf);
             char *pszSize = apcol[4];
 
-            num nFileTime = 0;
-
-            if (bGlblFTPSetAttribs) {
-               if (bHaveFlatTime) {
-                  timeFromString(pszMonTS, nFileTime); // ftp.attribs
-               } else {
-                  if (apcol[5] && apcol[6] && apcol[7]) {
-                     sprintf(szLineBuf, "%s %s %s",apcol[5],apcol[6],apcol[7]);
-                     timeFromString(szLineBuf, nFileTime); // ftp.attribs
-                  }
-               }
-            }
-
             num nFileSize = atonum(pszSize);
             if (nFileSize <= 0) {
                printf("] skip, size=%s: %s\n", pszSize, pszFile);
@@ -27572,7 +27750,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                num ndsttime = getFileTime(pszFile);
 
                if (   bupdate && (ndsttime > 0)
-                   && canSkipFile(hSock, pszFile, ndsttime, 0))
+                   && canSkipFile(hSock, pszFile, ndsttime, 0, nSFTVer)) // ftp cget
                {
                   if (cs.verbose)
                      printf("skip: %s - unchanged. (or use -all)\n", pszFile);
@@ -27598,7 +27776,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                   if (sendLine(hSock, szLineBuf2)) break;
                   if (readLine(hSock)) break; // 150 Sending
                   createOutDirTree(localPath(pszFile));
-                  if (receiveFileRaw(hData, localPath(pszFile), -1, 0,0,0)) // client
+                  if (receiveFileRaw("ftp", hData, localPath(pszFile), -1, 0,0,0)) // client
                      break;
                   if (readLine(hSock)) break; // 226 Closing
                   closesocket(hData); hData = INVALID_SOCKET;
@@ -27612,17 +27790,6 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                   } else {
                      if (getFileBySFT(hSock, pszFile, nSFTVer, 1))
                         break;
-                     if (bGlblFTPSetAttribs) {
-                        // set the file time
-                        FileStat ofs;
-                        ofs.readFrom(pszFile);
-                        ofs.src.nMTime = nFileTime;
-                        #ifdef _WIN32
-                        ofs.src.nHaveWFT = 0; // no windows filetime
-                        #endif
-                        int lRCT = ofs.writeTo(pszFile, __LINE__);
-                        printf("] filetime set: %s, %d\n", timeAsString(nFileTime), lRCT);
-                     }
                   }
                }
 
@@ -27654,7 +27821,6 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
 
          // chained multi file get (after select)
 
-         // with SFT, update is default.
          // with FTP, update isn't supported.
          // simulate is always default.
          char szParmBuf[300]; mclear(szParmBuf);
@@ -27664,6 +27830,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
 
          if (cs.ftpupdate) bupdate = 1;
          if (cs.ftpall   ) bupdate = 0;
+         if (!bSFT       ) bupdate = 0; // sfk185 no cput/cget w/o SFT
 
          char *pparms = szLineBuf+strlen("mget");
          skipWhite(&pparms);
@@ -27702,8 +27869,8 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
             CoiAutoDelete odel(pcoidst, 0); // no decref
             num  ndsttime = pcoidst->getTime(); // if any
 
-            if (   bupdate && bSFT && (ndsttime > 0)
-                && canSkipFile(hSock, pszFileName, ndsttime, 0))
+            if (   bupdate && (ndsttime > 0) // sfk185 NOT "&& bSFT"
+                && canSkipFile(hSock, pszFileName, ndsttime, 0, nSFTVer)) // sel +ftp cget
             {
                if (cs.verbose)
                   printf("skip: %s - unchanged. (or use -all)\n", pszFileName);
@@ -27723,7 +27890,7 @@ int ftpClient(char *pszHost, uint nPort, char *pszCmd, char *pszUser, char *pszA
                if (sendLine(hSock, szLineBuf2)) break;
                if (readLine(hSock)) break; // 150 Sending
                createOutDirTree(szDstBuf);
-               if (receiveFileRaw(hData, szDstBuf, -1, 0,0,0)) // client
+               if (receiveFileRaw("ftp", hData, szDstBuf, -1, 0,0,0)) // client
                   break;
                if (readLine(hSock)) break; // 226 Closing
                closesocket(hData); hData = INVALID_SOCKET;
@@ -28136,6 +28303,21 @@ void dumpKnxInfo(uchar *pData, int iSize, char *pBuf, int iMaxBuf)
    }
 }
 
+bool validFromIPMask(char *pszmask)
+{
+   char *psz=pszmask;
+   for (;*psz;psz++) {
+      if (isdigit(*psz)) continue;
+      if (*psz=='.') continue;
+      if (*psz==',') continue;
+      if (*psz=='/') continue;
+      if (*psz==' ') continue;
+      pwarn("invalid \"%c\" in ip mask: %s\n",*psz,pszmask);
+      return 0;
+   }
+   return 1;
+}
+
 bool matchesFromIPMask(char *pszip, char *pszmask)
 {
    char szIP[100];
@@ -28149,7 +28331,7 @@ bool matchesFromIPMask(char *pszip, char *pszmask)
    while (pszcur && *pszcur)
    {
       char *psznext=pszcur;
-      while (*psznext!=0 && *psznext!=',')
+      while (*psznext!=0 && *psznext!=',' && *psznext!=' ') // sfk185
          psznext++;
       int ilen=psznext-pszcur;
       if (ilen>sizeof(szPart)-10)
@@ -28162,7 +28344,7 @@ bool matchesFromIPMask(char *pszip, char *pszmask)
          return 1;
 
       pszcur=psznext;
-      if (*pszcur==',')
+      while (*pszcur==',' || *pszcur==' ') // sfk185
          pszcur++;
    }
 
@@ -29157,9 +29339,11 @@ int httpServ(uint nPort, uint nPort2, bool bDeep, bool bNoList, bool bRW, bool b
       // list IP of client machine whenever it changes
       memcpy(&addr,&ClientAdr.sin_addr,sizeof(struct in_addr));
       char *premip = inet_ntoa(addr);
-      if (strcmp(szClientIP, premip)) {
+      if (strcmp(szClientIP, premip)) 
+      {
          strcopy(szClientIP, premip);
-         printf("> connect from %s\n", premip);
+         num ntime=time(0);
+         printf("> connect from %s on %s\n", premip, timeAsString(ntime,0));
       }
 
       char szFile[SFK_MAX_PATH+50]; mclear(szFile);
@@ -29901,9 +30085,13 @@ char *FTPServer::sysPath(char *pszFilePath, int *piVDir)
 // RC 2: unallowed root path
 int FTPServer::mapPath(char *pszRelPath, bool bAllowRoot, bool bCheckDiskSpace)
 {
-   // fix sfk184: check incoming path immediately before mapping
-   if (isPathTraversal(pszRelPath, bClDeep))
-      { reply("550 Invalid path"); return 1; }
+   // fix sfk184: check incoming path immediately before mapping.
+   // FIX sfk185: must accept /mydir/ by checking just mydir/
+   char *pszCheck = pszRelPath;
+   if (*pszCheck=='/' || *pszCheck=='\\') // FIX sfk185 ftp folders
+      pszCheck++;
+   if (isPathTraversal(pszCheck, bClDeep))
+      { reply("550 Invalid path (1)"); return 1; }
 
    nClDiskFree = -1;
 
@@ -29914,16 +30102,16 @@ int FTPServer::mapPath(char *pszRelPath, bool bAllowRoot, bool bCheckDiskSpace)
       printf("use.abs: %s\n", pszAbsPath);
 
    if (pszAbsPath[0]!='/')
-      { reply("550 Invalid path"); return 1; }
+      { reply("550 Invalid path (2)"); return 1; }
 
    if (pszAbsPath[1] && isPathTraversal(pszAbsPath+1, bClDeep))
-      { reply("550 Invalid path"); return 1; }
+      { reply("550 Invalid path (3)"); return 1; }
 
    int iVDir = -1;
 
    char *pszSysPath = sysPath(pszAbsPath, &iVDir);
    if (!pszSysPath)
-      { reply("550 Invalid path"); return 1; }
+      { reply("550 Invalid path (4)"); return 1; }
 
    if (cs.verbose>=2)
       printf("use.sys: %s\n", pszSysPath);
@@ -29962,7 +30150,7 @@ int FTPServer::mapPath(char *pszRelPath, bool bAllowRoot, bool bCheckDiskSpace)
          // collect current folder size and files
          char *pszSysDir = aClVDirDst[iVDir];
          if (setLocalWalkDir(pszSysDir))
-            { reply("550 Invalid path (2)"); return 1; }
+            { reply("550 Invalid path (5)"); return 1; }
          int iDirFiles=0, iSubDirs=0; num nDirBytes=0;
          walkAllTrees(eFunc_SumFiles, iDirFiles, iSubDirs, nDirBytes);
          if (iSubDirs>0) iSubDirs--; // uncount root dir
@@ -30036,7 +30224,7 @@ char *FTPServer::notslash(char *pszPath)
 int FTPServer::checkPath(char *pszPath, bool bDeep)
 {
    if (isPathTraversal(pszPath, bDeep)) {
-      reply("550 invalid path");
+      reply("550 invalid path (6)");
       if (!cs.verbose && !cs.quiet)
          printf("] invalid path: %s\n", pszPath);
       return 9;
@@ -30070,7 +30258,15 @@ int FTPServer::reply(cchar *pszMask, ...)
 
    strcat(szClReplyBuf, "\r\n");
 
-   if (cs.verbose) printf("< %s", szClReplyBuf);
+   int iReplyCode = atoi(szClReplyBuf);
+
+   // sfk1852: print errors only with option -showerr[or]
+   if (    cs.showerr != 0 && iReplyCode != 550
+       && iReplyCode >= 500 && iReplyCode < 600
+      )
+      printx("<err>< %s", szClReplyBuf);
+   else if (cs.verbose)
+      printf("< %s", szClReplyBuf);
 
    int nSent = send(hClClient, szClReplyBuf, strlen(szClReplyBuf), 0);
 
@@ -30618,8 +30814,8 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
    }
 
    int nDefSFTVer = 105;
-   // 104: support for CWD, MKD, DELE, RMD
    // 105: linux based file attributes with sfk extensions
+   // 104: support for CWD, MKD, DELE, RMD
 
    if (makeServerSocket(nPort, clServerAdr, hClServer, "server main port", nPort2))
       return 9;
@@ -30661,7 +30857,9 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
       struct in_addr addr;
       memcpy(&addr,&clClientAdr.sin_addr,sizeof(struct in_addr));
       char *premip = inet_ntoa(addr);
-      printf("> connect from %s\n", premip);
+      num nnow = time(0);
+      num tconstart = getCurrentTime();
+      printf("> connect from %s on %s\n", premip, timeAsString(nnow,0));
 
       // login, pseudo-authentication
       if (reply("220 sfk instant ftp, %d sec timeout. sft %d.", cs.timeOutMSec / 1000, nSFTVer))
@@ -30799,6 +30997,7 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
          if (readLineSub(hClClient, szLineBuf, 0)) break;
          removeCRLF(szLineBuf);
 
+         // per command inits
          mclear(szClAbsPathBuf);
          mclear(szClSysPathBuf);
          mclear(szClTmpPathBuf);
@@ -30812,15 +31011,13 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
             reply("214 Command list end.");
             continue;
          }
-         else
          if (stribeg(szLineBuf, "feat")) { nbail=0;
             reply("211-Features:");
-            reply(" MDTM");
             reply(" SIZE");
+            reply(" MDTM");
             reply("211 End");
             continue;
          }
-         else
          if (   stricase(szLineBuf, "NOOP")
              || stribeg(szLineBuf, "ALLO ")
             )
@@ -30829,17 +31026,14 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
             reply("200 OK");
             continue;
          }
-         else
          if (stribeg(szLineBuf, "SYST")) { nbail=0;
             reply("215 UNIX emulated by SFK.");
             continue;
          }
-         else
          if (stribeg(szLineBuf, "TYPE ")) { nbail=0;
             reply("200 Command OK");
             continue;
          }
-         else
          if (stribeg(szLineBuf, "SCHK ")) { nbail=0;
             int iMode = atoi(szLineBuf+5);
             if (iMode >= 0 && iMode < 2) {
@@ -30850,7 +31044,6 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
             }
             continue;
          }
-         else
          if (   stribeg(szLineBuf, "PWD")
              || stribeg(szLineBuf, "XPWD")
             )
@@ -30858,7 +31051,6 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
             reply("257 \"%s\" is current directory.", szClWorkDir);
             continue;
          }
-         else
          if (stribeg(szLineBuf, "SIZE ")) { nbail=0;
             num nFileSize=0;
             switch (mapPath(szLineBuf+5,1)) {
@@ -30870,14 +31062,14 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
             reply("213 %s", numtoa(nFileSize));
             continue;
          }
-         else
          if (stribeg(szLineBuf, "MDTM ")) { nbail=0;
             // MDTM 20060604111037
             num nFileTime=0;
+            bool bUTC=0;
             switch (mapPath(szLineBuf+5,1)) {
                case 1: continue;
                case 2:
-                  reply("213 %s", timeAsString(0, 1));
+                  reply("213 %s", timeAsString(0, 1, bUTC));
                   continue;
                default:
                   nFileTime = getFileTime(sysPath());
@@ -30885,17 +31077,15 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
             if (nFileTime <= 0)
                reply("550 no such file");
             else
-               reply("213 %s", timeAsString(nFileTime, 1));
+               reply("213 %s", timeAsString(nFileTime, 1, bUTC));
             continue;
          }
-         else
          if (stricase(szLineBuf, "RETR /")) { nbail=0;
             reply("550 File not found");
             closesocket(hClData);
             hClData = INVALID_SOCKET;
             continue;
          }
-         else
          if (stribeg(szLineBuf, "CWD ")) { nbail=0; // since 104
             strcopy(szClOldWorkDir, szClWorkDir);
             char *pszRawPath = szLineBuf+4;
@@ -31073,7 +31263,8 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
             reply("200 Okay");
          }
          else
-         if (stribeg(szLineBuf, "LIST")) // ftp.list: ftp full detail
+         if (   stribeg(szLineBuf, "LIST")   // ftp.list: ftp full detail
+            )
          {
             if (hClData == INVALID_SOCKET) {
                reply("503 Wrong command sequence");
@@ -31256,7 +31447,7 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                reply("150 Sending File");
                if (cs.quiet < 2)
                   printf("send file: \"%s\"\n", absPath());
-               int lRC = sendFileRaw(hClData, sysPath());
+               int lRC = sendFileRaw("ftp", hClData, sysPath());
                if (cs.quiet < 2)
                   printf("send file done, RC %d\n", lRC);
             }
@@ -31280,7 +31471,7 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
                if (reply("150 Receiving File")) break;
                if (cs.verbose)
                   printf("> recv file: \"%s\"\n", absPath());
-               iSubRC = receiveFileRaw(hClData, sysPath(), -1, 0,0,0, nClDiskFree); // stor
+               iSubRC = receiveFileRaw("ftp", hClData, sysPath(), -1, 0,0,0, nClDiskFree); // stor
                if (cs.verbose || iSubRC)
                   printf("> recv file done, RC %d\n", iSubRC);
             }
@@ -31429,6 +31620,7 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
          }
          else
          if (stribeg(szLineBuf, "QUIT")) { nbail=0;
+            reply("221 Goodbye."); // sfk185
             break;
          }
          else
@@ -31650,7 +31842,8 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
             // no ack sending
          }
          else {
-            if (reply("500 not supported: \"%.20s\"", szLineBuf))
+            if (reply("500 not supported: \"%.32s\"%s", szLineBuf,
+                      strlen(szLineBuf)>32 ? "...":""))
                break;
             // count invalid command, maybe connection is out of control:
             nbail++;
@@ -31658,8 +31851,12 @@ int FTPServer::run(uint nPort, bool bRW, bool bRun, bool bDeep, uint nPort2, uin
          }
       }  // endwhile
 
-      if (cs.quiet < 2)
-         printf("disconnecting client\n");
+      if (cs.quiet < 2) {
+         num nnow2 = time(0);
+         printf("< disconnecting client on %s after %d sec.\n",
+            timeAsString(nnow2,0),
+            (int)(getCurrentTime()-tconstart)/1000);
+      }
       closesocket(hClClient);
    }
 
@@ -35361,12 +35558,10 @@ void resetLoadCaches(bool bfinal, const char *pszFromInfo)
             nValue = atol(pszParm);
             continue;
          }
-         else
          if (!strcmp(pszArg, "-opt2")) {
             bFlag = 1;
             continue;
          }
-         else
          if (!strncmp(pszArg, "-", 1)) {
             if (isDirParm(pszArg))
                break; // fall through
@@ -35375,7 +35570,6 @@ void resetLoadCaches(bool bfinal, const char *pszFromInfo)
             else
                return 9+perr("unknown option: %s\n", pszArg);
          }
-         else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
          // process non-option keywords:
@@ -36170,6 +36364,9 @@ static const char *aWebRef[] =
    "entab", "addcrlf", "run", "udpsend", "chars", "hex", "sort",
    "perline", "setvar", "getvar", "helpvar", "ping", "number",
    "fromnet", "wget", "web",
+   "setbytes", "scantab", "join", "encode", "decode", "dec", "printloop",
+   "head", "strings", "count", "linelen", "ip", "time", "calc", "spell",
+   "data", "ruler", 
    0
 };
 
@@ -37046,6 +37243,9 @@ int main(int argc, char *argv[], char *penv[])
          if (strBegins(pszCfg, "strict") || strstr(pszCfg, ",strict")) {
             gs.strict = cs.strict = 1;
          }
+         if (strBegins(pszCfg, "usesft") || strstr(pszCfg, ",usesft")) {
+            gs.allowsft = cs.allowsft = 1;
+         }
       }
    }
 
@@ -37297,8 +37497,12 @@ char *filterAskPattern(char *prawpat, char *ppre1, char *ppre2)
          return 0;
 
    // word reduction:
-   char *p   = szLineBuf;
+   char *p  = szLineBuf;
    int nlen = strlen(p);
+
+   // relevant length of -abs is 3
+   int rlen = nlen;
+   if (*p == '-') rlen--;
 
    // force all lowercase
    for (i=0; i<nlen; i++)
@@ -37307,7 +37511,7 @@ char *filterAskPattern(char *prawpat, char *ppre1, char *ppre2)
    // director ies -> director
    if (nlen > 7 && strEnds(p, "ies")) p[nlen-3] = '\0';
    else // file s -> file
-   if (nlen > 3 && p[nlen-1] == 's')  p[nlen-1] = '\0';
+   if (rlen > 3 && p[nlen-1] == 's')  p[nlen-1] = '\0';
    else // list ing -> list
    if (nlen > 6 && strEnds(p, "ing")) {
       p[nlen-3] = '\0';
@@ -37787,7 +37991,8 @@ void printMainHelp(bool bhelp, char *penv[])
       "   sfk tee        - split command output in two streams\n"
       "   sfk tofile     - save command output to a file\n"
       "   sfk toterm     - flush command output to terminal\n"
-      "   sfk loop       - repeat execution of a command chain\n"
+      "   sfk for        - repeat commands many times\n"
+      "   sfk loop       - repeat execution of all commands\n"
       "   sfk cd         - change directory within a script\n"
       "   sfk getcwd     - print the current working directory\n"
       "   sfk require    - compare version text\n"
@@ -37955,17 +38160,6 @@ void printMainHelp(bool bhelp, char *penv[])
           #endif
          );
 }
-
-#ifdef LIBIMG
-#include "loi.hpp"
-void testpic()
-{
-   Loi oloi(0);
-   num nsize=0;
-   int irc = oloi.loadJpeg((char*)"in.jpg");
-   printf("load.rc %d\n",irc);
-}
-#endif // LIBIMG
 
 // this crashes by intention.
 void probeStack(int iloadpercall)
@@ -38184,6 +38378,13 @@ int extmain(int argc, char *argv[], char *penv[],
    int &iStepNext, bool &bMod
  );
 
+struct ForBlock {
+   char *pszCmd;
+   int   iDir;
+   char  szVar[16+2]; // loop vars must be short
+   num   nVarMax;
+};
+
 // submain.begin
 int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &bFatal) // sfk
 {__
@@ -38223,9 +38424,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    char *pszCmdStart = pszCmd;
    int   iDirStart   = iDir;
 
-   // for +forline: restart point
-   char *pszCmdFor = pszCmd;
-   int   iDirFor   = iDir;
+   // for +for: restart points
+   #define SFK_MAX_FOR 5
+   struct ForBlock aForBlock[SFK_MAX_FOR+1];
+   mclear(aForBlock);
+   int iForBlock=-1;
 
    szIOTraceBuf[0] = '\0';
 
@@ -39697,8 +39900,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
    if (!strcmp(pszCmd, "testerr"))
    {
-      const char *psz = "foo.txt\n";
-      pferr(psz, "cannot open: %s\n", psz);
+      num ntime=time(0);
+      printf("%s\n",timeAsString(ntime,0));
       bDone = 1;
    }
 
@@ -40359,13 +40562,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   $options\n"
              "      -quiet   do not list filenames, show only statistics.\n"
              "      -pure    list only filenames, but no statistics.\n"
+          // "      -ind[ent]  collect also indentation statistics\n"
+          // "      -indsel=4  list only files with indentation 4\n"
+          // "      -verbose   list estimated indendation per file\n"
              "\n"
              "   $return codes for batch files\n"
              "      0 = no tabs, 1 = tabs found, >1 = error occurred.\n"
-      //     "   -ind[ent]  collect also indentation statistics\n"
-      //     "   -indsel=4  list only files with indentation 4\n"
-      //     "   -verbose   list estimated indendation per file\n"
-            );
+             "\n");
+      webref("scantab");
+      printx("   $examples\n"
+             "      #sfk scantab mydir\n"
+             "         list all text files with tabs in mydir.\n");
       ehelp;
 
       sfkarg;
@@ -40808,13 +41015,20 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    regtest("list xdir .txt +addcr");
    regtest("list -dir xdir1 xdir2 -file .cpp .hpp +lf-to-crlf");
 
+   bool baddcr  = 0;
+   bool blistle = 0;
+
    ifcmd (   !strcmp(pszCmd, "lf-to-crlf") // +wref
           || !strcmp(pszCmd, "addcr")
           || !strcmp(pszCmd, "addcrlf")
-          || !strcmp(pszCmd, "listle")     // internal
+          || !strcmp(pszCmd, "listle")     // sfk185
          )
    {
+      blistle = strBegins(pszCmd, "listle");
+      baddcr  = blistle ? 0 : 1;
+
       ifhelp (!chain.usefiles && (nparm < 1))
+      if (bhelp || baddcr) {
       printx("<help>$sfk lf-to-crlf [options] dir .ext1 .ext2 [-to outmask]\n"
              "\n"
              "   convert just-lf (unix) text format to cr+lf (dos/windows).\n"
@@ -40833,6 +41047,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   $aliases\n"
              "      #sfk addcr<def>    same as sfk lf-to-crlf\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk remcr<def>    convert crlf to just lf\n"
+             "      #sfk listle<def>   list line end infos for files\n"
              "\n");
       webref("addcrlf");
       printx("   $examples\n"
@@ -40841,7 +41059,43 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "      #sfk select -dir doc -file .txt +addcr -to tmp<sla><run>file\n"
              "         add crlf on all .txt files within doc, saving to tmp.\n"
+             "\n"
             );
+      }
+      if (bhelp || blistle) {
+      printx("<help>$sfk listle dir [.ext1 .ext2]\n"
+             "\n"
+             "   list line end infos for all text files of a folder\n"
+             "   and also show unterminated text files.\n"
+             "\n"
+             "   for each ASCII text file found this shows:\n"
+             "\n"
+             "      crlf : contains at least one CR/LF line end\n"
+             "             (windows line end format)\n"
+             "\n"
+             "      lf   : contains at least one pure LF line end\n"
+             "             (linux line end format)\n"
+             "\n"
+             "      ut   : is unterminated, i.e. last line of file\n"
+             "             is not followed by CR or LF. to fix\n"
+             "             such files you may use addcr or remcr\n"
+             "             with option -forceend.\n"
+             "\n"
+             "      cr   : contains at least one pure CR line end\n"
+             "             (old macintosh line end format)\n"
+             "\n");
+      printx("   $see also\n"
+             "      #sfk addcr<def>  convert lf to crlf line endings\n"
+             "      #sfk remcr<def>  convert crlf to lf line endings\n"
+             "\n"
+             );
+      webref("listle");
+      printx("   $examples\n"
+             "      #sfk listle mydir\n"
+             "         shows infos for all text files in mydir.\n"
+             "\n"
+            );
+      }
       ehelp;
 
       sfkarg;
@@ -40949,6 +41203,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   $aliases\n"
              "      #sfk remcr<def>    same as sfk crlf-to-lf\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk addcr<def>    convert lf to crlf\n"
+             "      #sfk listle<def>   list line end infos for files\n"
              "\n");
       webref("remcrlf");
       printx("   $examples\n"
@@ -48588,8 +48846,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              );
       #endif // WITH_REPEAT
       printx("      -full         print full help text telling about -bylist pattern files,\n"
-             "                    batch file return codes, special character case sensi-\n"
-             "                    tivity and nested or repeated replace behaviour.\n"
+             "                    special character case sensitivity and nested or repeated\n"
+             "                    replace behaviour.\n"
              "\n");
 
       printx("   $output options\n");
@@ -48655,7 +48913,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                    displayed on terminal to a file x.\n");
 
       printx("\n");
-      if (bFullHelp)
+      // if (bFullHelp) // sfk185
       printx("   $return codes for batch files\n"
              "      0 = no matches, 1 = matches found, >1 = major error occurred.\n"
              "      see also \"sfk help opt\" on how to influence error processing.\n"
@@ -48868,6 +49126,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         in all .exe files of mydir and show result in dview. [14]\n"
              "      #sfk xfind -arc in.zip \"/class*/\"\n"
              "         XE: find phrases starting with \"class\" in .zip contents\n"
+             #ifdef _WIN32
+             "      #sfk xfind -justrc result.txt \"/error/\"\n"
+             "      #IF %%ERRORLEVEL%%==1 GOTO foundError\n"
+             "         in a batchfile: jump to label foundError if \"error\"\n"
+             "         is found in result.txt. with -justrc no output is printed.\n"
+             #endif
              );
 
       if (bIsXText || bGlblCollectHelp)
@@ -50323,6 +50587,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "       #+xed \"/[60 chars]*, /[all]\\n/\"\n"
              "         same as above, but surrounding words by quotes.\n"
              );
+      printx("      #sfk xex foo.h +setvar a +then xed bar.c\n"
+             "       #\"/[lstart]##include \\qfoo.h\\q*[eol]/[getvar a]/\"\n"
+             "         replace a text line: ##include \"foo.h\"\n"
+             "         within file bar.c by the file content of foo.h\n"
+             );
 
       ehelp;
 
@@ -50503,8 +50772,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          char *pszfe = pszfs;
          while (*pszfe!=0 && *pszfe!=cLimit)
             pszfe++;
-         if (!*pszfe)
-            return 9+perr("missing end of from part: %s\n", pszArg);
+         if (!*pszfe) {
+            perr("missing end of from part: %s\n", pszArg);
+            if (chain.usedata) // sfk1852
+               pinf("if %s is a filename use +then %s\n", pszArg, pszCmd);
+            return 9;
+         }
 
          *pszfe++ = '\0';
          char *pszts = pszfe;
@@ -51002,15 +51275,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
  
-   // internal
-   #ifdef LIBIMG
-   if (!strcmp(pszCmd, "testpic"))
-   {
-      testpic();
-      bDone = 1;
-   }
-   #endif // LIBIMG
-
    if (!strcmp(pszCmd, "testrep"))
    {
       int iTestCases = 1;
@@ -51564,7 +51828,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
       else if (pszDate || !pszFrom) {
          if (pszDate) {
-            if (timeFromString(pszDate, nTmpTime)) // touch
+            if (timeFromString(pszDate, nTmpTime)) // local touch
                return 9;
             bTouchSelf = 0;
          } else {
@@ -53200,11 +53464,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                      if (pattr) strcopy(szAttrBuf, pattr);
                      for (char *psz=szAttrBuf; *psz; psz++)
                         switch (*psz) {
-                           case 'f': *psz = 'B'; break; // nGlblFileColor
+                           case 'f': *psz = 'g'; break; // nGlblFileColor  sfk185
                            case 'l': *psz = 'C'; break; // nGlblLinkColor
                            case 'h': *psz = 'g'; break; // nGlblHeadColor
-                           case 'i': *psz = 'g'; break; // nGlblHitColor
-                           case 'a': *psz = 'M'; break; // nGlblRepColor
+                           case 'i': *psz = 'M'; break; // nGlblHitColor   sfk185
+                           case 'a': *psz = 'R'; break; // nGlblRepColor   sfk185
                            case 'x': *psz = 'M'; break; // nGlblExampColor
                            case 'e': *psz = 'R'; break; // nGlblErrColor
                            case 'w': *psz = 'Y'; break; // nGlblWarnColor
@@ -53791,8 +54055,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk hexdump<def>   produce hex data in many formats\n"
              "      #sfk hextobin<def>  convert many hex formats to binary\n"
              "      #sfk md5<def>       create checksum of file(s)\n"
-             "\n"
-             "   $examples\n"
+             "\n");
+      webref(pszCmd);
+      printx("   $examples\n"
              "      #sfk encode in.jpg -base64 -tofile out.txt\n"
              "         encodes in.jpg as base64, writing to out.txt\n"
              "      #sfk decode in.txt -base64 -tofile out.dat\n"
@@ -55066,12 +55331,14 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "     also type \"sfk label\" for infos.\n"
              "\n");
       printx("   $parameter name collisions:\n"
-             "     if your script contains phrases like\n"
-             "        #+filter -form \"$$10.10col1 ...\"\n"
+             "     if your script contains commands like\n"
+             "         #+filter -form \"$$10.10col1 ...\"\n"
              "     then \"$$1\" will be misinterpreted as an input parameter\n"
-             "     into the script. to get around this problem, redefine the\n"
-             "     parameter name prefix at the script's \"sfk label\" line.\n"
-             "     type \"sfk label\" for more on that.\n"
+             "     into the script. to avoid this use one of\n"
+             "         #+filter -form \"$$(10.10col1) ...\"\n"
+             "     or  #+filter -form \"$$$$10.10col1 ...\"\n"
+             "     or disable #$$<def> as a parameter name prefix\n"
+             "     by option -prefix. see \"sfk label\" for more on that.\n"
              "\n"
              "   $options\n"
              "      -verbose  tell in detail which words are used from script.\n"
@@ -57099,8 +57366,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   $aliases\n"
              "      #sfk nato<def>    same as sfk spell -nato\n"
-             "\n"
-             "   $examples\n"
+             "\n");
+      webref(pszCmd);
+      printx("   $examples\n"
              "      #sfk spell foo bar\n"
              "        spell two words in separate lines\n"
              "\n"
@@ -57345,8 +57613,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   $options\n"
              "      -dig[its]=n  round result to n digits.\n"
-             "\n"
-             "   $examples\n"
+             "\n");
+      webref(pszCmd);
+      printx("   $examples\n"
              "      #sfk calc \"1.5*2.5\"\n"
              "        prints 3.75. quotes \"\" are required\n"
              "        with linux but not under windows.\n"
@@ -58499,6 +58768,168 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
+   ifcmd (!strcmp(pszCmd, "for"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk for variable from start to end\n"
+             "\n"
+             "   repeat sfk commands several times, from a start\n"
+             "   value until an end value, setting a variable.\n"
+             "\n"
+             "   $command chaining notes\n"
+             "      $for<def> must be followed by another chain command.\n"
+             "      the command sequence to repeat must end with $+endfor<def>.\n"
+             "      $+for<def> can be nested up to 5 times. further $+for<def> must\n"
+             "      be put into a sub function called by $+call<def>.\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk perline<def>   do something per chain text line\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk for i from 1 to 10 +echo -var \"##(i)\" +endfor\n"
+             "         print numbers 1 to 10.\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      int istate=0;
+      int isubrc=0;
+      num nval=0;
+
+      int iNextFor=iForBlock+1;
+
+      if (iNextFor >= SFK_MAX_FOR) {
+         perr("too many nested +for in one chain.");
+         pinf("use +call label, then +for therein.\n");
+         return 9;
+      }
+
+      struct ForBlock *pFor = &aForBlock[iNextFor];
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         // todo: check argx persistency
+         char *pszArg = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         else
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         switch (istate) {
+            case 0: 
+               if (!pFor->szVar[0]) {
+                  if (strlen(pszArg)>sizeof(pFor->szVar)-2)
+                     return 9+perr("for variable name too long: %s",pszArg);
+                  strcopy(pFor->szVar,pszArg);
+                  istate=1;
+                  continue; 
+               }
+               break;
+            case 1:
+               if (!strcmp(pszArg,"from"))
+                  { istate=2; continue; }
+               break;
+            case 2:
+               nval=myatonum(pszArg);
+               if (nval==0 && strcmp(pszArg,"0")!=0)
+                  return 9+perr("invalid for start value: %s",pszArg);
+               sfksetvar(pFor->szVar,(uchar*)pszArg,strlen(pszArg));
+               istate=3;
+               continue;
+            case 3:
+               if (!strcmp(pszArg,"to"))
+                  { istate=4; continue; }
+               break;
+            case 4:
+               pFor->nVarMax=myatonum(pszArg);
+               istate=5;
+               continue;
+         }
+         return 9+perr("unexpected: %s",pszArg);
+      }
+
+      iForBlock = iNextFor;
+
+      if (!iChainNext)
+         return 9+perr("%s must be followed by further chain commands.",pszCmd);
+
+      pFor->pszCmd=argv[iChainNext];
+      pFor->iDir=iChainNext;
+
+      STEP_CHAIN(iChainNext, 0);
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "endfor"))
+   {
+      sfkarg;
+
+      if (iForBlock<0 || iForBlock>=SFK_MAX_FOR)
+         return 9+perr("missing +for before %s",pszCmd);
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         else
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+      }
+
+      struct ForBlock *pFor = &aForBlock[iForBlock];
+
+      if (!pFor->szVar[0])
+         return 9+perr("missing +for before %s",pszCmd);
+
+      char *pszval=(char*)sfkgetvar(pFor->szVar,0);
+      if (!pszval)
+         return 9+perr("no such variable: %s",pFor->szVar);
+
+      num nval=myatonum(pszval);
+
+      if (nval == LLONG_MAX)
+         return 9+perr("for %s stops with overflow",pFor->szVar);
+
+      if (userInterrupt()==0 && nval<pFor->nVarMax)
+      {
+         nval++;
+         pszval=numtoa(nval);
+         sfksetvar(pFor->szVar,(uchar*)pszval,strlen(pszval));
+         STEP_CHAIN(pFor->iDir, 0);
+         // does continue
+      }
+
+      // cleanup
+      memset(pFor,0,sizeof(struct ForBlock));
+
+      if (iForBlock>-1)
+         iForBlock--;
+
+      if (iChainNext) {
+         STEP_CHAIN(iChainNext, 0);
+      }
+
+      bDone = 1;
+   }
+
    ifcmd (!strcmp(pszCmd, "loop"))
    {
       ifhelp (iDir == iDirStart)
@@ -58519,8 +58950,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       ehelp;
 
       if (!userInterrupt()) {
-         // dump pending text data from the pipes
-         // chain.flush();
          // restart command sequence
          pszCmd = pszCmdStart;
          iDir   = iDirStart;
@@ -58683,10 +59112,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             else
                return 9+perr("unknown option: %s\n", argv[iDir]);
          }
-         // else
-         // if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
-         //    break;
-         // process non-option keywords:
+         // process ask patterns:
          nrawpat++;
          char *prawpat  = argv[iDir];
          char *pfiltpat = filterAskPattern(prawpat, ppre1, ppre2);

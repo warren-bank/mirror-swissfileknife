@@ -95,6 +95,7 @@ void decodeSub64(uchar in[4], uchar out[3]);
 bool isPathTraversal(char *pszFileIn, bool bDeep);
 void fixPathChars(char *pszBuf);
 uchar mapchar(char ch);
+bool validFromIPMask(char *pszmask);
 
 extern bool bGlblEscape;
 extern num  nGlblMemLimit;
@@ -193,24 +194,43 @@ int sfksetvar(char *pname, uchar *pdata, int idata)
          printf("[setvar %s = %.*s]\n",pname,idata,(char*)pdata);
    }
 
-   struct SFKVarHead ohead;
    int iHeadSize = sizeof(struct SFKVarHead);
 
-   uchar *pcopy = new uchar[iHeadSize+idata+1];
-   if (!pcopy)
-      return 9+perr("outofmem");
+   struct SFKVarHead oOldHead;
+   uchar *pOldData = (uchar*)glblSFKVar.get(pname);
+   if (pOldData) {
+      memcpy(&oOldHead, pOldData, iHeadSize);
+      pOldData += iHeadSize;
+   }
 
-   ohead.iDataLen = idata;
-   memcpy(pcopy, &ohead, iHeadSize);
-
-   memcpy(pcopy+iHeadSize, pdata, idata);
-   pcopy[iHeadSize+idata] = '\0'; // safety
-
-   uchar *pold = (uchar*)glblSFKVar.get(pname);
-   if (pold)
-      delete [] pold;
-
-   glblSFKVar.put(pname, pcopy);
+   if (oOldHead.iDataLen == idata)
+   {
+      // sfk185: reuse var memory on same length.
+      memcpy(pOldData, pdata, idata);
+      // keeps same zero term and size.
+      if (pOldData[idata] != 0)
+         return 9+perr("sfkvar int. error #2173271");
+   }
+   else
+   {
+      struct SFKVarHead ohead;
+   
+      uchar *pcopy = new uchar[iHeadSize+idata+1];
+      if (!pcopy)
+         return 9+perr("outofmem");
+   
+      ohead.iDataLen = idata;
+      memcpy(pcopy, &ohead, iHeadSize);
+   
+      memcpy(pcopy+iHeadSize, pdata, idata);
+      pcopy[iHeadSize+idata] = '\0'; // safety
+   
+      uchar *pold = (uchar*)glblSFKVar.get(pname);
+      if (pold)
+         delete [] pold;
+   
+      glblSFKVar.put(pname, pcopy);
+   }
 
    return 0;
 }
@@ -3730,14 +3750,13 @@ int FTPClient::list(char *pdir, CoiTable **ppout, char *pRootURL)
 
       num nFileTime = 0;
 
-      // if (bGlblFTPSetAttribs)
       {
          if (bHaveFlatTime) {
-            timeFromString(pszMonTS, nFileTime); // ftp.list
+            timeFromString(pszMonTS, nFileTime); // local ftp.list
          } else {
             if (apcol[5] && apcol[6] && apcol[7]) {
                sprintf(szTmpBuf2, "%s %s %s",apcol[5],apcol[6],apcol[7]);
-               timeFromString(szTmpBuf2, nFileTime); // ftp.list
+               timeFromString(szTmpBuf2, nFileTime); // local ftp.list
             }
          }
       }
@@ -8539,7 +8558,7 @@ static int fileSize(char *pszFile)
    return sinfo.st_size;
 }
 
-// NOTE: DO NOT FORGET TO DELETE RESULT
+/*
 static char *loadFile(char *pszFile, int nLine)
 {
    int lFileSize = fileSize(pszFile);
@@ -8561,6 +8580,7 @@ static char *loadFile(char *pszFile, int nLine)
    pOut[lFileSize] = '\0';
    return pOut;
 }
+*/
 
 int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke, int nmode)
 {
@@ -8605,7 +8625,7 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
    if (bRevoke)
    {
       // first check if the file is really instrumented
-      char *pFile = loadFile(pszFile, __LINE__);
+      char *pFile = loadFile(pszFile, 0);
       bool bisins = 1;
       if (pFile) {
          if (!strstr(pFile, "// [instrumented]"))
@@ -8706,7 +8726,7 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
    if (nsize <= 0) { fprintf(stderr, "skipped: %s - empty file\n", pszFile); return 5; }
    if (nsize > 50 * 1048576) { fprintf(stderr, "warning: too large, skipping: %s\n", pszFile); return 5; }
 
-   char *pFile = loadFile(pszFile, __LINE__);
+   char *pFile = loadFile(pszFile, 0);
    if (!pFile)
       return 9;
 
@@ -12692,7 +12712,7 @@ int ExtProgram::start(int iTimeout, const char *pszMask, ...)
    ::vsnprintf(szClXCmdBuf, sizeof(szClXCmdBuf)-10, pszMask, argList);
    szClXCmdBuf[sizeof(szClXCmdBuf)-10] = '\0';
 
-   mtklog(("%s",szClXCmdBuf));
+   if (cs.debug) printf("[run: %s]\n",szClXCmdBuf);
 
    clXTimeout = iTimeout;
    clXRunStart = getCurrentTime();
@@ -12770,16 +12790,18 @@ int ExtProgram::start(int iTimeout, const char *pszMask, ...)
    return 0;
 }
 
-int ExtProgram::readFull(uchar *pBuf, int iToRead)
+int ExtProgram::readFull(uchar *pBuf, int iMaxBuf)
 {
    int isubrc=0;
 
    int iTotal=0;
-   int iRemain=iToRead;
+   int iRemain=iMaxBuf;
 
    while (iRemain>0)
    {
       isubrc = read(pBuf+iTotal,iRemain);
+
+      // if (cs.debug) printf("[%d = ext.read(%d) total %d remain %d]\n",isubrc,iRemain,iTotal,iRemain);
 
       if (isubrc >= 0) {
          iTotal += isubrc;
@@ -12789,8 +12811,8 @@ int ExtProgram::readFull(uchar *pBuf, int iToRead)
 
       mtklog(("%d = ext.read",isubrc));
 
-      // case -1 and other
-      return 0;
+      // -1 flags end of data
+      break; // fix sfk1852: NOT "return 0"
    }
 
    return iTotal;
@@ -12946,6 +12968,9 @@ int ExtProgram::read(uchar *pBuf, int iMaxBuf)
 
    if (iread > 0)
    {
+      if (cs.debug!=0 && iread>10) 
+         printf("[%d = ext.read] %s\n",iread,dataAsTrace(pBuf,mymin(64,iread)));
+
       return iread;
    }
 
@@ -13172,6 +13197,227 @@ int execToHtml(int imode, int iaspect, char *plist, char *pszOutFile)
 
    return 0;
 }
+
+#ifdef SFKPIC
+
+uint *sfkPicAllocFunc(int nWords)
+{
+   return new uint[nWords];
+}
+
+SFKPic::SFKPic( )
+{
+   memset(this, 0, sizeof(*this));
+}
+
+SFKPic::~SFKPic( )
+{
+   freepix();
+}
+
+int SFKPic::getObjectSize( )
+{
+   return (int)sizeof(*this);
+}
+
+uint SFKPic::pix(uchar a,uchar r,uchar g,uchar b)
+{
+   return
+         (((uint)a) << 24)
+      |  (((uint)r) << 16)
+      |  (((uint)g) <<  8)
+      |  (((uint)b) <<  0)
+      ;
+}
+
+void SFKPic::freepix( )
+{
+   if (octl.ppix)
+      delete [] octl.ppix;
+
+   octl.ppix   = 0;
+   octl.npix   = 0;
+   octl.model  = 0;
+}
+
+int SFKPic::allocpix(uint w, uint h)
+{
+   freepix();
+
+   uint nTotalPix = w * h;
+
+   if (!(octl.ppix = new uint[nTotalPix+100]))
+      return 9;
+
+   memset(octl.ppix, 0xFF, nTotalPix * sizeof(uint));
+
+   octl.width     = w;
+   octl.height    = h;
+   octl.npix      = nTotalPix;
+   octl.model     = 0;
+   octl.filecomp  = 4;
+
+   return 0;
+}
+
+int SFKPic::load(char *pszFile)
+{
+   uchar *pPack = 0;
+   num    nPack = 0;
+   if (!(pPack = loadBinaryFlex(pszFile, nPack)))
+      return 9+pferr(pszFile, "cannot load: %s", pszFile);
+
+   uint *ppix = loadpic(pPack,nPack,&octl);
+
+   delete [] pPack;
+
+   return ppix ? 0 : 9;
+}
+
+int SFKPic::load(uchar *pPacked, int nPacked)
+{
+   uint *ppix = loadpic(pPacked,nPacked,&octl);
+
+   return ppix ? 0 : 9;
+}
+
+int SFKPic::save(char *pszFile)
+{
+   if (endsWithExt(pszFile,".png"))  octl.fileformat=1;
+   if (endsWithExt(pszFile,".jpg"))  octl.fileformat=2;
+   if (endsWithExt(pszFile,".jpeg")) octl.fileformat=2;
+
+   uint   nPack = octl.width*octl.height*4+100;
+   uchar *pPack = new uchar[nPack+100];
+   if (!pPack)
+      return 10+perr("outofmem\n");
+
+   int isubrc = packpic(octl.ppix, &octl, &pPack, &nPack);
+   if (isubrc)
+      return isubrc+perr("packpic rc %d",isubrc);
+
+   isubrc=saveFile(pszFile,pPack,nPack,"wb");
+
+   delete [] pPack;
+
+   return isubrc;
+}
+
+int SFKPic::getErrNum( ) { return octl.rc; }
+char *SFKPic::getErrStr( ) { return octl.szerror; }
+
+void SFKPic::setpix(uint x, uint y, uint c)
+{
+   if (!octl.ppix)
+      return;
+   uint ioff = y * octl.width + x;
+   if (ioff >= octl.npix)
+      return;
+   octl.ppix[ioff] = c;
+}
+
+uint SFKPic::getpix(uint x, uint y)
+{
+   if (!octl.ppix)
+      return 0;
+   uint ioff = y * octl.width + x;
+   if (ioff >= octl.npix)
+      return 0;
+   return octl.ppix[ioff];
+}
+
+void SFKPic::copyFrom(SFKPic *pSrc, uint x1dst, uint y1dst, uint wdst, uint hdst, uint x1src, uint y1src, uint wsrc, uint hsrc)
+{
+   if (!octl.ppix || !pSrc->octl.ppix)
+      return;
+   if (!octl.npix) { perr("copyFrom target npix error"); return; }
+   if (!pSrc->octl.npix) { perr("copyFrom source npix error"); return; }
+
+   uint iSrcWidth        = wsrc;
+   uint iSrcHeight       = hsrc;
+   uint iDstWidth        = wdst;
+   uint iDstHeight       = hdst;
+
+   uint dst_x1=0, dst_y1=0, dst_off=0;
+
+   double HFactor = double(iSrcHeight) / iDstHeight;
+   double WFactor = double(iSrcWidth)  / iDstWidth;
+
+   uint srcpixymax = iSrcHeight - 1;
+   uint srcpixxmax = iSrcWidth - 1;
+
+   double srcpixy, srcpixy1, srcpixy2, dy, dy1;
+   double srcpixx, srcpixx1, srcpixx2, dx, dx1;
+
+   double r1, g1, b1, a1 = 0;
+   double r2, g2, b2, a2 = 0;
+ 
+   for (uint dsty = 0; dsty < iDstHeight; dsty++)
+   {
+      srcpixy  = double(dsty) * HFactor;
+      srcpixy1 = uint(srcpixy + y1src);
+      srcpixy2 = ( srcpixy1 == srcpixymax ) ? srcpixy1 : srcpixy1 + 1.0;
+
+      dy  = srcpixy - (uint)srcpixy;
+      dy1 = 1.0 - dy;
+
+      for (uint dstx = 0; dstx < iDstWidth; dstx++)
+      {
+         srcpixx  = double(dstx) * WFactor;
+         srcpixx1 = uint(srcpixx + x1src);
+         srcpixx2 = ( srcpixx1 == srcpixxmax ) ? srcpixx1 : srcpixx1 + 1.0;
+
+         dx  = srcpixx - (int)srcpixx;
+         dx1 = 1.0 - dx;
+
+         uint x_offset1 = srcpixx1 > srcpixxmax ? srcpixxmax : (uint)srcpixx1;
+         uint x_offset2 = srcpixx2 > srcpixxmax ? srcpixxmax : (uint)srcpixx2;
+
+         uint y_offset1 = srcpixy1 > srcpixymax ? srcpixymax : (uint)srcpixy1;
+         uint y_offset2 = srcpixy2 > srcpixymax ? srcpixymax : (uint)srcpixy2;
+
+         if (x_offset1 >= iSrcWidth ) break;
+         if (x_offset2 >= iSrcWidth ) break;
+         if (y_offset1 >= iSrcHeight) break;
+         if (y_offset2 >= iSrcHeight) break;
+ 
+         uint csrc1 = pSrc->getpix(x_offset1, y_offset1);
+         uint csrc2 = pSrc->getpix(x_offset2, y_offset1);
+         uint csrc3 = pSrc->getpix(x_offset1, y_offset2);
+         uint csrc4 = pSrc->getpix(x_offset2, y_offset2);
+
+         // first line
+         r1 =   red(csrc1) * dx1 + red(csrc2) * dx;
+         g1 =   grn(csrc1) * dx1 + grn(csrc2) * dx;
+         b1 =   blu(csrc1) * dx1 + blu(csrc2) * dx;
+         a1 =   alp(csrc1) * dx1 + alp(csrc2) * dx;
+
+         // second line
+         r2 =   red(csrc3) * dx1 + red(csrc4) * dx;
+         g2 =   grn(csrc3) * dx1 + grn(csrc4) * dx;
+         b2 =   blu(csrc3) * dx1 + blu(csrc4) * dx;
+         a2 =   alp(csrc3) * dx1 + alp(csrc4) * dx;
+
+         // result lines
+         dst_x1  = dstx + x1dst;
+         dst_y1  = dsty + y1dst;
+         dst_off = dst_y1 * octl.width + dst_x1;
+
+         if (dst_off < 0 || dst_off > octl.npix)
+            break;
+
+         uchar rdst = (uchar)(r1 * dy1 + r2 * dy);
+         uchar gdst = (uchar)(g1 * dy1 + g2 * dy);
+         uchar bdst = (uchar)(b1 * dy1 + b2 * dy);
+         uchar adst = 0xFFU;
+         adst = (uchar)(a1 * dy1 + a2 * dy);
+
+         setpix(dst_x1, dst_y1, pix(adst, rdst,gdst,bdst));
+      }
+   }
+}
+
+#endif // SFKPIC
 
 size_t myfread(uchar *pBuf, size_t nBytes, FILE *fin , num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
 char getYNAchar();
@@ -16866,6 +17112,29 @@ void arcinf(int iind);
 
 void printHelpText(cchar *pszSub, bool bhelp, bool bext)
 {
+   if (!strcmp(pszSub, "ftpprot"))
+   {
+      printx(
+         #ifdef _WIN32
+         "   $transfer protocol selection\n"
+         "      since SFK 1.8.5, when using \"sfk ftpserv\" at the server\n"
+         "      and \"sfk ftp\" at the windows client, plain FTP protocol\n"
+         "      is used to avoid firewall restrictions via port 21.\n"
+         "      to use SFT Simple File Transfer for better connectivity\n"
+         "      and cput/cget support run the server as \"sfk sftserv\"\n"
+         "      and the client as \"sfk sft\", which will use port 2121.\n"
+         "\n"
+         #endif
+         "   $file attributes\n"
+         "      since SFK 1.6.7, when using the SFT protocol,\n"
+         "      linux file attributes are sent and written at the receiver,\n"
+         "      except for file owner 'rw' flags which are set by default\n"
+         "      to allow rewrite in future transfers. when sending from\n"
+         "      linux to windows attributes like 'x' get lost.\n"
+         "\n");
+      return;
+   }
+
    if (!strcmp(pszSub, "dupfind"))
    {
       printx("<help>$sfk dupfind -dir anydir [-file .ext1 .ext2]\n"
@@ -17017,6 +17286,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              );
       printx("      -relnames  list filenames relative to specified directory(s),\n"
              "                 i.e. strip root directory names at the beginning.\n"
+             "      -abs[olute]   list all filenames with full absolute path.\n"
              "      -tomake .ext<def>  select only files that have no, or an older,\n"
              "                    counterpart file with extension .ext\n"
              "                    in the same folder.\n"
@@ -17033,8 +17303,8 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "                 e.g. -subdir :/tmp does the same as -subdir !\\tmp\n"
              "      -upat2     also support wildcard %% instead of *\n"
              #endif
-             "\n"
-             "   $important details of file name / extension selection:\n"
+             "\n");
+      printx("   $important details of file name / extension selection:\n"
              "      - when specifying a filename pattern beginning with a dot \".\"\n"
              "        and no wildcard, only files with this extension will be selected.\n"
              "      - otherwise the pattern is searched anywhere within the filename.\n"
@@ -17421,10 +17691,11 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "         replace underlining by bold in an HTML text. quotes \"\" are strictly\n"
              "         required here, otherwise the shell environment would split the command\n"
              "         at the < and > characters. add option -yes to really rewrite the file.\n"
-             "      #sfk filter export.csv -sep \";\" -format \"title: <run>-40col2 remark: <run>-60col5\"\n"
+             "      #sfk filter export.csv -sep \";\" -format \"title: <run>(-40col2) remark: <run>(-60col5)\"\n"
              "         reformat comma-separated data, exported from spreadsheet, as ascii text.\n"
-             "      #sfk stat . +filter -blocksep \" \" -format \"<run>4col1 mb in folder: <run>col5\"\n"
-             "         reformats output of the stat command.\n"
+             "      #sfk stat . +filter -blocksep \" \" -format \"<run>(4col1) mb in folder: <run>(col5)\"\n"
+             "         reformats output of the stat command. when using this in an sfk script\n"
+             "         round brackets () are required to avoid parameter name collision.\n"
 
              "      #sfk filter mycsv.txt >out.txt -spat -rep _\\\"__ -rep _\\t__ -rep \"_;_\\\"\\t\\\"_\" -form \"<run>qcol1\"\n"
              "         read semicolon-separated spreadsheet data mycsv, strip all double colons\n"
@@ -18139,6 +18410,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      #sfk label<def>     possible options with label\n"
          "      #sfk if<def>        conditional execution\n"
          "      #sfk goto<def>      jump to a local label\n"
+         "      #sfk for<def>       repeat commands n times\n"
          );
    }
 
@@ -19395,6 +19667,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       printx("   $chaining support\n"
              "      output chaining is supported.\n"     // sfk1833
              "\n");
+      webref(pszCmd);
       printx("   $examples\n"
              "      #sfk ip\n"
              "         list own machine's ip address(es).\n"
@@ -20279,13 +20552,15 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              "   data can be given as a series of byte blocks each\n"
              "   starting with 0x or as plain text. all data parameters\n"
-             "   are joined into one long byte block.\n"
+             "   are joined into one long byte block which cannot be\n"
+             "   larger than %d bytes.\n"
              "\n"
              "   $options\n"
              "      -dump  create a hexdump of the changed output.\n"
              "             by default only the input is shown.\n"
              "      -spat  support slash patterns like foo\\tbar.\n"
              "             type \"sfk help pat\" for details.\n"
+             "      -repeat=n  repeat the next data n times.\n"
              "\n"
              "   $command chaining\n"
              "      accepts binary chain input.\n"
@@ -20293,8 +20568,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   $see also\n"
              "      #sfk hexdump<def>    show binary file contents\n"
              "      #sfk partcopy<def>   copy part of a file\n"
-             "\n"
-             "   $examples\n"
+             "\n",
+             (int)(sizeof(abBuf)-100));
+      webref("setbytes");
+      printx("   $examples\n"
              "      #sfk setbytes out.dat 20 0xf1f2f3f4 \"foo bar\"\n"
              "         write 4 bytes with codes f1, f2, f3, f4 into\n"
              "         out.dat at offset 20 followed by the words\n"
@@ -20309,6 +20586,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "         write a filename string as pure as possible,\n"
              "         without pattern interpretation or (CR)LF,\n"
              "         into out.dat at offset 20.\n"
+             "      #sfk setbytes out.dat 0 -repeat=10000 a -spat \"\\n\"\n"
+             "         fill the first 10000 bytes of out.dat with\n"
+             "         character a then add a single line feed.\n"
              );
       ehelp;
 
@@ -20332,11 +20612,19 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       uchar *pMsg = abBuf;
 
+      int irepeat = 0;
+
       int nstate = 1;
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
+         char *pszParm = 0;
 
+         if (haveParmOption(argx, argc, iDir, "-repeat", &pszParm)) {
+            if (!pszParm) return 9;
+            irepeat = atol(pszParm);
+            continue;
+         }
          if (!strcmp(pszArg, "-fromto")) {
             bAbsolute = 1;
             continue;
@@ -20406,6 +20694,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             if (nMsg+nlen > nMsgMax) return 9+perr("data too long");
             memcpy(abBuf+nMsg, ppart, nlen);
             nMsg += nlen;
+         }
+         if (irepeat > 1) {
+            irepeat--;
+            iDir--;
          }
       }
 
@@ -20637,7 +20929,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       printx("   $see also\n"
              "      $sfk partcopy<def>  - copy a single part of a file\n"
              "      $sfk space [d]<def> - tell free disk space available\n"
-             "                      in current of given directory d\n"
+             "                      in current or given directory d\n"
              "\n");
       webref(pszCmd);
       printx("   $examples\n"
@@ -21121,6 +21413,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "                 transmission from an sfk ftp client.\n"
          "     -verbose    list the transmitted ftp commands.\n"
          "                 helpful to get more infos in case of errors.\n"
+         "     -showerr[or]  print all sent 5xx replies to terminal,\n"
+         "                 except for 550 no such file. default is to\n"
+         "                 print them only with -verbose.\n"
          "     -quiet[=2]  print less or no status informations.\n"
          "     -nosub      block sub directory access, e.g. the client\n"
          "                 may NOT say \"put the/sub/dir/document.txt\".\n"
@@ -21167,35 +21462,35 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          // "\n"
          "   $aliases\n"
          "      sfk sftserv ...  = the same as sfk ftpserv, but using port 2121.\n"
-         "\n"
-         "   $file attributes\n"
-         "      since SFK 1.6.7, if an SFK server speaks with SFK client,\n"
-         "      linux file attributes are sent and written at the receiver,\n"
-         "      except for file owner 'rw' flags which are set by default\n"
-         "      to allow rewrite in future transfers. when sending from linux\n"
-         "      to windows attributes like 'x' get lost.\n"
-         "\n"
-         );
+         "\n");
+  printHelpText("ftpprot", bhelp, 0);
   printx("   $problems and solutions:\n"
+         "\n"
          "   if you try to login to the server using a regular ftp client, but\n"
          "   you cannot connect and/or transfer files, then usually there is a\n"
          "   firewall or network configuration incompatible to normal FTP.\n"
+         "\n"
          "   - if your ftp client provides a command \"passive\", then type that,\n"
          "     press enter, and then try the usual commands like dir, get or put.\n"
-         "   - whenever possible, use the SFK FTP client to connect to an SFK FTP\n"
-         "     server. client and server will then use a different protocol (SFT)\n"
-         "     with which you often can transfer files even if normal FTP fails.\n"
-         "   - Windows Vista, Windows 7: the firewall may stop sfk to sfk file\n"
-         "     transfer on the default port 21, with error ECONNRESET, probably\n"
-         "     because sfk uses a different protocol. You then have to use a\n"
-         "     different port, e.g. -port=5000 or use Windows' \"ftp\" command.\n"
+         "\n"
+         "   - use \"sfk sftserv\" at the server and \"sfk sft\" at the client.\n"
+         "     this will use a different protocol (SFT) via port 2121 with\n"
+         "     which you often can transfer files even if normal FTP fails.\n"
+         "\n"
+         "   - Windows: the firewall may stop sfk to sfk file transfer on\n"
+         "     port 21, with error ECONNRESET, if your sfk client is old.\n"
+         "     use the sfk 1.8.5 ftp client which uses plain FTP.\n"
+         "\n"
          "   - Windows 7 Starter: you may have to open the firewall settings\n"
          "     and enable incoming connections for application \"sfk\" manually.\n"
+         "\n"
          "   - Windows: whenever running sfk.exe in an ununsual user context,\n"
          "     e.g. from a mounted virtual drive, or a non-admin shell, this\n"
          "     may cause the system to block incoming connections.\n"
+         "\n"
          "   - some FTP clients must be configured not to use multiple transfer\n"
          "     connections in parallel (FileZilla: edit/settings/transfers)\n"
+         "\n"
          "   - virtual machines: when using NAT network adapter mode you may\n"
          "     not connect from the host into the guest but only vice versa.\n"
          "     you may configure port forwards in the VM's adapter settings,\n"
@@ -21211,16 +21506,14 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "\n"
          );
   printx("   $see also\n"
-         "     - type \"#sfk ftp<def>\" for the SFK FTP client. when it connects to an\n"
-         "       SFK FTP server, you get easier connectivity and more features.\n"
-         "     - type \"#sfk httpserv -h<def>\" for the SFK Instant HTTP Server.\n"
+         "     #sfk ftp<def>       the sfk ftp client\n"
+         "     #sfk sft<def>       the sfk sft client\n"
+         "     #sfk httpserv<def>  the sfk instant http server\n"
          "\n");
       webref("ftpserv");
       printx("   $examples\n"
          "\n"
-         "   - to run sfk as a 'real' ftp server for non sfk clients:\n"
-         "     (uses port 21. sfk ftp clients may also connect,\n"
-         "      but see possible problems listed above.)\n"
+         "   - to run a 'real' ftp server (port 21) for non sfk clients:\n"
          "\n"
          "     #sfk ftpserv -user=foo -pw=bar mydir\n"
          "       require the given user/pw and allow read only access to mydir\n"
@@ -21264,6 +21557,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       // no verbose progress indicator at server side.
       cs.noprog = 1;
 
+      if (nPort == 21)
+         cs.showprotocol = 1; // sfk1852
+
       // aliases, yet internal
       if (!strcmp(pszCmd, "sfs3")) { bRW=1; nPort=3000; }
       if (!strcmp(pszCmd, "sfs4")) { bRW=1; nPort=4000; }
@@ -21287,75 +21583,63 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             nPort2 = 0;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-port2", &pszParm)) {
             if (!pszParm) return 9;
             nPort2 = atol(pszParm);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-pasvport", &pszParm)) {
             if (!pszParm) return 9;
             nPasvPort = atol(pszParm);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-ownip", &pszParm)) {
             if (!pszParm) return 9;
             strcopy(cs.szownip, pszParm);
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-minspace", &pszParm)) {
             if (!pszParm) return 9;
             cs.diskspace = numFromSizeStr(pszParm, "-minspace");
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-user", &pszParm)) {
             if (!pszParm) return 9+perr("-user requires a parameter.\n");
             strcopy(oserv.szClAuthUser, pszParm);
             bGotOptUser = 1;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-pw", &pszParm)) {
             if (!pszParm) return 9+perr("-pw requires a parameter.\n");
             strcopy(oserv.szClAuthPW, pszParm);
             bGotOptPW = 1;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-runpw", &pszParm)) {
             if (!pszParm) return 9+perr("-runpw requires a parameter.\n");
             strcopy(oserv.szClRunPW, pszParm);
             bGotOptRunPW = 1;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-maxsize", &pszParm)) {
             if (!pszParm) return 9;
             if (!(nGlblTCPMaxSizeMB = numFromSizeStr(pszParm) / 1000000))
                return 9+perr("-maxsize must be at least \"1m\" for one megabyte");
             continue;
          }
-         else
          if (!strcmp(pszArg, "-anysize")) { // deprecated since 167
             nGlblTCPMaxSizeMB = 0;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-timeout", &pszParm)) { // ftpserv
             if (!pszParm) return 9;
             cs.timeOutMSec = atol(pszParm) * 1000;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-rw")) {
             bRW = 1;
             continue;
          }
-         else
          if (   strBegins(pszArg, "-wany")  // deprecated since 167
              || strBegins(pszArg, "-rwany") // deprecated since 167
             )
@@ -21365,41 +21649,37 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bDeep = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-run")) {
             bRun = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-deep")) { // deprecated since 167
             bDeep = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-nosub")) { // since 167
             bDeep = 0;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-withsub")) { // deprecated since 167
             continue;
          }
-         else
          if (!strcmp(pszArg, "-noclone")) {
             cs.noclone = 1;
             continue;
          }
-         else
          if (!strcmp(pszArg, "-noclose")) {
             cs.autoclose = 0;
             continue;
          }
-         else
          if (strBegins(pszArg, "-usedir")) {
             istate = 1;
             continue;
          }
-         else
+         if (strBegins(pszArg, "-showerr")) {
+            cs.showerr = 1;
+            continue;
+         }
          if (!strncmp(argx[iDir], "-", 1)) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
@@ -22025,6 +22305,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "     loads all text and binary files from mydir. \"sfk view\" for more.\n"
              #endif
              "\n");
+      webref(pszCmd);
       printx("   $examples\n"
              "      #sfk strings test.exe +filter -+VersionInfo\n"
              );
@@ -22232,7 +22513,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       printx("\n"
              "   $message filtering\n"
              "      %s only messages ...\n"
-             "      -from \"s1,s2\"  from IPs containing text s1 or s2\n"
+             "      -from \"s1,s2\"  from IPs containing text s1 or s2.\n"
+             "                     note that packages from the same\n"
+             "                     machine may use an IP 127.0.0.1\n"
+             "      -from \"s1 s2\"  same as -from \"s1,s2\"\n"
              "      -notfrom \"s\"   not from IP containing text s,\n"
              "                     with \".10\"  matching .10 and .100\n"
              "                     but  \".10/\" matching only .10\n"
@@ -22322,6 +22606,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       printx("   $examples\n"
              "     #sfk udpdump 5000\n"
              "        waits on port 5000 for incoming udp packages.\n"
+             "     #sfk udpdump 5000 -from .10\n"
+             "        show only packages from ip's containing .10\n"
+             "        like 192.168.100.1 or 192.168.1.100\n"
+             "     #sfk udpdump 5000 -from \".100/,.101/,.102/\"\n"
+             "        show only from ip's ending .100, .101 or .102\n"
+             "        e.g. 192.168.1.100 but not 192.168.100.1\n"
              );
       }
       else {
@@ -22613,12 +22903,14 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          else
          if (haveParmOption(argx, argc, iDir, "-from", &pszParm)) {
             if (!pszParm) return 9;
+            validFromIPMask(pszParm);
             pszFromMask = pszParm;
             continue;
          }
          else
          if (haveParmOption(argx, argc, iDir, "-notfrom", &pszParm)) {
             if (!pszParm) return 9;
+            validFromIPMask(pszParm);
             pszNotFromMask = pszParm;
             continue;
          }
@@ -24155,8 +24447,18 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       ifhelp (nparm < 1)
       printx(
          "<help>$sfk ftp host[:port] [options] [command [parms]]\n"
+         "$sfk sft host[:port]\n"
          "\n"
-         "   The SFK Simple FTP Client.\n"
+         "   The SFK FTP Client.\n"
+         "\n"
+         "   $sfk ftp hostname<def>\n"
+         "      uses plain FTP protocol via port 21\n"
+         "      to speak with any (non SFK) FTP server.\n"
+         "\n"
+         "   $sfk sft hostname<def>\n"
+         "      uses SFT Simple File Transfer via port 2121\n"
+         "      for better connectivity, file attributes and\n"
+         "      multi file transfer, with SFK SFT servers only.\n"
          "\n"
          "   $commands\n"
          "      put x     send a single file with name x\n"
@@ -24173,21 +24475,52 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       // "      ccd x     change remote and local dir in parallel\n"
       // "                if x exists on both sides.\n"
          "      !mycmd    execute local command mycmd\n"
-         "      run cmd   run remote command (only with sfk ftp server)\n"
          "      bye       exit\n"
+         "\n");
+  printx("   $with SFT only:\n"
+         "      cput x    send new or changed files of the current dir.\n"
+         "                if the server time (zone) is incompatible\n"
+         "                this will not work and may send all files\n"
+         "                or never any files.\n"
+         "      cget x    receive new or changed files of the current\n"
+         "                directory on the server.\n"
+         "                same restrictions apply as with cput.\n"
+         "      run cmd   run remote command, if server allows.\n"
+         /*
+         -  FTP never transmits file times.
+         -  non SFK ftp server answers with UTC times
+            which we cannot compare.
          "\n"
-         "   $options\n"
-         "      -force    continue transfer after errors.\n"
-         "      -verbose  list the transmitted ftp commands\n"
+         "      $Note:<def> when using cput with normal FTP, file times are\n"
+         "      not copied, but the server sets file time to \"now\".\n"
+         "      this means repeated cput may work, somehow, but trying\n"
+         "      cget afterwards will download all files which were\n"
+         "      recently uploaded, instead of just changed files.\n"
+         "      therefore cput/cget is not recommended with normal FTP.\n"
+         */
+         "\n");
+  printx("   $options\n"
+         "      -raw      force ftp protocol even when connected with an\n"
+         "                sfk ftp server. default under windows, since\n"
+         "                sfk 1.8.5, when using port 21.\n"
+         #ifdef _WIN32
+         "      -sft      allow sft protocol even when using port 21 with\n"
+         "                an sfk ftp server. you may also set variable\n"
+         "                   <exp> SFK_CONFIG=usesft\n"
+         #endif
+         "      -verbose  list the transmitted ftp commands,\n"
          "                and tell if SFK_FTP_USER/PW variable is used.\n"
          "                helpful to get more infos in case of errors.\n"
+         "      -force    continue transfer after errors.\n"
          "      -quiet    disable progress indicator and other output.\n"
          "      -noprog   no progress indicator during transfers.\n"
+         /* sfk185: use cput/cget instead
          "      -update   or -up transmits only changed files. this option\n"
          "                is experimental and may or may not work, depending\n"
          "                on the server software, server settings (UTC vs.\n"
          "                local time) and time zone.\n"
          "      -new      the same as -update.\n"
+         */
          "      -user=x   or -user x sends username x instead of anonymous.\n"
          "                you may also set an environment variable like:\n"
          "                   <exp> SFK_FTP_USER=myuser\n"
@@ -24198,8 +24531,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "                you may also set an environment variable like:\n"
          "                   <exp> SFK_FTP_PW=mypassword\n"
          "                or <exp> SFK_FTP_CPW=mypassword\n"
-         "     -noclone   do not try to replicate time stamps on a file\n"
-         "                transmission from an sfk ftp server.\n"
+         "\n");
+  printx("   $with SFT only:\n"
+         "     -noclone   do not copy time stamps on put/get.\n"
          "     -pres      always preserve full file attributes, including\n"
          "                readonly modes. default is to keep file writeable\n"
          "                by file owner and to apply umask under linux.\n"
@@ -24208,10 +24542,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "\n");
   printx("   $aliases\n"
          "      sfk sft ...   = the same as sfk ftp, but using port 2121.\n"
+         /*
          "      cput          = same as \"mput -update\" (multi put changed).\n"
          "      cget          = same as \"mget -update\" (multi get changed).\n"
          "                      cget, cput have same experimental status\n"
          "                      as described under the -update option.\n"
+         */
          "\n"
          "   $automatic IP expansion\n"
          "      if you are in the same subnet as the target host,\n"
@@ -24221,16 +24557,21 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "      this feature may or may not work, depending on your\n"
          "      operating system and number of network interfaces.\n"
          "      add option -showip to see what the expanded IP is.\n"
+         "\n");
+  printHelpText("ftpprot", bhelp, 0);
+  printx("   $problems and solutions:\n"
+         "      if sfk to sfk file transfer via port 21 is stopped\n"
+         "      with ECONNRESET or ECONNABORTED this is probably caused\n"
+         "      by a firewall. try option -raw to use plain FTP.\n" 
+         "      alternatively use \"sfk sftserv\" on server and \"sfk sft\"\n"
+         "      at the client, which uses the unrestricted port 2121.\n"
+         "      read more under: sfk ftpserv -help\n"
          "\n"
-         "   $file attributes\n"
-         "      since SFK 1.6.7, if an SFK server speaks with SFK client,\n"
-         "      some linux file attributes are sent and written at the\n"
-         "      receiver. by default, rw for owner is always set, and the\n"
-         "      target system umask is applied. use option -pres(erve)\n"
-         "      to transfer attributes as is. when sending from linux\n"
-         "      to windows attributes like 'x' get lost.\n"
-         "\n"
-         "   $examples\n"
+         "   $see also\n"
+         "      #sfk ftpserv -help\n"
+         "\n");
+  webref("ftp");
+  printx("   $examples\n"
          "      #sfk ftp farpc put test.zip\n"
          "         send test.zip to farpc\n"
          "      #sfk ftp -user=foo -pw=bar farpc put test.zip\n"
@@ -24267,7 +24608,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "         which of the selected files actually differ.\n"
          "\n");
     printx(
-         "   $IF connected with an sfk sft server:\n"
+         "   $IF using SFT with an sfk sft server:\n"
          "\n"
          "      best practice is to run an sft (simple file transfer)\n"
          "      server on the other PC or VM like:\n"
@@ -24320,21 +24661,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "         execute a command on the remote server, redirecting all\n"
          "         output into a file tmp1.txt. requires an sfk sft server\n"
          "         with option -run, AND -pw authentication on both sides.\n"
-         "\n"
-         "   $problems and solutions:\n"
-         "   - if running the ftp server just like \"sfk ftpserv\" then\n"
-         "     on Windows Vista, Windows 7 the firewall may stop sfk to sfk\n"
-         "     file transfer on port 21 with ECONNRESET or ECONNABORTED.\n"
-         "     therefore use a different port, like -port=2121 which is\n"
-         "     default with sftserv. read more under: sfk ftpserv -help\n"
-         "\n"
-         "   $see also\n"
-         "      #sfk ftpserv -help\n"
          "\n");
-  webref("ftp");
-  printx("NOTE: existing files are overwritten <err>without asking back<def>.\n"
+  printx("   $NOTE:<def> existing files are overwritten <err>without asking back<def>.\n"
          "      Make sure that ftp server and client are running\n"
          "      in the correct directories, especially before mput/mget.\n"
+         "\n"
          );
       ehelp;
 
@@ -24354,6 +24685,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       // since SFT 103, default is not to use verify, for faster transfer.
       cs.verify = 0;
 
+      if (nPort == 21)
+         cs.showprotocol = 1; // sfk1852
+
       // aliases, yet internal
       if (!strcmp(pszCmd, "sf3")) { nPort=3000; }
       if (!strcmp(pszCmd, "sf4")) { nPort=4000; }
@@ -24370,39 +24704,40 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             pszAuthPW = pszParm;
             continue;
          }
-         else
          if (haveParmOption(argx, argc, iDir, "-user", &pszParm)) {
             if (!pszParm) return 9+perr("-user requires a parameter.\n");
             pszUser = pszParm;
             continue;
          }
-         else
          if (strBegins(argx[iDir], "-up") || !strcmp(argx[iDir], "-new"))
          {
             cs.ftpupdate = 1;
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-all")) {
             cs.ftpall = 1;
             continue;
          }
-         else
          if (!strcmp(argx[iDir], "-noclone")) {
             cs.noclone = 1;
             continue;
          }
-         else
          if (strBegins(argx[iDir], "-pres")) {
             cs.preserve = 1;
             continue;
          }
-         else
+         if (!strcmp(argx[iDir], "-raw")) {
+            cs.nosft = 1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-sft")) {
+            cs.allowsft = 1;
+            continue;
+         }
          if (strBegins(argx[iDir], "-ver") && !strBegins(argx[iDir], "-verbose")) {
             cs.verify = 1;
             continue;
          }
-         else
          if (!strncmp(argx[iDir], "-", 1)) {
             if (isDirParm(argx[iDir]))
                break; // fall through
@@ -25801,6 +26136,194 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   #ifdef SFKPIC
+   if (!strcmp(pszCmd, "pic"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk pic infile [opts] [outfile]\n"
+             "\n"
+             "   $options\n"
+             "      -notrans     remove alpha transparency\n"
+             "      -trans       change all pixels with background\n"
+             "                   color to transparent pixels\n"
+             "      -back n      set background color as rrggbb\n"
+             "                   default is white ffffff\n"
+             "      -q n         set jpeg output quality\n"
+             "      -w[idth] n   set width n\n"
+             "      -h[eight] n  set height n\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk pic in.jpg -height 120 out.jpg\n"
+             "\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      sfkPicAllocCallback = sfkPicAllocFunc;
+
+      char *pszInFile=0,*pszOutFile=0;
+      bool  bnotrans=0;
+      bool  btrans=0;
+      uint  backcol=0xffffff,q=90;
+      bool  bbackcol=0;
+      uint  targw=0,targh=0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-back", &pszParm)) {
+            if (!pszParm) return 9;
+            backcol=(uint)strtoul(pszParm,0,0x10);
+            bbackcol=1;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-q", &pszParm)) {
+            if (!pszParm) return 9;
+            q=atoi(pszParm);
+            if (q<10 || q>100)
+               return 9+perr("quality must be from 10 to 100");
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-width", &pszParm)) {
+            if (!pszParm) return 9;
+            targw=atoi(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-w", &pszParm)) {
+            if (!pszParm) return 9;
+            targw=atoi(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-height", &pszParm)) {
+            if (!pszParm) return 9;
+            targh=atoi(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-h", &pszParm)) {
+            if (!pszParm) return 9;
+            targh=atoi(pszParm);
+            continue;
+         }
+         if (!strcmp(pszArg, "-trans"))
+            {  btrans=1; continue; }
+         if (!strcmp(pszArg, "-notrans"))
+            {  bnotrans=1; continue; }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (!pszInFile)
+            { pszInFile=pszArg; continue; }
+         if (!pszOutFile)
+            { pszOutFile=pszArg; continue; }
+         return 9+perr("unexpected: %s",pszArg);
+      }
+
+      SFKPic opic,opic2;
+
+      if (btrans) {
+         opic.octl.mixonload=1;
+         opic.octl.backcolor=backcol;
+      }
+
+      if (opic.load(pszInFile))
+         return 9+perr("cannot load: %s",pszInFile);
+
+      printf("load: %u x %u x %u\n",
+         opic.octl.width,
+         opic.octl.height,
+         opic.octl.filecomp);
+
+      if (btrans) {
+         opic.octl.outcomp=4;
+         opic.octl.backcolor=0;
+         bbackcol=0; // not on output
+      }
+
+      SFKPic *pout = &opic;
+
+      if (targw || targh) 
+      {
+         if (targw && !targh)
+            targh = ((num)opic.octl.height * (num)targw) / opic.octl.width;
+         else
+         if (targh && !targw)
+            targw = ((num)opic.octl.width * (num)targh) / opic.octl.height;
+
+         if (opic2.allocpix(targw,targh))
+            return 9+perr("cannot allocate %ux%u image",targw,targh);
+
+         pout = &opic2;
+         pout->copyFrom(&opic,0,0,targw,targh,0,0,opic.width(),opic.height());
+      }
+
+      if (pszOutFile)
+      {
+         if (   endsWithExt(pszOutFile,".jpg")
+             || endsWithExt(pszOutFile,".jpeg")
+            )
+         {
+            pout->octl.outcomp=3;
+            pout->octl.filequality=90;
+         }
+         else if (bnotrans)
+         {
+            pout->octl.mixonpack=1;
+            pout->octl.outcomp=3;
+            pout->octl.backcolor=backcol;
+         }
+
+         if (bnotrans) {
+            printf("save: %u x %u x %u back %06x\n",
+               pout->octl.width,
+               pout->octl.height,
+               pout->octl.outcomp ? pout->octl.outcomp : pout->octl.filecomp,
+               pout->octl.backcolor
+               );
+         } else {
+            printf("save: %u x %u x %u\n",
+               pout->octl.width,
+               pout->octl.height,
+               pout->octl.outcomp ? pout->octl.outcomp : pout->octl.filecomp
+               );
+         }
+
+         if (pout->save(pszOutFile)) {
+            opic2.freepix();
+            return 9+perr("cannot save: %s",pszOutFile);
+         }
+      }
+      else if (chain.coldata && chain.colbinary)
+      {
+         int nbytes = pout->octl.width * pout->octl.height*4;
+         chain.addBinary((uchar*)pout->octl.ppix,nbytes);
+      }
+
+      opic2.freepix();
+
+      if (iChainNext) {
+         if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+   #endif // SFKPIC
+
+
    return 0;
 }
 // extmain.end
@@ -25808,6 +26331,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
+
+
+
+
 
 
 
