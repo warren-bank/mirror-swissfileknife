@@ -93,7 +93,10 @@
   #include <ifaddrs.h>
   #include <fcntl.h>
   #ifndef MAC_OS_X
+   #define SFK_NATIVE_LINUX
    #include <wait.h>
+   #include <net/if_arp.h>
+   #include <linux/sockios.h>
   #endif
   #ifndef  _S_IFDIR
    #define _S_IFDIR 0040000 // = 0x4000
@@ -448,6 +451,7 @@ private:
    uchar    aClDig[100];
    uint32_t alClSta[4];
    uint32_t alClBuf[16];
+   uint32_t nClCRC;
    bool     bClDigDone;
 };
 
@@ -657,7 +661,8 @@ public:
    FileSet  ( );
   ~FileSet  ( );
    int  beginLayer     (bool bWithEmptyCommand, int nTraceLine);
-   int  addRootDir     (char *pszName, int nTraceLine, bool bNoCmdFillup);
+   int  addRootDir     (char *pszName, int nTraceLine, bool bNoCmdFillup,
+                        bool bAutoUseArc=false); // sfk193 addrootdir
    int  addDirMask     (char *pszName);
    int  addDirCommand  (int);
    int  addFileMask    (char *pszName);
@@ -750,6 +755,10 @@ struct SFKFindData
    __dev_t ostdev;   // under linux
    bool  bhavenode;  // under linux
 };
+#endif
+
+#ifdef SFKINT
+ #define SFKOFFICE
 #endif
 
 class CoiData;
@@ -894,9 +903,21 @@ public:
    bool   isKnownArc    ( )   { return 0; }
    #endif
 
+   #ifdef SFKPACK
+   bool   isOffice            (int iTraceFrom);
+   char  *officeSubName       ( );
+   int    isOfficeSubEntry    ( );
+   int    rawLoadOfficeDir    ( );
+   Coi   *rawNextOfficeEntry  ( );
+   void   rawCloseOfficeDir   ( );
+   int    loadOfficeSubFile   (cchar *pszFromInfo);
+   void   stripOfficeName     ( );
+   #endif // SFKPACK
+
    #ifdef VFILEBASE
 
    int   rawLoadDir (int ilevel=0);
+
    Coi   *getElementByAbsName (char *pabs); // result is NOT locked
 
    bool  isNet    ( );  // ftp OR http
@@ -1039,6 +1060,7 @@ public:
    bool  bClUniName; // set cs.uname when processing
    // after close(), set file time using MTime and/or CTime
    uint  nClAttr;    // file attributes
+   uint  crc;
 
    // simplified infos for http cois
    int   setTypeFromHeaders      ( );
@@ -1103,19 +1125,20 @@ public:
   ~CoiTable             ( );
 
    // use THIS for a simple coi list:
-   int addEntry        (Coi &ocoi, int nAtPos=-1);
+   int addEntry         (Coi &ocoi, int nAtPos=-1);
    // it adds a COPY of the supplied coi.
 
-   int removeEntry     (int nAtPos);
-   int numberOfEntries ( );
-   Coi  *getEntry      (int iIndex, int nTraceLine);
-   int  setEntry       (int iIndex, Coi *pcoi);
-   int addSorted       (Coi &ocoi, char cSortedBy, bool bUseCase);
-   void resetEntries   ( );
-   bool isSet          (int iIndex);
+   int  removeEntry     (int nAtPos);
+   int  numberOfEntries ( );
+   Coi  *getEntry       (int iIndex, int nTraceLine);
+   int  setEntry        (int iIndex, Coi *pcoi);
+   int  addSorted       (Coi &ocoi, char cSortedBy, bool bUseCase);
+   void resetEntries    ( );
+   bool isSet           (int iIndex);
+   int  hasEntry        (char *pszFilename);
 
 private:
-   int expand          (int nSoMuch);
+   int expand           (int nSoMuch);
    int nClArraySize;
    int nClArrayUsed;
    Coi  **apClArray;
@@ -1524,6 +1547,7 @@ public:
 
    int files     ; // visible plus hidden
    int filesChg  ; // no. of files changed
+   int filesZip  ; // no. of files (un)zipped
    int noFiles   ; // fnames that failed to stat etc.
    int dirs      ; // visible plus hidden
    int filesCloned ; // no. of files with attributes copied
@@ -1541,9 +1565,11 @@ public:
    int filesDeleted ;
    int filesDeletedWP;
    int dirsDeleted  ;
+   int dirsDelFailed;
    int dirsDeletedWP;
    int filesScanned ;
    int dirsScanned  ;
+   int filesDelFailed;
    int filesNewerInDst ;
    int filesStale ; // deletion candidate
    int filesRedundant;  // rename
@@ -1584,7 +1610,7 @@ public:
    bool nocheck;     // do not perform any checks
    bool noinfo;      // do not tell infos
    bool nochain;     // disable command chains
-   bool useJustNames;// create a list of filenames
+   int  useJustNames;// create a list of filenames
    bool countMatchLines; // count no. of matching lines
    bool yes;
    bool logcmd;
@@ -1592,7 +1618,7 @@ public:
    bool nostop;
    bool syncFiles;   // sync files instead of copy
    bool syncOlder;   // with sync, copy older over newer files
-   bool flat;        // copy: flat output filenames
+   int  flat;        // copy: flat output filenames
    char cflatpat;    // how to join flat output name
    bool nonames;     // do NOT print/pass :file records
    bool noind;       // no indentation
@@ -1744,7 +1770,7 @@ public:
    int  xmaxlen;           // xpat default maxlen
    int  xmaxlit;           // xpat max literal size
    bool nodirtime;         // copy should not clone dir times
-   bool tolines;           // with extract
+   bool collines;          // sfk193 with xed
    bool fixedbylist;       // force fixed record -bylist file
    bool showpre;           // replace
    bool showpost;          // replace
@@ -1847,11 +1873,14 @@ public:
    bool bzip2;
    bool force64;
    bool catzip;
+   Coi  *pOutCoi;
    bool toziplist;
    bool addmeta;
    char *tozipname;
    uint nzipredundant;
    uint mofftime;          // apply for 0:dos 1:unix 2:ntfs
+   bool bjustcrc;
+   uint njustcrc;
    #endif // SFKPACK
    int  tracecase;
    bool nocasemin;         // sfk190 just latin a-z
@@ -1871,6 +1900,8 @@ public:
    int  imore;
    int  morepage;
    int  makemd5;
+   bool crcmd5;            // use crc instead of md5
+   bool keepdata;          // keep chaindata with setvar
 };
 
 // extern struct CommandStats gs;
@@ -2091,6 +2122,8 @@ public:
    StringPipe *perlinein;
    StringPipe *perlineout;
 
+   KeyMap *justNamesFilter;
+
    bool  text2files;
    bool  files2text;
 
@@ -2108,6 +2141,7 @@ public:
    int  addBlockAsLines(char *pData, int iData);
 
    int  addFile(Coi &ocoi); // is COPIED
+   int  hasFile(char *psz);
    int  numberOfInFiles() { return infiles->numberOfEntries(); }
    Coi  *getFile(int nIndex); // returns null on wrong index
 
@@ -2225,7 +2259,7 @@ char *aClXCmdParms   [100];
 
 extern KeyMap glblSFKVar;
 bool   sfkhavevars();
-int    sfksetvar(char *pname, uchar *pdata, int idata);
+int    sfksetvar(char *pname, uchar *pdata, int idata, int badd=0);
 uchar *sfkgetvar(char *pname, int *plen);
 uchar *sfkgetvar(int i, char **ppname, int *plen);
 void   sfkfreevars();
@@ -2687,6 +2721,8 @@ extern uchar sfkMapChar(char ch, uchar bCase);
 extern uchar sfkLowerUChar(uchar c);
 extern uchar sfkUpperUChar(uchar c);
 extern void  sfkSetHeadMatch(uchar ucFirst, uchar aHeadMatch[]);
+extern char *getMacForIP(uint uiIP);
+extern bool  useOfficeBaseNames();
 extern SFKChars sfkchars;
 
 #endif // _SFKBASE_HPP_

@@ -125,6 +125,15 @@ $TEXE -nocol filter res-52.txt -sep " " -form "#col1" >res-52-2.txt
 $TEXE -nocol test $TCMD T16.2.md5gen res-51-2.txt
 $TEXE -nocol test $TCMD T16.3.md5gen res-52-2.txt
 
+$TEXE -nocol crcgento=tmp-51.txt testfiles/FooBank >/dev/null
+$TEXE -nocol crcgento tmp-52.txt testfiles/FooBank >/dev/null
+$TEXE -nocol crccheck=tmp-51.txt -quiet >res-53.txt
+$TEXE -nocol crccheck tmp-52.txt -skip 2 -quiet >res-54.txt
+$TEXE -nocol filter res-53.txt -sep " " -form "#col1" >res-53-2.txt
+$TEXE -nocol filter res-54.txt -sep " " -form "#col1" >res-54-2.txt
+$TEXE -nocol test $TCMD T16.4.crcgen res-53-2.txt
+$TEXE -nocol test $TCMD T16.5.crcgen res-54-2.txt
+
 $TEXE -nocol echo "mid include quick fox" >res-60-1.txt
 $TEXE -nocol filt testfiles/Formats/23-filt-patterns.txt "-+quick*fox" >>res-60-1.txt
 
@@ -262,7 +271,7 @@ $TEXE -nocol echo -lit -noline "and the paragraph continues " >>res-79.txt
 $TEXE -nocol echo -lit "until here." >>res-79.txt
 $TEXE -nocol echo -lit "----- block4 end -----" >>res-79.txt
 $TEXE -nocol addcr -quiet res-79.txt >/dev/null
-$TEXE -nocol md5 res-79.txt >res-79-2.txt
+$TEXE -nocol md5 -name res-79.txt >res-79-2.txt
 $TEXE -nocol test $TCMD T26.1.echo res-79-2.txt
 
 $TEXE -nocol echo -spat "[filter -cut  including markers: strip ads]\\n" +tofile res-80.txt
@@ -278,40 +287,40 @@ $TEXE -nocol filter testfiles/Formats/24-line-blocks.txt -inc "ad-begin" to "ad-
 $TEXE -nocol echo -spat "\\n[filter -inc excluding markers: isolate ads]\\n" +tofile -append res-80.txt
 $TEXE -nocol filter testfiles/Formats/24-line-blocks.txt -inc- "ad-begin" to "ad-end" +tofile -append res-80.txt
 $TEXE -nocol addcr -quiet res-80.txt >/dev/null
-$TEXE -nocol md5 res-80.txt >res-81.txt
+$TEXE -nocol md5 -name res-80.txt >res-81.txt
 $TEXE -nocol test $TCMD T26.2.cutinc res-81.txt
 
 
 cd testfiles
 cd myproj
 ../../$TEXE -nocol sel -dir .              +tofile    ../../myproj.txt
-../../$TEXE -nocol sel -dir . -sub :myscm    +difflines ../../myproj.txt >../../res-30-1.txt
-../../$TEXE -nocol sel -dir . -sub :/.myscm  +difflines ../../myproj.txt >../../res-30-2.txt
-../../$TEXE -nocol sel -dir . :.myscm/     +difflines ../../myproj.txt >../../res-30-3.txt
-../../$TEXE -nocol sel -dir . :/.myscm/    +difflines ../../myproj.txt >../../res-30-4.txt
-../../$TEXE -nocol sel -dir . :.myscm      +difflines ../../myproj.txt >../../res-30-5.txt
-../../$TEXE -nocol sel -dir . :/gui/login/ +difflines ../../myproj.txt >../../res-30-6.txt
+../../$TEXE -nocol sel -dir . -sub :myscm    +tdifflines -quiet ../../myproj.txt >../../res-30-1.txt
+../../$TEXE -nocol sel -dir . -sub :/.myscm  +tdifflines -quiet ../../myproj.txt >../../res-30-2.txt
+../../$TEXE -nocol sel -dir . :.myscm/     +tdifflines -quiet ../../myproj.txt >../../res-30-3.txt
+../../$TEXE -nocol sel -dir . :/.myscm/    +tdifflines -quiet ../../myproj.txt >../../res-30-4.txt
+../../$TEXE -nocol sel -dir . :.myscm      +tdifflines -quiet ../../myproj.txt >../../res-30-5.txt
+../../$TEXE -nocol sel -dir . :/gui/login/ +tdifflines -quiet ../../myproj.txt >../../res-30-6.txt
 
-../../$TEXE -nocol sel -dir . -subdir %myscm +difflines ../../myproj.txt >../../res-31-1.txt
-../../$TEXE -nocol sel -dir . %/.myscm     +difflines ../../myproj.txt >../../res-31-2.txt
-../../$TEXE -nocol sel -dir . %.myscm/     +difflines ../../myproj.txt >../../res-31-3.txt
-../../$TEXE -nocol sel -dir . %/.myscm/    +difflines ../../myproj.txt >../../res-31-4.txt
-../../$TEXE -nocol sel -dir . %/gui/login/ +difflines ../../myproj.txt >../../res-31-5.txt
-../../$TEXE -nocol sel -dir . %.myscm      +difflines ../../myproj.txt >../../res-31-6.txt
+../../$TEXE -nocol sel -dir . -subdir %myscm +tdifflines -quiet ../../myproj.txt >../../res-31-1.txt
+../../$TEXE -nocol sel -dir . %/.myscm     +tdifflines -quiet ../../myproj.txt >../../res-31-2.txt
+../../$TEXE -nocol sel -dir . %.myscm/     +tdifflines -quiet ../../myproj.txt >../../res-31-3.txt
+../../$TEXE -nocol sel -dir . %/.myscm/    +tdifflines -quiet ../../myproj.txt >../../res-31-4.txt
+../../$TEXE -nocol sel -dir . %/gui/login/ +tdifflines -quiet ../../myproj.txt >../../res-31-5.txt
+../../$TEXE -nocol sel -dir . %.myscm      +tdifflines -quiet ../../myproj.txt >../../res-31-6.txt
 
-../../$TEXE -nocol sel -dir . -file :myscm      +difflines ../../myproj.txt >../../res-32-1.txt
-../../$TEXE -nocol sel -dir . -file :/.myscm    +difflines ../../myproj.txt >../../res-32-2.txt
-../../$TEXE -nocol sel -dir . -file :.myscm/    +difflines ../../myproj.txt >../../res-32-3.txt
-../../$TEXE -nocol sel -dir . -file :/.myscm/   +difflines ../../myproj.txt >../../res-32-4.txt
-../../$TEXE -nocol sel -dir . -file :.myscm     +difflines ../../myproj.txt >../../res-32-5.txt
-../../$TEXE -nocol sel -dir . -file :/oth%scm/  +difflines ../../myproj.txt >../../res-32-6.txt
+../../$TEXE -nocol sel -dir . -file :myscm      +tdifflines -quiet ../../myproj.txt >../../res-32-1.txt
+../../$TEXE -nocol sel -dir . -file :/.myscm    +tdifflines -quiet ../../myproj.txt >../../res-32-2.txt
+../../$TEXE -nocol sel -dir . -file :.myscm/    +tdifflines -quiet ../../myproj.txt >../../res-32-3.txt
+../../$TEXE -nocol sel -dir . -file :/.myscm/   +tdifflines -quiet ../../myproj.txt >../../res-32-4.txt
+../../$TEXE -nocol sel -dir . -file :.myscm     +tdifflines -quiet ../../myproj.txt >../../res-32-5.txt
+../../$TEXE -nocol sel -dir . -file :/oth%scm/  +tdifflines -quiet ../../myproj.txt >../../res-32-6.txt
 
-../../$TEXE -nocol sel -dir . -file myscm       +difflines ../../myproj.txt >../../res-33-1.txt
-../../$TEXE -nocol sel -dir . -file /.myscm     +difflines ../../myproj.txt >../../res-33-2.txt
-../../$TEXE -nocol sel -dir . -file .myscm/     +difflines ../../myproj.txt >../../res-33-3.txt
-../../$TEXE -nocol sel -dir . -file /.myscm/    +difflines ../../myproj.txt >../../res-33-4.txt
-../../$TEXE -nocol sel -dir . -file .myscm      +difflines ../../myproj.txt >../../res-33-5.txt
-../../$TEXE -nocol sel -dir . -file /oth%scm/   +difflines ../../myproj.txt >../../res-33-6.txt
+../../$TEXE -nocol sel -dir . -file myscm       +tdifflines -quiet ../../myproj.txt >../../res-33-1.txt
+../../$TEXE -nocol sel -dir . -file /.myscm     +tdifflines -quiet ../../myproj.txt >../../res-33-2.txt
+../../$TEXE -nocol sel -dir . -file .myscm/     +tdifflines -quiet ../../myproj.txt >../../res-33-3.txt
+../../$TEXE -nocol sel -dir . -file /.myscm/    +tdifflines -quiet ../../myproj.txt >../../res-33-4.txt
+../../$TEXE -nocol sel -dir . -file .myscm      +tdifflines -quiet ../../myproj.txt >../../res-33-5.txt
+../../$TEXE -nocol sel -dir . -file /oth%scm/   +tdifflines -quiet ../../myproj.txt >../../res-33-6.txt
 
 ../../$TEXE -nocol filefind oth scm       >../../res-34-1.txt
 ../../$TEXE -nocol filefind oth%scm       >../../res-34-2.txt

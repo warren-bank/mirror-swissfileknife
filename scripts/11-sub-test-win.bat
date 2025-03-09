@@ -126,6 +126,15 @@
 %TEXE% test %TCMD% T16.2.md5gen res-51-2.txt
 %TEXE% test %TCMD% T16.3.md5gen res-52-2.txt
 
+%TEXE% crcgento=tmp-51.txt testfiles\FooBank >nul
+%TEXE% crcgento tmp-52.txt testfiles\FooBank >nul
+%TEXE% crccheck=tmp-51.txt -quiet >res-53.txt
+%TEXE% crccheck tmp-52.txt -skip 2 -quiet >res-54.txt
+%TEXE% filter res-53.txt -sep " " -form "$col1" >res-53-2.txt
+%TEXE% filter res-54.txt -sep " " -form "$col1" >res-54-2.txt
+%TEXE% test %TCMD% T16.4.crcgen res-53-2.txt
+%TEXE% test %TCMD% T16.5.crcgen res-54-2.txt
+
 %TEXE% echo "mid include quick fox" >res-60-1.txt
 %TEXE% filt testfiles\Formats\23-filt-patterns.txt "-+quick*fox" >>res-60-1.txt
 
@@ -263,7 +272,7 @@
 %TEXE% echo -lit "until here." >>res-79.txt
 %TEXE% echo -lit "----- block4 end -----" >>res-79.txt
 %TEXE% addcr -quiet res-79.txt >nul
-%TEXE% md5 res-79.txt >res-79-2.txt
+%TEXE% md5 -name res-79.txt >res-79-2.txt
 %TEXE% test %TCMD% T26.1.echo res-79-2.txt
 
 %TEXE% echo -spat "[filter -cut  including markers: strip ads]\n" +tofile res-80.txt
@@ -279,7 +288,7 @@
 %TEXE% echo -spat "\n[filter -inc excluding markers: isolate ads]\n" +tofile -append res-80.txt
 %TEXE% filter testfiles\Formats\24-line-blocks.txt -inc- "ad-begin" to "ad-end" +tofile -append res-80.txt
 %TEXE% addcr -quiet res-80.txt >nul
-%TEXE% md5 res-80.txt >res-81.txt
+%TEXE% md5 -name res-80.txt >res-81.txt
 %TEXE% test %TCMD% T26.2.cutinc res-81.txt
 
 %TEXE% filter testfiles\Formats\34-csv-data-lines.txt -spat -rep "_\x01__" -within "\q*\q" -rep "_,_\x01_" -sep "," -form "$col5\t$col3\t$col1\t$col2\t$col4" -rep "_\x01_,_" >res-271.txt
@@ -288,33 +297,33 @@
 cd testfiles
 cd myproj
 ..\..\%TEXE% sel -dir .              +tofile    ..\..\myproj.txt
-..\..\%TEXE% sel -dir . -sub !myscm    +difflines ..\..\myproj.txt >..\..\res-30-1.txt
-..\..\%TEXE% sel -dir . -sub !\.myscm  +difflines ..\..\myproj.txt >..\..\res-30-2.txt
-..\..\%TEXE% sel -dir . !.myscm\     +difflines ..\..\myproj.txt >..\..\res-30-3.txt
-..\..\%TEXE% sel -dir . !\.myscm\    +difflines ..\..\myproj.txt >..\..\res-30-4.txt
-..\..\%TEXE% sel -dir . !.myscm      +difflines ..\..\myproj.txt >..\..\res-30-5.txt
-..\..\%TEXE% sel -dir . !\gui\login\ +difflines ..\..\myproj.txt >..\..\res-30-6.txt
+..\..\%TEXE% sel -dir . -sub !myscm    +tdifflines -quiet ..\..\myproj.txt >..\..\res-30-1.txt
+..\..\%TEXE% sel -dir . -sub !\.myscm  +tdifflines -quiet ..\..\myproj.txt >..\..\res-30-2.txt
+..\..\%TEXE% sel -dir . !.myscm\     +tdifflines -quiet ..\..\myproj.txt >..\..\res-30-3.txt
+..\..\%TEXE% sel -dir . !\.myscm\    +tdifflines -quiet ..\..\myproj.txt >..\..\res-30-4.txt
+..\..\%TEXE% sel -dir . !.myscm      +tdifflines -quiet ..\..\myproj.txt >..\..\res-30-5.txt
+..\..\%TEXE% sel -dir . !\gui\login\ +tdifflines -quiet ..\..\myproj.txt >..\..\res-30-6.txt
 
-..\..\%TEXE% sel -dir . -subdir *myscm +difflines ..\..\myproj.txt >..\..\res-31-1.txt
-..\..\%TEXE% sel -dir . *\.myscm     +difflines ..\..\myproj.txt >..\..\res-31-2.txt
-..\..\%TEXE% sel -dir . *.myscm\     +difflines ..\..\myproj.txt >..\..\res-31-3.txt
-..\..\%TEXE% sel -dir . *\.myscm\    +difflines ..\..\myproj.txt >..\..\res-31-4.txt
-..\..\%TEXE% sel -dir . *\gui\login\ +difflines ..\..\myproj.txt >..\..\res-31-5.txt
-..\..\%TEXE% sel -dir . *.myscm      +difflines ..\..\myproj.txt >..\..\res-31-6.txt
+..\..\%TEXE% sel -dir . -subdir *myscm +tdifflines -quiet ..\..\myproj.txt >..\..\res-31-1.txt
+..\..\%TEXE% sel -dir . *\.myscm     +tdifflines -quiet ..\..\myproj.txt >..\..\res-31-2.txt
+..\..\%TEXE% sel -dir . *.myscm\     +tdifflines -quiet ..\..\myproj.txt >..\..\res-31-3.txt
+..\..\%TEXE% sel -dir . *\.myscm\    +tdifflines -quiet ..\..\myproj.txt >..\..\res-31-4.txt
+..\..\%TEXE% sel -dir . *\gui\login\ +tdifflines -quiet ..\..\myproj.txt >..\..\res-31-5.txt
+..\..\%TEXE% sel -dir . *.myscm      +tdifflines -quiet ..\..\myproj.txt >..\..\res-31-6.txt
 
-..\..\%TEXE% sel -dir . -file !myscm      +difflines ..\..\myproj.txt >..\..\res-32-1.txt
-..\..\%TEXE% sel -dir . -file !\.myscm    +difflines ..\..\myproj.txt >..\..\res-32-2.txt
-..\..\%TEXE% sel -dir . -file !.myscm\    +difflines ..\..\myproj.txt >..\..\res-32-3.txt
-..\..\%TEXE% sel -dir . -file !\.myscm\   +difflines ..\..\myproj.txt >..\..\res-32-4.txt
-..\..\%TEXE% sel -dir . -file !.myscm     +difflines ..\..\myproj.txt >..\..\res-32-5.txt
-..\..\%TEXE% sel -dir . -file !\oth*scm\  +difflines ..\..\myproj.txt >..\..\res-32-6.txt
+..\..\%TEXE% sel -dir . -file !myscm      +tdifflines -quiet ..\..\myproj.txt >..\..\res-32-1.txt
+..\..\%TEXE% sel -dir . -file !\.myscm    +tdifflines -quiet ..\..\myproj.txt >..\..\res-32-2.txt
+..\..\%TEXE% sel -dir . -file !.myscm\    +tdifflines -quiet ..\..\myproj.txt >..\..\res-32-3.txt
+..\..\%TEXE% sel -dir . -file !\.myscm\   +tdifflines -quiet ..\..\myproj.txt >..\..\res-32-4.txt
+..\..\%TEXE% sel -dir . -file !.myscm     +tdifflines -quiet ..\..\myproj.txt >..\..\res-32-5.txt
+..\..\%TEXE% sel -dir . -file !\oth*scm\  +tdifflines -quiet ..\..\myproj.txt >..\..\res-32-6.txt
 
-..\..\%TEXE% sel -dir . -file myscm       +difflines ..\..\myproj.txt >..\..\res-33-1.txt
-..\..\%TEXE% sel -dir . -file \.myscm     +difflines ..\..\myproj.txt >..\..\res-33-2.txt
-..\..\%TEXE% sel -dir . -file .myscm\     +difflines ..\..\myproj.txt >..\..\res-33-3.txt
-..\..\%TEXE% sel -dir . -file \.myscm\    +difflines ..\..\myproj.txt >..\..\res-33-4.txt
-..\..\%TEXE% sel -dir . -file .myscm      +difflines ..\..\myproj.txt >..\..\res-33-5.txt
-..\..\%TEXE% sel -dir . -file \oth*scm\   +difflines ..\..\myproj.txt >..\..\res-33-6.txt
+..\..\%TEXE% sel -dir . -file myscm       +tdifflines -quiet ..\..\myproj.txt >..\..\res-33-1.txt
+..\..\%TEXE% sel -dir . -file \.myscm     +tdifflines -quiet ..\..\myproj.txt >..\..\res-33-2.txt
+..\..\%TEXE% sel -dir . -file .myscm\     +tdifflines -quiet ..\..\myproj.txt >..\..\res-33-3.txt
+..\..\%TEXE% sel -dir . -file \.myscm\    +tdifflines -quiet ..\..\myproj.txt >..\..\res-33-4.txt
+..\..\%TEXE% sel -dir . -file .myscm      +tdifflines -quiet ..\..\myproj.txt >..\..\res-33-5.txt
+..\..\%TEXE% sel -dir . -file \oth*scm\   +tdifflines -quiet ..\..\myproj.txt >..\..\res-33-6.txt
 
 ..\..\%TEXE% filefind oth scm       >..\..\res-34-1.txt
 ..\..\%TEXE% filefind oth*scm       >..\..\res-34-2.txt

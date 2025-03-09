@@ -1888,6 +1888,14 @@ int SFKMatch::parseFromMask(char *pSrcIn)
             istate = 10;
             continue;
          }
+         if (!strncmp((char*)pSrcCur, "skip", 4)) {
+            if (iClFrom > 0)
+               return 9+sfkerr("[skip] is allowed only as first word.");
+            pSrcCur += 4;
+            bClIsSkipPattern = 1;
+            istate = 10;
+            continue;
+         }
          /*
          if (!strncmp((char*)pSrcCur, "end or byte of ", 15)) {
             pSrcCur += 15;

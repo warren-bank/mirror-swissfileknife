@@ -49,6 +49,7 @@ extern int nGlblFunc;
 extern unsigned char abBuf[MAX_ABBUF_SIZE+100];
 
 extern Array glblGrepPat;
+extern Array glblUnzipMask;
 
 #ifdef _WIN32
 bool vname();
@@ -121,11 +122,16 @@ int dumpOutput(uchar *pOutText, char *pOutAttr, num nOutSize, bool bHexDump);
 int sfkmkdir(char *pszName, bool braw=0);
 int ansiToUTF(char *pdst, int imaxdst, char *psrc);
 void utfToAnsi(char *pdst, int imaxdst, char *psrc);
-int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, bool &bSize, bool &bPure, bool &bOptErr);
+int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, bool &bSize, bool &bCRC, bool &bPure, bool &bOptErr);
 const char *getPureSFKVersion();
 const char *getShortOSName();
 bool anyHiCodes(char *psz);
 bool stribeg(char *psz, cchar *pstart);
+void stripOfficeName(char *psz);
+uchar *loadBinaryFlex(Coi &ocoi, num &rnFileSize);
+bool isEmpty(char *psz);
+bool  strbeg(char *pszStr, cchar *pszPat);
+bool  stribeg(char *psz, cchar *pstart);
 
 extern CoiTable glblFileListCache;
 
@@ -198,6 +204,7 @@ KeyMap glblSFKVar;
 
 struct SFKVarHead {
    int iDataLen;
+   int iAllocLen; // sfk1921 including header
 };
 
 bool sfkhavevars( )
@@ -205,10 +212,24 @@ bool sfkhavevars( )
    return glblSFKVar.size() ? 1 : 0;
 }
 
-int sfksetvar(char *pname, uchar *pdata, int idata)
+bool isvarnamechar(char c, bool bforset)
 {
-   if (pdata == 0) return 9+perr("int. #2171132");
-   if (idata <  0) return 9+perr("int. #2171133");
+   if (isalpha(c)) // varname
+      return 1;
+   if (isdigit(c))
+      return 1;
+   if (c=='_')
+      return 1;
+   if (bforset==0 && c=='.')
+      return 1;
+   return 0;
+}
+
+// sfk1922 addtovar support
+int sfksetvar(char *pname, uchar *pDataIn, int iDataIn, int badd)
+{
+   if (pDataIn == 0) return 9+perr("int. #2171132");
+   if (iDataIn <  0) return 9+perr("int. #2171133");
 
    for (char *psz=pname; *psz; psz++)
    {
@@ -224,54 +245,127 @@ int sfksetvar(char *pname, uchar *pdata, int idata)
       return 9;
    }
 
-   if (cs.debug) {
-      if (memchr(pdata, 0, idata))
-         printf("[setvar %s = (binary)]\n",pname);
-      else
-         printf("[setvar %s = %.*s]\n",pname,idata,(char*)pdata);
-   }
-
    int iHeadSize = sizeof(struct SFKVarHead);
 
    struct SFKVarHead oOldHead;
+   struct SFKVarHead oNewHead;
 
-   uchar *pOldData = (uchar*)glblSFKVar.get(pname);
+   uchar *pOldDataRaw = (uchar*)glblSFKVar.get(pname);
+   uchar *pOldDataNet = pOldDataRaw;
 
-   if (pOldData) {
-      memcpy(&oOldHead, pOldData, iHeadSize);
-      pOldData += iHeadSize;
+   uchar *pNewDataRaw = 0;
+   uchar *pNewDataNet = 0;
+
+   int iOldAlloc=0, iOldUsed=0, iOldRemain=0;
+   int iNewAlloc=0, iNewUsed=0, iAddSpace=0;
+
+   oOldHead.iDataLen = oOldHead.iAllocLen = 0;
+   oNewHead.iDataLen = oNewHead.iAllocLen = 0;
+ 
+   if (pOldDataRaw)
+   {
+      // get old data
+      memcpy(&oOldHead, pOldDataRaw, iHeadSize);
+
+      pOldDataNet = pOldDataRaw + iHeadSize;
+      iOldAlloc   = oOldHead.iAllocLen;
+      iOldUsed    = oOldHead.iDataLen;
+      iOldRemain  = iOldAlloc - iHeadSize - iOldUsed;
+
+      // check signature
+      if (pOldDataNet[iOldUsed] != 0)
+         return 9+perr("sfkvar mem overwrite.1: %s\n", pname);
    }
 
-   if (   pOldData != 0 // fix sfk189 crash x64
-       && oOldHead.iDataLen == idata
+   if (   badd == 0
+       && pOldDataRaw != 0
+       && iOldUsed == iDataIn
       )
    {
-      // sfk185: reuse var memory on same length.
-      memcpy(pOldData, pdata, idata);
-      // keeps same zero term and size.
-      if (pOldData[idata] != 0)
-         return 9+perr("sfkvar int. error #2173271");
+      // reuse var memory on exactly same length.
+      memcpy(pOldDataNet, pDataIn, iDataIn);
+      if (cs.debug) printf("[var.update  %05u %s]\n", iDataIn, pname);
+   }
+   else if (pOldDataRaw != 0 && badd == 1 && iDataIn+10 < iOldRemain)
+   {
+      // add to existing, by simple copy into free space
+
+      // force lf on old if non empty
+      if (iOldUsed > 0 && pOldDataNet[iOldUsed-1] != '\n')
+         pOldDataNet[iOldUsed++] = '\n';
+
+      // append new to old
+      memcpy(pOldDataNet+iOldUsed, pDataIn, iDataIn);
+      iOldUsed += iDataIn;
+
+      // force lf on new. also force lf if new is empty.
+      if (iOldUsed < 1 || iDataIn < 1 || pOldDataNet[iOldUsed-1] != '\n')
+         pOldDataNet[iOldUsed++] = '\n';
+
+      pOldDataNet[iOldUsed] = '\0';
+
+      // update header
+      oOldHead.iDataLen = iOldUsed;
+      memcpy(pOldDataRaw, &oOldHead, iHeadSize);
+
+      if (cs.debug) printf("[var.addfast %05u %s]\n", oOldHead.iDataLen, pname);
    }
    else
    {
-      struct SFKVarHead ohead;
-   
-      uchar *pcopy = new uchar[iHeadSize+idata+1];
-      if (!pcopy)
-         return 9+perr("outofmem");
-   
-      ohead.iDataLen = idata;
-      memcpy(pcopy, &ohead, iHeadSize);
+      // allocate new, to copy or join
+      if (badd == 0)
+      {
+         // do not add to old content.
+         // pointer will be cleaned up below.
+         iOldUsed = 0;
+      }
 
-      if (idata > 0)
-         memcpy(pcopy+iHeadSize, pdata, idata);
-      pcopy[iHeadSize+idata] = '\0'; // safety
-   
-      uchar *pold = (uchar*)glblSFKVar.get(pname);
-      if (pold)
-         delete [] pold;
-   
-      glblSFKVar.put(pname, pcopy);
+      iAddSpace = badd ? MAX_LINE_LEN : 0;
+      iNewAlloc = iHeadSize + iOldUsed + 1 + iDataIn + 1 + iAddSpace;
+
+      if (cs.debug) printf("[var.alloc %05u %s add=%d %d %.20s]\n",
+         iNewAlloc, pname, badd, iDataIn, 
+         dataAsTrace(pDataIn,mymin(iDataIn,20)));
+
+      pNewDataRaw = new uchar[iNewAlloc + 4];
+      if (!pNewDataRaw)
+         return 9+perr("outofmem");
+
+      uchar *pNewDataNet = pNewDataRaw + iHeadSize;
+
+      iNewUsed = 0;
+
+      // copy old payload, if any
+      if (iOldUsed && pOldDataNet) {
+         memcpy(pNewDataNet, pOldDataNet, iOldUsed);
+         iNewUsed = iOldUsed;
+      }
+      // force lf on old if non empty
+      if (badd==1 && (iNewUsed > 0 && pNewDataNet[iNewUsed-1] != '\n'))
+         pNewDataNet[iNewUsed++] = '\n';
+
+      // append new payload
+      memcpy(pNewDataNet+iNewUsed, pDataIn, iDataIn);
+      iNewUsed += iDataIn;
+
+      // on add, force lf on new. also force lf if new is empty.
+      if (    badd==1 
+          && (iNewUsed < 1 || iDataIn < 1 || pNewDataNet[iNewUsed-1]!='\n')
+         )
+         pNewDataNet[iNewUsed++] = '\n';
+
+      pNewDataNet[iNewUsed] = '\0';
+
+      // set header
+      oNewHead.iDataLen = iNewUsed;
+      oNewHead.iAllocLen = iNewAlloc;
+      memcpy(pNewDataRaw, &oNewHead, iHeadSize);
+
+      glblSFKVar.put(pname, pNewDataRaw);
+
+      // cleanup
+      if (pOldDataRaw)
+         delete [] pOldDataRaw;
    }
 
    return 0;
@@ -5212,6 +5306,11 @@ int Coi::preload(cchar *pszFromInfo, bool bsilent, int iStopMode, bool bfile)
 
    if (cs.debug)
       printf("preload.1: %s %d mode=%d file=%d %s\n", pszFromInfo, bsilent, iStopMode, bfile, name());
+
+   #ifdef SFKPACK
+   if (isOfficeSubEntry())
+      return loadOfficeSubFile("preload");
+   #endif // SFKPACK
 
    bool bIsZipTrav = isTravelZip(111,1);
    bool bIsZipSub  = isZipSubEntry();
@@ -10974,7 +11073,7 @@ int execRename(Coi *pcoi)
          abDstPrint[sizeof(abDstPrint)-10] = '\0';
          memset(abDstAbsAtt, 'f', 6);
          if (!cs.quiet) printColorText(abDstPrint, abDstAbsAtt);
-         cs.filesChg++;
+         cs.filesChg++; // rename
       }
    }
 
@@ -11315,7 +11414,7 @@ int execXRename(Coi *pcoi) // file OR folder
          abDstPrint[sizeof(abDstPrint)-10] = '\0';
          memset(abDstAbsAtt, 'f', 6);
          if (!cs.quiet) printColorText(abDstPrint, abDstAbsAtt);
-         cs.filesChg++;
+         cs.filesChg++; // rename
       }
    }
 
@@ -11696,13 +11795,13 @@ int execFixFile(ushort *ain, sfkfinddata64_t *pdata)
          }
 
          if (!berr)
-            cs.filesChg++;
+            cs.filesChg++; // fixfile
       }
       while (0);
    }
    else
    {
-      cs.filesChg++;
+      cs.filesChg++; // fixfile
    }
 
    return 0;
@@ -13424,6 +13523,7 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
       chain.print(
          "#!/bin/bash\n"
          "sfk script $0 -from begin $@\n"
+         "exit\n" // sfk193
          "function skip_block\n"
          "{\n"
          "sfk label begin -var\n"
@@ -15446,8 +15546,6 @@ int execPackFile(Coi *pin, Coi *pout, bool bPack)
    return irc;
 }
 
-bool isEmpty(char *psz);
-
 // --------------------- zip support ---------------------
 
 typedef struct tm_zip_s
@@ -16010,7 +16108,7 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
                glblZipSortSize.addSorted(*pin, 'S', 0);
             if (cs.listByTime)
                glblZipSortTime.addSorted(*pin, 't', 0);
-            if (!bDir) cs.filesChg++;
+            if (!bDir) cs.filesZip++; // zip
          }
       }
       return 0;
@@ -16099,7 +16197,6 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
    uchar *p = aExtraFields;
    ushort nExtraSize1=0, nExtraSize2=0, nExtraSize3=0;
 
-   #if 1 // ziptime-ntfs
    // --- NTFS Extra Field ---
    
    nExtraSize1 = 8 + 24; // from: reserved
@@ -16128,9 +16225,7 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
    }
 
    nExtraSize1 += 4; // add header
-   #endif
 
-   #if 1 // ziptime-unix
    // --- Unix Extra Field ---
 
    nExtraSize2 = 12; // from: access time
@@ -16156,7 +16251,6 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
       *p++ = 0;
 
    nExtraSize2 += 4; // add header
-   #endif
 
    // --- windows: utf path extra field ---
 
@@ -16207,7 +16301,7 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
     #endif
    #endif
 
-   #if 1 // ziptime-dos
+   // ziptime-dos
 
    num nTimeForDos = (cs.mofftime & 1) ? nInTime2 : nInTime1;
 
@@ -16232,8 +16326,6 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
 
    // zi.dosDate = unix2dostime(nTimeForDos);
    // printf("### DosTime: %u 0x%x\n", zi.dosDate, zi.dosDate);
-
-   #endif
 
    #ifndef _WIN32
    // linux: set file mode as high word
@@ -16368,7 +16460,7 @@ int execZipFile(Coi *pin, int bDir, int iLevel)
       printFile("added", szInZipNameUTF, nTotalIn, nDoneOut, nPrintFlags);
 
    cs.totaloutbytes += nDoneOut;
-   if (!bDir) cs.filesChg++;
+   if (!bDir) cs.filesZip++; // zip
 
    return irc;
 }
@@ -16520,8 +16612,86 @@ int zipOEMToUTF(char *pdst, int imaxdst, char *psrc)
    return 0;
 }
 
-int execUnzip(char *pszInFile)
+int execUnzip(char *pszInFile, char *pszSubFile=0, int iOffice=0);
+
+int Coi::loadOfficeSubFile(cchar *pszFromInfo)
 {
+   if (data().src.data)
+      return 0; // nothing to do
+
+   char *proot = strdup(name());
+   CharAutoDel odel(proot);
+
+   #ifdef _WIN32
+   char *psz = strstr(proot, "\\\\");
+   #else
+   char *psz = strstr(proot, "//");
+   #endif
+
+   if (!psz)
+      return 9+perr("not an office subfile: %s\n", name());
+
+   *psz = 0;
+   psz += 2;
+
+   cs.pOutCoi = this;
+   cs.catzip = 1;
+   int irc = execUnzip(proot, psz); // loadOfficeSubFile
+   cs.catzip = 0;
+   cs.pOutCoi = 0;
+
+   return irc;
+}
+
+// caller MUST RELEASE COI after use!
+Coi *Coi::rawNextOfficeEntry( )
+{
+   if (!data().bdiropen) {
+      perr("nextEntry() called without openDir()");
+      return 0;
+   }
+
+   Coi *psubsrc = 0;
+
+   do
+   {
+      // something left to return?
+      if (data().nNextElemEntry >= data().elements().numberOfEntries())
+         return 0; // end of list
+
+      // return a COPY from the internal list entries.
+      psubsrc = data().elements().getEntry(data().nNextElemEntry, __LINE__);
+
+      data().nNextElemEntry++;
+   }
+   while (0);
+
+   // caller MUST RELEASE COI after use!
+   Coi *psubdst = psubsrc->copy();
+
+   psubdst->incref("nze");
+
+   return psubdst;
+}
+
+void Coi::rawCloseOfficeDir( )
+{
+   if (!data().bdiropen) {
+      pwarn("closeDir() called on non-open dir");
+      return;
+   }
+   // all elements have been returned as copies,
+   // and another processing is not possible.
+   // so we MAY cleanup the elements() list here.
+   // for now, do nothing. maybe later version
+   // of elements() will store offsets within zipfile.
+   data().bdiropen = 0;
+}
+
+void setSystemSlashes(char *pdst);
+
+int execUnzip(char *pszInFile, char *pszSubFile, int iOffice)
+{__
    char szAddInfo[100];
    char szSizeBuf[100];
    char szTimeBuf[100];
@@ -16539,7 +16709,7 @@ int execUnzip(char *pszInFile)
 
    if (cs.catzip)    iout = 2;
    else if (cs.test) iout = 1;
-   else if (cs.yes)  iout = 3;
+   else if (cs.yes==1 && cs.pOutCoi==0)  iout = 3;
 
    uint size_buf = 8192;
 
@@ -16552,7 +16722,7 @@ int execUnzip(char *pszInFile)
 
    unzFile uf = unzOpen64(pszInFile);
    if (uf == 0) {
-      perr("invalid zip file: %s",pszInFile);
+      pwarn("invalid zip file: %s",pszInFile);
       pinf("[nopre] the central directory was not found. the file may be incomplete,\n");
       pinf("[nopre] part of a multi part archive (which is not supported by sfk),\n");
       pinf("[nopre] or no zip file at all.\n");
@@ -16589,7 +16759,7 @@ int execUnzip(char *pszInFile)
    // sfk1920: always get global zip comment for interpretation
    if (unzGetGlobalComment(uf, szGlobalComment, sizeof(szGlobalComment)-10) > 0) 
    {
-      if (!cs.yes && !cs.toziplist && !glblGrepPat.numberOfEntries()) {
+      if (!cs.yes && !cs.toziplist && !glblUnzipMask.numberOfEntries()) {
          setTextColor(nGlblTimeColor);
          printf("%s\n", szGlobalComment);
          setTextColor(-1);
@@ -16616,6 +16786,7 @@ int execUnzip(char *pszInFile)
    char  szExtUTFName[SFK_MAX_PATH+20]; mclear(szExtUTFName);
 
    bool buname = cs.uname;
+   cchar *pszFileFeed = "";
 
    // szRefNameBuf: original name/        within zip
    // szLineBuf2  : local    name\        relative
@@ -16623,6 +16794,8 @@ int execUnzip(char *pszInFile)
 
    for (num i=0; i<gi.number_entry; i++)
    {
+      mtklog(("zip.proc.entry %d/%d",(int)i,(int)gi.number_entry));
+
       szRefNameBuf[0] = '\0';
       szFileComment[0] = '\0';
       mclear(abExtraField);
@@ -16791,34 +16964,58 @@ int execUnzip(char *pszInFile)
          bDir = 1;
       }
 
-      // ----- filter by masks -----
-      int iMasks = glblGrepPat.numberOfEntries();
-      int iPosMasks=0, iPosMatch=0;
       bool bskip = 0;
-      for (int imask=0; imask<iMasks; imask++)
+
+      int iMasks = glblUnzipMask.numberOfEntries();
+
+      if (pszSubFile)
       {
-         // TEMPORARY use of szLineBuf3 to build /mask/
-         snprintf(szLineBuf3, MAX_LINE_LEN, "%c%s%c", glblPathChar, szLineBuf2, glblPathChar);
-         char *pmask = glblGrepPat.getString(imask);
-         int n1=0, n2=0;
-         bool bneg   = 0;
-         if (*pmask==glblNotChar)
-            { bneg=1; pmask++; }
-         bool bmatch = matchstr(szLineBuf3, pmask, 0, n1, n2);
-         if (bneg) {
-            // apply blacklisting: -pat .h !.html
-            if (bmatch)
-               { iPosMasks=0; iPosMatch=0; bskip=1; break; }
-         } else {
-            // prepare whitelisting
-            iPosMasks++;
-            if (bmatch)
-               iPosMatch++;
-         }
+         // ----- extract a single sub file -----
+         if (strcmp(szLineBuf2, pszSubFile))
+            bskip = 1;
       }
-      // apply whitelisting: -pat /mysubdir/
-      if (iPosMasks>0 && iPosMatch==0)
-         bskip = 1;
+      else if (iMasks > 0)
+      {
+         // ----- filter by masks -----
+         int iPosMasks=0, iPosMatch=0;
+         for (int imask=0; imask<iMasks; imask++)
+         {
+            // TEMPORARY use of szLineBuf3 to build /mask/
+            snprintf(szLineBuf3, MAX_LINE_LEN, "%c%s%c", glblPathChar, szLineBuf2, glblPathChar);
+            char *pmask = glblUnzipMask.getString(imask);
+            int n1=0, n2=0;
+            bool bneg   = 0;
+            if (*pmask==glblNotChar)
+               { bneg=1; pmask++; }
+            bool bmatch = matchstr(szLineBuf3, pmask, 0, n1, n2);
+            if (bneg) {
+               // apply blacklisting: -pat .h !.html
+               if (bmatch)
+                  { iPosMasks=0; iPosMatch=0; bskip=1; break; }
+            } else {
+               // prepare whitelisting
+               iPosMasks++;
+               if (bmatch)
+                  iPosMatch++;
+            }
+         }
+         // apply whitelisting: -pat /mysubdir/
+         if (iPosMasks>0 && iPosMatch==0)
+            bskip = 1;
+      }
+      else if (cs.bjustcrc==1)
+      {
+         // with -crc=x do not list dir entries
+         if (bDir != 0 || crc != cs.njustcrc)
+            bskip = 1;
+      }
+      else if (iOffice == 1)
+      {
+         // ----- office mode 1: use only .xml files -----
+         int ilen = strlen(szLineBuf2);
+         if (ilen<4 || mystricmp(szLineBuf2+ilen-4, ".xml")!=0)
+            bskip = 1;
+      }
 
       if (bskip) {
          // jump past sub file
@@ -16831,7 +17028,6 @@ int execUnzip(char *pszInFile)
       }
 
       // render output filename
-      #if 1
       if (cs.todir)
       {
          #ifdef _WIN32
@@ -16844,21 +17040,6 @@ int execUnzip(char *pszInFile)
          if (strlen(szLineBuf3)+10 >= SFK_MAX_PATH)
             return 9+perr("output name too long: %s\n", szLineBuf3);
       }
-      #else
-      if (cs.tomask) 
-      {
-         #ifdef _WIN32
-         if (cs.uname)
-            ansiToUTF(szToMaskBuf, SFK_MAX_PATH, cs.tomask);
-         else
-         #endif
-            strcopy(szToMaskBuf, cs.tomask);
-         Coi osub(szLineBuf2, 0);
-         int nrc = renderOutMask(szLineBuf3, &osub, szToMaskBuf, cs.curcmd);
-         if (nrc > 0)
-            return 9+perr("invalid -todir given");
-      }
-      #endif
       else 
       {
          strcopy(szLineBuf3, szLineBuf2);
@@ -16939,6 +17120,38 @@ int execUnzip(char *pszInFile)
 
       if (iout < 1)
       {
+         if (cs.pOutCoi) 
+         {
+            // create office dir entry
+            mtklog(("office.dir.add begin"));
+
+            Coi *ppar      = cs.pOutCoi;
+            int nRootLen   = strlen(ppar->name());
+            int nSubLen    = strlen(szRefNameBuf);
+            char *psubname = new char[nRootLen+nSubLen+10];
+            sprintf(psubname, "%s%c%c%s", ppar->name(), glblPathChar, glblPathChar, szRefNameBuf);
+            setSystemSlashes(psubname + nRootLen + 2);
+
+            Coi *psub = new Coi(psubname, ppar->root());
+            psub->incref("clst");
+
+            SFKFindData myfdat;
+            memset(&myfdat, 0, sizeof(myfdat));
+            myfdat.size = nRawSize;
+            myfdat.time_write = nFileTime;
+            psub->fillFrom(&myfdat);
+            psub->crc = crc;
+
+            ppar->data().elements().addEntry(*psub);
+
+            if (!psub->decref())
+               delete psub; // no refs remaining, not cached
+
+            delete [] psubname;
+
+            mtklog(("office.dir.add end"));
+         }
+         else
          if (cs.toziplist) {
             glblZipList.addEntry(szRefNameBuf);
          }
@@ -16973,7 +17186,7 @@ int execUnzip(char *pszInFile)
          }
 
          cs.totaloutbytes += nRawSize;
-         if (!bDir) cs.filesChg++;
+         if (!bDir) cs.filesZip++; // zip
 
          // jump past sub file
          if ((i+1) < gi.number_entry) {
@@ -16983,11 +17196,12 @@ int execUnzip(char *pszInFile)
          }
          continue;
       }
-      if (iout == 2 && cs.nonames == 0) {
+      if (iout == 2 && cs.nonames == 0 && cs.pOutCoi == 0) {
          if (!chain.colany())
-            printx("<file>%s\n", ocoi.name());
+            printx("%s<file>%s\n", pszFileFeed, ocoi.name());
          else
-            chain.print("%s:file:\n%s\n", (i==0)?"":"\n", ocoi.name());
+            chain.print("%s:file:\n%s\n", pszFileFeed, ocoi.name());
+         pszFileFeed = "\n";
       }
 
       if (bDir)
@@ -17100,6 +17314,24 @@ int execUnzip(char *pszInFile)
 
       md5.reset();
 
+      // collect buffer for office sub entry read
+      char  *pColBuf = 0;
+      num    nColCur = 0;
+      num    nColRem = 0;
+      CharAutoDelete oDelBuf(&pColBuf);
+
+      if (iout == 2 && cs.pOutCoi != 0) 
+      {
+         pColBuf = new char[nRawSize+100];
+         if (!pColBuf) {
+            perr("out of memory: cannot read %s\n", cs.pOutCoi->name());
+            err = UNZ_PARAMERROR;
+         }
+         pColBuf[nRawSize] = 0;
+         nColRem = nRawSize;
+      }
+
+      if (err == 0)
       while (1)
       {
          if (userInterrupt())
@@ -17123,6 +17355,14 @@ int execUnzip(char *pszInFile)
                { }
             else if (iout == 2)
             {
+               if (pColBuf!=0) {
+                  if (nColRem < iread)
+                     { perr("invalid size while reading"); break; }
+                  memcpy(pColBuf+nColCur, buf, iread);
+                  nColCur += iread;
+                  nColRem -= iread;
+               }
+               else
                if (chain.coldata) {
                   // no binary support, we need the file headers.
                   if (chain.addStreamAsLines(2, (char*)buf, iread))
@@ -17268,7 +17508,13 @@ int execUnzip(char *pszInFile)
          }
       }
 
-      cs.filesChg++;
+      if (cs.pOutCoi!=0 && pColBuf!=0) {
+         cs.pOutCoi->setContent((uchar*)pColBuf, nColCur, nFileTime);
+         // disable auto delete. OutCoi owns this now.
+         pColBuf = 0;
+      }
+
+      cs.filesZip++; // zip
 
       // jump past sub file
       if ((i+1) < gi.number_entry)
@@ -18407,7 +18653,7 @@ int FileVerifier::verify()
             break;
          }
          perr("unable to read for verify: %s   \n", pszDst);
-         lRC = 5;
+         lRC = 5; // file verify
          nClFailed++;
          continue;
       }
@@ -19253,6 +19499,13 @@ int execFileCopy(Coi *pcoi)
 
    cs.filesScanned++;
 
+   #if 0
+   printf("copy.usefiles    %d\n", chain.usefiles);
+   printf("copy.rootrelname %d\n", cs.rootrelname);
+   printf("copy.rootabsname %d\n", cs.rootabsname);
+   printf("copy.optroot     %s\n", pszOptRoot ? pszOptRoot : "");
+   #endif
+
    // with input chaining, glblCopySrc will not be set.
    char *pszSrcRaw = pszGlblCopySrc;
    if (chain.usefiles) {
@@ -19281,6 +19534,11 @@ int execFileCopy(Coi *pcoi)
  
    if (cs.flat) {
       char cjoin = cs.cflatpat ? cs.cflatpat : '-';
+      if (cs.flat == 2) {
+         char *psla = strrchr(pszRelSrc, glblPathChar);
+         if (psla!=0 && strlen(psla)>1)
+            pszRelSrc = psla+1;
+      }
       strcopy(szAttrBuf2, pszRelSrc);
       for (int i=0; szAttrBuf2[i]; i++) {
          if (!ispathchr(szAttrBuf2[i]))
@@ -19289,6 +19547,13 @@ int execFileCopy(Coi *pcoi)
       }
       pszRelSrc = szAttrBuf2;
    }
+
+   #if 0
+   printf("copy.src.raw %s\n",pszSrcRaw);
+   printf("copy.src.abs %s\n",pszSrc);
+   printf("copy.src.rel %s\n",pszRelSrc);
+   printf("copy.dst.raw %s\n",pszDstRaw);
+   #endif
 
    // build full target name: d:/tmp/subdir/thefile.txt
    joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszDstRaw, pszRelSrc);
@@ -20902,8 +21167,10 @@ printx("        $[white]<def>     = chars of (\\t )     - 0 or more whitespaces\
        );
 #ifdef SFK_LOR
 printx("        special keywords that do not count as tokens:\n"
+       "        $[skip]<def>   - at the start of a pattern: skip such text\n"
+       "                   completely, do not count it as a search hit.\n"
        "        $[keep]<def>   - search also the following text but keep it\n"
-       "                   in the input data, without consuming it\n"
+       "                   in the input data, without consuming it.\n"
        "        $[ortext]<def> - foo[ortext]bar searches word foo or bar.\n"
        "                   [ortext] is allowed only between literals.\n"
        "\n"
@@ -21164,12 +21431,15 @@ void printBewareLean( )
 
 extern int  nGlblConsColumns;
 extern bool bGlblConsColumnsSet;
+extern cchar *officeExtList[];
 
 void webref(cchar *pszIn);
 void arcinf(int iind);
 
+// .
 void printHelpText(cchar *pszSub, bool bhelp, bool bext)
 {
+
    if (!strcmp(pszSub, "xe"))
    {
 
@@ -21484,6 +21754,12 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "      type \"sfk help opt\" to list all supported archive extensions.\n");
              #endif // VFILEBASE
       printx("\n"
+             "   $return codes for batch files\n"
+             "      0   nothing found\n"
+             "      1   any files or dirs found\n");
+      if (bhelp || !bext)
+      {
+      printx("\n"
              "   $aliases\n"
              "      #sfk dir<def>          same as \"sfk list -stat\".\n"
              "      #sfk select<def>       same as list, but ignoring chain input.\n"
@@ -21594,6 +21870,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "         doing this in a root dir like C:\\ may produce a filename listing\n"
              "         of several hundred MB in size.\n"
              );
+      }
    }
 
    if (!strcmp(pszSub, "filter"))
@@ -21825,6 +22102,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
       if (!wfilt) {
          printSearchReplaceCommands(1);
          printx("      #sfk getvar<def>    fast single line lookup in multi line variable\n"
+                "      #sfk difflines<def>      show different lines between two files\n"
                 "      #sfk help unicode<def>   about wide character conversion functions\n"
                 "\n");
       }
@@ -22207,6 +22485,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          );
          #endif
   printx("   $-noipex<def>    disable automatic IP expansion with some commands.\n");
+  printx("   $-qarc<def>      quick read top level archives but not nested ones.\n");
   printx("   $-wchar<def>     activate EXPERIMENTAL utf-16 (ucs-2, wide char) decoding,\n"
          "              allowing sfk find or filter to search text in utf-16 files.\n"
          "              should not be used when (re)writing files. get more infos\n"
@@ -22252,8 +22531,9 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
   printx("\n"
          "   $shell return code handling and error processing:\n"
          "\n"
-         "   $-showrc<def>    print sfk return code at program end. may not print anything\n"
-         "              in case of fatal errors, like wrong syntax (usually rc 9).\n"
+         "   $-showrc<def>    print sfk return code at end of command or program.\n"
+         "              may not print anything in case of fatal errors,\n"
+         "              like wrong syntax (usually rc 9).\n"
          "   $-exterr<def>    in case of operating system related errors like file access,\n"
          "              prints extended error information, if available.\n"
          "   $-waitonerr<def> wait for user input on every error.\n"
@@ -22562,6 +22842,31 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "                                drops cmd1 chain text silently.\n"
          "      in all cases, the chain is cleared. if another command is following,\n"
          "      it will receive no input from the chain.\n"
+         "\n");
+  printx("   $no data tunneling\n"
+         "      chain data can only be passed\n"
+         "      - from a data producing command like  #+echo mytext<def>\n"
+         "      - directly to the following command\n"
+         "        if it consumes data like            #+setvar myvar<def>\n"
+         "      - but not through a non consumer like #+tell othertext<def>\n"
+         "      $bad example:\n"
+         "        #sfk echo mytext +tell hello +setvar a\n"
+         "          stops with an error at setvar: no chain data\n"
+         "      $good example:\n"
+         "        #sfk echo mytext +setvar a +tell hello +getvar\n"
+         "          mytext is stored, hello is printed\n"
+         "\n"
+         "      in other words, in a command chain like:\n"
+         "      #sfk cmd1 +cmd2 +cmd3 +cmd4 +cmd5\n"
+         "      it is not possible to send data from cmd1 to cmd3/4/5\n"
+         "      if cmd2 does $not<def> use any chain data (e.g. if, tell).\n"
+         "      since sfk 1.9.3 this bypassing of cmd2 is disabled\n"
+         "      to avoid conflicts by unwanted chain data in cmd3/4/5.\n"
+         "      the only exception is: $cmd1 +label name +cmd2<def>\n"
+         "      use global option -keepdata or set environment variable\n"
+         "         <exp> SFK_CONFIG=keepdata\n"
+         "      for the sfk 1.9.2 behaviour which was inconsistent\n"
+         "      and worked only with some commands.\n"
          "\n"
          "   $using chain data with call / label / end\n"
          "      #sfk ... +call myfunc<def>      passes no chain data into myfunc\n"
@@ -22576,7 +22881,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      if another command follows in the chain, the option is reset.\n"
          "      but some options may also be specified on a global scope.\n"
          "      read more on that under \"$sfk help options<def>\".\n"
-         "\n"
+         "\n");
          /*
          "   $tracing a data flow within a script\n"
          "      set global option $-iotrace<def> like:\n"
@@ -22599,7 +22904,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      printed on terminal, use \"+then cmd\" in the chain.\n"
          "\n"
          */
-         "   $more in the SFK Book\n"
+  printx("   $more in the SFK Book\n"
          "      the #SFK Book<def> contains long examples with input,\n"
          "      output, script and detailed command explanations.\n"
          "      type \"#sfk book<def>\" for more.\n"
@@ -22702,8 +23007,9 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "         type #sfk run<def>, #sfk perline<def> etc. for further infos.\n"
          "\n");
   printx("   $see also\n"
-         "      #sfk setvar<def>   set an SFK variable\n"
-         "      #sfk getvar<def>   get SFK or environment variable\n"
+         "      #sfk setvar<def>    set an SFK variable\n"
+         "      #sfk addtovar<def>  append text lines to an SFK variable\n"
+         "      #sfk getvar<def>    get SFK or environment variable\n"
          "\n");
   printx("   $sfk variable output formatting\n"
          "\n"
@@ -22738,11 +23044,18 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "\n"
          "      #strpos(v,'text')<def>        get index of text within v.\n"
          "                              0=first char, -1=not found\n"
-         "      #strpos(v,-case 'text')<def>  same, case sensitive\n"
-         "      #strpos(v,-spat '\\x20')<def>  using slash patterns\n"
+         "      #strpos(v,-case 'text')<def>  same, case sensitive (fast)\n"
+         "      #strpos(v,myvar)<def>         get index of text from myvar\n"
+         "                              within text of variable v.\n"
+         "      #strpos(v,-spat '\\x20')<def>  search using slash patterns\n"
          "      #strrpos(v,'text')<def>       search from right side\n"
          "      #contains(v,'text')<def>      tells 1 if text is found in v,\n"
          "                              else 0. accepts -case and -spat\n"
+         "      #contains(v,-case a)<def>     tells if text from variable a\n"
+         "                              is contained within v using\n"
+         "                              fast case sensitive search\n"
+         "      #begins(v,'word')<def>        check if string starts with word.\n"
+         "                              returns 1 (yes) or 0 (no).\n"
          "      #substr(v,o[,l])<def>         substring from offset o length l\n"
          "                              which can be variables themselves.\n"
          "                              offset 0 is first char. negative o\n"
@@ -22754,6 +23067,7 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
       // "      #rpad(v,n)<def>               fill right side up to n chars\n"
          "      #isset(v)<def>                tells 1 if v is set, else 0\n"
          "      #strlen(v)<def>               number of characters in v\n"
+         "      #numlines(v)<def>             number of lines in v\n"
          "\n");
       /*
          "      $examples:\n"
@@ -22770,13 +23084,6 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
          "      $command                           output\n"
          "      +echo -var \"##(substr(a,4,3))\"     bar\n"
          "      +echo -var \"##(strpos(a,'bar'))\"   4\n"
-         "\n");
-  printx("   $searching a variable within a variable\n"
-         "\n"
-         "      nested expansions are not supported, so\n"
-         "         <examp>##contains(v,'##(a)')<def>\n"
-         "      is not valid. use instead:\n"
-         "         <examp>+getvar v +xex -justrc \"_##(a)_\" +if \"rc=1\"\n"
          "\n");
    }
 
@@ -23607,13 +23914,34 @@ char *SFKMapArgs::eval(char *pszExp)
          break;
       }
    
+      // numlines(foo)
+      if (!strcmp(pfunc, "numlines"))
+      {
+         if (csep != ')') return 0;
+
+         unsigned long nlines=0;
+         char *psz=pvart;
+         for (; *psz; psz++)
+            if (*psz=='\n') nlines++;
+         if (psz>pvart && psz[-1]!='\n')
+            nlines++;
+ 
+         snprintf(szClEvalOut, sizeof(szClEvalOut)-10,
+            "%lu", nlines);
+ 
+         bdone = 1;
+         break;
+      }
+
       // strpos(foo,'bar')
       // strpos(foo,-spat '\x20')
       // strpos(foo,-case 'Bar')
       // contains(foo,'bar')
+      // contains(foo,myvar) - sfk1922
       if (   !strcmp(pfunc, "strpos")
           || !strcmp(pfunc, "strrpos")
           || !strcmp(pfunc, "contains") // sfk1889
+          || !strcmp(pfunc, "begins")   // sfk193
          )
       {
          if (csep != ',') return 0;
@@ -23622,6 +23950,7 @@ char *SFKMapArgs::eval(char *pszExp)
          bool bspat = 0;
          bool brite = strcmp(pfunc, "strrpos") ? 0 : 1;
          bool bcont = strcmp(pfunc, "contains") ? 0 : 1;
+         bool bbeg  = strcmp(pfunc, "begins") ? 0 : 1;
    
          while (1)
          {
@@ -23637,31 +23966,53 @@ char *SFKMapArgs::eval(char *pszExp)
          }
    
          char *plitst = pnext;
-         if (*plitst!='\'') return 0; // nullptr == error
-         plitst++;
-         pnext = plitst;
-         for (; *pnext!=0 && *pnext!='\''; pnext++);
-         if (!*pnext) return 0;
-         *pnext++ = '\0';
-         if (*pnext!=')') return 0;
-   
-         if (bspat) {
-            if (copyFormStr(szLitBuf, sizeof(szLitBuf)-10, plitst, strlen(plitst), 2))
+         if (*plitst=='\'') {
+            plitst++;
+            pnext = plitst;
+            for (; *pnext!=0 && *pnext!='\''; pnext++);
+            if (!*pnext) return 0;
+            *pnext++ = '\0';
+            if (*pnext!=')') return 0;
+      
+            if (bspat) {
+               if (copyFormStr(szLitBuf, sizeof(szLitBuf)-10, plitst, strlen(plitst), 2))
+                  return 0;
+               plitst = szLitBuf;
+            }
+         } else {
+            // sfk1922: #(contains(foo,env.bar))
+            char *pnamst = pnext;
+            while (*pnext!=0 && *pnext!=')' && isvarnamechar(*pnext, 0)==1)
+               pnext++;
+            if (*pnext!=')' && isvarnamechar(*pnext, 0)==0)
                return 0;
-            plitst = szLitBuf;
+            *pnext++ = '\0';
+            plitst = (char*)sfkgetvar(pnamst, 0);
+            if (!plitst) {
+               perr("undefined variable: %s\n", pnamst);
+               return 0;
+            }
          }
    
          int ipos   = -1;
          char *phit = 0;
-         if (brite)
-            phit = bcase ? mystrrstr(pvart, plitst) : mystrristr(pvart, plitst);
-         else
-            phit = bcase ? strstr(pvart, plitst) : mystrstri(pvart, plitst);
-         if (phit)
-             ipos   = (int)(phit-pvart);
+
+         if (bbeg) {
+            // sfk193: begins with result 1 or 0
+            ipos = bcase ? strbeg(pvart, plitst) : stribeg(pvart, plitst);
+         } else {
+            // strpos, strrpos, contains
+            if (brite)
+               phit = bcase ? mystrrstr(pvart, plitst) : mystrristr(pvart, plitst);
+            else
+               phit = bcase ? strstr(pvart, plitst) : mystrstri(pvart, plitst);
    
-         if (bcont)
-            ipos = (ipos == -1) ? 0 : 1;
+            if (phit)
+                ipos   = (int)(phit-pvart);
+      
+            if (bcont)
+               ipos = (ipos == -1) ? 0 : 1;
+         }
    
          sprintf(szClEvalOut, "%d", ipos);
 
@@ -23685,7 +24036,10 @@ char *SFKMapArgs::eval(char *pszExp)
             ioff = ntxt + ioff;
             if (ioff < 0) return 0;
          }
-         if (ioff > ntxt) return 0;
+         if (ioff > ntxt) {
+            // fix sfk1920: accept offset beyond length
+            ioff = ntxt;
+         }
    
          int ilen = 0;
          if (ball) {
@@ -23719,7 +24073,10 @@ char *SFKMapArgs::eval(char *pszExp)
             ioff = ntxt + ioff;
             if (ioff < 0) return 0;
          }
-         if (ioff > ntxt) return 0;
+         if (ioff > ntxt) {
+            // fix sfk1922: accept offset beyond length
+            ioff = ntxt;
+         }
    
          int ilen = 0;
          if (ball) {
@@ -23732,12 +24089,17 @@ char *SFKMapArgs::eval(char *pszExp)
             ilen = varfuncval(plen); // sfk1914
          }
    
-         int n = strlen(pvart);
-         char *p2 = (pvart+n)-ioff;
+         int n    = strlen(pvart);
+         if (ioff > n) ioff = n;     // safety
+         char *p2 = (pvart + n) - ioff;
+         if (p2 < pvart)   p2 = pvart;   // sfk1922
+         if (p2 > pvart+n) p2 = pvart+n; // sfk1922
+
          char *p1 = p2 - ilen;
          if (ball) p1 = pvart;
-         if (p1 < pvart || p1 > pvart+n) return 0;
-         if (p2 < pvart || p2 > pvart+n) return 0;
+         if (p1 < pvart)   p1 = pvart;   // sfk1922
+         if (p1 > pvart+n) p1 = pvart+n; // sfk1922
+
          nres = p2-p1;
          pres = p1;
          // fall through
@@ -23886,6 +24248,174 @@ char *SFKMapArgs::eval(char *pszExp)
    #endif
 
    return szClEvalOut;
+}
+
+// -----------------------------------------------------
+
+// .
+// rc 5 : lines were truncated
+int diffMemText(char *pleft, char *prite,
+   char *padd, char *prem, char *psame, int astat[3]
+   )
+{__
+   KeyMap omapFile,omapChain,omapMix;
+   omapFile.setcase(cs.usecase);
+   omapChain.setcase(cs.usecase);
+   omapMix.setcase(cs.usecase);
+
+   int irc=0,isame=0,iadd=0,irem=0;
+
+   // read ref data, reducing dub lines
+   char *psz=pleft;
+   while (*psz!=0)
+   {
+      char *peol=psz;
+      while (*peol!=0 && *peol!='\n') peol++;
+      int ilen=peol-psz;
+      if (ilen>MAX_LINE_LEN) {
+         ilen = MAX_LINE_LEN;
+         irc = 5;
+      }
+      memcpy(szLineBuf,psz,ilen);
+      szLineBuf[ilen]='\0';
+      removeCRLF(szLineBuf);
+      omapFile.put(szLineBuf, 0);
+      omapMix.put(szLineBuf, 0);
+      psz=peol;
+      if (*psz) psz++;
+   }
+
+   // read chain text, reducing dub lines
+   psz=prite;
+   while (*psz!=0)
+   {
+      char *peol=psz;
+      while (*peol!=0 && *peol!='\n') peol++;
+      int ilen=peol-psz;
+      if (ilen>MAX_LINE_LEN) {
+         ilen = MAX_LINE_LEN;
+         irc = 5;
+      }
+      memcpy(szLineBuf,psz,ilen);
+      szLineBuf[ilen]='\0';
+      removeCRLF(szLineBuf);
+      omapChain.put(szLineBuf, 0);
+      omapMix.put(szLineBuf, 0);
+      psz=peol;
+      if (*psz) psz++;
+   }
+
+   // list differences
+   for (int i=0; i<omapMix.size(); i++)
+   {
+      char *pszMixLine = 0;
+      omapMix.iget(i, &pszMixLine);
+      if (!pszMixLine) continue; // safety
+ 
+      bool bChainSet = omapChain.isset(pszMixLine);
+      bool bFileSet  = omapFile.isset(pszMixLine);
+
+      char *ppre = 0;
+      char  ccol = ' ';
+
+      if (bChainSet && bFileSet) {
+         if (psame)
+            ppre = psame;
+         ccol = 'b';
+         isame++;
+      }
+      else
+      if (bChainSet) {
+         iadd++;
+         ppre = padd;
+         if (!irc) irc=1;
+         if (psame)
+            ccol = 'g';
+      } else {
+         irem++;
+         ppre = prem;
+         if (!irc) irc=1;
+         ccol = 'R';
+      }
+
+      if (ppre) {
+         // chain.print("%s %s\n", ppre, pszMixLine);
+         snprintf(szLineBuf, MAX_LINE_LEN, "%s %s", ppre, pszMixLine);
+         memset(szAttrBuf, ccol, strlen(szLineBuf));
+         if (chain.colany())
+            chain.addLine(szLineBuf, szAttrBuf);
+         else
+            printColorText(szLineBuf, szAttrBuf);
+      }
+   }
+
+   astat[0] = isame;
+   astat[1] = iadd;
+   astat[2] = irem;
+
+   return irc;
+}
+
+void dospell(char *pszWord, bool bNato, bool bPrefix)
+{
+   static const char *apszMixed[26] =
+   {
+      "Alpha", "Bravo",  "Charlie", "Delta",  "Echo",  "Foxtrot",  "Golf", "Hotel",
+      "India", "Johnny", "King",    "London", "Mike",  "November", "Oscar", "Peter",
+      "Queen", "Roger",  "Sierra",  "Tango",  "Union", "Victor",   "William",
+      "X-ray", "Yankee", "Zebra"
+   };
+
+   static const char *apszNato[26] =
+   {
+      "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
+      "India", "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa",
+      "Quebec", "Romeo", "Sierra", "Tango", "Uniform", "Victor", "Whisky",
+      "X-ray", "Yankee", "Zulu"
+   };
+
+   const char **apsz = bNato ? apszNato : apszMixed;
+
+   char szBuf[20];
+
+   if (pszWord)
+   {
+      if (bPrefix) {
+         if (chain.coldata) {
+            chain.addToCurLine(pszWord, str(""));
+            chain.addToCurLine(str(" : "), str(""));
+         } else {
+            printf("%s : ", pszWord);
+         }
+      }
+      while (*pszWord)
+      {
+         char c = sfktolower(*pszWord++);
+ 
+         if (c >= 'a' && c <= 'z') {
+            if (chain.coldata)
+               chain.addToCurLine((char*)apsz[c - 'a'], str(""));
+            else
+               printf("%s ", apsz[c - 'a']);
+         } else {
+            szBuf[0] = c;
+            szBuf[1] = '\0';
+            if (chain.coldata)
+               chain.addToCurLine(szBuf, str(""));
+            else
+               printf("%s ", szBuf);
+         }
+         if (chain.coldata)
+            chain.addToCurLine(str(" "), str(""));
+      }
+   }
+   else
+   for (int i=0; i<26; i++)
+   {
+      printf("%-10.10s ", apsz[i]);
+      if ((i & 7) == 7)
+         printf("\n");
+   }
 }
 
 // -----------------------------------------------------
@@ -28643,6 +29173,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bool bFromIsNumber = 0;
       bool bipenum = 0;
       bool bpure = 0;
+      bool bshowmac = 0;
       char *pszFirst = 0;
       int  anet[100+10];
       int  inet = -1;
@@ -28693,10 +29224,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             iDelay -= iSingleWaitMSec;
             continue;
          }
-         if (!strcmp(pszArg, "-list")) {
-            bSingle = 1;
-            continue;
-         }
+         if (!strcmp(pszArg, "-list"))
+            { bSingle = 1; continue; }
+         if (!strcmp(pszArg, "-mac")) // sfk1922 internal, experimental
+            { bshowmac = 1; continue; }
          if (!strcmp(pszArg, "-stop")) {
             bStopOnReply = 1;
             bSingle = 1;
@@ -28870,15 +29401,16 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                {
                   if (pio->aClCon[i].idelay >= 0)
                   {
-                     bAnyReply = 1;
+                     bAnyReply    = 1;
+                     uint nip     = pio->aClCon[i].addr.sin_addr.s_addr;
+                     char *pszMac = bshowmac ? getMacForIP(nip) : 0;
                      if (bpure)
                         chain.print("%s\n", pio->aClCon[i].ipstr);
                      else
                         chain.print("%-15s : OK (%03d msec) %s\n",
                            pio->aClCon[i].ipstr, pio->aClCon[i].idelay,
-                           cs.verbose ?
-                              dataAsHex(pio->aClCon[i].reply, mymin(32, pio->aClCon[i].replylen))
-                              : ""
+                           // dataAsHex(pio->aClCon[i].reply, mymin(32, pio->aClCon[i].replylen))
+                           pszMac ? pszMac : ""
                            );
                   }
                }
@@ -30079,6 +30611,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "      at the client, which uses the unrestricted port 2121.\n"
          "      read more under: sfk ftpserv -help\n"
          "\n"
+         "   $return codes for batch files\n"
+         "      0   no files sent\n"
+         "      1   any files sent\n"
+         "\n"
          "   $see also\n"
          "      #sfk ftpserv -help\n"
          "\n");
@@ -30173,6 +30709,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          "         execute a command on the remote server, redirecting all\n"
          "         output into a file tmp1.txt. requires an sfk sft server\n"
          "         with option -run, AND -pw authentication on both sides.\n"
+         "\n"
+         "      #sfk today mydir +sft -quiet .100 cput -yes +sleep 3000 +loop\n"
+         "         check mydir every 3 seconds for files changed today\n"
+         "         and upload them to .100 if newer as on server.\n"
          "\n");
   printx("   $NOTE:<def> existing files are overwritten <err>without asking back<def>.\n"
          "      Make sure that ftp server and client are running\n"
@@ -30248,6 +30788,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          }
          if (strBegins(argx[iDir], "-ver") && !strBegins(argx[iDir], "-verbose")) {
             cs.verify = 1;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-timeout", &pszParm)) { // sfk193 internal, ftpclient
+            if (!pszParm) return 9;
+            cs.maxftpwait = atol(pszParm);
+            if (strEnds(pszParm, "ms")==0)
+               cs.maxftpwait *= 1000;
             continue;
          }
          if (!strncmp(argx[iDir], "-", 1)) {
@@ -30334,6 +30881,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       // cleanup
       if (pszHost) delete [] pszHost;
+
+      lRC = (cs.files ? 1 : 0); // sfk193
 
       if (iChainNext) {
          if (chain.coldata) {
@@ -30772,6 +31321,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      global option -chainweb to use chain input by default.\n"
              "      output data chaining is supported.\n"
              "\n"
+             "   $return codes for chaining\n"
+             "      0 = ok    >0 = any error\n"
+             "\n"
              "   $see also\n"
              "      #sfk wfilt<def>    download web text and filter it directly\n"
              "      #sfk wget<def>     download file from http URL\n"
@@ -31049,7 +31601,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                if (ntotal > cs.maxwebsize) {
                   pwarn("file too large: %s (%dm)\n", psrc->name(), (int)cs.maxwebsize/1000000);
                   pinf("use option -weblimit=n to change limit.\n");
-                  lRC = 5;
+                  lRC = 5; // web file too large
                   break;
                }
 
@@ -31096,14 +31648,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          } while (0);
       }
 
-      // rc 9 would stop command chain
-      if (iChainNext == 0)
-      {
-         if (isubrc == 200) // HTTP 200 OK
-            lRC = 0;
-         else
-            lRC = isubrc ? 9 : 0;
-      }
+      // sfk193: web rc: 0=ok 1=error
+      if (isubrc == 200) // HTTP 200 OK
+         lRC = 0;
+      else
+         lRC = isubrc ? 1 : 0;
 
       STEP_CHAIN(iChainNext, 1);
 
@@ -31801,7 +32350,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          perr("%d bad output directories are files.", cs.badOutDir);
 
       if (cs.sim < 2 && cs.showstat() == 1)
-         printf("%d files%s renamed.\n",cs.filesChg,cs.sim?" would be":"");
+         printf("%d files%s renamed.\n",cs.filesChg,cs.sim?" would be":""); // rename
 
       if (cs.listfiles)
          printx("$[add %s\"/from/\" or \"/from/to/\" to continue.]\n",
@@ -31912,7 +32461,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             // parse initial -dir ... -file ... parameters
             bGotFileDir=1;
             int iDirNext = 0;
-            if ((lRC = processDirParms(pszCmd, argc, argv, iDir, 5, &iDirNext))) {
+            if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 5, &iDirNext))) {
                nGlblError=1;
                pinf("try to add -enddir after initial -dir ... -file ...\n");
                return 9;
@@ -32005,7 +32554,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             if (SFKMatch::define(pszf,pszt)) return 9+perr("cannot use -define %s", szLineBuf);
             continue;
          }
- 
+
+         if (pszArg[0] == 0) continue; // sfk193 empty pattern
+
          // e.g. /foo*bar/[all]/
          // TODO: use reperr
          if (strlen(pszArg) < 3)
@@ -32139,7 +32690,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          perr("%d bad output directories are files.", cs.badOutDir);
 
       if (cs.showstat())
-         printf("%d files%s renamed.\n",cs.filesChg,cs.sim?" would be":"");
+         printf("%d files%s renamed.\n",cs.filesChg,cs.sim?" would be":""); // rename
 
       if (cs.listfiles)
          printx("$[add %s\"/from/\" or \"/from/to/\" to continue.]\n",
@@ -32965,7 +33516,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          cs.yes = 0; cs.sim = 1;
          cs.nowarn = 1; // quiet prescan
 
-         if (execUnzip(pszOutFile) >= 9)
+         if (execUnzip(pszOutFile) >= 9) // zip
             return 9;
 
          if (walkAllTrees(eFunc_ZipTo, lFiles, lDirs, nBytes) >= 9)
@@ -32973,7 +33524,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
          cs.toziplist = 0;
          cs.totaloutbytes = 0;
-         cs.filesChg = 0;
+         cs.filesZip = 0; // zip
          lFiles = lDirs = nBytes = 0;
 
          if (cs.nzipredundant > 0)
@@ -33107,12 +33658,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
          if (cs.totaloutbytes < 1000000)
             printx("would pack $%d files<def> with $%s kb<def> into %s\n",
-               cs.filesChg,
+               cs.filesZip, // zip
                numtoa(cs.totaloutbytes/1000),
                szOutFile[0] ? szOutFile : "archive.");
          else
             printx("would pack $%d files<def> with #%1.0f mb<def> into %s\n",
-               cs.filesChg,
+               cs.filesZip, // zip
                (cs.totaloutbytes/1000000.0),
                szOutFile[0] ? szOutFile : "archive.");
       }
@@ -33142,11 +33693,11 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             if (nOutSize < 1000000)
                printx("%s $%d files<def> with $%s kb<def> in %s.\n",
                   iAppend ? "added " : "packed",
-                  cs.filesChg, numtoa(nOutSize/1000), szElap);
+                  cs.filesZip, numtoa(nOutSize/1000), szElap); // zip
             else
                printx("%s $%d files<def> with #%1.0f mb<def> in %s.\n",
                   iAppend ? "added " : "packed",
-                  cs.filesChg, (nOutSize/1000000.0), szElap); 
+                  cs.filesZip, (nOutSize/1000000.0), szElap); // zip
          }
       }
 
@@ -33396,6 +33947,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (!strcmp(pszCmd, "checkzip")) cs.test   = 1;
       if (!strcmp(pszCmd, "catzip"))   cs.catzip = 1;
 
+      glblUnzipMask.reset();
+
       int iChainNext  = 0;
       for (; iDir<argc; iDir++)
       {
@@ -33460,7 +34013,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          if (istate) {
             strcopy(szPat, pszArg);
             fixPathChars(szPat);
-            glblGrepPat.addString(szPat);
+            glblUnzipMask.addString(szPat);
             continue;
          }
          perr("unexpected: %s",pszArg);
@@ -33518,9 +34071,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       glblUnzipDirs.resetEntries();
 
-      int isubrc = execUnzip(szInFile);
+      int isubrc = execUnzip(szInFile); // unzip
 
       glblUnzipDirs.resetEntries();
+      glblUnzipMask.reset();
 
       if (!cs.quiet && !cs.nowarn) {
          if (!cs.uname && cs.iinvalidutfmarks) {
@@ -33609,10 +34163,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
                 { }
             else if (cs.totaloutbytes < 1000000)
                printx("%s%s $%d files<def> with $%s kb<def>%s.\n",
-                  pszPre, pszVerb, cs.filesChg, numtoa(cs.totaloutbytes/1000), szElap);
+                  pszPre, pszVerb, cs.filesZip, numtoa(cs.totaloutbytes/1000), szElap); // zip
             else
                printx("%s%s $%d files<def> with #%1.0f mb<def>%s.\n",
-                  pszPre, pszVerb, cs.filesChg, (cs.totaloutbytes/1000000.0), szElap);
+                  pszPre, pszVerb, cs.filesZip, (cs.totaloutbytes/1000000.0), szElap); // zip
          }
       }
 
@@ -34592,6 +35146,479 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   ifcmd (!strcmp(pszCmd, "difflines")
+          || !strcmp(pszCmd, "tdifflines")   // internal
+          || !strcmp(pszCmd, "diff")         // internal alias
+         )
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk difflines [opts] file1 file2\n"
+             "\n"
+             "   compare text lines of two files or variables.\n"
+             "   from both files, the text content is loaded,\n"
+             "   sorted, and redundant lines are removed.\n"
+             "   then differing lines are shown, prefixed:\n"
+             "\n"
+             "     >   means lines were added   in file2\n"
+             "     <   means lines were removed in file2\n"
+             "\n"
+             "   $options\n"
+             "      -fromvar   use variables instead of files\n"
+             "      -withsame  also show lines found in both,\n"
+             "                 prefixed by \"-\".\n"
+             "      -quiet     do not tell statistics.\n"
+             "      -nocol     disable color output.\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk difflines in1.txt in2.txt\n"
+             "         compare two files\n"
+             "      #sfk difflines -var a b\n"
+             "         compare two variables\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      char  *pszName1=0,*pszName2=0;
+      uchar *pleft=0,*prite=0;
+      bool   bvar=0;
+      bool   bchain = strBegins(pszCmd, "tdiff");
+      char  *padd=str(">");
+      char  *prem=str("<");
+      char  *psame=0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (!strcmp(pszArg, "-fromvar"))
+            { bvar = 1; continue; }
+         if (!strcmp(pszArg, "-withsame"))
+            { psame=str("-"); continue; }
+         // if (!strcmp(pszArg, "-old")) { // pre193
+         //    padd=str("< :");
+         //    prem=str("> :");
+         //    psame=str("- :");
+         //    continue;
+         // }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pszName1)
+            { pszName1=pszArg; continue; }
+         if (!pszName2)
+            { pszName2=pszArg; continue; }
+         return 9+perr("unexpected: %s\n",pszArg);
+      }
+
+      if (bchain) {  // tdifflines, internal
+         num ndummy=0;
+         // left is chain
+         if (loadInput(&pleft, 0, &ndummy, 0,0,0))
+            return 9;
+         Coi ocoi1(pszName1, 0);
+         prite=loadBinaryFlex(ocoi1,ndummy);
+         if (!prite)
+            return 9+perr("cannot load: %s\n",pszName1);
+      }
+      else
+      if (bvar) {
+         pleft=sfkgetvar(pszName1, 0);
+         if (!pleft)
+            return 9+perr("no such variable: %s",pszName1);
+         prite=sfkgetvar(pszName2, 0);
+         if (!prite)
+            return 9+perr("no such variable: %s",pszName2);
+      } else {
+         num ndummy=0;
+         Coi ocoi1(pszName1, 0);
+         Coi ocoi2(pszName2, 0);
+         pleft=loadBinaryFlex(ocoi1,ndummy);
+         if (!pleft)
+            return 9+perr("cannot load: %s\n",pszName1);
+         prite=loadBinaryFlex(ocoi2,ndummy);
+         if (!prite) {
+            delete [] pleft;
+            return 9+perr("cannot load: %s\n",pszName2);
+         }
+      }
+
+      int astat[3];
+
+      lRC = diffMemText((char*)pleft, (char*)prite, padd, prem, psame, astat);
+
+      int isame=astat[0], iadd=astat[1], irem=astat[2];
+
+      if (!cs.nostat && !cs.quiet)
+         printx("$[%d differences. add=%d rem=%d same=%d]\n",
+            iadd+irem, iadd, irem, isame);
+
+      if (lRC == 5)
+         perr("line(s) were truncated.");
+
+      if (!bvar) {
+         delete [] pleft;
+         delete [] prite;
+      }
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
+   ifcmd (!strcmp(pszCmd, "spell") || !strcmp(pszCmd, "nato"))
+   {
+      ifhelp (chain.usedata==0 && (nparm < 1 || isHelpOpt(argv[iDir])))
+      printx("<help>$sfk spell word [word2] [...]\n"
+             "\n"
+             "   spell a phrase, i.e. print one word per character\n"
+             "   of a word/phrase for clear transmission over telephone.\n"
+             "   primarily used for email addresses which must\n"
+             "   be accurate by every character.\n"
+             "\n"
+             "   $options\n"
+             "      -table  show spelling table\n"
+             "      -nato   use original Nato spelling table.\n"
+             "              default is to use an optimized mix\n"
+             "              of Nato/RAF.\n"
+             "      -pure   do not prefix output by input words\n"
+             "\n"
+             "   $chaining support\n"
+             "      supports chain input text.\n"
+             "\n"
+             "   $aliases\n"
+             "      #sfk nato<def>    same as sfk spell -nato\n"
+             "\n");
+      webref(pszCmd);
+      printx("   $examples\n"
+             "      #sfk spell foo bar\n"
+             "        spell two words in separate lines\n"
+             "\n"
+             "      #sfk filter in.txt +spell\n"
+             "        spell words from a file in.txt\n"
+             "\n"
+             "      #sfk fromclip +spell\n"
+             "        spell text from clipboard\n"
+             "\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool bNato    = strcmp(pszCmd, "nato") ? 0 : 1;
+      bool bDoneAny = 0;
+      bool bPrefix  = 1;
+      bool bTable   = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         if (!strcmp(argx[iDir], "-nato")) {
+            bNato = 1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-pure")) {
+            bPrefix = 0;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-table")) {
+            bTable = 1;
+            continue;
+         }
+         if (!strncmp(argx[iDir], "-", 1)) {
+            if (isDirParm(argx[iDir]))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argx[iDir]);
+         }
+         else
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         dospell(argx[iDir], bNato, bPrefix);
+         if (bPrefix) chain.print("\n");
+         bDoneAny = 1;
+      }
+
+      if (chain.usedata) {
+         for (int i=0; i<chain.indata->numberOfEntries(); i++) {
+            char *pszLine = chain.indata->getEntry(i, __LINE__);
+            if (isEmpty(pszLine)) continue;
+            dospell(pszLine, bNato, bPrefix);
+            chain.print("\n");
+         }
+         bDoneAny = 1;
+      }
+
+      if (bTable)
+      {
+         if (bNato)
+            pinf("[nopre] === Standard Nato phonetic alphabet ===\n");
+         else
+            pinf("[nopre] === Optimized Nato/RAF alphabet. Use \"sfk nato\" for standard alphabet. ===\n");
+         dospell(0, bNato, 0);
+      }
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
+   ifcmd (!strcmp(pszCmd, "calc"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk calc \"1+2*3\"\n"
+             "\n"
+             "   do a simple calculation with mathematical\n"
+             "   operators + - * /\n"
+             "\n"
+             "   $options\n"
+             "      -dig[its]=n  round result to n digits\n"
+             "      -form        also print the formula,\n"
+             "                   tab separated after result\n"
+             "\n");
+      printx("   $chaining support\n"
+             "      can use chain input data as ##text within formula.\n"
+             "\n");
+      webref(pszCmd);
+      printx("   $examples\n"
+             "      #sfk calc \"1.0+2.5*3.5\"\n"
+             "        prints 9.75. quotes \"\" are required\n"
+             "        with linux but not under windows.\n"
+             "      #sfk echo \"1+2*3\" +calc \"##text*4\"\n"
+             "        calculates 1 + 2*3*4 = 25\n"
+             "      #sfk echo \"1+2*3\" +calc \"##text\" +calc \"##text*4\"\n"
+             "        calculates (1+2*3) * 4 = 28\n"
+             "      #sfk filt in.txt +calc \"##text\" -form\n"
+             "        calculate all formulas given in in.txt\n"
+             "      #sfk list -size -tabform sfk.exe +filt -utabform \"##col1\"\n"
+             "       #+calc \"##text/1000\" -dig=0\n"
+             "        show the size of sfk.exe in kbytes, rounded to\n"
+             "        zero digits after decimal point.  [29]\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      int    iDigits=6;
+      bool   bForceDig=0,bShowForm=0,bSum=0;
+      double r=0.0,rTotal=0.0;
+      char   *pszExp=0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-digits", &pszParm)) {
+            if (!pszParm) return 9;
+            iDigits = atoi(pszParm);
+            bForceDig = 1;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-dig", &pszParm)) {
+            if (!pszParm) return 9;
+            iDigits = atoi(pszParm);
+            bForceDig = 1;
+            continue;
+         }
+         if (strBegins(pszArg, "-form")) {
+            bShowForm=1;
+            continue;
+         }
+         if (!strcmp(pszArg, "-sum")) {   // internal
+            bSum=1;
+            continue;
+         }
+         if (strBegins(pszArg, "-bra")) { // internal
+            cs.brackets=1;
+            continue;
+         }
+         if (!strcmp(pszArg,"-test"))
+         {
+            #define calctest(x)  \
+               if (!sfkcalc(r,str(#x),0,0)) \
+                  printf("%f / %f\n",x,r);  \
+               else  \
+                  printx("[Red]err: %s[def]\n",str(#x));
+            calctest(1100.0-4+2);
+            calctest(1.5/3.28+4.3+6.7*2.1*3.9*-1.26/5.38-2.3);
+            calctest(1.0-1.0/8*9+1.2*2.3*3.4);
+            calctest(-1.0-2.0*3.0-3.0*4.0+5.0*6.0/7.0/8.0/9.0);
+            calctest(-1.0-2.0/7.0/8.0/9.0+3.0/5.1-4.0/5.2*3.4);
+            if (cs.brackets)
+            {
+               calctest(1.1e3+(-4+2*8.3));
+               calctest((1.1e3-4+2)*8.3);
+               calctest(1100.0-(4+2));
+               calctest((1.2e2*(3.5+1.8-2.3*(-1.5+2.6*4.9))));
+               calctest(15-3*2/(1.5)*2.7-(3.8+(2.9/(1.9-2.5/1.2+4.6))));
+               calctest(1.3e2*4.8+(3.9-2.4/1.5*((12.3-1.8/(5.6/2.4-3.1)))));
+               calctest(1.5/(3.28+4.3+6.7*2.1*3.9*-1.26/(5.38-2.3)));
+               calctest(1.0/(1.0-1.0/(3+5)*9));
+               calctest(1.0/(1.0-1.0/8*9));
+               calctest(1.0/(3+5)*9);
+               calctest(1.0/((8.0+0))*9);
+            }
+            return 0;
+         }
+         if (pszArg[0]=='-' && isdigit(pszArg[1])==0) // sfk1863
+         {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (pszExp)
+            return 9+perr("unexpected: %s\n",pszArg);
+         pszExp = pszArg;
+      }
+
+      if (!pszExp)
+         return 9+perr("missing expression.");
+
+      int iIndex=0;
+      char *pattr=0;
+      char *pline=0;
+
+      while (1)
+      {
+         if (chain.usedata) {
+            if (iIndex >= chain.indata->numberOfEntries())
+               break;
+            pline = chain.indata->getEntry(iIndex++, __LINE__, &pattr);
+            if (!pline) break;
+         }
+
+         char *psz=strstr(pszExp, "$text");
+         if (!psz) psz=strstr(pszExp, "#text");
+         if (psz) {
+            int ileft=psz-pszExp;
+            snprintf(szLineBuf,MAX_LINE_LEN,"%.*s%s%s",
+               ileft,pszExp, pline, psz+5);
+         } else {
+            strcopy(szLineBuf, pszExp);
+         }
+
+         if (bShowForm)
+            snprintf(szLineBuf2,MAX_LINE_LEN,"\t%s",szLineBuf);
+         else
+            szLineBuf2[0]='\0';
+
+         if (sfkcalc(r,szLineBuf,0,0))
+            return 9;
+
+         if (bSum)
+            rTotal += r;
+
+         if (!bSum || bShowForm) {
+            if (bForceDig == 0 && ((int)r * 1.0) == r)
+               chain.print("%1.0f%s\n",r,szLineBuf2);
+            else
+               chain.print("%1.*f%s\n",iDigits,r,szLineBuf2);
+         }
+
+         if (!chain.usedata)
+            break;
+      }
+
+      if (bSum)
+      {
+         r = rTotal;
+
+         if (bShowForm)
+            strcpy(szLineBuf2,"\t:total");
+         else
+            szLineBuf2[0]='\0';
+
+         if (bForceDig == 0 && ((int)r * 1.0) == r)
+            chain.print("%1.0f%s\n",r,szLineBuf2);
+         else
+            chain.print("%1.*f%s\n",iDigits,r,szLineBuf2);
+      }
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
+   ifcmd (!strcmp(pszCmd, "ruler"))
+   {
+      ifhelp (argc >= 3 && isHelpOpt(argv[2]))
+      printx("<help>$sfk ruler [columns]\n"
+             "\n"
+             "   print a ruler. supports output chaining.\n"
+             "\n"
+             #ifdef _WIN32
+             "   $examples\n"
+             "     #sfk ruler 200 +toclip\n"
+             "       copy a 200 columns ruler into clipboard\n"
+             "\n"
+             #endif
+             );
+      ehelp;
+
+      sfkarg;
+
+      int icol = -1;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (icol == -1) {
+            icol = atoi(pszArg);
+            continue;
+         }
+      }
+
+      if (icol == -1)
+          icol = nGlblConsColumns;
+
+      int i=0,k=1;
+      for (i=1; i<icol-1; i++) {
+         if (i%10 == 0) {
+            szLineBuf[i-1]='0'+k;
+            if (++k >= 10) k=0;
+         } else {
+            szLineBuf[i-1]=' ';
+         }
+      }
+      szLineBuf[i-1]='\0';
+      for (i=1; i<icol-1; i++)
+         szLineBuf2[i-1]='0'+(i%10);
+      szLineBuf2[i-1]='\0';
+      chain.print("%s\n",szLineBuf);
+      chain.print("%s\n",szLineBuf2);
+
+      if (iChainNext) {
+         if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+
    return 0;
 }
 // extmain.end
@@ -34599,6 +35626,14 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
+
+
+
+
+
+
+
+
 
 
 
@@ -34885,7 +35920,7 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
    szFileHead[0] = '\0';
    if (cs.usefilehead) {
       char *pmask = cs.szfilehead;
-      if (cs.filesChg==0) {
+      if (cs.filesChg==0) { 
          if (!strncmp(pmask, "\r\n", 2)) pmask += 2;
          else
          if (pmask[0] == '\n') pmask++;
@@ -35044,13 +36079,15 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
             #ifdef WITH_CASE_XNN
             uchar *pBit     = apRepSrcBit[iPat];
             #endif
-            int voff=0;
+            int  voff=0;
+            bool bskip=0;
             if (cs.xpat) {
                SFKMatch *pObj = &apRepObj[iPat];
                nPatLen = nCmpRemain;
                if (!pObj->matches(pSrcCur, nPatLen, bStart, &bLineStart, bLastRecord)) {
                   bMatch = true; 
-                  voff=pObj->viewOffset();
+                  voff = pObj->viewOffset();
+                  bskip = pObj->bClIsSkipPattern; 
                }
             }
             else
@@ -35065,7 +36102,8 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
             }
             if (!bMatch)
                continue;
-            info.clear();
+            bool buse = bskip ? 0 : 1; 
+            if (buse) info.clear();
             uchar *pDstText = apRepDstExp[iPat];
             int   nDstLen   = apRepDstLen[iPat];
             char  *pDstAttr = 0;
@@ -35074,7 +36112,7 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
             bool bDumpToText  = (cs.dumpfrom==0 && (nPatFlags & (1 << 3))!=0);
             bool bDumpSingle  = (nPatFlags & (1 << 4)) ? 1 : 0;
             bool bDumpFromText= cs.dumpboth || (bDumpToText ? 0 : 1);
-            if (cs.xpat)
+            if (buse && cs.xpat)
             {
                SFKMatch *pObj = &apRepObj[iPat];
                int iSubRC = 0;
@@ -35127,23 +36165,29 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                 }
                } 
             }
-            if ((cs.verbose >= 2) && nDstLen && !(nPatFlags & (1<<0))) {
+            if (buse && (cs.verbose >= 2) && nDstLen && !(nPatFlags & (1<<0))) {
                printf("replace @%s: %.*s -> %.*s\n", numtohex(nBlockStartInFile+(pSrcCur-pInBuffer),10),
                   nPatLen, pSrcCur, nDstLen, pDstText);
             }
+            if (bskip)
+               { }
+            else
             if (cs.useJustNames) 
             {
                if (!bFileTold) {
                   bFileTold = 1;
+                  strcopy(szLineBuf3, pcoi->name()); 
+                  if (useOfficeBaseNames())
+                     stripOfficeName(szLineBuf3); 
                   if (chain.colfiles)
                      { } 
                   else if (chain.coldata) {
-                     sprintf(szLineBuf3, "%s", pcoi->name());
                      setattr(szAttrBuf3, 'f', strlen(szLineBuf3)+2, MAX_LINE_LEN);
                      chain.addLine(szLineBuf3, szAttrBuf3);
                   } else {
-                     info.print("%s\n", pcoi->name());
+                     info.print("%s\n", szLineBuf3);
                   }
+                  chain.justNamesFilter->put(szLineBuf3);
                }
             }
             else
@@ -35275,20 +36319,23 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                   nLastDumpOff = nAbsOff;
                }
             }  
-            iContextUsed = 0;
-            bFileChanged = 1;
-            nFound++;
-            apRepFlags[iPat] |= (1 << 1);
-            if (cs.extract)
-            { }
-            else
-            if (bSameLengthAndFile)
+            if (buse)
             {
-               if (!cs.sim && !cs.extract) {
-                  if (nPatLen != nDstLen)
-                     { perr("int. #21211502"); iRC=9; bStop=true; break; }
-                  memcpy(pSrcCur, pDstText, nPatLen);
-                  bCurrentBlockChanged = 1;
+               iContextUsed = 0;
+               bFileChanged = 1;
+               nFound++;
+               apRepFlags[iPat] |= (1 << 1); 
+               if (cs.extract)
+               { }
+               else
+               if (bSameLengthAndFile)
+               {
+                  if (!cs.sim && !cs.extract) {
+                     if (nPatLen != nDstLen)
+                        { perr("int. #21211502"); iRC=9; bStop=true; break; }
+                     memcpy(pSrcCur, pDstText, nPatLen);
+                     bCurrentBlockChanged = 1;
+                  }
                }
             }
             if (nPatLen == 0)
@@ -35299,9 +36346,10 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
                bLineStart = 0;
             iStepped += nPatLen;
             pSrcCur  += nPatLen;
-            pCopyFrom = pSrcCur;
+            if (buse) 
+               pCopyFrom = pSrcCur;
             bStart = 0;
-            if (cs.useFirstHitOnly) {
+            if (buse && cs.useFirstHitOnly) {
                if (!cs.sim && !cs.extract)
                   bAllThrough=true; 
                else
@@ -35351,9 +36399,18 @@ int execXFind(Coi *pcoi, char *pszOptOutFile)
    if (pcoi->isFileOpen())
       pcoi->close();
    if (bFileChanged && !bRepeatRun) {
-      if (chain.colfiles)
+      if (chain.colfiles) do {
+         #if defined(SFKOFFICE)
+         if (cs.office>0 && cs.useJustNames>0 && pOutCoi==0) {
+            if (useOfficeBaseNames())
+               pcoi->stripOfficeName(); 
+            if (chain.hasFile(pcoi->name()))
+               break;
+         }
+         #endif
          chain.addFile(pOutCoi ? *pOutCoi : *pcoi);
-      cs.filesChg++;
+      } while(0);
+      cs.filesChg++; 
    }
    if (pInBuffer)
       delete [] pInBuffer;

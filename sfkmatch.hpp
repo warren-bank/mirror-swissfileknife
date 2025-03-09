@@ -241,6 +241,7 @@ uint32_t
 char
   *pszClFromText;       // a copy if below flag is set
 bool
+   bClIsSkipPattern,    // starts with [skip]
    bClFromTextWasCopied,
    bClToTextIsCover,    // totext is "[all]"
    bClSetKeep;          // apply [keep] in parseFromMask

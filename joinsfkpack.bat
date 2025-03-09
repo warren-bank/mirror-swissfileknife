@@ -14,7 +14,7 @@ sfk label begin -var
 
    +echo -spat "
       /*
-         SFKPack V1.0.1, a frozen monolithic code containing
+         SFKPack V1.0.2, a frozen monolithic code containing
 
             zlib     1.2.11
 
@@ -154,7 +154,7 @@ sfk label addfile
      "/const char inflate_/const char zlinf01_/"
      "/z_errmsg/z2_errmsg/"
 
-   +if "%3 <> " tcall "%3"
+   +tif "%3 <> " tcall "%3"
 
    +xed -case
       "_#*include *[eol]__"

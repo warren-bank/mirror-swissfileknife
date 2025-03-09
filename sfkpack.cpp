@@ -1,5 +1,5 @@
 /*
-   SFKPack V1.0.1, a frozen monolithic code containing
+   SFKPack V1.0.2, a frozen monolithic code containing
 
       zlib     1.2.11
 
