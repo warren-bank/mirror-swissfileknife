@@ -12,6 +12,10 @@
    -  unix bash interprets $, ! and probably other chars.
    -  german umlauts not supported in grep.
 
+   1.2.4
+   -  fix: ftp: file receive by normal ftp: division by zero
+           during output of intermediate size.
+
    1.2.3
    -  fix: ftp: timeouts after transfer of long files,
            due to wrong sequence of reply and md5 check.
@@ -206,7 +210,7 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.2.3"
+#define SFK_VERSION  "1.2.4"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -8671,6 +8675,7 @@ long sendNum(SOCKET hSock, num nOut, char *pszInfo)
 long sendFileRaw(SOCKET hSock, char *pszFile, bool bQuiet=0)
 {
    num nLen = getFileSize(pszFile);
+   if (nLen < 0) return 9+perr("cannot get size of %s\n", pszFile);
 
    FILE *fin = fopen(pszFile, "rb");
    if (!fin) return 9+perr("cannot read %s\n", pszFile);
@@ -8690,7 +8695,8 @@ long sendFileRaw(SOCKET hSock, char *pszFile, bool bQuiet=0)
       if (nLen2 >= nTellNext) {
          nTellNext += nTellStep;
          nTellStep += nTellStep;
-         printf("< %02d%% sending %s, %s bytes \r", (int)(nLen2 * 100 / (nLen+1)), pszFile, numtoa(nLen));
+         if (nLen >= 0)
+            printf("< %02d%% sending %s, %s bytes \r", (int)(nLen2 * 100 / (nLen+1)), pszFile, numtoa(nLen));
          fflush(stdout);
       }
    }
@@ -8784,7 +8790,7 @@ long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0)
 {
    FILE *fout = fopen(pszFile, "wb");
    if (!fout) return 9+perr("cannot write to \"%s\"\n", pszFile);
-
+ 
    num nLen2 = 0;
    num nTellStep = 10;
    num nTellNext = 0;
@@ -8805,14 +8811,17 @@ long receiveFileRaw(SOCKET hSock, char *pszFile, num nMaxBytes, bool bQuiet=0)
       if (nLen2 >= nTellNext) {
          nTellNext += nTellStep;
          nTellStep += nTellStep;
-         printf("> %02d%% receiving %s, %s bytes \r", (int)(nLen2 * 100 / (nMaxBytes+1)), pszFile, numtoa(nMaxBytes));
+         if (nMaxBytes >= 0)
+            printf("> %02d%% receiving %s, %s bytes \r", (int)(nLen2 * 100 / (nMaxBytes+1)), pszFile, numtoa(nMaxBytes));
+         else
+            printf("> receiving %s, %s bytes \r", pszFile, numtoa(nLen2));
          fflush(stdout);
       }
    }
    fclose(fout);
-
+ 
    printf("> %s received, %s bytes.       \n", pszFile, numtoa(nLen2));
-
+ 
    return 0;
 }
 
