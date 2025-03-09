@@ -233,9 +233,6 @@ extern       char  glblWildChar    ;
   typedef __time64_t mytime_t;
   #define mymktime _mktime64
   #define mytime _time64
-  #ifndef WITH_SSL
-   // #define time_t bad_time_t_use_mytime_t
-  #endif
  #else
   typedef time_t mytime_t;
   #define mymktime mktime
@@ -1308,7 +1305,6 @@ public:
    ProgressInfo          ( );
    void  setWidth        (int nColumns);
    void  setAddInfoWidth (int nColumns); // abs. columns, high prio
-   void  setAddInfoHalve ( );  // fills half of line, with low prio
    void  setAddInfo      (const char *pszFormat, ...);
    void  setAction       (cchar *pszVerb, cchar *pszSubject, cchar *pszAddInfo=0, int nKeepFlags=0);
    void  setStatus       (cchar *pszVerb, cchar *pszSubject, cchar *pszAddInfo=0, int nKeepFlags=0);
@@ -1636,7 +1632,7 @@ public:
    bool countMatchLines; // count no. of matching lines
    bool yes;
    bool logcmd;
-   bool force;
+   int  force;
    bool nostop;      // command specific
    bool keepchain;   // keep chain always running
    bool syncFiles;   // sync files instead of copy
@@ -1868,14 +1864,18 @@ public:
    bool errtotext;
    bool trimscript;
    char mlquotes;          // multi line quotes format
-   int  headers;           // print web headers
+   int  showhdr;           // print web headers
    bool showreq;           // print web requests
+   char *headers;          // sfk1972 user web headers prefixed by \n
+   char *webreq;           // sfk1972 full predefined web request
+   int  webreqlen;         // sfk1972 with -reqfromvar
    num  maxwebsize;        // web download limit
    bool execweb;
    bool openbyapp;
    int  maxlines;          // max lines to read
    int  taillines;         // lines from eof
    bool usevars;
+   bool quotevars;
    bool sellines;          // select lines from input
    int  linesfrom;         // if sellines
    int  linesto;           // if sellines
@@ -1889,6 +1889,7 @@ public:
    bool brackets;
    bool cweb;              // +web expects chain input
    bool movefiles;
+   bool withempty;
    SFKMatch *apexp;        // xrename
    int  iexp;              // xrename
    num  totalinbytes;
@@ -1953,6 +1954,10 @@ public:
    char setxmask[60];      // draft: -setexec
    char curhost[255+20];   // sfk197
    int  curport;           // sfk197 -1 if unset
+   int  chan;              // sfk1972 tcp channel, from 1
+   int  chanserv;          // sfk1972 server channel
+   bool noqwild;           // sfk1972
+   bool nopass;            // sfk1972 internal
 };
 
 // extern struct CommandStats gs;
@@ -2254,7 +2259,7 @@ int saveFile(char *pszName, uchar *pData, int iSize, const char *pszMode="wb");
 int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc=0, char *pszShDst=0);
 int execFileMoveSub(char *pszSrc, char *pszDst);
 int joinShadowPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2);
-int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot);
+int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot=0);
 int mygetpos64(FILE *f, num &rpos, char *pszFile);
 int mysetpos64(FILE *f, num pos, char *pszFile);
 extern int bGlblCollectHelp;
@@ -2263,53 +2268,6 @@ extern int bGlblCollectHelp;
 char *winSysError();
 int makeWinFileTime(num nsrctime, FILETIME &rdsttime, num nSrcNanoSec=0, bool bUTC=0);
 #endif
-
-class ExtProgram // call external program
-{
-public:
-      ExtProgram  ( );
-
-   int   start (int iTimeout, const char *pszMask, ...);
-
-   int   stop  ( );
-
-   int   readFull (uchar *pBuf, int iToRead);
-
-   int   readFull (uchar **ppBuf, int *pIOBufSize);
-   // Note: this will alloc given *pIOBufSize.
-   // RC 0: OK *pBufSize contains data size, caller is owner.
-   // RC 5: timeout
-   // RC 9: error
-
-   char *readLine ( );
-
-   // internal
-   int   read  (uchar *pBuf, int iMaxBuf);
-   // RC >0: bytes read
-   // RC  0: no data yet
-   // RC -1: completed
-   // RC -5: timeout
-   // RC -9: other error
-
-#ifdef _WIN32
-int winFork(char *pszCmd,HANDLE hChildStdOut,HANDLE hChildStdIn,HANDLE hChildStdErr);
-HANDLE hOutputReadTmp,hOutputRead,hOutputWrite;
-HANDLE hInputWriteTmp,hInputRead,hInputWrite;
-HANDLE hErrorWrite;
-HANDLE clXPid;
-#else
-pid_t mypopen2(char *commandin[], int *infp, int *outfp);
-pid_t clXPid;
-int   clXFin;
-#endif
-
-int   clXTimeout;
-num   clXRunStart;
-char  szClXCmdBuf    [1000+20];
-char  szClXDataBuf   [4000+20];
-char  szClXLineBuf   [1000+20];
-char *aClXCmdParms   [100];
-};
 
 extern KeyMap glblSFKVar;
 bool   sfkhavevars();
@@ -2499,36 +2457,6 @@ char
    szClFixSysDir  [800],
    szClRenameFrom [800],
    szClReplyBuf   [1024];
-
-int
-   xrerun   (char *pszCmd, int iTimeout),
-   xpipe    ( ),
-   xstop    ( );
-
-// #define WITH_FTP_EXTPROG
-// linux: unexpected "command completed by eod"
-
-#ifdef WITH_FTP_EXTPROG
-ExtProgram
-   clXProg;
-#else
-
-#ifdef _WIN32
-int winFork(char *pszCmd,HANDLE hChildStdOut,HANDLE hChildStdIn,HANDLE hChildStdErr);
-HANDLE hOutputReadTmp,hOutputRead,hOutputWrite;
-HANDLE hInputWriteTmp,hInputRead,hInputWrite;
-HANDLE hErrorWrite;
-HANDLE clXPid;
-#else
-pid_t mypopen2    (char *commandin[], int *infp, int *outfp);
-int   mysystemio  (char *pszCmd, int iTimeout);
-pid_t
-   clXPid;
-int
-   clXFin;
-#endif
-
-#endif
 
 int
    clXTimeout;

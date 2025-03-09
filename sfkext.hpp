@@ -1,10 +1,6 @@
 
 #ifdef VFILEBASE
 
-#ifdef WITH_SSL
- #include <openssl/ssl.h>
- #include <openssl/err.h>
-#endif // WITH_SSL
 
 #ifdef USE_DCACHE
 
@@ -131,6 +127,7 @@ public:
    // reads a reply like "200 OK", "HTTP/1.1 200 OK",
    // checks RC if it's within range, returns 0 if so.
 
+
 // private:
    TCPCore &core  ( );
    void  rawClose ( );
@@ -149,6 +146,7 @@ public:
 
    struct sockaddr_in clFromAddr;
 
+
 friend class TCPCore;
 };
 
@@ -158,6 +156,8 @@ class TCPCore
 public:
       TCPCore  (char *pszID, char cProtocol);
      ~TCPCore  ( );
+
+   static TCPCore &any( ); // generic core for scripting
 
    char  *getID   ( );
 
@@ -182,7 +182,7 @@ public:
    // returned object is managed by TPCCore.
    // returned client socket is added to core's readfds set.
 
-   int connect(char *phostorip, int nport, TCPCon **ppout);
+   int connect(char *phostorip, int nport, TCPCon **ppout, bool bSSL=0);
    // returned object is managed by TPCCore.
    // client socket is added to readfds set.
 
@@ -248,8 +248,9 @@ public:
    static  char szClProxyHost[100];
    static  int  nClProxyPort;
    static  bool  bClProxySet;
-
    static  bool bSysInitDone;
+
+   static TCPCore *pClGeneric;   // sfk1972
 };
 
 // class to auto close a connection,
@@ -362,8 +363,6 @@ private:
 friend class Coi;
 };
 
-class ExtProgram;
-
 class HTTPClient : public TCPCore
 {
 public:
@@ -461,11 +460,6 @@ private:
    bool      bClNoCon;
 
    bool      bClSSL;
-
-   #ifdef WITH_SSL
-   SSL_CTX *pClSSLContext;
-   SSL     *pClSSLSocket;
-   #endif // WITH_SSL
 
 
 friend class Coi;

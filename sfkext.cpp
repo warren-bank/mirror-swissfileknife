@@ -37,11 +37,12 @@
  #define SO_REUSEPORT 15
 #endif
 
-#define SFKNEWDUMP
-
 uint   glblFromTCPPort    = 0;
 SOCKET glblFromTCPASocket = INVALID_SOCKET;
 SOCKET glblFromTCPCSocket = INVALID_SOCKET;
+
+TCPCon *aGlblUserSocket[20] =
+   { 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0 };
 
 extern struct CommandStats gs;
 extern struct CommandStats cs;
@@ -53,6 +54,8 @@ extern unsigned char abBuf[MAX_ABBUF_SIZE+100];
 
 extern Array glblGrepPat;
 extern Array glblUnzipMask;
+
+extern StringTable glblCreatedDirs;
 
 #ifdef _WIN32
 bool vname();
@@ -144,6 +147,7 @@ int makeServerSocket(
    );
 num getCurrentTicks();
 void initRandom(char *penv[]);
+bool isEmptyDir(char *pszIn);
 
 static const char aenc64loc[] =
    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -225,6 +229,15 @@ extern char szAttrBuf3[MAX_LINE_LEN+10];
 extern char szRefNameBuf[MAX_LINE_LEN+10];
 extern char szRefNameBuf2[MAX_LINE_LEN+10];
 extern char szTopURLBuf[MAX_LINE_LEN+10];
+
+// sfk1972 FROM HERE ON, ALL fread() and fwrite() calls are MAPPED to SAFE versions
+// to work around Windows runtime bugs (60 MB I/O bug, stdin joined lines etc.)
+
+size_t safefread(void *pBuf, size_t nBlockSize, size_t nBufSize, FILE *fin);
+size_t safefwrite(const void *pBuf, size_t nBlockSize, size_t nBufSize, FILE *fin);
+
+#define fread  safefread
+#define fwrite safefwrite
 
 int iGlblWebCnt=0;
 FILE *fGlblWebDump=0;
@@ -1819,14 +1832,17 @@ int TCPCon::read(uchar *pBlock, uint nLen, bool bReturnAny)
       if (nMaxWait > 0 && select(clSock+1, &fdvar, 0, 0, &tv) <= 0) 
       {
          if (getCurrentTime() - tstart > nMaxWait) {
-            pinf("read timeout (%d ms).   \n", (int)(getCurrentTime() - tstart));
+            if (cs.verbose > 1)
+               pinf("read timeout (%d ms).   \n", (int)(getCurrentTime() - tstart));
             nCursor=0;
             break;
          }
          continue;
       }
 
-      nRead = recv(clSock, (char*)pBlock+nCursor, nRemain, 0);
+      {
+         nRead = recv(clSock, (char*)pBlock+nCursor, nRemain, 0);
+      }
 
       // printf("%d = tcp.recv(%d,%d) err %d\n",nRead,clSock,nRemain,netErrno());
 
@@ -1836,7 +1852,8 @@ int TCPCon::read(uchar *pBlock, uint nLen, bool bReturnAny)
          {
             if (getCurrentTime() - tstart > nMaxWait) 
             {
-               pinf("read timeout (%d ms).   \n", (int)(getCurrentTime() - tstart));
+               if (cs.verbose > 1)
+                  pinf("read timeout (%d ms).   \n", (int)(getCurrentTime() - tstart));
                nCursor=0;
                break;
             }
@@ -1863,12 +1880,22 @@ int TCPCon::read(uchar *pBlock, uint nLen, bool bReturnAny)
       mtklog(("tcp.read: no data (%d,%d)\n",nRead,netErrno()));
    }
 
+   // sfk1972 tcp: tcpcon.read return -1 on connection close
+   if (nCursor == 0 && nRead < 0)
+      return nRead;
+
    return nCursor;
 }
 
 int TCPCon::send(uchar *pBlock, uint nLen) 
 {__
-   return ::send(clSock, (char*)pBlock, nLen, 0);
+   int ires = 0;
+
+   {
+      ires = ::send(clSock, (char*)pBlock, nLen, 0);
+   }
+
+   return ires;
 }
 
 char *TCPCon::buffer(int &rbufsize)
@@ -1901,7 +1928,6 @@ char *TCPCon::readLine(char *poptbuf, uint noptmaxbuf, bool braw)
    // of CRLF, from which on we may switch to binary.
    while (nRemain > 10) 
    {
-      // int nRead = recv(clSock, pBuf+nCursor, 1, 0);
       int nRead = read((uchar*)pBuf+nCursor, 1);
       if (nRead <= 0) {
          mtklog(("< readline: EOD"));
@@ -2047,6 +2073,15 @@ TCPCore::~TCPCore( )
    shutdown();
    delete [] pClID;
    wipe();
+}
+TCPCore *TCPCore::pClGeneric = 0;
+
+TCPCore &TCPCore::any() {
+   if (pClGeneric == 0) {
+      if (!(pClGeneric = new TCPCore(str("any"), 'h')))
+         perr("TCPCore allocation failure");
+   }
+   return *pClGeneric;
 }
 
 char *TCPCore::getID( ) {
@@ -2263,7 +2298,7 @@ int TCPCore::accept(TCPCon *pServerCon, TCPCon **ppout)
    socklen_t nSoLen = sizeof(sockaddr_in);
    SOCKET hClient = ::accept(pServerCon->clSock, (struct sockaddr *)&ClientAdr, &nSoLen);
    if (hClient == INVALID_SOCKET)
-      return 9+perr("accept failed (%d)", lastError());
+      return 9; // perr("accept failed (%d)", lastError());
 
    TCPCon *pcon = new TCPCon(hClient, this, __LINE__);
    pcon->setBlocking(0);
@@ -2358,7 +2393,7 @@ int myconnect(SOCKET hSock, struct sockaddr *paddr, int naddr, int iMaxWait,
    return 0;
 }
 
-int TCPCore::connect(char *pszHost, int nportin, TCPCon **ppout)
+int TCPCore::connect(char *pszHost, int nportin, TCPCon **ppout, bool bSSL)
 {__
    mtklog(("tcp.connect: %s %d timeout=%d",pszHost,nportin,iClMaxWait));
 
@@ -2529,11 +2564,6 @@ void HTTPClient::wipe( )
    pszClLineCache = 0;
 
    bClSSL = 0;
-
-   #ifdef WITH_SSL
-   pClSSLContext = 0;
-   pClSSLSocket = 0;
-   #endif // WITH_SSL
 }
 
 char *HTTPClient::curname( ) {
@@ -2644,11 +2674,7 @@ int HTTPClient::splitURL(char *purl)
    nClPort = 80;
 
    if (!strncmp(purl, "https://", 8)) {
-      #ifdef WITH_SSL
-      psz1 = purl + 8;
-      bClSSL = 1;
-      nClPort = 443;
-      #else
+      #ifndef WITH_SSL
       perr("SFK does not support SSL encryption (HTTPS).");
       static bool bfirst=1;
       if (bfirst) {
@@ -2738,93 +2764,7 @@ char *HTTPClient::readLine(bool braw)
    if (!haveConnection())
       { perr("int. #175291 missing connection"); return 0; }
 
-   #ifdef WITH_SSL
-
-   if (bClSSL && pClSSLSocket)
-   {
-      SOCKET osock = pClCurCon->clSock;
-
-      char *pBuf   = aClIOBuf;
-      int  nBufMax = sizeof(aClIOBuf)-10;
-   
-      int nCursor = 0;
-      int nRemain = nBufMax;
-      pBuf[0] = '\0';
-   
-      int iTimeout = 5000;
-    
-      num tStart = getCurrentTime();
-   
-      while (nRemain > 10)
-      {
-         if (bGlblEscape)
-         {
-            printf("!HttpClient: Canceling http connect due to stop request (2)\n");
-            return 0;
-         }
-
-         #if 1
-         struct timeval tv;
-         fd_set fdvar;
-         tv.tv_sec  = 0;
-         tv.tv_usec = 20 * 1000; // 200 msec
-         FD_ZERO(&fdvar);
-         FD_SET(osock, &fdvar);
-         if (select(osock+1, &fdvar, 0, 0, &tv) <= 0) {
-            if (getCurrentTime() - tStart > iTimeout) {
-               printf("!HttpClient: timeout while reading web reply (%s)\n", curhost());
-               return 0;
-            }
-            continue;
-         }
-         mtklog(("before read on sock %d",osock));
-         mtklog(("SSL %p has fd %d",pClSSLSocket,SSL_get_fd(pClSSLSocket)));
-         #else
-         if (getCurrentTime() > tStart + iTimeout)
-         {
-            printf("!HttpClient: timeout while reading web reply (%s)\n", curhost());
-            return 0;
-         }
-         #endif
-   
-         int nRead = SSL_read(pClSSLSocket, pBuf+nCursor, 1);
-
-         if (nRead == 0) // no input yet available
-            { doSleep(50); continue; }
-   
-         if (nRead < 0) { // end of stream, or error
-            int ierr = SSL_get_error(pClSSLSocket, nRead);
-            mtklog(("ssl.readline error: %d %d %d at %d",nRead,ierr,errno,nCursor));
-            return 0;
-         }
-
-         nCursor += nRead;
-         nRemain -= nRead;
-         pBuf[nCursor] = '\0';
-         if (nCursor >= 2 && !strncmp(pBuf+nCursor-2, "\r\n", 2))
-            break;
-         if (nCursor >= 1 && !strncmp(pBuf+nCursor-1, "\n", 1))
-            break;
-      }
-   
-      if (!braw)
-      {
-         char *pcr = strchr(pBuf, '\r'); if (pcr) *pcr = '\0';
-               pcr = strchr(pBuf, '\n'); if (pcr) *pcr = '\0';
-      }
-   
-      return pBuf;
-   }
-   else
-   {
-      return pClCurCon->readLine(0, 0, braw);
-   }
-
-   #else
-
    return pClCurCon->readLine(0, 0, braw);
-
-   #endif
 }
 
 // returns RC
@@ -2835,13 +2775,6 @@ int HTTPClient::sendLine(char *pline)
 
    int ires = 0;
 
-   #ifdef WITH_SSL
-   if (bClSSL)
-   {
-      ires = SSL_write(pClSSLSocket, pline, strlen(pline));
-   }
-   else
-   #endif
    {
       ires = pClCurCon->puts(pline);
    }
@@ -3004,7 +2937,6 @@ char *nextNonBlank(char *psz) {
 
 bool HTTPClient::haveConnection( )
 {
-
    if (pClCurCon)
       return 1;
 
@@ -3078,7 +3010,7 @@ int HTTPClient::rawReadHeaders
          // normal server: strip CRLF
          removeCRLF(pline);
 
-         if (cs.headers & 4) {
+         if (cs.showhdr & 4) {
             // chain.print('h', 1, "> %s", pline);
             printx("<head>> %s\n", pline);
          }
@@ -3111,7 +3043,7 @@ int HTTPClient::rawReadHeaders
       else
       {
          // non first: crlf was stripped
-         if (cs.headers & 4) {
+         if (cs.showhdr & 4) {
             // chain.print('h', 1, "> %s", pline);
             printx("<head>> %s\n", pline);
          }
@@ -3209,10 +3141,6 @@ int HTTPClient::rawReadHeaders
       mtklog(("no headers, no data received"));
       if (fGlblWebDump)
          fprintf(fGlblWebDump, "-----head.end----- (no reply)\n");
-      #ifdef WITH_SSL
-      if (bClSSL && pClSSLSocket && cs.recurl)
-         return 9;
-      #endif
       return 9+perr("no data: %s", purl);
    }
 
@@ -3241,64 +3169,6 @@ int HTTPClient::connectHttp(char *phostorip, int nport, TCPCon **ppout)
       mtklog(("connect rc %d",isubrc));
       return isubrc;
    }
-
-   #ifdef WITH_SSL
-   if (bClSSL && pClCurCon)
-   {
-      static bool bLocalInit = false;
-      if (!bLocalInit)
-      {
-         bLocalInit = true;
-         SSL_load_error_strings();
-         SSLeay_add_ssl_algorithms();
-      }
-
-      #ifdef WITH_SSL2
-      // fails with some sites, producing SSL_Connect error -1:
-      //    if (!(pClSSLContext = SSL_CTX_new(TLSv1_client_method())))
-      if (!(pClSSLContext = SSL_CTX_new(TLS_client_method()))) // sfk1933
-      #else
-      if (!(pClSSLContext = SSL_CTX_new(SSLv23_client_method())))
-      #endif
-      {
-         perr("SSLContext init failed\n");
-         close();
-         return 9;
-      }
-
-      if (!(pClSSLSocket = SSL_new(pClSSLContext)))
-      {
-         perr("SSLSocket creation failed\n");
-         close();
-         return 9;
-      }
- 
-      SSL_set_fd(pClSSLSocket, pClCurCon->clSock);
-
-      #ifdef WITH_SSL2
-      if (!SSL_set_tlsext_host_name(pClSSLSocket, phostorip)) 
-      {
-         perr("Unable to set TLS servername extension.\n");
-         return 9;
-      }
-      if (cs.debug) printf("[SSL_set_tlsext_host_name: %s]\n", phostorip);
-      #endif
-
-      int iErrCode = SSL_connect(pClSSLSocket);
-
-      if (iErrCode < 0)
-      {
-         printf("SSLConnect failed (%d)\n",iErrCode);
-         close();
-         return 9;
-      }
-
-      mtklog(("SSL connect done to %s:%d with rc=%d", phostorip, nport, iErrCode));
-
-      if (cs.debug)
-         printf("SSL connect done to %s:%d\n", phostorip, nport);
-   }
-   #endif
 
    return 0;
 }
@@ -3446,14 +3316,6 @@ int HTTPClient::readraw(uchar *pbuf, int nbufsize)
 
    int ires = 0;
 
-   #ifdef WITH_SSL
-   if (bClSSL)
-   {
-      ires = SSL_read(pClSSLSocket, pbuf, nbufsize);
-      mtklog(("%d = ssl_read maxbuf %d",ires,nbufsize));
-   }
-   else
-   #endif
    {
       ires = pClCurCon->read(pbuf, nbufsize);
       mtklog(("%d = readraw maxbuf %d",ires,nbufsize));
@@ -3660,20 +3522,6 @@ void HTTPClient::close( )
       TCPCore::close(pClCurCon);
       pClCurCon = 0;
    }
-
-   #ifdef WITH_SSL
-   if (pClSSLSocket)
-   {
-      SSL_free(pClSSLSocket);
-      pClSSLSocket = 0;
-   }
-
-   if (pClSSLContext)
-   {
-      SSL_CTX_free(pClSSLContext);
-      pClSSLContext = 0;
-   }
-   #endif
 
    bClSSL = false;
 
@@ -4561,7 +4409,9 @@ int HTTPClient::sendReq
 
    char szPort[20];
    szPort[0] = '\0';
-   if (nport != 80)
+
+   // 'hostname:443' causes redirect failure with some servers.
+   if (nport != 80 && nport != 443)
       sprintf(szPort, ":%u", nport);
 
    char szAuth1[200];
@@ -4575,42 +4425,93 @@ int HTTPClient::sendReq
       snprintf(szAuth1,sizeof(szAuth1)-10, "Authorization: Basic %s", szAuth2);
    }
 
-   if (szClProxyHost[0])
-   snprintf(aClIOBuf, sizeof(aClIOBuf)-10,
-      "%s http://%s%s/%s HTTP/1.1\r\n"
-      "Host: %s%s\r\n"
-      "%s"
-      "User-Agent: %s\r\n"
-      "Accept: text/html;q=0.9,*/*;q=0.8\r\n"
-      "Accept-Language: en-us,en;q=0.8\r\n"
-   // "Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n"
-      "Proxy-Connection: close\r\n"
-      "\r\n"
-      , pcmd, phost, szPort, pfile
-      , phost, szPort
-      , szAuth1
-      , getHTTPUserAgent()
-      );
+   char *phdrs = cs.headers ? cs.headers : str("");
+   char *pReqBuf = aClIOBuf;
+   int   nReqLen = 0;
+
+   if (cs.webreq)
+   {
+      char *preq = cs.webreq;
+      while (iseol(*preq)) preq++;
+
+      if (!mystrnicmp(preq, "POST", 4))
+      {
+         // POST: leave as is, use large input buffer
+         pReqBuf = preq;
+         nReqLen = cs.webreqlen ? cs.webreqlen : (int)strlen(pReqBuf);
+      }
+      else
+      {
+         // GET, HEAD, CONNECT etc: complete the header
+         if (strlen(cs.webreq) > sizeof(aClIOBuf)-20)
+            return 9+perr("web request too long: %.100s", cs.webreq);
+         strcopy(aClIOBuf, cs.webreq);
+         int nlen = strlen(aClIOBuf);
+         int nmax = sizeof(aClIOBuf)-10;
+         // fix missing double crlf at end
+         if (nlen>4 && nlen+4<nmax
+             && strncmp(&aClIOBuf[nlen-4], "\r\n\r\n", 4)!=0)
+         {
+            if (strncmp(&aClIOBuf[nlen-2], "\r\n", 2)==0)
+               strcat(aClIOBuf, "\r\n");
+            else
+               strcat(aClIOBuf, "\r\n\r\n");
+         }
+         nReqLen = (int)strlen(aClIOBuf);
+      }
+   }
    else
-   snprintf(aClIOBuf, sizeof(aClIOBuf)-10,
-      "%s /%s HTTP/1.1\r\n"
-      "Host: %s%s\r\n"
-      "%s"
-      "User-Agent: %s\r\n"
-      "Accept: text/html;q=0.9,*/*;q=0.8\r\n"
-      "Accept-Language: en-us,en;q=0.8\r\n"
-      "Connection: close\r\n"
-      "\r\n"
-      , pcmd, pfile, phost, szPort
-      , szAuth1
-      , getHTTPUserAgent()
-      );
+   {
+      int nmaxbuf = (int)sizeof(aClIOBuf)-10;
+
+      if (szClProxyHost[0])
+      snprintf(aClIOBuf, nmaxbuf,
+         "%s http://%s%s/%s HTTP/1.1\r\n"
+         "Host: %s%s\r\n"
+         , pcmd, phost, szPort, pfile
+         , phost, szPort);
+      else
+      snprintf(aClIOBuf, nmaxbuf,
+         "%s /%s HTTP/1.1\r\n"
+         "Host: %s%s\r\n"
+         , pcmd, pfile, phost, szPort);
+   
+      if (strlen(phdrs) > 1) // skip prefix "\n"
+         mystrcatf(aClIOBuf, nmaxbuf, "%s", phdrs+1);
+   
+      if (szAuth1[0] && !mystrstri(phdrs, "\nAuthorization:"))
+         mystrcatf(aClIOBuf, nmaxbuf, "%s\r\n", szAuth1);
+   
+      if (!mystrstri(phdrs, "\nUser-Agent:"))
+         mystrcatf(aClIOBuf, nmaxbuf, "User-Agent: %s\r\n", getHTTPUserAgent());
+   
+      if (!mystrstri(phdrs, "\nAccept:"))
+         mystrcatf(aClIOBuf, nmaxbuf, "Accept: text/html;q=0.9,*/*;q=0.8\r\n");
+   
+      if (!mystrstri(phdrs, "\nAccept-Language:"))
+         mystrcatf(aClIOBuf, nmaxbuf, "Accept-Language: en-us,en;q=0.8\r\n");
+   
+      if (szClProxyHost[0]) {
+         if (!mystrstri(phdrs, "\nProxy-Connection:"))
+            mystrcatf(aClIOBuf, nmaxbuf, "Proxy-Connection: close\r\n");
+      } else {
+         if (!mystrstri(phdrs, "\nConnection:"))
+            mystrcatf(aClIOBuf, nmaxbuf, "Connection: close\r\n");
+      }
+   
+      mystrcatf(aClIOBuf, nmaxbuf, "\r\n");
+
+      if (strlen(aClIOBuf) > nmaxbuf-10)
+         return 9+perr("web request too long: %.100s", aClIOBuf);
+
+      nReqLen = (int)strlen(aClIOBuf);
+   }
 
    if (cs.showreq)
       printx("<file>http://%s%s/%s\n", phost, szPort, pfile);
 
-   if (cs.headers & 2) {
-      char *psz = (char*)aClIOBuf;
+   if (cs.showhdr & 2) {
+      char *psz = (char*)pReqBuf;
       char ccol = 'f';
       while (*psz!=0) {
          char *peol=psz;
@@ -4621,40 +4522,28 @@ int HTTPClient::sendReq
             printx("<file>< %.*s\n",ilen,psz);
          else
             printf("< %.*s\n",ilen,psz);
+         if (!strncmp(peol, "\r\n\r\n", 4)
+             || !strncmp(peol, "\n\n", 2)) {
+            printf("< \n");
+            break;
+         }
          while (*peol && iseol(*peol)) peol++;
-         psz=peol;
+         psz = peol;
          ccol = ' ';
       }
    }
 
-   mtklog(("send.request: %s",(char*)aClIOBuf));
-
-   size_t nlen = (int)strlen(aClIOBuf);
-
-   if (nlen >= sizeof(aClIOBuf)-20)
-   {
-      perr("HttpClient: request too long, cannot send: \"%.100s\"\n", aClIOBuf);
-      return 9;
-   }
-
    if (fGlblWebDump) {
       fprintf(fGlblWebDump, "-----req.begin-----\n");
-      fwrite(aClIOBuf,1,nlen,fGlblWebDump);
+      fwrite(pReqBuf, 1, nReqLen, fGlblWebDump);
       fprintf(fGlblWebDump, "-----req.done-----\n");
       fflush(fGlblWebDump);
    }
 
    size_t nsent = 0;
 
-   #ifdef WITH_SSL
-   if (bClSSL)
    {
-      nsent = SSL_write(pClSSLSocket, aClIOBuf, nlen);
-   }
-   else
-   #endif
-   {
-      nsent = pClCurCon->send((uchar*)aClIOBuf, strlen(aClIOBuf));
+      nsent = pClCurCon->send((uchar*)pReqBuf, nReqLen);
    }
 
    return 0;
@@ -14708,6 +14597,231 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
                    );
             break;
          }
+
+         case 20: // tcp.bat and tcp.sh
+         if (iSystem==1)
+         chain.print(
+            "@echo off\n"
+            "sfk script \"%%~f0\" -from begin %%*\n"
+            "GOTO xend\n"
+            "\n");
+         else
+         chain.print(
+            "#!/bin/bash\n"
+            "sfk script \"$0\" -from begin $@\n"
+            "function skip_block\n"
+            "{\n");
+
+         chain.print(
+            "sfk label begin -var\n"
+            "   +if \"%%1 = \" stop -all \"usage: tcp client|server [host:]port\"\n"
+            "   +call %%1 %%2\n"
+            "   +end\n"
+            "\n"
+            "sfk label client\n"
+            "   +tell \"connecting to %%1\"\n"
+            "   +connect %%1\n"
+            "   +send \"GET / HTTP/1.1\\r\\n\\r\\n\"\n"
+            "   +receive -timeout=3000\n"
+            "   +disconnect\n"
+            "   +end\n"
+            "\n"
+            "sfk label server\n"
+            "   +tell \"waiting on port %%1\"\n"
+            "   +accept %%1\n"
+            "   +receive -line -tovar a\n"
+            "   +echo -spat \"I got: #(a)\"\n"
+            "      +setvar b\n"
+            "   +send -fromvar b\n"
+            "   +disconnect\n"
+            "   +loop\n"
+            "   +end\n"
+            "\n");
+
+         if (iSystem==1)
+         chain.print(
+            ":xend\n");
+         else
+         chain.print(
+            "}\n");
+
+         break;
+
+         case 21: // vedit.bat
+         chain.print(
+"@echo off\n"
+"sfk script \"%%~f0\" -from begin %%*\n"
+"GOTO xend\n"
+"\n"
+"sfk label begin -var\n"
+"\n"
+"   +if \"%%1 = \" begin\n"
+"      +tell \"[green]vedit 1.0.5 - edit a video file[def]\"\n"
+"      +tell \"\"\n"
+"      +tell \"vedit command input output[.ext] [-yes][def]\"\n"
+"      +tell \"\"\n"
+"      +tell \"1. run VLC with a video in the current folder\"\n"
+"      +tell \"   (not in a sub folder), with a simple filename\"\n"
+"      +tell \"   with just one extension (not foo.m3u8.mkv).\"\n"
+"      +tell \"   press CTRL+B to show the bookmarks.\"\n"
+"      +tell \"   mark start and end of each part to extract.\"\n"
+"      +tell \"   there must be an even number of bookmarks.\"\n"
+"      +tell \"   CTRL+Y and save playlist file: parts.xspf\"\n"
+"      +tell \"\"\n"
+"      +tell \"2. type one of these commands:\"\n"
+"      +tell \"\"\n"
+"      +tell \"   [green]vedit get parts.xspf outdir\\video01[def]\"\n"
+"      +tell \"     get parts and store as outdir\\video01-part01/02/...\"\n"
+"      +tell \"     keeping the original file extension/format\"\n"
+"      +tell \"\"\n"
+"      +tell \"   [green]vedit get parts.xspf outdir\\video01 .mpg[def]\"\n"
+"      +tell \"     convert parts to .mpg format\"\n"
+"      +tell \"\"\n"
+"      +tell \"   [green]vedit join parts.xspf video01[def]\"\n"
+"      +tell \"     get parts and rejoin as video01.xyz\"\n"
+"      +tell \"     keeping the origial extension/format\"\n"
+"      +tell \"\"\n"
+"      +tell \"   [green]vedit join parts.xspf video01.mpg[def]\"\n"
+"      +tell \"     join and convert to given format like .mpg\"\n"
+"      +tell \"\"\n"
+"      +tell \"   [green]vedit wipe[def]\"\n"
+"      +tell \"     cleanup the zzsfktmp folder\"\n"
+"      +tell \"\"\n"
+"      +tell \"   [green]vedit shrink in.mov out.mov[def]\"\n"
+"      +tell \"     create video with halve width and height\"\n"
+"      +tell \"\"\n"
+"      +tell \"   [green]vedit scale in.mov 640:400 out.mov[def]\"\n"
+"      +tell \"     scale video to given resolution\"\n"
+"      +tell \"\"\n"
+"      +tell \"if it fails try simple filenames, without folders,\"\n"
+"      +tell \"backslashes or special characters.\"\n"
+"      +tell \"\"\n"
+"      +stop\n"
+"      +endif\n"
+"\n"
+"   +setvar partlist=\"\"\n"
+"   +setvar lastext=\"\"\n"
+"   +setvar diffext=0\n"
+"   +setvar userext=\"\"\n"
+"\n"
+"   +if \"%%1 = wipe\" begin\n"
+"      +rmtree zzsfktmp -yes\n"
+"      +stop +endif\n"
+"\n"
+"   +if \"%%1 = get\" begin\n"
+"      +if \"%%2 = \" stop \"missing input .xspf filename\"\n"
+"      +if \"%%3 = \" stop \"missing output base, e.g. outdir\\video01\"\n"
+"      +call getparts %%2 %%3 %%4 %%5\n"
+"      +stop +endif\n"
+"\n"
+"   +if \"%%1 = join\" begin\n"
+"      +if \"%%2 = \" stop \"missing input .xspf filename\"\n"
+"      +if \"%%3 = \" stop \"missing output filebase/name, e.g. video01 or video.mpg\"\n"
+"      +mkdir zzsfktmp\n"
+"      +call getparts %%2 zzsfktmp/edit %%4\n"
+"      +echo -pure \"%%3\" +xed _\\\\_/_ +setvar out\n"
+"      +call joinparts #(out) %%4\n"
+"      +stop +endif\n"
+"\n"
+"   +if \"%%1 = scale\" begin\n"
+"      +if \"%%4 = \" stop -all \"usage: vedit scale in.mov 640:400 out.mov\"\n"
+"      +setvar in=\"%%2\" +setvar out=\"%%4\"\n"
+"      +run %%5 \"ffmpeg -y -i #(qin) -vf scale=%%3 #(qout)\"\n"
+"      +if \"%%5 = -yes\" list -time -size #(in) #(out)\n"
+"      +stop +endif\n"
+"\n"
+"   +if \"%%1 = shrink\" begin\n"
+"      +if \"%%3 = \" stop -all \"usage: vedit shrink in.mov out.mov\"\n"
+"      +setvar in=\"%%2\" +setvar out=\"%%3\"\n"
+"      +run %%4 \"ffmpeg -y -i #(qin) -vf scale=iw/2:-1 #(qout)\"\n"
+"      +if \"%%4 = -yes\" list -time -size \"#(in)\" \"#(out)\"\n"
+"      +stop +endif\n"
+"\n"
+"   +tell \"unknown command: %%1\"\n"
+"\n"
+"   +end\n"
+"\n"
+"sfk label getparts\n"
+"   // expects a VLC bookmark file like \"parts.xspf\" containing a record like:\n"
+"   // <location>file:///C:/vid/foobar.mov</location>\n"
+"   // <vlc:option>bookmarks={name=myfile.MOV #0,time=749.750},{name=myfile.MOV #1,time=844.500},{name=myfile.MOV #2,time=1680.250},{name=myfile.MOV #3,time=1751.250}</vlc:option>\n"
+"   +setvar infile=\"%%1\"\n"
+"   +setvar outbase=\"%%2\"\n"
+"   +setvar userext=\"%%3\"\n"
+"   +setvar yes=\"%%4\"\n"
+"   +if \"#(userext) = -yes\" begin\n"
+"      +setvar userext=\"\"\n"
+"      +setvar yes=\"-yes\"\n"
+"      +endif\n"
+"   +if \"#(contains(infile,'.xspf')) = 0\" stop -all \"supply an .xspf file as input\"\n"
+"   +setvar npart=1\n"
+"   +xex %%1\n"
+"      \"_<location>*</location>_[all]\\n_\"\n"
+"      \"_<vlc:option>bookmarks=**</vlc:option>_[part2]\\n_\"\n"
+"      +perline -setvar line \"call getpart1\" -yes\n"
+"   +end\n"
+"\n"
+"sfk label getpart1\n"
+"   +if \"#(contains(line,'<location>')) = 1\" begin\n"
+"      +getvar line\n"
+"         +xex \"_<location>*</location>_[setvar file][part2][endvar]_\"\n"
+"      +getvar file +xed \"_*/__\" +decode -url +setvar file\n"
+"      // +tell \"file: #(file)\"\n"
+"      +stop +endif\n"
+"   // +tell \"book: #(line)\"\n"
+"   +getvar line\n"
+"      +xex\n"
+"         \"_{name=* #*,time=*},{name=* #*,time=*}_[part2]\\t[part6]\\t[part12]\\n_\"\n"
+"      +perline -setvar book \"call getpart2\" -yes\n"
+"   +end\n"
+"   \n"
+"sfk label getpart2\n"
+"   +getvar book\n"
+"      +xex \"_*\\t*\\t*\n"
+"            _[setvar title][part1][endvar]\n"
+"             [setvar sabs][part3][endvar]\n"
+"             [setvar eabs][part5][endvar]_\"\n"
+"   +setvar iext=\"#(strrpos(file,'.'))\"\n"
+"   +setvar ext=\"#(substr(file,iext))\"\n"
+"   +if \"#(userext) <> \" setvar ext=\"#(userext)\"\n"
+"   +if \"#(lastext) = \" setvar lastext=#(ext)\n"
+"   +if \"#(lastext) <> #(ext)\" setvar diffext=1\n"
+"   +calc \"#(eabs)-#(sabs)\" +setvar duration\n"
+"   +setvar partfile=\"#(outbase)-#(03npart)#(ext)\"\n"
+"   +then run #(yes) \"ffmpeg -y -ss #(sabs) -i #(qfile) -c copy -t #(duration) #(qpartfile)\"\n"
+"   +calc \"#(npart)+1\" +setvar npart\n"
+"   +echo \"file '#(partfile)'\" +addtovar partlist\n"
+"   +end\n"
+"\n"
+"sfk label joinparts\n"
+"   +setvar outfile=\"%%1\"\n"
+"   +setvar codec=\"\"\n"
+"   +setvar iext=\"#(strrpos(outfile,'.'))\"\n"
+"   +if \"#(iext) = -1\" begin\n"
+"      +if \"#(diffext) = 1\" call multiformerr\n"
+"      +if \"#(diffext) = 0\" setvar codec=\"-c copy\"\n"
+"      +setvar outfile=\"%%1#(ext)\"\n"
+"      +endif\n"
+"   +if \"#(iext) <> -1\" begin\n"
+"      +setvar oext=\"#(substr(outfile,iext))\"\n"
+"      +if \"#(oext) = #(ext)\" setvar codec=\"-c copy\"\n"
+"      +endif\n"
+"   +getvar partlist +tofile zzsfktmp\\infiles.txt\n"
+"   +then run %%2 \"ffmpeg -y -f concat -i zzsfktmp\\infiles.txt #(codec) -timecode 00:00:00.0 #(qoutfile)\"\n"
+"   +if \"%%2 = -yes\" sel -time -size #(outfile)\n"
+"   +end\n"
+"\n"
+"sfk label multiformerr\n"
+"   +tell \"input files have multiple formats.\"\n"
+"   +tell \"you must supply an output file extension, e.g. #(ext)\"\n"
+"   +tell \"joining different input formats may not work at all.\"\n"
+"   +stop -all\n"
+"   +end\n"
+"\n"
+":xend\n"
+"\n"
+);
+         break;
       }
 }
 
@@ -14944,458 +15058,6 @@ int UDPCore::recvPing(int i, int *pDelay)
 }
 
 #endif // USE_SFK_BASE
-
-ExtProgram::ExtProgram( )
-{
-   memset(this, 0, sizeof(*this));
-}
-
-#ifdef _WIN32
-int ExtProgram::winFork(char *pszCmd,
-   HANDLE hChildStdOut,
-   HANDLE hChildStdIn,
-   HANDLE hChildStdErr
- )
-{
-   PROCESS_INFORMATION pi;
-   STARTUPINFO si;
-
-   ZeroMemory(&si,sizeof(STARTUPINFO));
-   si.cb = sizeof(STARTUPINFO);
-   si.dwFlags = STARTF_USESTDHANDLES;
-   si.hStdOutput = hChildStdOut;
-   si.hStdInput  = hChildStdIn;
-   si.hStdError  = hChildStdErr;
-   // si.wShowWindow = SW_HIDE;
-   // dwFlags |= STARTF_USESHOWWINDOW;
-
-   if (!CreateProcess(NULL,pszCmd,NULL,NULL,TRUE,
-                      0, // CREATE_NEW_CONSOLE,
-                      NULL,NULL,&si,&pi))
-      return 9+perr("cannot run: CreateProcess failed%s",winSysError());
-
-   clXPid = pi.hProcess;
-
-   if (!CloseHandle(pi.hThread))
-      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
-
-   return 0;
-}
-#else
-pid_t ExtProgram::mypopen2(char *commandin[], int *infp, int *outfp)
-{
-    int iREAD=0,iWRITE=1;
-    int p_stdin[2], p_stdout[2];
-    pid_t pid;
-
-    const char *pbinary = (const char *)commandin[0];
-    char * const *pargs = (char * const *)commandin;
-
-    if (pipe(p_stdin) != 0 || pipe(p_stdout) != 0)
-        return -1;
-
-    pid = fork();
-
-    if (pid < 0)
-    {
-        return pid;
-    }
-    else if (pid == 0)
-    {
-        close(p_stdin[iWRITE]);
-        dup2(p_stdin[iREAD], iREAD);
-
-        close(p_stdout[iREAD]);
-        dup2(p_stdout[iWRITE], iWRITE);
-
-        execvp(pbinary, pargs);
-
-        exit(1);
-    }
-
-    close(p_stdin[iREAD]);
-    close(p_stdout[iWRITE]);
-
-    if (infp == NULL)
-        close(p_stdin[iWRITE]);
-    else
-        *infp = p_stdin[iWRITE];
-
-    if (outfp == NULL)
-        close(p_stdout[iREAD]);
-    else
-        *outfp = p_stdout[iREAD];
-
-    return pid;
-}
-#endif
-
-int ExtProgram::start(int iTimeout, const char *pszMask, ...)
-{
-   va_list argList;
-   va_start(argList, pszMask);
-   ::vsnprintf(szClXCmdBuf, sizeof(szClXCmdBuf)-10, pszMask, argList);
-   szClXCmdBuf[sizeof(szClXCmdBuf)-10] = '\0';
-
-   if (cs.debug) printf("[run: %s]\n",szClXCmdBuf);
-
-   clXTimeout = iTimeout;
-   clXRunStart = getCurrentTime();
-
-#ifdef _WIN32
-   SECURITY_ATTRIBUTES sa;
-   sa.nLength= sizeof(SECURITY_ATTRIBUTES);
-   sa.lpSecurityDescriptor = NULL;
-   sa.bInheritHandle = TRUE;
-
-   if (!CreatePipe(&hOutputReadTmp,&hOutputWrite,&sa,0))
-      return 9+perr("cannot run: CreatePipe failed%s",winSysError());
-
-   if (!DuplicateHandle(GetCurrentProcess(),hOutputWrite,
-                        GetCurrentProcess(),&hErrorWrite,0,
-                        TRUE,DUPLICATE_SAME_ACCESS))
-      return 9+perr("cannot run: DuplicateHandle failed%s",winSysError());
-
-   if (!CreatePipe(&hInputRead,&hInputWriteTmp,&sa,0))
-      return 9+perr("cannot run: CreatePipe failed%s",winSysError());
-
-   if (!DuplicateHandle(GetCurrentProcess(),hOutputReadTmp,
-                        GetCurrentProcess(),
-                        &hOutputRead, // Address of new handle.
-                        0,FALSE, // Make it uninheritable.
-                        DUPLICATE_SAME_ACCESS))
-      return 9+perr("cannot run: DuplicateHandle failed%s",winSysError());
-
-   if (!DuplicateHandle(GetCurrentProcess(),hInputWriteTmp,
-                        GetCurrentProcess(),
-                        &hInputWrite, // Address of new handle.
-                        0,FALSE, // Make it uninheritable.
-                        DUPLICATE_SAME_ACCESS))
-      return 9+perr("cannot run: DuplicateHandle failed%s",winSysError());
-
-   if (!CloseHandle(hOutputReadTmp))
-      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
-   if (!CloseHandle(hInputWriteTmp))
-      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
-
-   int lRC = winFork(szClXCmdBuf, hOutputWrite, hInputRead, hErrorWrite);
-
-   if (!CloseHandle(hOutputWrite))
-      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
-   if (!CloseHandle(hInputRead))
-      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
-   if (!CloseHandle(hErrorWrite))
-      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
-#else
-   mclear(szClXCmdBuf);
-
-   int lRC = 0;
-   int iparms = 0;
-
-   char *psz = szClXCmdBuf;
-   while (*psz)
-   {
-      aClXCmdParms[iparms++] = psz;
-
-      while (*psz!=0 && *psz!=' ')
-         psz++;
-
-      if (!*psz)
-         break;
-
-      while (*psz==' ')
-         *psz++ = '\0';
-   }
-   aClXCmdParms[iparms] = 0;
-
-   clXFin = 0;
-   clXPid = mypopen2(aClXCmdParms, 0, &clXFin);
-#endif
-
-   return 0;
-}
-
-int ExtProgram::readFull(uchar *pBuf, int iMaxBuf)
-{
-   int isubrc=0;
-
-   int iTotal=0;
-   int iRemain=iMaxBuf;
-
-   while (iRemain>0)
-   {
-      isubrc = read(pBuf+iTotal,iRemain);
-
-      // if (cs.debug) printf("[%d = ext.read(%d) total %d remain %d]\n",isubrc,iRemain,iTotal,iRemain);
-
-      if (isubrc >= 0) {
-         iTotal += isubrc;
-         iRemain -= isubrc;
-         continue;
-      }
-
-      mtklog(("%d = ext.read",isubrc));
-
-      // -1 flags end of data
-      break; // fix sfk1852: NOT "return 0"
-   }
-
-   return iTotal;
-}
-
-int ExtProgram::readFull(uchar **ppBuf, int *pBufSize)
-{
-   *ppBuf = 0;
-
-   int iBufSize = *pBufSize;
-
-   if (iBufSize < 100)
-      return 9+perr("extprog: wrong input buffer size");
-
-   uchar *pBuf = new uchar[iBufSize+100];
-   if (!pBuf)
-      return 9+perr("outofmem %d",iBufSize);
-
-   int isubrc=0;
-
-   int iTotal=0;
-   int iRemain=0;
-   while (1)
-   {
-      iRemain = iBufSize-iTotal;
-
-      if (iRemain<=0) {
-         // buffer overflow
-         isubrc=-9;
-         break;
-      }
-
-      isubrc = read(pBuf+iTotal,iRemain);
-
-      if (isubrc >= 0) {
-         iTotal += isubrc;
-         continue;
-      }
-
-      // case -1 and other
-      break;
-   }
-
-   // require "command completed"
-   if (isubrc == -1)
-   {
-      // todo: adjust buffer
-      *pBufSize = iTotal;
-      *ppBuf    = pBuf;
-      return 0;
-   }
-
-   // otherwise drop buffer
-   delete [] pBuf;
-
-   if (isubrc == -5)
-      return 5;
-
-   return 9;
-}
-
-// .
-char *ExtProgram::readLine( )
-{
-   char *pBuf   = szClXLineBuf;
-   int  nBufMax = sizeof(szClXLineBuf)-10;
-
-   int nCursor = 0;
-   int nRemain = nBufMax;
-   pBuf[0] = '\0';
-
-   while (nRemain > 10)
-   {
-      if (bGlblEscape)
-      {
-         printf("!Curl: Canceling connect due to stop request (2)\n");
-         return 0;
-      }
-
-      int nRead = read((uchar*)pBuf+nCursor, 1);
-
-      if (nRead == 0) // no input yet available
-         { doSleep(20); continue; }
-
-      if (nRead < 0) { // end of stream, or error
-         mtklog(("curl.readline error: %d",nRead));
-         return 0;
-      }
-
-      nCursor += nRead;
-      nRemain -= nRead;
-      pBuf[nCursor] = '\0';
-      if (nCursor >= 2 && !strncmp(pBuf+nCursor-2, "\r\n", 2))
-         break;
-      if (nCursor >= 1 && !strncmp(pBuf+nCursor-1, "\n", 1))
-         break;
-   }
-
-   {
-      char *pcr = strchr(pBuf, '\r'); if (pcr) *pcr = '\0';
-            pcr = strchr(pBuf, '\n'); if (pcr) *pcr = '\0';
-   }
-
-   // printf("< %s\n", pBuf);
-
-   return pBuf;
-}
-
-// 0 : no data yet
-// >0: no. of bytes received
-// -1: command completed
-// -5: timeout
-// -9: other error
-int ExtProgram::read(uchar *pBuf, int iMaxBuf)
-{
-#ifdef _WIN32
-   char szTmpBuf[100];
-
-   DWORD n1=0,nAvail=0,n3=0;
-   BOOL brc = PeekNamedPipe(hOutputRead, szTmpBuf, 10, &n1, &nAvail, &n3);
-
-   if (nAvail < 1)
-   {
-      mtklog(("ext.read.1 %d %d",nAvail,brc));
-
-      if (brc == FALSE && GetLastError() == ERROR_BROKEN_PIPE) {
-         clXPid = 0;
-         return -1;
-      }
-
-      return 0;
-   }
-
-   DWORD nBytesRead = 0;
-
-   if (   !ReadFile(hOutputRead,pBuf,iMaxBuf,&nBytesRead,NULL)
-       || !nBytesRead
-      )
-   {
-      mtklog(("ext.read.2"));
-
-      if (GetLastError() == ERROR_BROKEN_PIPE) {
-         clXPid = 0;
-         return -1;
-      }
-
-      perr("error during run%s",winSysError());
-      return -9;
-   }
-
-   // got further data from child stdout
-   int iread = (int)nBytesRead;
-
-   if (iread > 0)
-   {
-      if (cs.debug!=0 && iread>10) 
-         printf("[%d = ext.read] %s\n",iread,dataAsTrace(pBuf,mymin(64,iread)));
-
-      return iread;
-   }
-
-   perr("no data from pipe: %d",iread);
-
-   stop();
-
-   return -9;
-#else
-   if (getCurrentTime()-clXRunStart >= clXTimeout)
-   {
-      printf("< command timeout, stopping.\n");
-      stop();
-      return -5;
-   }
-
-   fd_set fdr;
-   FD_ZERO(&fdr);
-   FD_SET(clXFin,&fdr);
-   struct timeval tv;
-   tv.tv_sec  = 0;
-   tv.tv_usec = 200*1000;
-
-   int irc = select(clXFin+1,&fdr,NULL,NULL,&tv);
-
-   if (irc == 0)
-   {
-      int nstat=0;
-      pid_t isubrc = waitpid(clXPid,&nstat,WNOHANG);
-      if (isubrc != 0) {
-         if (cs.verbose)
-            printf("< command completed by pid.\n");
-         return -1;
-      }
-   }
-   else
-   if (irc < 0) {
-      printf("error %d\n",irc);
-      stop();
-      return -9;
-   }
-   else
-   {
-      if (FD_ISSET(clXFin,&fdr))
-      {
-         int iread = ::read(clXFin,pBuf,iMaxBuf);
-         // printf("%d = ::read(%d,%d)\n",iread,clXFin,iMaxBuf);
-         if (iread > 0)
-         {
-            return iread;
-         }
-         else
-         {
-            // if (cs.verbose)
-               printf("< command completed by eod.\n");
-            stop();
-            return -1;
-         }
-      }
-   }
-#endif
-
-   return 0;
-}
-
-int ExtProgram::stop()
-{
-#ifdef _WIN32
-   if (hOutputRead && !CloseHandle(hOutputRead))
-      return 9+perr("rerun: CloseHandle failed%s",winSysError());
-   hOutputRead = 0;
-
-   if (hInputWrite && !CloseHandle(hInputWrite))
-      return 9+perr("rerun: CloseHandle failed%s",winSysError());
-   hInputWrite = 0;
-
-   if (clXPid != 0) {
-      if (cs.verbose)
-         printf("[stopping child process.]\n");
-      TerminateProcess(clXPid, 0);
-      clXPid = 0;
-   }
-#else
-   if (clXRunStart == 0)
-      return 0;
-
-   clXRunStart = 0;
-
-   // stop 1. forked proc 2. child of fork
-   kill(clXPid, SIGINT);
-   close(clXFin);
-
-   // must do this otherwise forked process
-   // runs endless as "defunct".
-   int iwaitstat=0;
-   waitpid(clXPid, &iwaitstat, 0);
-#endif
-
-   return 0;
-}
 
 static cchar *pszPicReaderTpl1 =
 "<html><head><title>image reader</title>\n"
@@ -17968,9 +17630,9 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice,
             cs.inonutfhicodes++;
       }
 
-      if (cs.force==0 && isPathTraversal(szLineBuf2,1)!=0) {
+      if (cs.force<2 && isPathTraversal(szLineBuf2,1)!=0) {
          perr("invalid path start of zip entry: %s", szLineBuf2);
-         pinf("use option -force if you really want to extract this.\n");
+         pinf("use option -force=2 if you really want to extract this.\n");
          return 9;
       }
 
@@ -18374,14 +18036,14 @@ int execUnzip(char *pszInFile, char *pszSubFile, int iOffice,
          if (isubrc)
          {
             perr("cannot write: %s\n", ocoi.name());
-            if (!cs.force)
+            if (!cs.force) // unzip stop on file write failure
                return 9;
          }
 
          if (ocoi.open("wb"))
          {
             perr("cannot write: %s\n", ocoi.name());
-            if (!cs.force) {
+            if (!cs.force) { // unzip stop on dir create failure
                static bool btold=0;
                if (!btold)
                   pinf("use option -force to ignore errors.\n");
@@ -20498,16 +20160,21 @@ int execDirCopy(char *pszSrc, FileList &oDirFiles)
    if ((nRefLen > 0) && (szRefNameBuf[nRefLen-1] == glblPathChar))
       szRefNameBuf[nRefLen-1] = '\0';
 
-   // in case we have to copy EMPTY target directories:
-   // if (createSubDirTree(szRefNameBuf, ""))
-   //   return 9;
-
    // execFileCopy has created dir tree on demand,
    // so all dirs must exist, IF files have been copied.
    if (!isDir(szRefNameBuf)) {
-      if (cs.verbose)
-         info.print("%s : skip, no files copied.\n",szRefNameBuf);
-      return 0; // no files have been copied in that dir.
+      // sfk1972 -empty internal, yet incomplete.
+      // e.g. dont want this if file masks are given.
+      if (cs.withempty && isEmptyDir(pszSrc)) {
+         if (createSubDirTree(szRefNameBuf, str("")))
+            return 9;
+         if (cs.verbose)
+            info.print("%s : copying empty dir.\n",szRefNameBuf);
+      } else {
+         if (cs.verbose)
+            info.print("%s : skip, no files copied.\n",szRefNameBuf);
+         return 0; // no files have been copied in that dir.
+      }
    }
 
    char szReason[50];
@@ -20541,22 +20208,8 @@ int execDirCopy(char *pszSrc, FileList &oDirFiles)
    // checked isDir(szRefNameBuf) above
    if (!ofsDst.readFrom(szRefNameBuf))
    {
-      // copy the directory timestamp or not? during filecopy,
-      // we may have created the dir on demand. in this case,
-      // copy the dir timestamp unconditionally. ELSE copy it only
-      // if the src is newer than the target.
-      bool bOnlyOnNewSrc = 1;
-      // this check is not at all beautiful, but it works
-      // without restructuring the whole tree processing.
-      #ifdef SFK_CCDIRTIME
-      int ipos = glblCreatedDirs.find(szRefNameBuf);
-      if (ipos >= 0) {
-         // the dir was recently created: ignore its new timestamp
-         glblCreatedDirs.removeEntry(ipos);
-         bOnlyOnNewSrc = 0;
-      }
-      #endif
-      int ndif = ofsSrc.differs(ofsDst, bOnlyOnNewSrc);
+      // sfk1972 always sync folder dates, just like file dates.
+      int ndif = ofsSrc.differs(ofsDst, 0); // NOT same if older src 
       if (!ndif) {
          if (cs.verbose > 1)
             info.print("%s : no time / attrib change\n", szRefNameBuf);
@@ -21206,7 +20859,6 @@ int execDirCleanup(char *pszSrc, FileList &oDirFiles)
 
    if (!isDir(pszSrc) && isDir(pszDst))
    {
-      bool isEmptyDir(char *pszIn);
       if (isEmptyDir(pszDst))
       {
          setTextColor(nGlblWarnColor);
@@ -22546,7 +22198,7 @@ void printBewareLean( )
 }
 
 extern int  nGlblConsColumns;
-extern bool bGlblConsColumnsSet;
+extern int  bGlblConsColumnsSet;
 extern cchar *officeExtList[];
 
 void webref(cchar *pszIn);
@@ -23768,6 +23420,7 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
          "   $-withsub<def>    include subdirs. is DEFAULT with most commands.\n"
          "   $-withdirs<def>   include (sub) folder names in processing.\n"
          "   $-justdirs<def>   use just (sub) folder names for processing.\n"
+      // "   $-noqwild<def>    disable \"?\" wildcard in file selection.\n" // internal
          #if (!defined(SFK_LIB5))
          "   $-nofollow<def>   or -nofo does not follow symbolic directory links.\n"
          "               this option may NOT work with older Linux versions,\n"
@@ -23821,6 +23474,14 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
          #endif
          "   $-binallchars<def>  with binary-to-text conversion, include all printable\n"
          "                 characters, like accents or non latin.\n"
+         "\n");
+
+      printx(
+         "   #network options\n"
+         "   $-header x<def>   or -head adds custom header x to http requests, like\n"
+         "               -header \"Accept-Language: de,en-US;q=0.7,en;q=0.3\"\n"
+         "               multiple header lines can be given. default headers\n"
+         "               with the same name are replaced.\n"
          "\n");
 
       printx(
@@ -24988,6 +24649,58 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
           "      <exp> SFK_COLORS=theme:black    for DARK    backgrounds\n"
           "      <exp> SFK_COLORS=theme:white    for BRIGHT  backgrounds\n"
           "      see also \"sfk help colors\"\n");
+   }
+
+   if (!strcmp(pszSub, "tcp"))   // sfk1972
+   {
+  printx("$sfk tcp toolkit\n"
+         "\n"
+         "   you can use in a script:\n"
+         "\n"
+         "   #+connect host:port\n"
+         "      connect to a server\n"
+         "\n"
+         "   #+send \"text\"\n"
+         "      send text. when doing this in a script, multi line\n"
+         "      text is joined as is, stripped from leading or\n"
+         "      trailing blanks per line.\n"
+         "      -addcrlf    add CRLF per line (no default).\n"
+         "      -spat       use slash patterns like \\r\\n\n"
+         "                  for details see: sfk help pat\n"
+         "      -fromvar=a  send data from variable a\n"
+         "      -verbose    tell exactly what is sent\n"
+         "\n"
+         "   #+receive [options]\n"
+         "      receive some data.\n"
+         "      -line       receive single text line until (CR)LF\n"
+         "      -until p    receive until (slash) pattern p\n"
+         "      -timeout=n  wait up to n msec, or until connection\n"
+         "                  close is detected.\n"
+         "      -nostop     don't try to detect connection close,\n"
+         "                  wait the full timeout.\n"
+         "      -maxlen=n   receive up to n bytes. default is 100000.\n"
+         "      -tovar=a    put output into variable a.\n"
+         "\n"
+         "   #+disconnect\n"
+         "      close connection\n"
+         "\n"
+         "   #+accept port\n"
+         "      be a server, accept connections on given port.\n"
+         "      this creates a server- and a client socket.\n"
+         "\n"
+         "   #+closeaccept\n"
+         "      close server socket.\n"
+         "\n"
+         "   $options for multiple connections\n"
+         "      -chan[nel]=n  set a channel number (1-19).\n"
+         "         default with connect/send/recv/disc is 1.\n"
+         "         default for accept server socket is 2,\n"
+         "                 for accept client socket is 1.\n"
+         "\n"
+         "   $see also\n"
+         "      #sfk batch tcp.bat<def>   create example batch\n"
+         "      #sfk batch tcp.sh<def>    create example .sh\n"
+         );
    }
 
    if (!strcmp(pszSub, "faq"))
@@ -26167,7 +25880,7 @@ public:
    if (!bhelp) return 9; printx("\n"); } bexec=1; } \
    if (!bhelp && bexec) { bexec=0
 
-#define sfkarg   \
+#define sfkarg \
    SFKMapArgs oxargs(pszCmd,argc,argv,iDir);  \
    if (oxargs.bdead) return 9;   \
    char **argx = oxargs.clargx;
@@ -27971,6 +27684,31 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   ifcmd (!strcmp(pszCmd, "video")) // +wref
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk video\n"
+             "\n"
+             "   how to edit a video file by\n"
+             "   - extracting multiple parts\n"
+             "   - joining them into a new file\n"
+             "\n"
+             "   1. get VLC 3.0.11 or later\n"
+             "\n"
+             "   2. get ffmpeg.exe of 2016 or later\n"
+             "\n"
+             "   3. type:\n"
+             "\n"
+             "      #sfk batch vedit.bat\n"
+             "      #vedit\n"
+             "\n"
+             "      and read further instructions.\n"
+             );
+      ehelp;
+
+      bDone = 1;
+   }
+
    ifcmd (!strcmp(pszCmd, "media")) // +wref
    {
       ifhelp(!chain.usefiles && (nparm < 1))
@@ -27980,6 +27718,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              "   cuts mpeg2 video or other binary file(s), by keeping or\n"
              "   dropping parts given as absolute byte positions in the file.\n"
+             "\n"
+             "   this command is deprecated. use instead: #sfk video\n"
              "\n"
              "   sfk media $does not interpret, decode or encode any video data<def>,\n"
              "   and knows nothing about the file format. it simply $copies\n"
@@ -28745,6 +28485,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       int istate = 0;
 
       FTPServer oserv;
+
       // sets user/pw from environment,
       // to be overwritten by options below
       bool bGotOptUser=0,bGotOptPW=0,bGotOptRunPW=0;
@@ -31059,7 +30800,331 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
-   #ifdef SFKNEWDUMP
+   // --------- sfk1972 tcp kit begin, yet internal ----------
+   if (!strcmp(pszCmd, "connect"))
+   {
+      sfkarg;
+
+      char szHost[200]; szHost[0]='\0';
+      int  iPort=0, bSSL=0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++) {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (!strcmp(pszArg, "-ssl"))
+            { bSSL=1; continue; }
+         if (sfkisopt(pszArg)) {
+            if (setGeneralOption(argx, argc, iDir)) continue;
+            return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         strcopy(szHost, pszArg);
+      }
+      if (!szHost[0])
+         return 9+perr("missing host:port");
+
+      if (bSSL>0 && cs.verbose>1)
+         bSSL = 1+(cs.verbose-1);
+
+      TCPCore::sysInit();
+
+      char *psz = strchr(szHost, ':');
+      if (psz)
+         { *psz='\0'; iPort=atoi(psz+1); }
+
+      TCPCon *pcon = 0;
+      int irc = TCPCore::any().connect(szHost, iPort, &pcon, bSSL);
+      if (cs.verbose)
+         printf("[connect channel=%d con=%p rc=%d err=%d host=%s port=%d]\n",
+            cs.chan,pcon,irc,netErrno(),szHost,iPort);
+      if (irc)
+         return 9+perr("connect failed to %s:%d\n", szHost, iPort);
+      aGlblUserSocket[cs.chan] = pcon;
+
+      STEP_CHAIN(iChainNext, 1);
+   }
+   if (!strcmp(pszCmd, "send"))
+   {
+      sfkarg;
+
+      char  *pszRawText=0;
+      uchar *pData=0;
+      int   nData=0;
+      char  cFormat='t';
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++) {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-fromvar", &pszParm)) {
+            if (!pszParm) return 9;
+            pData = sfkgetvar(pszParm, &nData);
+            continue;
+         }
+         if (!strcmp(pszArg, "-addcrlf"))
+            { cFormat='w'; continue; }
+         if (sfkisopt(pszArg)) {
+            if (setGeneralOption(argx, argc, iDir)) continue;
+            return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (iGlblInScript) // then pszArg is writeable
+            fixMultiLineParm(pszArg, cFormat); // send
+         if (cs.spat) {
+            nData = copyFromFormText(pszArg, strlen(pszArg), (char*)abBuf, MAX_ABBUF_SIZE);
+            pData = abBuf;
+         } else {
+            nData = strlen(pszArg);
+            pData = (uchar*)pszArg;
+         }
+      }
+      if (nData < 1 || pData == 0)
+         return 9+perr("missing data");
+      if (aGlblUserSocket[cs.chan] == 0)
+         return 9+perr("missing connect on channel %u",cs.chan);
+
+      if (cs.verbose)
+         printf("[send: %s]\n", dataAsTrace(pData, nData));
+
+      int irc = aGlblUserSocket[cs.chan]->send(pData, nData);
+
+      if (cs.verbose)
+         printf("[sent con=%p ndata=%d rc=%d err=%d]\n",aGlblUserSocket[cs.chan],nData,irc,netErrno());
+
+      if (irc < nData)
+         return 9+perr("send failed (%d/%d)\n", irc, nData);
+
+      STEP_CHAIN(iChainNext, 1);
+   }
+   if (!strcmp(pszCmd, "receive"))
+   {
+      sfkarg;
+
+      int   bHexDump=0, nTimeout=200, bNoClose=0, iMaxLen=0, nUntil=0;
+      char *pszVar=0;
+      char  szUntil[200];
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++) {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-timeout", &pszParm)) {
+            if (!pszParm) return 9;
+            nTimeout = atol(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-maxlen", &pszParm)) {
+            if (!pszParm) return 9;
+            iMaxLen = atol(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-tovar", &pszParm)) {
+            if (!pszParm) return 9;
+            pszVar = pszParm;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-until", &pszParm)) {
+            if (!pszParm) return 9;
+            nUntil = copyFromFormText(pszParm, strlen(pszParm), szUntil, sizeof(szUntil)-10);
+            if (nUntil < 1)
+               return 9;
+            continue;
+         }
+         if (!strcmp(pszArg, "-line"))
+            { strcpy(szUntil, "\n"); nUntil=1; continue; }
+         if (!strcmp(pszArg, "-nostop"))
+            { bNoClose=1; continue; }
+         if (!strcmp(pszArg, "-hexdump"))
+            { bHexDump=1; continue; }
+         if (sfkisopt(pszArg)) {
+            if (setGeneralOption(argx, argc, iDir)) continue;
+            return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+      }
+      TCPCon *pcon = aGlblUserSocket[cs.chan];
+      if (pcon == 0)
+         return 9+perr("missing connect on channel %d", cs.chan);
+
+      char *pszBuf = (char*)abBuf;
+      int   iMaxBuf = MAX_ABBUF_SIZE;
+
+      if (iMaxLen) {
+         pszBuf = new char[iMaxLen+100];
+         if (!pszBuf)
+            return 9+perr("outofmem");
+         iMaxBuf = iMaxLen;
+      }
+
+      if (nUntil>0) {
+         pcon->setBlocking(1);
+         pcon->iClMaxWait = 0;
+         nTimeout = 0;
+      } else {
+         pcon->iClMaxWait = nTimeout;
+      }
+
+      int nData=0;
+      num nstart=getCurrentTime();
+      do {
+         int iReadLen = iMaxBuf-nData;
+         if (nUntil>0 && iReadLen>1)
+             iReadLen = 1;
+         int iBlock = pcon->read((uchar*)pszBuf+nData, iReadLen, 1);
+         if (cs.verbose)
+            printf("[recv con=%p read=%d total=%d until=%d err=%d]\n",pcon,iBlock,nData,nUntil,netErrno());
+         if (iBlock < 0)
+            break; // connection close
+         if (iBlock > 0) {
+            nData += iBlock;
+            pszBuf[nData] = '\0';
+            if (nUntil>0 && nData>=nUntil) {
+               if (memcmp(pszBuf+nData-nUntil, szUntil, nUntil)==0) {
+                  if (cs.verbose > 1)
+                     printf("[until match] '%s'\n", pszBuf);
+                  break;
+               }
+               if (cs.verbose > 2)
+                  printf("[until %.*s miss] '%s'\n", nUntil, szUntil, pszBuf);
+            }
+         }
+         if (nTimeout > 0) {
+            if (bNoClose == 0 && iBlock == 0) // flags connection close
+               break;
+            if (getCurrentTime()-nstart >= nTimeout)
+               break;
+            doSleep(25);
+         }
+      } while (nTimeout > 0 || nUntil > 0);
+
+      if (pszVar) {
+         if (nData > 0)
+            sfksetvar(pszVar, (uchar*)pszBuf, nData);
+         else
+            sfksetvar(pszVar, (uchar*)"", 0);
+      } else {
+         if (nData > 0)
+            dumpOutput((uchar*)pszBuf, 0, nData, bHexDump);
+      }
+
+      if (iMaxLen) delete [] pszBuf;
+
+      STEP_CHAIN(iChainNext, 1);
+   }
+   if (!strcmp(pszCmd, "disconnect"))
+   {
+      sfkarg;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++) {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (sfkisopt(pszArg)) {
+            if (setGeneralOption(argx, argc, iDir)) continue;
+            return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+      }
+      TCPCon *pcon = aGlblUserSocket[cs.chan];
+      if (pcon == 0)
+         return 9+perr("missing connect on channel %d", cs.chan);
+
+      TCPCore::any().close(pcon);
+      aGlblUserSocket[cs.chan] = 0;
+
+      STEP_CHAIN(iChainNext, 1);
+   }
+   if (!strcmp(pszCmd, "accept"))
+   {
+      sfkarg;
+
+      uint iPort=0;
+      struct sockaddr_in ServerAdr;
+      struct sockaddr_in ClientAdr;
+      socklen_t nSoLen = sizeof(sockaddr_in);
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++) {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (sfkisopt(pszArg)) {
+            if (setGeneralOption(argx, argc, iDir)) continue;
+            return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         iPort = atoi(pszArg);
+      }
+      if (!iPort)
+         return 9+perr("missing port");
+
+      TCPCore::sysInit();
+
+      TCPCon *pscon = 0;
+      TCPCon *pccon = 0;
+
+      if (aGlblUserSocket[cs.chanserv] == 0) {
+         if (TCPCore::any().makeServerSocket(iPort, &pscon))
+            return 9;
+         aGlblUserSocket[cs.chanserv] = pscon;
+         if (cs.verbose) printf("[create channel=%u scon=%p]\n", cs.chanserv, pscon);
+         // pscon->setBlocking(0);
+      } else {
+         pscon = aGlblUserSocket[cs.chanserv];
+         if (cs.verbose) printf("[reuse channel=%u scon=%p]\n", cs.chanserv, pscon);
+      }
+
+      if (cs.verbose) printf("[waiting for accept on channel=%u port=%u con=%p]\n", cs.chanserv, iPort, pscon);
+
+      while (!userInterrupt()) {
+         TCPCore::any().accept(pscon, &pccon);
+         if (pccon == 0) {
+            int nerr = netErrno();
+            if (nerr == WSAEWOULDBLOCK)
+               { doSleep(50); continue; }
+            return 9+perr("accept failed");
+         }
+         if (cs.verbose) printf("[got connection: channel=%u con=%p]\n",cs.chan,pccon);
+         aGlblUserSocket[cs.chan] = pccon;
+         break;
+      }
+      if (userInterrupt()) return 9;
+
+      STEP_CHAIN(iChainNext, 1);
+   }
+   if (!strcmp(pszCmd, "closeaccept"))
+   {
+      sfkarg;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++) {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (sfkisopt(pszArg)) {
+            if (setGeneralOption(argx, argc, iDir)) continue;
+            return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+      }
+      TCPCon *pscon = aGlblUserSocket[cs.chanserv];
+      if (!pscon)
+         return 9+perr("missing accept for channel %d\n", cs.chanserv);
+
+      if (cs.verbose) printf("[closing socket channel=%u con=%p]\n", cs.chanserv, pscon);
+
+      TCPCore::any().close(pscon);
+      aGlblUserSocket[cs.chanserv] = 0;
+
+      STEP_CHAIN(iChainNext, 1);
+   }
+   // --------- sfk1972 tcp kit end ----------
+
    ifcmd (   strBegins(pszCmd, "hexdump") // +wref
           || strBegins(pszCmd, "fhexdump")
           || strBegins(pszCmd, "hexfile")
@@ -31361,7 +31426,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       bDone = 1;
    }
-   #endif // SFKNEWDUMP
 
    #ifdef WITH_TCP
 
@@ -32269,10 +32333,13 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       }
       else
       if (bTCP) {
+         /*
+         // sfk1972 no longer add crlf by default
          if (nMsg) {
             memcpy(abMsg+nMsg, "\r\n", 2);
             nMsg += 2;
          }
+         */
          tcpClient(szDstIP, ndstport, nlisten, nownport, abMsg, nMsg, nTimeout);
       } else {
          udpSend(szDstIP, ndstport, nlisten, nownport, abMsg, nMsg, nTimeout, 0);
@@ -32564,10 +32631,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              "      SFKTray Full supports 9 status slots per instance,\n"
              "      and can run up to 3 instances in parallel (27 lights).\n"
-             "      It is available from:\n"
-             "\n"
-             "        #http://stahlworks.com/sfktray\n"
-             "\n"
+             "      It is part of the SFK Plus bundle:\n"
+             "         #http://stahlworks.com/sfkplus\n"
+             "\n"   // sfkplus.anno tray
              "   $command chaining\n"
              "      is supported without any chain input or output.\n"
              "\n"
@@ -33001,6 +33067,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          */
          "\n");
   printx("   $options\n"
+         "      -spat     activate slash patterns like \\t \\q \\xnn\n"
+         "                which can be useful in run expressions.\n"
          "      -notify=h display an arrow in SFKTray 1.1 running on\n"
          "                hostname h whenever files are actually sent.\n"
          "      -raw      force ftp protocol even when connected with an\n"
@@ -33329,6 +33397,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             }
             case 2: {
                pszFtpCmd = pparm;
+               // single-file get/put add forced quotes:
+               //    get "the blank dir/foo.txt"
                if (!strcmp(pszFtpCmd, "get")
                    || !strcmp(pszFtpCmd, "put"))
                   benquote = 1;
@@ -33337,10 +33407,18 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             }
             default: {
                // continue to collect instant command,
-               // considering internal enquoting
+               // considering internal enquoting.
+               // prepare -spat here like:
+               // FROM rerun dir \qthe blank dir\q
+               // TO   rerun dir "the blank dir"
                if (szLineBuf2[0]) strcat(szLineBuf2, " ");
                if (benquote) strcat(szLineBuf2, "\"");
-               strcat(szLineBuf2, pparm);
+               int ilen = strlen(szLineBuf2);
+               int irem = MAX_LINE_LEN-ilen;
+               if (cs.spat)
+                  copyFromFormText(pparm,strlen(pparm), szLineBuf2+ilen,irem);
+               else
+                  strcat(szLineBuf2, pparm);
                if (benquote) strcat(szLineBuf2, "\"");
             }
          }
@@ -33800,6 +33878,20 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      -noerr       print no error message\n"
              "      -quiet       do not print status line in case of -nodump\n"
              "      -headers     print sent and received http headers\n"
+             "      -header x<def>    or -head adds custom header x to http requests, like\n"
+             "                   -header \"Accept-Language: de,en-US;q=0.7,en;q=0.3\"\n"
+             "                   multiple header lines can be given. default headers\n"
+             "                   with the same name are replaced.\n"
+             "      -request x   or -req specifies the whole HTTP request, like\n"
+             "                   -req \"POST / HTTP/1.1\n"
+             "                         Host: localhost\n"
+             "                         Connection: close\n"
+             "                         \n"
+             "                         var1=123&var2=456\n"
+             "                         \"\n"
+             "                   this can only be used within a script file.\n"
+             "      -reqfromvar a  take request from variable a. must contain exact\n"
+             "                   data, like empty CRLF line after GET header.\n"
              "      -showreq     print full URL, may also use -status\n"
              "      -verbose     tell current proxy settings, if any\n"
              "\n"
@@ -33822,13 +33914,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      $tweb<def>  same as web but tells explicitely\n"
              "            that it expects chain text input.\n"
              "\n");
-      printx("   $chaining support\n"
-             "      since sfk 1.8.7 +web does not use chain text input.\n"
-             "      use +tweb to read url's from chain text, or set\n"
-             "      global option -chainweb to use chain input by default.\n"
-             "      output data chaining is supported.\n"
-             "\n"
-             "   $return codes for chaining\n"
+      printx("   $HTTPS support\n"  // sfkplus.anno web
+             "      SSL/TLS connections are supported with SFK Plus.\n"
+             "      read more under:\n"
+             "         #stahlworks.com/sfkplus\n"
+             "\n");
+      printx("   $return codes for chaining\n"
              "      0 = ok    >0 = any error\n"
              "\n"
              "   $see also\n"
@@ -33930,6 +34021,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
+         char *pszParm = 0;
          if (!strncmp(pszArg,"-timeout=",9)) { // wto.web
             cs.maxwebwait = atol(pszArg+9);
             continue;
@@ -33966,8 +34058,29 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             bstatus = 1;
             continue;
          }
-         if (!strcmp(argx[iDir], "-rawterm")) {
+         if (!strcmp(pszArg, "-rawterm")) {
             cs.rawterm = 1;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-request", &pszParm)
+             || haveParmOption(argx, argc, iDir, "-req", &pszParm))
+         {
+            if (!pszParm) return 9;
+            if (!iGlblInScript)
+               return 9+perr("-req[uest] can be used only in a script file");
+            if (iGlblInScript) // then pszParm is writeable
+               fixMultiLineParm(pszParm, 'w'); // sfk1972 web -req
+            cs.webreq = pszParm;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-reqfromvar", &pszParm)) // internal
+         {
+            if (!pszParm) return 9;
+            cs.webreqlen = 0;
+            char *pszText = (char*)sfkgetvar(pszParm, &cs.webreqlen);
+            if (!pszText)
+               return 9+perr("no such variable: %s", pszParm);
+            cs.webreq = pszText; // could contain binary
             continue;
          }
          if (sfkisopt(pszArg)) {
@@ -35353,6 +35466,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             { pszOutFile=pszArg; continue; }
          return 9+perr("unexpected: %s",pszArg);
       }
+
+      #ifdef SFKPLUS
+       #ifdef SFKCHECKLIC
+       checkLicense(); // pic
+       #endif // SFKCHECKLIC
+      #endif // SFKPLUS
 
       SFKPic opic,opic2;
 
@@ -36867,6 +36986,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       else
       printx("               add -full now for more details.\n");
       printx("   -todir x    write output to folder x\n"
+             "   -force      continue after errors.\n"
              "   -uauto      detect UTF-8 filenames just by looking\n"
              "               at their characters. this is not fully\n"
              "               safe, and should be used only to fix\n"
@@ -38568,8 +38688,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          pszExp = pszArg;
       }
 
-      if (!pszExp)
-         return 9+perr("missing expression.");
+      if (!pszExp) {
+         perr("missing expression.");
+         return 9;
+      }
 
       int iIndex=0;
       char *pattr=0;
