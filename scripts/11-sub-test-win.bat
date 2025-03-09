@@ -94,7 +94,7 @@
 %TEXE% find -text testfiles\Formats the wrap >res-22.txt
 %TEXE% test %TCMD% T09.2.findwrap res-22.txt
 
-%TEXE% filter testfiles\Formats\20-tab-data-line.txt -spat -sep "\t" -form "\"$col1\";\"$col2\";\"$col3\";\"$col4\";\"$col5\"" >res-24.txt
+%TEXE% filter testfiles\Formats\20-tab-data-line.txt -spat -rep "_\q__" -sep "\t" -form "\"$col1\";\"$col2\";\"$col3\";\"$col4\";\"$col5\"" >res-24.txt
 %TEXE% test %TCMD% T11.1.tabform res-24.txt
 
 %TEXE% -spat filter -bin testfiles\Formats\14-all-codes.txt -rep "_\x01_Char01 replaced_" -rep "_\xFF_CharFF replaced_" >res-25.txt
@@ -289,3 +289,6 @@
 %TEXE% addcr -quiet res-80.txt >nul
 %TEXE% md5 res-80.txt >res-81.txt
 %TEXE% test %TCMD% T26.2.cutinc res-81.txt
+
+%TEXE% filter testfiles\Formats\34-csv-data-lines.txt -spat -rep "_\x01__" -within "\q*\q" -rep "_,_\x01_" -sep "," -form "$col5\t$col3\t$col1\t$col2\t$col4" -rep "_\x01_,_" >res-271.txt
+%TEXE% test %TCMD% T27.1.csvdata res-271.txt

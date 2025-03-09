@@ -21,6 +21,63 @@
       -  fwrite is mapped to safefwrite
       to work around the Windows 60 MB I/O bug.
 
+   1.5.6
+   Revision 2:
+   -  add: option -textfiles to process only text files.
+   -  add: option -binfiles  to process only binary files.
+   Initial Revision:
+   -  CHG: SYNTAX CHANGE: if you are using negative
+           directory selection masks starting with "."
+           like in this example:
+              sfk list -dir mytree !.svn
+           then sfk will now exclude directories
+           like in file masks: dir names ending with 
+           the given extension will be excluded.
+   -  chg: RETURN CODE CHANGE: sfk md5check:
+           if some files to check do not exist sfk
+           no longer returns code 0, but code 2 or 3.
+   -  add: sfk filter -within ... -replace ...
+           to replace phrases only in parts of lines.
+   -  add: sfk if, conditional command execution based
+           on the return code of a previous chain command.
+   -  add: sfk call, call a sub function in a script.
+   -  add: sfk copy, an incremental file copy and
+           synchronization command.
+   -  add: sfk wget, download http:// content from web.
+   -  add: simple http:// url support for some commands
+           like filter.
+   -  add: simple anonymous ftp:// url support for some
+           commands like list.
+   -  add: sfk chars, print character codes of a word.
+   -  add: sfk ascii, alias for sfk help ascii.
+   -  add: sfk ownip(s), sfk ip to list the ip address(es)
+           of the current machine.
+   -  add: sfk ftpserv linux, mac: own IP information.
+   -  add: sfk udpdump: dump incoming UDP packets.
+   -  add: user defined zip file extension support:
+           set an environment variable like
+              export SFK_ZIP_EXT=".foo .bar .myext"
+           to define a list of up to 30 file extensions
+           that should be treated as zip files.
+   -  add: sfk larc, alias for sfk list -arc.
+   -  fix: file selection negative dir masks like in
+             sfk list -dir mytree !.svn
+           were ignored because they started with ".".
+           now such masks correctly exclude dir names
+           ending with the given extension.
+   -  fix: md5check: now returns rc 2 or 3 if some files
+           to check are not found. see help for details.
+   -  fix: sfk copy: dirs where only time was copied
+           were not listed in time color, and not listed
+           at all in simu mode.
+   -  chg: sfk getcwd: now passes dir name as file object
+           to following chain commands.
+   -  chg: code redundancy cleanup, more definitions
+           moved into sfkbase.hpp.
+   internal:
+   -  chg: ftp deep directory processing, yet inactive.
+   -  chg: unified use of netErrno().
+
    1.5.5
    -  add: sfk filter -form "$count" or "$(count+n)" 
            to insert the output line numer with an
@@ -73,7 +130,7 @@
            a linux sfk server if the client closed connection.
    -  fix: missing shutdown on socketclose may have lead
            to missing data at the end of some tcp connections.
-	internal:
+   internal:
    -  add: sfk filter -within ... -replace _from_to_
            to change text only in a part of a line.
    -  add: sfk filesys, infos on filesystem.
@@ -124,7 +181,7 @@
            e.g. sfk list mydir .txt +ftp myhost put
    -  add: sfk stat: option -flat to show the no. of
            files and bytes per folder w/o subfolders.
- 	-	add: sfk stat: can now also list sizes in (k)bytes.
+   -  add: sfk stat: can now also list sizes in (k)bytes.
    -  add: sfk stat: alias "statn" == "stat -minsize=n".
    -  add: sfk stat: option -sum for just the summary.
    -  add: tcpdump: example on how to connect via proxies.
@@ -132,7 +189,7 @@
            and an example on ffox extension development.
    -  add: tcpdump -flat: if reply contains binary,
            now also hex dumping first 1000 bytes of that.
-	-	add: sfk inst: support for blocks starting with
+   -  add: sfk inst: support for blocks starting with
            whitespace "   {" instead of just "{".
    -  add: sfk ftpserv -help: info about the "passive"
            command on some ftp clients.
@@ -152,11 +209,11 @@
            reason was the insane sizeof(long) == 8.
    -  fix: sfk ftp -quiet ... dir didn't list anything.
    -  fix: setting of file times under windows.
-	-	fix: sfk samp javagui produced too much output.
+   -  fix: sfk samp javagui produced too much output.
    -  fix: linux: better support for files > 2 GB,
            changed several 32bit stat() calls to 64.
-	internal:
-	-	add: execJam: webrc in meta infos.
+   internal:
+   -  add: execJam: webrc in meta infos.
    -  chg: sft102: optional block mode with different
            command sequence.
    -  chg: bGlblQuiet changed to cs.quiet.
@@ -442,10 +499,10 @@
    -  fix: replace didn't work with last byte of file.
    -  add: sfk sel ... +stat now tells no. of bytes used.
    -  fix: sfk fromclip +filter ... -join +toclip crashed.
-	-	fix: "sfk echo mydir | sfk stat -i" produced errors.
-	-	add: rep help now tells about filt -rep wildcards.
+   -  fix: "sfk echo mydir | sfk stat -i" produced errors.
+   -  add: rep help now tells about filt -rep wildcards.
    -  add: dupfind help: added "sfk dupfind ."
-	-	add: sfk filter -srep = sfk filter -spat -rep
+   -  add: sfk filter -srep = sfk filter -spat -rep
    -  add: internal: snapto callback for filenames.
 
    1.4.5
@@ -1120,8 +1177,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.5.5" // and check the _PRE definition
-#define SFK_FIXPACK  ""
+#define SFK_VERSION  "1.5.6"  // ver_ and check the _PRE definition
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1143,6 +1200,7 @@
 
 #ifdef _WIN32
  #define VER_STR_OS "windows-any"
+ #define _WIN32_WINNT 0x0400 // for copyFileEx
 #else
  #ifdef MAC_OS_X
   #ifdef MAC_OS_X_PPC
@@ -1168,7 +1226,11 @@
 
 #define VER_DAT_STR "date=" __DATE__
 
+#define  MTKTRACE_CODE
+#include "sfkbase.hpp"
 
+#ifdef VFILEBASE
+#endif // VFILEBASE
 
 #ifdef USE_SFK_BASE
  #define NO_VER_STR
@@ -1188,141 +1250,17 @@ static const char *pszGlblVersion =
 static const char *pszGlblVerType = SFK_VERTYPE;
 #endif
 
-// enable LFS esp. on linux:
-#define _LARGEFILE_SOURCE
-#define _LARGEFILE64_SOURCE
-#define _FILE_OFFSET_BITS 64
-
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdarg.h>
-#include <ctype.h>
-#include <assert.h>
-#include <time.h>
-#include <string.h>
-#include <sys/timeb.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-
-#ifdef _WIN32
-  #define FD_SETSIZE 200   // must be set before windows.h
-  #include <windows.h>
-  #include <eh.h>
-  #include <sys/timeb.h>
-  #include <time.h>
-  #include <process.h>
-  #define getpid() _getpid()
-  #include <errno.h>
-  #include <direct.h>
-  #include <signal.h>
-  #include <io.h>
-  #ifndef socklen_t
-   #define socklen_t int
-  #endif
-  #ifndef SD_RECEIVE
-   #define SD_RECEIVE 0x00
-   #define SD_SEND    0x01
-   #define SD_BOTH    0x02
-  #endif
-  #ifndef SHUT_RD
-   #define  SHUT_RD   SD_RECEIVE
-   #define	SHUT_WR   SD_SEND
-   #define	SHUT_RDWR SD_BOTH
-  #endif
-  #define vsnprintf _vsnprintf
-  #define snprintf  _snprintf
-  // FILE_ATTRIBUTE_READONLY    0x00000001
-  // FILE_ATTRIBUTE_HIDDEN      0x00000002
-  // FILE_ATTRIBUTE_SYSTEM      0x00000004
-  // FILE_ATTRIBUTE_DIRECTORY   0x00000010
-  // FILE_ATTRIBUTE_ARCHIVE     0x00000020
-  // FILE_ATTRIBUTE_NORMAL      0x00000080
-  // FILE_ATTRIBUTE_TEMPORARY   0x00000100
-  #define WINFILE_ATTRIB_MASK   0x0000001F
-#else
-  #include <unistd.h>
-  #include <dirent.h>
-  #include <sys/stat.h>
-  #include <netinet/in.h>
-  #include <sys/socket.h>
-  #include <sys/ioctl.h>
-  #include <sys/time.h>
-  #include <arpa/inet.h>
-  #include <netdb.h>
-  #include <errno.h>
-  #include <sched.h>
-  #include <signal.h>
-  #include <sys/statvfs.h>
-  #include <utime.h>
-  #include <pthread.h>
-  #include <pwd.h>
-  #ifndef  _S_IFDIR
-   #define _S_IFDIR 0040000 // = 0x4000
-  #endif
-  #ifndef  _S_IREAD
-   #ifdef S_IREAD
-    #define _S_IREAD  S_IREAD
-    #define _S_IWRITE S_IWRITE
-   #else
-    #define _S_IREAD  __S_IREAD  // by owner
-   #define  _S_IWRITE __S_IWRITE // by owner
-   #endif
-  #endif
-  typedef int SOCKET;
-  #define INVALID_SOCKET -1
-  #define SOCKET_ERROR   -1
-  #define ioctlsocket ioctl
-  #define WSAEWOULDBLOCK EWOULDBLOCK
-#endif
-
-#ifdef MAC_OS_X
- #define fpos64_t  fpos_t 
- #define fgetpos64 fgetpos
- #define fsetpos64 fsetpos
- #define statvfs64 statvfs
- #define stat64    stat
- #define __dev_t   dev_t
-#endif // MAC_OS_X
-
-#define uchar unsigned char
-#define ulong unsigned long
-#define bool  unsigned char
-
-#define mclear(x) memset(&x, 0, sizeof(x))
+#define SFK_BOTH_RUNCHARS
+// #define SFK_STRICT_MATCH
 
 #ifndef USE_SFK_BASE
  #define WITH_FN_INST
 #endif // USE_SFK_BASE
 
-#define SFK_BOTH_RUNCHARS
-// #define SFK_STRICT_MATCH
-
-#ifdef CALLBACK_TRACING
- #define mtklog  cbtrace
- #define mtkerr  cbtrace
- #define mtkwarn cbtrace
- #define mtkdump 
- #define _
- #define __
-#else
- #ifdef WITH_TRACING
-  #include "mtk/mtktrace.hpp"
-  #include "mtk/mtktrace.cpp"
-  #define _  mtklog("[sfk %d]",__LINE__);
-  #define __ MTKBlock tmp983452(__FILE__,__LINE__,"");tmp983452.dummy();
- #else
-  #define mtklog
-  #define mtkerr
-  #define mtkwarn
-  #define mtkdump
-  #define _
-  #define __
- #endif
-#endif
-
 #ifndef USE_SFK_BASE
- #define SFK_MEMTRACE
+ #ifdef WINFULL
+  #define SFK_MEMTRACE
+ #endif
 #endif
 
 #ifdef _WIN32
@@ -1331,32 +1269,8 @@ static const char *pszGlblVerType = SFK_VERTYPE;
  #endif
 #endif
 
-#ifdef _WIN32
-static const char  glblPathChar    = '\\';
-static const char  glblWrongPChar  = '/';
-static const char *glblPathStr     = "\\";
-static const char *glblAddWildCard = "*";
-static const char *glblDotSlash    = ".\\";
-static       char  glblNotChar     = '!';
-static       char  glblRunChar     = '$';
-static const char *glblWildStr     = "*";
-static const char  glblWildChar    = '*';
-static const char *glblWildInfoStr = "*";
-#define EXE_EXT ".exe"
-#define SFK_SETENV_CMD "set"
-#else
-static const char  glblPathChar    = '/';
-static const char  glblWrongPChar  = '\\';
-static const char *glblPathStr     = "/";
-static const char *glblAddWildCard = "";    // not used w/ linux
-static const char *glblDotSlash    = "./";
-static       char  glblNotChar     = ':';
-static       char  glblRunChar     = '#';
-static       char  glblWildStr[10];       // "+";
-static       char  glblWildChar;          // '+';
-static       char  glblWildInfoStr[20];   // "+ or \\*";
-#define EXE_EXT ""
-#define SFK_SETENV_CMD "export"
+#ifdef WINCE
+ // #include "sfkwince.cpp"
 #endif
 
 #if defined(_WIN32) && defined(SFK_WINPOPUP_SUPPORT)
@@ -1397,25 +1311,7 @@ long pinf(const char *pszFormat, ...);
 
 // ========== 64 bit abstraction layer begin ==========
 
-#ifdef _WIN32
- #if _MSC_VER >= 1310
-  #define SFK_W64
- #endif
-#endif
-
-#ifdef _WIN32
- typedef __int64 num;
- #ifdef SFK_W64
- typedef __time64_t mytime_t;
- #else
- typedef time_t mytime_t;
- #endif
-#else
- typedef long long num;
- typedef time_t mytime_t;
-#endif
-
-static char *numtostr(num n, int nDigits, char *pszBuf, int nRadix)
+char *numtostr(num n, int nDigits, char *pszBuf, int nRadix)
 {
    static char szBuf[100];
    if (!pszBuf)
@@ -1436,7 +1332,7 @@ static char *numtostr(num n, int nDigits, char *pszBuf, int nRadix)
    #endif
 }
 
-static char *numtoa_blank(num n, int nDigits=12)
+char *numtoa_blank(num n, int nDigits)
 {
    static char szBuf2[100];
    #ifdef _WIN32
@@ -1592,30 +1488,6 @@ void skipWhite(char **pp)   { skipOver(pp, " \t\r\n");  }
 
 #ifdef WITH_TRACING
 
-#ifndef SIG_UNBLOCK
-   #define SIG_UNBLOCK 2
-#endif
-
-#ifndef SIGALRM
-   #define SIGALRM 14
-#endif
-
-#ifndef sigset_t
-   #define sigset_t int
-#endif
-
-#ifndef sigemptyset
-   #define sigemptyset(sig)
-#endif
-
-#ifndef sigaddset
-   #define sigaddset( set, sig)
-#endif
-
-#ifndef sigprocmask
-   #define sigprocmask(a, b, c)
-#endif
-
 static void traceModeCrashHandler(int sig)
 {
    static int crashRecursionCounter = 0;
@@ -1686,6 +1558,48 @@ CommandScope::CommandScope(char *pszcmd) {
 CommandScope::~CommandScope() {
    bGlblCurCmdSet = 0;
 }
+
+#ifdef VFILEBASE
+
+const char *pGlblHttpUserAgent = 0;
+
+static char szGlblUserAgent[100];
+
+void setHTTPUserAgent(const char *psz)
+   { pGlblHttpUserAgent = psz; }
+
+char *getHTTPUserAgent() 
+{
+
+   if (pGlblHttpUserAgent)
+      return (char*)pGlblHttpUserAgent;
+
+   if (bGlblCurCmdSet)
+      snprintf(szGlblUserAgent, sizeof(szGlblUserAgent)-10,
+         "Swiss File Knife " SFK_VERSION " %s (" VER_STR_OS ")",
+            szGlblCurCmd);
+   else
+      snprintf(szGlblUserAgent, sizeof(szGlblUserAgent)-10,
+         "Swiss File Knife " SFK_VERSION " (" VER_STR_OS ")");
+
+   // capialize os info
+   char *pbra = strchr(szGlblUserAgent, '(');
+   if (pbra) {
+      pbra++;
+      bool bfirst=1;
+      while (*pbra) {
+         char c = *pbra;
+         if (isalpha(c) && bfirst)
+            { bfirst=0; *pbra=toupper(c); }
+         if (!isalpha(c)) bfirst=1;
+         pbra++; 
+      }
+   }
+
+   return szGlblUserAgent;
+}
+
+#endif // VFILEBASE
 
 // fwrite on windows network drives may fail with blocks > 60 MB,
 // therefore a single block write is limited to this size:
@@ -1939,6 +1853,15 @@ public:
    bool travelzips;        // traverse zipfile contents
    bool incbin;            // include binary files in processing
    bool reldist;           // hexfind: tell also relative distances
+   #ifdef VFILEBASE
+   bool shallowzips;       // list only first level of zips
+   bool precachezip;
+   bool extdomref;         // include external domain refs
+   bool xelike;            // set xe default behaviour and help text
+   bool cacheall;          // no direct processing of files
+   bool cachestat;         // cache statistics at program end
+   bool travelHttp;        // decided per command, esp. list
+   #endif // VFILEBASE
    bool subdirs;           // process subdirs
    bool utf8dec;           // utf-8  detect and decode (not yet impl.)
    bool utf16dec;          // utf-16 detect and decode
@@ -1953,12 +1876,12 @@ public:
    long wrapcol;           // if >0, auto-wrap lines in snapfile
    long wrapbincol;        // only on binary to text conversion
    bool rewrap;            // ignore linefeeds, rewrap all
-	char listunit;				// stat output in 'b'ytes, 'k'bytes or default.
-	bool flatdirstat;       // list no. of files per dir, not dir tree
+   char listunit;          // stat output in 'b'ytes, 'k'bytes or default.
+   bool flatdirstat;       // list no. of files per dir, not dir tree
    long flatfilecnt;       // global stats if flatdirstat is set
    long flatdircnt;        // "
    num  flatbytecnt;       // "
-	bool statonlysum;			// sfk stat: quiet except summary
+   bool statonlysum;       // sfk stat: quiet except summary
    long quiet;             // quiet mode
    bool ftpupdate;         // mput, mget: explicite -update
    bool ftpall;            // mput, mget: disable -update mode
@@ -1966,6 +1889,13 @@ public:
    long fast;              // command dependent optimization
    bool noprog;            // no progress indicator
    bool test;              // filter: run in test mode
+   bool copyLinks;         // copy symlinks     , windows only, untested
+   bool copyNoBuf;         // copy w/o buffering, windows only, untested
+   bool copyDecrypt;       // copy and decrypt  , windows only, untested
+   bool intrun;            // sfk run -internal option
+   bool textfiles;         // process only textfiles
+   bool binaryfiles;       // process only binaryfiles
+   bool packalnum;         // deblank: reduce filenames to alnum
 };
 
 struct CommandStats gs; // global settings accross whole chain
@@ -1980,11 +1910,20 @@ bool infoAllowed() {
 long quietMode() { return cs.quiet; }
 long fastMode()  { return cs.fast;  }
 
+#ifdef VFILEBASE
+bool csExtDomRef() { return cs.extdomref; }
+void setxelike(bool byes) { gs.xelike = cs.xelike = byes; }
+bool httpTravel()  { return cs.travelHttp; }
+#endif // VFILEBASE
+
 void setArcTravel(bool bYesNo, bool bPreCache) 
 {
    mtklog("setarctravel %d %d", bYesNo, bPreCache);
    gs.travelzips  = bYesNo;
    cs.travelzips  = bYesNo;
+   #ifdef VFILEBASE
+   cs.precachezip = bPreCache;
+   #endif // VFILEBASE
 }
 
 bool getArcTravel( ) { return cs.travelzips; }
@@ -2030,46 +1969,46 @@ void setWrapLoad(long n, bool brewrap) {
 // if mask="-sep" then "-sep" and "-ssep" is allowed.
 bool isxopt(char *pszcur, char *pszmask)
 {
-	char szBuf[100];
-	if (pszmask[0] != '-') return 0;
-	if (strlen(pszmask) > sizeof(szBuf)-10) return 0;
+   char szBuf[100];
+   if (pszmask[0] != '-') return 0;
+   if (strlen(pszmask) > sizeof(szBuf)-10) return 0;
 
-	// check for indirect hit: "-seps".
-	// if so, auto-activate slash patterns for this command.
-	sprintf(szBuf, "%ss", pszmask);
-	if (!strncmp(pszcur, szBuf, strlen(szBuf))) {
-		cs.spat = 1;
-		return 1;
-	}
+   // check for indirect hit: "-seps".
+   // if so, auto-activate slash patterns for this command.
+   sprintf(szBuf, "%ss", pszmask);
+   if (!strncmp(pszcur, szBuf, strlen(szBuf))) {
+      cs.spat = 1;
+      return 1;
+   }
 
-	// check for direct hit: "-sep"
-	if (!strncmp(pszcur, pszmask, strlen(pszmask))) return 1;
+   // check for direct hit: "-sep"
+   if (!strncmp(pszcur, pszmask, strlen(pszmask))) return 1;
 
-	// check for indirect hit: "-ssep"
-	char *pszbase = pszmask+1;
+   // check for indirect hit: "-ssep"
+   char *pszbase = pszmask+1;
 
-	// if so, auto-activate slash patterns for this command.
-	sprintf(szBuf, "-s%s", pszbase);
-	if (!strncmp(pszcur, szBuf, strlen(szBuf))) {
+   // if so, auto-activate slash patterns for this command.
+   sprintf(szBuf, "-s%s", pszbase);
+   if (!strncmp(pszcur, szBuf, strlen(szBuf))) {
       cs.spat = 1;
       return 1; 
    }
 
    // check for "-uform" to activate -upat syntax.
-	sprintf(szBuf, "-u%s", pszbase);
-	if (!strncmp(pszcur, szBuf, strlen(szBuf))) {
+   sprintf(szBuf, "-u%s", pszbase);
+   if (!strncmp(pszcur, szBuf, strlen(szBuf))) {
       glblNotChar = ':';
       glblRunChar = '#';
       return 1; 
    }
 
-	return 0;
+   return 0;
 }
 
 // tells if cur matches mask, without variations.
 bool isopt(char *pszcur, char *pszmask) {
-	if (!strncmp(pszcur, pszmask, strlen(pszmask))) return 1;
-	return 0;
+   if (!strncmp(pszcur, pszmask, strlen(pszmask))) return 1;
+   return 0;
 }
 
 CommandStats::CommandStats() { reset(); }
@@ -2225,7 +2164,9 @@ FILE *fGlblMD5Org  = 0;
 FILE *fGlblBatch   = 0;
 FILE *fGlblTimes   = 0;
 
-#include "sfkbase.hpp"
+#ifdef VFILEBASE
+   #include "sfknet.hpp"
+#endif // VFILEBASE
 
 unsigned char abBuf[MAX_ABBUF_SIZE+100];
 char szLineBuf[MAX_LINE_LEN+10];
@@ -2375,10 +2316,11 @@ num    nGlblWorkBufSize  = 0;
 long   nGlblCopyStyle    = 2; // how filenames are dumped onto terminal
 long   nGlblCopyShadows  = 0;
 num   nGlblShadowSizeLimit = 0;
-bool  bGlblUseCopyCache  = 1;
+bool  bGlblUseCopyCache  = 0;
 bool  bGlblShowSyncDiff  = 0;
 bool  bGlblHavePlusDirMasks = 0; // deprecated
 num   nGlblMemLimit      = 300 * 1048576;
+char  *pGlblCurrentScript = 0; // while within a script command
 
 #ifdef _WIN32
 char *pszGlblAliasBatchHead = "@rem sfk alias batch";
@@ -2451,7 +2393,6 @@ long execFileCopy    (Coi  *pcoi);
 long execDirCopy     (char *pszSrc, FileList &oDirFiles);
 long execFileCleanup (char *pszFile);
 long execDirCleanup  (char *pszSrc, FileList &oDirFiles);
-bool userInterrupt   (bool bSilent=0, bool bWaitForRelease=0);
 long timeFromString  (char *psz, num &nRetTime);
 bool tryGetRelTime   (char *psz, num &nRetTime);
 long execReplaceFix  (Coi *pcoi);
@@ -2473,55 +2414,55 @@ long execVersion     (Coi *pcoi);
 
 class IOStatus {
 public:
-		IOStatus  ( );
+      IOStatus  ( );
 
-		void	 setInfo	(char *pinfo);
-		char	*getInfo	(num &nagemsec, num &nbytes, num &nmaxbytes);
+      void   setInfo (char *pinfo);
+      char  *getInfo (num &nagemsec, num &nbytes, num &nmaxbytes);
 
-		num	countBytes	(num nbytes);
+      num   countBytes  (num nbytes);
       void  setMaxBytes (num nbytes);
-		void	resetBytes	( );
+      void  resetBytes  ( );
 
 private:
-		char	szClStatus[200+20];
-		num	nClSince;
-		num	nClBytes;
+      char  szClStatus[200+20];
+      num   nClSince;
+      num   nClBytes;
       num   nClMaxBytes;
 };
 static IOStatus iostat;
 
 IOStatus::IOStatus() {
-	memset(this, 0, sizeof(*this));
+   memset(this, 0, sizeof(*this));
 }
 
 void IOStatus::setInfo(char *pinfo) {
-	memset(szClStatus, 0, sizeof(szClStatus));
-	if (!pinfo) {
-		nClSince = 0;
-		return;
-	}
-	strncpy(szClStatus, pinfo, sizeof(szClStatus)-20);
-	nClSince = getCurrentTime();
+   memset(szClStatus, 0, sizeof(szClStatus));
+   if (!pinfo) {
+      nClSince = 0;
+      return;
+   }
+   strncpy(szClStatus, pinfo, sizeof(szClStatus)-20);
+   nClSince = getCurrentTime();
 }
 
 char *IOStatus::getInfo(num &nagemsec, num &nbytes, num &nmaxbytes) {
-	if (!szClStatus[0]) return 0;
-	if (nClSince > 0) {
-		num nage  = getCurrentTime() - nClSince;
-		nagemsec  = nage;
-		nbytes    = nClBytes;
+   if (!szClStatus[0]) return 0;
+   if (nClSince > 0) {
+      num nage  = getCurrentTime() - nClSince;
+      nagemsec  = nage;
+      nbytes    = nClBytes;
       nmaxbytes = nClMaxBytes;
-	} else {
-		nagemsec  = 0;
+   } else {
+      nagemsec  = 0;
       nbytes    = 0;
       nmaxbytes = 0;
-	}
+   }
    return szClStatus;
 }
 
 num IOStatus::countBytes(num nbytes) {
-	nClBytes += nbytes;
-	return nClBytes;
+   nClBytes += nbytes;
+   return nClBytes;
 }
 
 void IOStatus::setMaxBytes(num nbytes) {
@@ -2534,11 +2475,11 @@ void IOStatus::resetBytes() {
 }
 
 IOStatusPhase::IOStatusPhase(char *pinfo) {
-	iostat.setInfo(pinfo);
+   iostat.setInfo(pinfo);
 }
 
 IOStatusPhase::~IOStatusPhase( ) {
-	// iostat.setInfo(0);
+   // iostat.setInfo(0);
 }
 
 char *getIOStatus(num &nage, num &nbytes, num &nmaxbytes) {
@@ -2546,8 +2487,8 @@ char *getIOStatus(num &nage, num &nbytes, num &nmaxbytes) {
 }
 num   countIOBytes(num nbytes)   { return iostat.countBytes(nbytes); }
 void  setIOStatMaxBytes(num n)   { iostat.setMaxBytes(n); }
-void  resetIOBytes( ) 	{ iostat.resetBytes(); }
-void	resetIOStatus( )	{ iostat.setInfo(0); iostat.resetBytes(); }
+void  resetIOBytes( )   { iostat.resetBytes(); }
+void  resetIOStatus( )  { iostat.setInfo(0); iostat.resetBytes(); }
 
 #ifndef _WIN32
 char *readDirEntry(DIR *d) {
@@ -2716,6 +2657,24 @@ char *mystrrstr(char *psrc, char *ppat)
    return 0;
 }
 
+char *mystrristr(char *psrc, char *ppat)
+{
+   if (!psrc || !ppat) return 0;
+
+   char c = *ppat;
+   long nsrclen = strlen(psrc);
+   long npatlen = strlen(ppat);
+   if (npatlen > nsrclen) return 0;
+
+   char *pcur = psrc + nsrclen - npatlen;
+   while (pcur >= psrc) {
+      if (!mystrnicmp(pcur, ppat, npatlen))
+         return pcur;
+      pcur--;
+   }
+   return 0;
+}
+
 long   nGlblConsColumns    = 80;
 bool   bGlblConsColumnsSet =  0;
 
@@ -2723,12 +2682,21 @@ long setWriteEnabled(char *pszFile)
 {
    #ifdef _WIN32
 
+   BOOL bok = 0;
+
+   #ifdef WINFULL
    WIN32_FILE_ATTRIBUTE_DATA oinf;
-   BOOL bok = GetFileAttributesEx(pszFile, GetFileExInfoStandard, &oinf);
+   bok = GetFileAttributesEx(pszFile, GetFileExInfoStandard, &oinf);
    if (!bok) return 9;
 
    oinf.dwFileAttributes &= (0xFFFFFFFFUL ^ FILE_ATTRIBUTE_READONLY);
    bok = SetFileAttributes(pszFile, oinf.dwFileAttributes);
+   #else
+   ulong nattrib = GetFileAttributesA(pszFile);
+   nattrib &= (0xFFFFFFFFUL ^ FILE_ATTRIBUTE_READONLY);
+   SetFileAttributes(pszFile, nattrib);
+   #endif
+
    if (!bok) return 9;
 
    #else
@@ -2923,6 +2891,7 @@ void setTextColor(long n, bool bStdErr)
 
    #ifdef _WIN32
 
+   #ifdef WINFULL
    if (n == 0) {
       // FIX: n==0 produces invisible text both with a white
       //      or black background shell. a visible compromise:
@@ -2946,6 +2915,7 @@ void setTextColor(long n, bool bStdErr)
       SetConsoleTextAttribute(hGlblConsole, nval);
       mtklog("color: scta %lxh (default=%lxh)", nval, nGlblConsAttrib);
    }
+   #endif
 
    #else
 
@@ -3308,6 +3278,90 @@ char *sfkLastError()
       return szErrBuf;
    else
       return "";
+}
+
+ListEntry::ListEntry( )  { pClNext = pClPrevious = 0; data = 0; }
+ListEntry::~ListEntry( ) { pClNext = pClPrevious = 0; data = 0; }
+
+List::List( )  { reset(); }
+List::~List( ) { reset(); }
+
+// NOTE: caller MUST FREE all list elements before reset()!
+void List::reset( ) {
+   pClFirst = pClLast = 0;
+}
+
+void List::add(ListEntry* pNew)
+{
+   if (!pClFirst)
+   {
+      // yet empty list:
+      pClFirst = pClLast = pNew;
+      pNew->pClNext = pNew->pClPrevious = 0;
+      return;
+   }
+
+   // append node at end of list:
+   pClLast->pClNext   = pNew;
+    pNew->pClPrevious = pClLast;
+    pNew->pClNext     = 0;
+   pClLast            = pNew;
+}
+
+void List::addAsFirst(ListEntry* pNew)
+{
+   // yet empty list?
+   if (!pClFirst)
+   {
+      pClFirst = pClLast = pNew;
+      pNew->pClNext = pNew->pClPrevious = 0;
+      return;
+   }
+
+   // make node new front of list:
+   ListEntry *n2 = pClFirst;
+   n2->pClPrevious      = pNew;
+    pNew->pClPrevious   = 0;
+    pNew->pClNext       = n2;
+   pClFirst             = pNew;
+}
+
+void List::addAfter(ListEntry *pAfter, ListEntry *pNew)
+{
+   ListEntry *pNext = pAfter->pClNext;  // might be 0
+
+   pAfter->pClNext   = pNew;
+   pNew->pClPrevious = pAfter;
+   pNew->pClNext     = pNext;
+
+   if (pNext)
+      pNext->pClPrevious = pNew;
+   else
+      pClLast  = pNew;
+}
+
+void List::remove(ListEntry* pRemove)
+{
+   ListEntry *pPrevious = pRemove->pClPrevious;  // might be 0
+   ListEntry *pNext     = pRemove->pClNext;      // might be 0
+
+   pRemove->pClNext = pRemove->pClPrevious = 0;
+
+   if (!pPrevious)   // if 'pRemove' at start of list
+   {
+      if (pClFirst = pNext)      // new list start becomes pNext ...
+         pNext->pClPrevious = 0; // ... and if pNext exists, adjust it,
+      else
+         pClLast  = 0;           // else list is empty.
+   }
+   else
+   {
+      // at least a 'pClPrevious' is given.
+      if (pPrevious->pClNext = pNext)     // let pPrevious' 'pClNext' ptr bypass 'pRemove' ...
+         pNext->pClPrevious = pPrevious;  // ... and if pNext exists, adjust it,
+      else
+         pClLast  = pPrevious;            // else set new listend.
+   }
 }
 
 KeyMap::KeyMap( ) {
@@ -3831,6 +3885,185 @@ long parseVersion(char *psz, long nmaxlen, StringMap &rmap)
    return 0;
 }
 
+#ifdef VFILENET
+char *flatURLName(char *purl, char *pctype, char *pbuf, long nmaxbuf, ulong nmode, bool &rdefault)
+{
+   bool bpath2name = (nmode & 1) ? 1 : 0;
+   bool bpath2path = (nmode & 2) ? 1 : 0;
+   bool bwithdom   = (nmode & 4) ? 1 : 0;
+   bool bskippath  = (!bpath2name && !bpath2path);
+
+   *pbuf = '\0'; // safety
+
+   char *prel    = purl;
+   char *purlmax = purl + strlen(purl);
+   char *pCacheDir = getDiskCachePath();
+
+   char szNameBuf[SFK_MAX_PATH+10];
+
+   // only normalize net filenames,
+   // or net files from the cache dir.
+   if (strBegins(prel, "http://")) prel += strlen("http://");
+   else
+   if (strBegins(prel, "ftp://"))  prel += strlen("ftp://");
+   else
+   if (strBegins(prel, pCacheDir)) 
+   {
+      prel += strlen(pCacheDir);
+      if (*prel == glblPathChar) prel++;
+
+      // rebuild url from cache name format
+      char *psrc = prel;
+      char *pdst = szNameBuf;
+      char *pdstmax = pdst+sizeof(szNameBuf)-10;
+      szNameBuf[0] = '\0';
+
+      if (strBegins(psrc, "http/") || strBegins(psrc, "http\\"))
+         { psrc += 5; strcat(pdst, "http://"); pdst += 7; }
+      else
+      if (strBegins(psrc, "ftp/") || strBegins(psrc, "ftp\\"))
+         { psrc += 4; strcat(pdst, "ftp://"); pdst += 6; }
+
+      while (*psrc && (pdst < pdstmax)) 
+      {
+         if (!strncmp(psrc, "%2F", 3))
+            { psrc+=3; *pdst++ = '/'; continue; }
+         if (*psrc == '\\')
+            { psrc++; *pdst++ = '/'; continue; }
+         *pdst++ = *psrc++;
+      }
+      *pdst = '\0';
+
+      // printf("-> \"%s\"\n", szNameBuf);
+
+      prel = szNameBuf;
+   }
+   else
+      return 0;
+
+   char *pdst = pbuf;
+   long  nrem = nmaxbuf - 10;
+
+   if (nrem <= 100) { perr("int. #9529106"); return 0; }
+
+   if (bskippath) {
+      // the/sub/doc.zip -> doc.zip
+      // http://foo.com/ -> ""
+      char *psz2 = strrchr(prel, '/');
+      if (psz2) {
+         prel = psz2+1;
+         if (!*prel) {
+            strcpy(pdst, "index.html");
+            rdefault = 1;
+            return pbuf;
+         }
+      }
+   }
+   else
+   if (!bwithdom) {
+      // foobar.com/path -> path
+      char *psz2 = strchr(prel, '/');
+      if (psz2) {
+         prel = psz2+1;
+         if (!*prel) {
+            strcpy(pdst, "index.html");
+            rdefault = 1;
+            return pbuf;
+         }
+      }
+   }
+
+   // convert and add rest of url.
+   // http: $-_.+!*'(),
+   char szBuf[10];
+   char *psrc = prel;
+   char *pext1 = 0;
+   char *pext2 = 0;
+   char  clast = 0;
+   bool  lm    = 0; // last char was minus
+   while (*psrc && (nrem > 0))
+   {
+      char c = *psrc++;
+      clast  = c;
+      if (isalnum(c)) {
+         *pdst++ = c; nrem--; lm=0;
+         continue; 
+      }
+      if (!pext2) pext2 = psrc-1;
+      switch (c) {
+         case '.':
+             pext1 = psrc-1; pext2 = 0;
+         case '-': case '+': case '_':
+            *pdst++ = c; nrem--; lm=0;
+            continue;
+         case '/':
+            if (bpath2path) {
+               *pdst++ = glblPathChar; nrem--; lm=0;
+               continue;
+            }
+         default:
+            if (!lm) {
+               *pdst++ = '-'; nrem--; lm=1;
+            }
+            continue;
+      }
+      /*
+      sprintf(szBuf, "%%%02X", (unsigned)c);
+      *pdst++ = szBuf[0];
+      *pdst++ = szBuf[1];
+      *pdst++ = szBuf[2];
+      nrem -= 3;
+      */
+   }
+
+   // fix trailing slash
+   if (clast == '/' && (nrem >= 12)) {
+      strcpy(pdst, "index.html");
+      pdst += strlen(pdst);
+      pext1 = ".html";
+      nrem -= 10;
+      rdefault = 1;
+   }
+
+   *pdst = '\0';
+
+   // reset extensions that make no sense
+   // if (pext1) {
+   //    if (pext1 && !strcmp(pext1, ".php"))   pext1 = 0;
+   //    if (pext1 && !strcmp(pext1, ".asp"))   pext1 = 0;
+   // }
+
+   // create default extensions for well-known ctypes
+   if (!pext1 && pctype) {
+      if (strstr(pctype, "text"))   pext1 = ".txt";
+      if (strstr(pctype, "html"))   pext1 = ".html";
+      if (!pext1) pext1 = ".dat";
+   }
+
+   if (!pext1) pext1 = ".dat";
+
+   // if extension is not at end of name, append it again
+   if (pext1)
+   {
+      long nlen   = strlen(pext1);
+      bool binurl = (pext1 >= purl && pext1 <= purlmax);
+      if (binurl && pext2 && (pext2 > pext1))
+         nlen = pext2 - pext1;
+      if (nlen > 7) { pext1 = ".dat"; nlen = 4; }
+      char *pcmp = pdst - nlen;
+      if (pcmp < pbuf) pcmp = pbuf;
+      if (nlen <= 7 && nlen < nrem && strncmp(pcmp, pext1, nlen))
+      {
+         memcpy(pdst, pext1, nlen);
+         pdst[nlen] = '\0';
+         nrem -= nlen;
+      }
+   }
+
+   return pbuf;
+}
+#endif // VFILENET
+
 // - - - - - Coi(Table) begin - - - - -
 
 bool Coi::bClDebug = 0;
@@ -3842,6 +4075,30 @@ Coi::Coi(char *pszName, char *pszRootDir)
    if (!strncmp(pszName, glblDotSlash, 2))
       pszName += 2;
 
+   #ifdef VFILEBASE
+   bool strEnds(char *pszStr, char *pszPat);
+
+   bool bexpdone = 0;
+
+   if (strBegins(pszName, "http://") || strBegins(pszName, "ftp://"))
+   {
+      // auto-expand http://thehost to http://thehost/
+      char *psz = strstr(pszName, "//");
+      if (psz) {
+         psz += 2;
+         psz = strchr(psz, '/');
+         if (!psz) {
+            long nlen = strlen(pszName);
+            pszClName = new char[nlen+4];
+            strcpy(pszClName, pszName);
+            strcat(pszClName, "/");
+            bexpdone = 1;
+         }
+      }
+   }
+
+   if (!bexpdone)
+   #endif // VFILEBASE
    pszClName   = strdup(pszName);
 
    pszClRoot   = pszRootDir ? strdup(pszRootDir) : 0;
@@ -3900,7 +4157,7 @@ Coi *Coi::copy( )
 }
 
 long Coi::incref(char *pTraceFrom)  {
-	++nClRefs;
+   ++nClRefs;
    mtklog("inc-ref: cnt=%ld from %s on %p %s", nClRefs, pTraceFrom, this, name());
    return nClRefs; 
 }
@@ -4023,6 +4280,30 @@ CoiData::~CoiData( )
 {
    mtklog("coidata dtr %p", this);
 
+   #ifdef VFILEBASE
+   if (pClFtp) {
+      mtklog("coidata dtr autoreleases ftp %p", pClFtp);
+      releaseFtp();
+      // do NOT delete, is managed by cache.
+   }
+
+   if (pClHeaders) {
+      mtklog("coidata dtr autoreleases headers %p", pClHeaders);
+      delete pClHeaders;
+   }
+
+   if (pClHttp) {
+      mtklog("coidata dtr autoreleases http %p", pClHttp);
+      releaseHttp();
+      // do NOT delete, is managed by cache.
+   }
+
+   if (pelements) delete pelements;
+
+   if (pClOrgName) delete [] pClOrgName;
+
+   #endif // VFILEBASE
+
    if (src.data) delete [] src.data;
 
    if (rbuf.data) delete [] rbuf.data;
@@ -4037,6 +4318,110 @@ CoiData::~CoiData( )
    #ifdef _WIN32
    otrav = -1;
    #endif
+}
+
+#ifdef VFILEBASE
+// NOTE: whenever the list is changed,
+//       adapt zzfind hashing of extensions.
+#endif // VFILEBASE
+
+char *arcExtList[] = 
+{
+   ".zip",".jar",".ear",".war",".aar",".xpi",
+   #ifdef VFILEBASE
+   #ifndef NO_TAR_SUPPORT
+   // CONVENTION:
+   //   on ambiguous extensions like .tar <-> .tar.gz,
+   //   always list the LONGEST FIRST.
+   ".tar.gz", ".tar", ".tgz",
+   ".tar.bz2", ".tbz2",
+   ".gz", ".bz2",
+   // NOTE: .tbz not supported, as it is not clearly bzip2
+   #endif
+   #endif // VFILEBASE
+   // up to 30 user defined ZIP archive extensions are supported:
+   0,0,0,0,0, 0,0,0,0,0,
+   0,0,0,0,0, 0,0,0,0,0,
+   0,0,0,0,0, 0,0,0,0,0,
+   0,0,0,0,0  // EOD and some tolerance
+};
+
+class StartupEnvGrabber 
+{
+public:
+   StartupEnvGrabber();
+
+   char szZipExtBuf[200];
+};
+
+StartupEnvGrabber glblEnvGrabber;
+
+StartupEnvGrabber::StartupEnvGrabber() 
+{
+   // set SFK_ZIP_EXT=".foo .bar .myext"
+   char *psz1 = getenv("SFK_ZIP_EXT");
+   if (psz1) 
+   {
+      // find insertion index in arcExtList
+      int iins = 0;
+      int imax = (sizeof(arcExtList) / sizeof(char*)) - 3;
+      for (; arcExtList[iins] && (iins<imax); iins++);
+
+      // copy and split user extension list
+      strcopy(szZipExtBuf, psz1);
+      psz1 = szZipExtBuf;
+      char *psz2 = 0;
+      bool bterminal = 0;
+      while (!bterminal && psz1 && *psz1) 
+      {
+         psz1 = strchr(psz1, '.');
+         if (!psz1) break;
+         psz2 = psz1+1;
+         while (*psz2 && isalnum(*psz2))
+            psz2++;
+         bterminal = *psz2 ? 0 : 1;
+         *psz2++ = '\0';
+         // still space left?
+         if (iins >= imax-1) {
+            fprintf(stderr, "Error: too many extensions in SFK_ZIP_EXT\n");
+            break;
+         }
+         // add another extension
+         arcExtList[iins++] = psz1;
+         // step to next, if !bterminal
+         psz1 = psz2;
+      }
+   }
+}
+
+bool endsWithArcExt(char *pname) 
+{
+   // find relevant end of input name:
+   // filesys : e.g. .tar.bz2
+   // http url: e.g. .tar.bz2?name=val&foo=bar
+
+   // exclusive name end point (on terminator or '?'):
+   char *pend = pname + strlen(pname);
+
+   if (strBegins(pname, "http://")) {
+      char *psz = strrchr(pname, '?');
+      if (psz) pend = psz;
+   }
+
+   // netto length until end point
+   long nnamlen = pend - pname;
+
+   for (long i=0; arcExtList[i]; i++) 
+   {
+      char *ppatstr = arcExtList[i];
+      long  npatlen = strlen(ppatstr);
+      if (nnamlen < npatlen)
+         continue;
+      if (!mystrnicmp(pname + nnamlen - npatlen, ppatstr, npatlen))
+         return 1;
+   }
+
+   return 0;
 }
 
 bool Coi::isDirOpen( ) {
@@ -4104,6 +4489,36 @@ long Coi::readStat( )
    // or any error already occured, do nothing:
    if (nClStatus > 0) return nClStatus;
 
+   #ifdef VFILEBASE
+   // virtual files MUST be blocked from native FS access
+   if (isNet() || isZipSubEntry())
+   {
+      // defensive information gathering:
+      // if ANY infos exist, assume that the vfile meta info
+      // have already been fetched in a different way,
+      // so avoid expensive retrieval operations.
+      if (nClHave) {
+         nClStatus = 1;
+         return 0;
+      }
+
+      // in case of Http, try an expensive header access:
+      if (isHttp()) {
+         if (data().getHttp(name())) return 9;
+         HTTPClient *phttp = data().pClHttp;
+         if (phttp->getFileHead(name(), this, "stat"))
+            { nClStatus = 9; return 9; }
+         // sets binary, size
+         nClStatus = 1;
+         return 0;
+      }
+
+      // in any case, block nativeFS access on virtuals:
+      nClStatus = 1; // "sorry, we know nothing."
+      return 0;
+   }
+   #endif // VFILEBASE
+
    long bIsDir    = 0;
    long bCanRead  = 1;
    long bCanWrite = 1;
@@ -4134,6 +4549,13 @@ long Coi::readStat( )
 
 bool Coi::isWriteable( ) 
 {__
+   #ifdef VFILEBASE
+   // any virtual file?
+   if (isNet()) return 0;
+   if (isZipSubEntry() > 0) return 0;
+   if (isTravelZip()) return 0;
+   #endif // VFILEBASE
+
    mtklog("coi::iswriteable.1 %d %ld %s",bClWrite,nClStatus,name());
 
    // only physical files are writeable, so far.
@@ -4189,6 +4611,24 @@ bool Coi::isAnyDir( )
 
    long n = 0;
 
+   #ifdef VFILEBASE
+   if (isTravelZip()) {
+      bClDir = 1;
+      mtklog("%d = isanydir(%s) by trvzip", bClDir, name());
+      nClHave |= COI_HAVE_DIR;
+      return bClDir;
+   }
+   if (n = isZipSubEntry()) {
+      switch (n) {
+         case 1: bClDir = 0; break; // file within zip
+         case 2: bClDir = 1; break; // dir within zip (but not traversable)
+      }
+      mtklog("%d = isanydir(%s) by zipsub (%ld)", bClDir, name(), n);
+      nClHave |= COI_HAVE_DIR;
+      return bClDir;
+   }
+   #endif // VFILEBASE
+
    if (nClHave & COI_HAVE_DIR) {
       mtklog("%d = isanydir(%s) as stored", bClDir, name());
       return bClDir;
@@ -4197,6 +4637,18 @@ bool Coi::isAnyDir( )
    // dir status not yet determined
    bClDir = 0;
 
+   #ifdef VFILEBASE
+   if (isHttp()) {
+      bClDir = rawIsHttpDir();
+      mtklog("%d = isanydir(%s) by httpdir", bClDir, name());
+   }
+   else
+   if (isFtp()) {
+      bClDir = rawIsFtpDir();
+      mtklog("%d = isanydir(%s) by ftpdir", bClDir, name());
+   }
+   else
+   #endif // VFILEBASE
    {
       bClDir = rawIsDir();
       mtklog("%d = isanydir(%s) by fs", bClDir, name());
@@ -4218,6 +4670,12 @@ bool Coi::isTravelDir( )
 
    // make sure raw status is determined
    bool brawdir = isAnyDir();
+
+   #ifdef VFILEBASE
+   if (isTravelZip())   brawdir = 1;   // per definitionem
+   else
+   if (isZipSubEntry()) brawdir = 0;   // travel done otherwise
+   #endif // VFILEBASE
 
    mtklog("%d = istravdir(%s)", brawdir, name());
 
@@ -4247,6 +4705,15 @@ bool Coi::rawIsDir( ) {
 // used so far only for http redirects
 long Coi::setName(char *psz, char *pszOptRoot)
 {
+   #ifdef VFILEBASE
+   if (pszClName && hasData() && !data().pClOrgName) 
+   {
+      // do not delete first name,
+      // but refunction it as the org name.
+      data().pClOrgName = pszClName;
+      pszClName = 0;
+   }
+   #endif // VFILEBASE
 
    if (pszClName) delete [] pszClName;
 
@@ -4261,6 +4728,15 @@ long Coi::setName(char *psz, char *pszOptRoot)
 }
 
 char  *Coi::name( ) { return pszClName; }
+
+#ifdef VFILEBASE
+char  *Coi::orgName( ) 
+{
+   if (hasData() && data().pClOrgName)
+      return data().pClOrgName;
+   return name();
+}
+#endif // VFILEBASE
 
 char  *Coi::root(bool braw) {
    if (braw) return pszClRoot;
@@ -4289,6 +4765,11 @@ CoiData &Coi::data( )
 
 bool Coi::hasData( )    { return pdata ? 1 : 0; }
 
+#ifdef VFILEBASE
+bool Coi::isCached( )   { return bClInCache; }
+bool Coi::hasContent( ) { return (pdata && pdata->src.data) ? 1 : 0; }
+#endif // VFILEBASE
+
 bool Coi::isFileOpen( ) {
    // the open flag itself is managed via pdata
    if (!pdata) return 0;
@@ -4310,6 +4791,11 @@ void Coi::setContent(uchar *pdata, num nsize, num ntime)
       data().src.size = nsize;
       data().src.time = ntime;
    }
+
+   #ifdef VFILEBASE
+   // cache checks itself if coi is really cached
+   glblVCache.tellByteSizeChange(this, nOldSize, nNewSize);
+   #endif // VFILEBASE
 }
 
 long Coi::releaseContent( )
@@ -4339,6 +4825,31 @@ long Coi::getContent(uchar **ppdata, num &rnSize)
       rnSize  = data().src.size;
       return 0;
    }
+
+   #ifdef VFILEBASE
+   // load file of known or unknown size?
+   if (isNet())
+   {
+      // always expect unknown sizes from the net
+      mtklog("loadownraw, expect unknown size: %s", name());
+      uchar *pdata = 0;
+      num    nsize = 0;
+      long nrc = 0;
+      if (nrc = loadOwnFileRaw(100 * 1000000, &pdata, nsize)) {
+         mtklog("loadownraw failed, %ld", nrc);
+         return 9;   // failed
+      }
+  
+      mtklog("loadownraw ok, %ld bytes", (long)nsize);
+
+      setContent(pdata, nsize);
+
+      *ppdata = data().src.data;
+      rnSize  = data().src.size;
+
+      return 0;
+   }
+   #endif // VFILEBASE
 
    char *pszFile = name();
 
@@ -4386,18 +4897,29 @@ bool Coi::existsFile(bool bOrDir)
 {__
    char *pszName = name();
 
+   #ifdef VFILEBASE
+   if (isNet())         return 1; // assume it exists
+   if (isZipSubEntry()) return 1; // assume it exists
+   // .zip file: fall through
+   #endif // VFILEBASE
+
    #ifdef _MSC_VER
+
    DWORD nAttrib = GetFileAttributes(pszName);
    if (nAttrib == 0xFFFFFFFF) // "INVALID_FILE_ATTRIBUTES"
       return 0;
    if (!bOrDir && (nAttrib & FILE_ATTRIBUTE_DIRECTORY))
       return 0; // is a dir, not a file
+
    #else
+
+   // linux
    struct stat64 buf;
    if (stat64(pszName, &buf))
       return 0;
    if (!bOrDir && (buf.st_mode & _S_IFDIR))
       return 0; // is a dir, not a file
+
    #endif
 
    // we can get the attribs, and it's not a dir,
@@ -4409,8 +4931,19 @@ long Coi::open(char *pmode)
 {__
    mtklog("coi-open %p %s %s %p",this,name(),pmode);
 
-	// reset per-file statistics
-	resetIOStatus();
+   // reset per-file statistics
+   resetIOStatus();
+
+   #ifdef VFILEBASE
+   // in case of vfiles, make sure required inputs
+   // are loaded, e.g. http://foo.zip//bar.zip//file.txt
+   // RECURSION BLOCK: for now, we call provideInput
+   // ONLY for zip sub entries. netFiles are expected
+   // to be cached otherwise, but not through pinput.
+   if (isZipSubEntry())
+      if (provideInput(__LINE__))
+         return 9;
+   #endif // VFILEBASE
 
    // (re)init in case that readLine is used:
    if (data().rbuf.data) delete data().rbuf.data;
@@ -4420,6 +4953,9 @@ long Coi::open(char *pmode)
    data().bwrite     = 0;
    data().szmode[0]  = '\0';
    data().ntotalread = 0;
+   #ifdef VFILEBASE
+   data().bstopread  = 0;
+   #endif // VFILEBASE
    data().banyread   = 0;
 
    if (!strcmp(pmode, "rb"))
@@ -4433,6 +4969,10 @@ long Coi::open(char *pmode)
    }
    else
    if (!strcmp(pmode, "r+b") || !strcmp(pmode, "wb")) {
+      #ifdef VFILEBASE
+      if (isVirtual(1)) // WITH root zips
+         return 9+perr("write not supported: %s", name());
+      #endif // VFILEBASE
       // TODO: not sure if this protects utf16 files in every case,
       //       so far it requires an isBinary() check before.
       if (nClUCS)
@@ -4460,6 +5000,13 @@ long Coi::open(char *pmode)
          return 0;
       }
    }
+
+   #ifdef VFILEBASE
+   // this can be reached in READ mode only
+   // http://thehost/thefile.txt
+   if (isHttp()) return rawOpenHttpSubFile(pmode);
+   if (isFtp())  return rawOpenFtpSubFile(pmode);
+   #endif // VFILEBASE
 
    // native file I/O: thefile.dat
    data().pfile = fopen(name(), pmode);
@@ -4558,16 +5105,6 @@ bool Coi::isBinaryFile( )
          }
       }
    }
-
-   #ifdef DVIEW
-   // dview .dvdb detection: mark as hidden file
-   if (strEnds(name(), ".dvdb")) {
-      const char *ppat = ":depeche-view-database,";
-      long npatlen = strlen(ppat);
-      if ((nRead > npatlen) && strBegins((char*)data().rbuf.data, (char*)ppat))
-         brc = 1;
-   }
-   #endif // DVIEW
 
    if (!brc && !nClUCS) {
       // binary data heuristic detection
@@ -4747,6 +5284,20 @@ size_t Coi::readRaw(void *pbufin, size_t nBufSize)
       return ntocopy;
    }
 
+   #ifdef VFILEBASE
+   if (isHttp())  {
+      size_t nread = rawReadHttpSubFile(pbufin, nBufSize);
+      data().ntotalread += nread;
+      return nread;
+   }
+
+   if (isFtp())   {
+      size_t nread = rawReadFtpSubFile(pbufin, nBufSize);
+      data().ntotalread += nread;
+      return nread;
+   }
+   #endif // VFILEBASE
+
    // native file I/O:
    if (!data().pfile) {
       perr("read on non-open file: %s",name());
@@ -4787,6 +5338,18 @@ int Coi::seek(num nOffset, int nOrigin)
    if (nOrigin != SEEK_SET)
       return 9+perr("internal: seek: supports only SEEK_SET");
 
+   #ifdef VFILEBASE
+   if (!data().src.data && isVirtual()) // w/o root zips
+   {
+      // force caching of virtual files, except root zips
+      uchar *pdummy = 0;
+      num    ndummy = 0;
+      if (getContent(&pdummy, ndummy))
+         return 9+perr("seek failed: %s", name());
+      // else fall through to cache use
+   }   
+   #endif // VFILEBASE
+
    // take cached data?
    if (data().src.data) 
    {
@@ -4796,6 +5359,13 @@ int Coi::seek(num nOffset, int nOrigin)
       data().src.index = nOffset;
       return 0;
    }
+
+   #ifdef VFILEBASE
+   // virtual file I/O: shouldn't be reached
+   if (isHttp())  return 9+perr("cannot seek on http file");
+   if (isFtp())   return 9+perr("cannot seek on ftp file");
+   if (isZipSubEntry()) return 9+perr("cannot seek on zip entry");
+   #endif // VFILEBASE
 
    // native file I/O:
    if (!data().pfile) {
@@ -4826,6 +5396,13 @@ size_t Coi::write(uchar *pBuf, size_t nBytes)
 {__
    if (data().src.data)
       return 9+perr("write: conflict with cached data");
+
+   #ifdef VFILEBASE
+   // virtual file I/O:
+   if (isHttp())  return 9+perr("cannot write on http file");
+   if (isFtp())   return 9+perr("cannot write on ftp file");
+   if (isZipSubEntry()) return 9+perr("cannot write on zip entry");
+   #endif // VFILEBASE
 
    // native file I/O:
    if (!data().pfile) {
@@ -4862,8 +5439,8 @@ void Coi::close( )
 {__
    mtklog("coi-close %p %s", this, name());
 
-	// reset per-file statistics
-	resetIOStatus();
+   // reset per-file statistics
+   resetIOStatus();
 
    // assuming: close methods below do NOT use rbuf
    if (data().rbuf.data) {
@@ -4877,6 +5454,12 @@ void Coi::close( )
       data().src.index = 0; // safety
       return;
    }
+ 
+   #ifdef VFILEBASE
+   // http://thehost/thefile.txt
+   if (isHttp())  { rawCloseHttpSubFile(); return; }
+   if (isFtp())   { rawCloseFtpSubFile(); return; }
+   #endif // VFILEBASE
  
  
    // in any case, reset the flag:
@@ -4893,6 +5476,15 @@ _  data().pfile = 0;
 
 long Coi::openDir( )
 {__
+   #ifdef VFILEBASE
+   if (isTravelZip() || isNet()) {
+      long nrc = rawLoadDir();
+      if (nrc >= 5) return nrc; // failed
+      data().bdiropen = 1;
+      return 0;
+   }
+   #endif // VFILEBASE
+
    if (rawIsDir())
       return rawOpenDir();
 
@@ -4933,6 +5525,11 @@ Coi *Coi::nextEntry( )
 // caller MUST RELEASE COI after use!
 Coi *Coi::nextEntryRaw( )
 {__
+   #ifdef VFILEBASE
+   if (isHttp())  return rawNextHttpEntry();
+   if (isFtp())   return rawNextFtpEntry();
+   #endif // VFILEBASE
+
    if (rawIsDir()) return rawNextEntry();
 
    perr("no directory, cannot read: %s", name());
@@ -4942,6 +5539,11 @@ Coi *Coi::nextEntryRaw( )
 void Coi::closeDir( )
 {__
    mtklog("coi::closedir %p", this);
+
+   #ifdef VFILEBASE
+   if (isHttp())  return rawCloseHttpDir();
+   if (isFtp())   return rawCloseFtpDir();
+   #endif // VFILEBASE
 
    if (rawIsDir())
       return rawCloseDir();
@@ -5439,7 +6041,7 @@ void initConsole()
    if (pszColEnv)
       setColorScheme(pszColEnv);
 
-   #ifdef _WIN32
+   #ifdef WINFULL
    hGlblConsole = GetStdHandle(STD_OUTPUT_HANDLE);
    CONSOLE_SCREEN_BUFFER_INFO oConInf;
    if (!GetConsoleScreenBufferInfo(hGlblConsole, &oConInf)) {
@@ -5460,9 +6062,7 @@ void initConsole()
       bGlblConsColumnsSet = true;
       info.setWidth(nGlblConsColumns);
    }
-   #endif
 
-   #ifdef _WIN32
    if (!pszColEnv)
    {
       // if we autodetect a black background shell
@@ -5479,10 +6079,16 @@ void initConsole()
    #endif
 
    #ifdef _WIN32
+
+   #ifdef WINFULL
    if (bGlblUseColor)
       SetConsoleCtrlHandler(ctrlcHandler, 1);
+   #endif
+
    #else
+
    signal(SIGINT, ctrlcHandler);
+
    #endif
 }
 
@@ -5591,7 +6197,13 @@ void ProgressInfo::setProgress(num nMax, num nCur, char *pszUnit) {
    if (nPerc >= 0 && nPerc <= 100)
       sprintf(szPerc, "%02ld%% ", nPerc);
    else
+   if (nPerc > 100) {
+      sprintf(szPerc, "100%% ");
+      if (cs.debug) printf("[progress: cur=%ld max=%ld perc=%ld]\n", (long)nCur, (long)nMax, (long)nPerc);
+   } else {
       sprintf(szPerc, "??%% ");
+      if (cs.debug) printf("[progress: cur=%ld max=%ld perc=%ld]\n", (long)nCur, (long)nMax, (long)nPerc);
+   }
    cycle();
 }
 
@@ -5848,6 +6460,9 @@ size_t safefwrite(void *pBuf, size_t nBlockSize, size_t nBufSize, FILE *fin)
 #define fread  safefread
 #define fwrite safefwrite
 
+// sockLastError  : see netErrno
+// sockLastErrStr : see netErrStr
+
 int netErrno()
 {
    #ifdef _WIN32
@@ -5864,7 +6479,7 @@ char *netErrStr(int ncode=-1)
 
    static char szErrBuf[200];
  
-   const char *perr = "?";
+   const char *perr = "";
 
    #ifdef _WIN32
    switch (ncode)
@@ -5952,7 +6567,10 @@ char *netErrStr(int ncode=-1)
    if (strBegins((char*)perr, "WSA")) perr += 3;
    #endif
 
-   snprintf(szErrBuf, sizeof(szErrBuf)-10, "status=%d (%s)", ncode, perr);
+   if (strlen(perr))
+      snprintf(szErrBuf, sizeof(szErrBuf)-10, "status=%d (%s)", ncode, perr);
+   else
+      snprintf(szErrBuf, sizeof(szErrBuf)-10, "status=%d", ncode);
 
    return szErrBuf;
 }
@@ -5968,6 +6586,15 @@ long perr(const char *pszFormat, ...)
    va_start(argList, pszFormat);
    ::vsnprintf(szErrBuf, sizeof(szErrBuf)-10, pszFormat, argList);
    szErrBuf[sizeof(szErrBuf)-10] = '\0';
+
+   #ifdef WINCE
+
+   printf("error: %s", szErrBuf);
+   bErrBufSet = 1;
+   nGlblErrors++;
+   return 0;
+
+   #else
 
    if (pGlblSFKStatusCallBack) {
       // output to callback
@@ -5993,6 +6620,8 @@ long perr(const char *pszFormat, ...)
    }
 
    return 0;
+
+   #endif
 }
 
 long pwarn(const char *pszFormat, ...)
@@ -6073,6 +6702,8 @@ void perrinfo(const char *pszContext)
 
    // then dump system infos, if any
    #ifdef _WIN32
+
+   #ifdef WINFULL
    long  nerr1 = errno;
    DWORD nerr2 = GetLastError();
    LPVOID lpMsgBuf = 0;
@@ -6090,12 +6721,16 @@ void perrinfo(const char *pszContext)
    printf("werno: %lu,%s\n", nerr2, lpMsgBuf ? lpMsgBuf : "");
    setTextColor(-1);
    LocalFree(lpMsgBuf);
+   #endif
+
    #else
+
    long  nerr1 = errno;
    info.clear(); // in case no perr was done
    setTextColor(nGlblWarnColor);
    printf("cerno: %ld,%s\n", nerr1, strerror(nerr1));
    setTextColor(-1);
+
    #endif
 }
 
@@ -9094,6 +9729,14 @@ long FileSet::addRootDir(char *pszRoot, int nTraceLine, bool bNoCmdFillup)
    clRootDirs.addString(0,pszRoot);
    clRootDirs.addLong(2,nClCurLayer, __LINE__);
 
+   #ifdef VFILEBASE
+   // implicite activation of zip travel by root dir:
+   if (endsWithArcExt(pszRoot)) {
+      cs.xelike     = 1;
+      cs.travelzips = 1;
+   }
+   #endif // VFILEBASE
+
    return 0;
 }  // FileSet::addRootDir
 
@@ -9119,6 +9762,16 @@ long FileSet::addFileMask(char *pszMask)
 {
    // if (cs.debug) printf("] addFileMask %s\n", pszMask);
    if (ensureBase(__LINE__)) return 9;
+
+   #ifdef VFILEBASE
+   if (!cs.shallowzips && cs.xelike && cs.travelzips && endsWithArcExt(pszMask)) {
+      pinf("file mask \"%s\" may produce no results, because\n",pszMask);
+      char *pext = strrchr(pszMask, '.');
+      if (!pext) pext = pszMask;
+      pinf("option -arc is set, treating %s files as directories.\n",pext);
+      pinf("say -dir ... %c%s -file ... instead to use %s as a path mask.\n",glblWildChar,pext,pszMask);
+   }
+   #endif // VFILEBASE
 
    if (!strcmp(pszMask, "-all") || isWildStr(pszMask)) {
       if (bClGotAllMask)
@@ -9788,6 +10441,10 @@ void setPriority(long nprio)
    #endif
 }
 
+#ifdef VFILEBASE
+extern "C" void setUzpMemLimit(num nlimit);
+#endif // VFILEBASE
+
 void setMemoryLimit(long nMBytes) 
 {
    num nbytes = nMBytes * 1048576;
@@ -9850,6 +10507,7 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-force"))     { pcs->force = 1; return true; }
    if (!strncmp(psz1, "-lit", 4))   { pcs->spat = 0; pcs->wpat = 0; return true; }
    if (!strncmp(psz1, "-spat", 5))  { pcs->spat = 1; return true; }
+   if (!strncmp(psz1, "-nospat", 7)){ pcs->spat = 0; return true; }
    if (!strcmp(psz1, "-bright"))    { nGlblDarkColBase = 1; return true; }
    if (!strcmp(psz1, "-dark"))      { nGlblDarkColBase = 0; return true; }
    if (!strcmp(psz1, "-nochain"))   { pcs->nochain = 1; return true; }
@@ -9874,6 +10532,11 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
    if (!strcmp(psz1, "-noprog"))    { pcs->noprog = 1; return true; }
    if (!strcmp(psz1, "-test"))      { pcs->test = 1; return true; }
    if (!strcmp(psz1, "-oldmd5"))    { bGlblOldMD5 = 1; return true; }
+   if (strBegins(psz1, "-text"))    { pcs->textfiles = 1; return true; }
+   if (strBegins(psz1, "-textfile")){ pcs->textfiles = 1; return true; }
+   if (strBegins(psz1, "-bin"))     { pcs->binaryfiles = 1; return true; }
+   if (strBegins(psz1, "-binfile")) { pcs->binaryfiles = 1; return true; }
+   if (strBegins(psz1, "-binaryfile")) { pcs->binaryfiles = 1; return true; }
    if (!strcmp(psz1, "-snap"))      { pcs->usesnap = 1; return true; }
    if (!strncmp(psz1, "-snapw", 6)) { // snapwithnames
       pcs->usesnap = 1;
@@ -9887,12 +10550,34 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       glblRunChar = '#';
       return true;
    }
+   #ifdef VFILEBASE
+   if (!strcmp(psz1, "-qarc")) {
+      pcs->travelzips  = 1;
+      pcs->xelike      = 1;
+      pcs->shallowzips = 1;  // toplevel only
+      return true;
+   }
+   #endif // VFILEBASE
    if (!strcmp(psz1, "-zip") || !strcmp(psz1, "-arc")) {
       pcs->travelzips = 1;
+      #ifdef VFILEBASE
+      pcs->xelike     = 1;  // process zips as deep as possible
+       #ifdef USE_SFK_BASE
+       pcs->precachezip = 1; // dv load: always force precache
+       #endif // USE_SFK_BASE
+      #endif // VFILEBASE
       return true; 
    }
    if (!strcmp(psz1, "-nozip") || !strcmp(psz1, "-noarc"))
       { pcs->travelzips = 0; return true; }
+
+   #ifdef VFILEBASE
+   if (!strcmp(psz1, "-extdom"))    { pcs->extdomref = 1; return true; }
+   if (!strcmp(psz1, "-xd"))        { pcs->xelike    = 1; return true; }
+   if (!strcmp(psz1, "-cacheall"))  { pcs->cacheall  = 1; return true; }
+   if (!strcmp(psz1, "-cachestat")) { gs.cachestat   = 1; return true; }
+   if (!strcmp(psz1, "-nocache"))   { setDiskCacheActive(0); return true; }
+   #endif // VFILEBASE
 
    // -pure is often a local option, but some commands allow general use:
    if (bGlblAllowGeneralPure && !strcmp(psz1, "-pure"))
@@ -10018,6 +10703,22 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0)
       pcs->usectime = 1;
       return true;
    }
+   #ifdef VFILENET
+   if (!strcmp(psz1, "-proxy")) {
+      // this option takes another parameter!
+      ++iOpt;  // new iOpt IS WRITTEN BACK.
+      if (iOpt >= argc) { perr("missing parameter after %s\n", psz1); exit(9); }
+      char szBuf[200];
+      char *pproxy = argv[iOpt];
+      strcopy(szBuf, pproxy);
+      char *psz1 = szBuf;
+      while (*psz1 && *psz1 != ':') psz1++;
+      if (*psz1) *psz1++ = '\0';
+      long nport = atol(psz1);
+      TCPCore::setProxy(szBuf, nport);
+      return true;
+   }
+   #endif // VFILENET
    if (!strcmp(psz1, "-since")) {
       // this option takes another parameter!
       ++iOpt;  // new iOpt IS WRITTEN BACK.
@@ -10181,6 +10882,11 @@ long processFlatDirParms(char *pszPreCmd, char *pszCmdLine, int nAutoComplete)
          if (isAbsolutePath(psz1))
             nAbsPathParms++;
 
+         #ifdef VFILEBASE
+         Coi ocoi(psz1, "");
+         if (endsWithArcExt(psz1) || ocoi.isZipSubEntry())
+            setArcTravel(1, 1);
+         #endif // VFILEBASE
       }
 
       // continue with next token, if any
@@ -10310,6 +11016,8 @@ char *aGlblChainCmds[] =
    "1wget",         // receive files
    "2strlen",       // receive TEXT
    "2webreq",       // receive TEXT
+   "1call",         // receive FILES and text
+   "1if",           // receive FILES and text
    0
 };
 
@@ -10901,6 +11609,9 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
          mtklog("pdp: short: first=%s havemdfl=%d", pszFirstParm,bGlblHaveMixedDirFileList);
 
          Coi *pcoi = 0;
+         #ifdef VFILEBASE
+         pcoi = glblVCache.get(pszFirstParm);
+         #endif // VFILEBASE
          if (!pcoi) { 
             pcoi = new Coi(pszFirstParm, 0);
             pcoi->incref("pdp");
@@ -10940,6 +11651,24 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
                   return 9;
                }
 
+               #ifdef VFILEBASE
+               // convenience: is user trying to specify .zip file mask
+               // although .zip's are directories?
+               if (!cs.shallowzips && cs.xelike && cs.travelzips && endsWithArcExt(psz1))
+               {
+                  // then turn file mask into a path mask
+                  static char szMaskBuf[100];
+                  if (containsWildCards(psz1))
+                     strcopy(szMaskBuf, psz1);
+                  else
+                     snprintf(szMaskBuf, sizeof(szMaskBuf)-10, "*%s", psz1);
+                  if (cs.verbose > 1)
+                     pinf("auto-converting %s to path mask %s\n", psz1, szMaskBuf);
+                  if (lRC |= glblFileSet.addDirMask(szMaskBuf)) // is copied
+                     return 9;
+               }
+               else
+               #endif // VFILEBASE
                if (lRC |= glblFileSet.addFileMask(psz1))
                   return 9;
                bAnyDone = 1;
@@ -11026,6 +11755,11 @@ long processDirParms(char *pszCmd, int argc, char *argv[], int iDir, int nAutoCo
 
 long setProcessSingleDir(char *pszDirName)
 {
+   #ifdef VFILEBASE
+   if (   !strBegins(pszDirName, "http://")
+       && !strBegins(pszDirName, "ftp://")
+      )
+   #endif // VFILEBASE
    {
       Coi ocoi(pszDirName, 0);
       if (!ocoi.isTravelDir())
@@ -11324,6 +12058,17 @@ long walkFileListFlat(CoiTable &oList, long nFunc, long &rlFiles, num &rlBytes, 
       if (!pcoi) return 9+perr("int. #50\n");
       char *pszFile = pcoi->name();
 
+      #ifdef VFILEBASE
+      // optim: if the cache contains an identical url,
+      // take that coi instead, to avoid double reads.
+      Coi *ptmp = glblVCache.get(pszFile);
+      // caller (we) MUST RELEASE COI after use!
+      if (ptmp) {
+         mtklog("wfl: coi replaced by cache entry: %s", pszFile);
+         pcoi = ptmp;
+      }
+      else
+      #endif // VFILEBASE
          pcoi->incref("wff");
 
       // NO RETURN WITHOUT RELEASE!
@@ -11439,6 +12184,12 @@ long walkAllTrees(long nFunc, long &rlFiles, long &rlDirs, num &rlBytes)
       // All sub-coi's will copy this root.
       Coi *pcoi = 0;
 
+      #ifdef VFILEBASE
+      if (pcoi = glblVCache.get(pszTree)) {
+         mtklog("wat: ... reusing root from vcache");
+      }
+      else
+      #endif // VFILEBASE
       {
          pcoi = new Coi(pszTree, pszRoot);
          pcoi->incref("wat");
@@ -11463,9 +12214,9 @@ long walkAllTrees(long nFunc, long &rlFiles, long &rlDirs, num &rlBytes)
          cs.flatbytecnt += nLocalBytes;
       } else {
          rlDirs++; // count root dir
-	      rlDirs   += nLocalDirs; // add it's subdirs
-	      rlFiles  += nLocalFiles;
-	      rlBytes  += nLocalBytes;
+         rlDirs   += nLocalDirs; // add it's subdirs
+         rlFiles  += nLocalFiles;
+         rlBytes  += nLocalBytes;
       }
 
       if (cs.stopTree(lRC)) {
@@ -11580,6 +12331,7 @@ long getFileStat( // RC == 0 if exists anything
 
    #ifdef _MSC_VER
 
+   #ifdef WINFULL
    // special case: top level of UNC paths
    // \\host\root          fails with stat()
    // \\host\root\subdir   can be used
@@ -11616,6 +12368,12 @@ long getFileStat( // RC == 0 if exists anything
       }
       // else fall through
    }
+   #else
+   ulong nattrib = GetFileAttributesA(pszName);
+   rbIsDirectory = (nattrib & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
+   rbCanRead     = 1;
+   rbCanWrite    = (nattrib & FILE_ATTRIBUTE_READONLY)  ? 0 : 1;
+   #endif
 
    // using MSC specific 64-bit filesize and time stamp infos
    #ifdef SFK_W64
@@ -11623,8 +12381,8 @@ long getFileStat( // RC == 0 if exists anything
    if (_stat64(pszName, &buf))
       return -1;
    #else
-   struct _stati64 buf;
-   if (_stati64(pszName, &buf))
+   struct stat buf;
+   if (mystat(pszName, &buf))
       return -1;
    #endif
 
@@ -11644,7 +12402,9 @@ long getFileStat( // RC == 0 if exists anything
       memcpy(prawstat, &buf, sizeof(buf));
    }
    return 0;
+
    #else
+
    // generic linux 64-bit stat
    struct stat64 buf;
    if (stat64(pszName, &buf))
@@ -11664,6 +12424,7 @@ long getFileStat( // RC == 0 if exists anything
       memcpy(prawstat, &buf, sizeof(buf));
    }
    return 0;
+
    #endif
 }
 
@@ -11741,6 +12502,7 @@ long getFileSystemInfoRaw(
 
    #ifdef _WIN32
 
+   #ifdef WINFULL
    char  szVolName[200];
    DWORD nVolSerNum = 0;
    DWORD nMaxFNLen  = 0;
@@ -11769,6 +12531,7 @@ long getFileSystemInfoRaw(
 
    nOutTotalBytes = nTotalBytes.QuadPart;
    nOutFreeBytes  = nFreeCaller.QuadPart;
+   #endif
 
    return 0;
 
@@ -12109,10 +12872,16 @@ long timeFromString(char *pszin, num &nRetTime)
    tm->tm_min  = nmin;
    tm->tm_sec  = nsec;
 
+   bool bNearEpoch = 0;
+   if (nyear == 70 && nmon == 0 && nday == 1)
+        bNearEpoch = 1;
+
    time_t nTime = mktime(tm);
-   if (!nTime) return 9+perr("invalid date/time: %s\n", psz);
    num nTime2 = (num)nTime;
-   if (nTime2 <= 0) return 9+perr("invalid date/time: %s\n", psz);
+   if (     nTime2 < 0
+       || (!bNearEpoch && (nTime2 == 0))
+      )
+      return 9+perr("invalid date/time: %s (%d %d %d)\n", psz, nyear, nmon, nday);
 
    // char *psz1 = timeAsString(nTime2);
    // printf("] %s\n", psz1);
@@ -12162,7 +12931,7 @@ class FileStat {
 public:
    FileStat       ( );
    long  readFrom (char *pszSrcFile, bool bWithFSInfo=0, bool bSilent=0);
-   long  writeTo  (char *pszDstFile);
+   long  writeTo  (char *pszDstFile, int nTraceLine);
    long  differs  (FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder=0);
    long  dump     ( );
    long  dumpTimeDiff (FileStat &rdst);
@@ -12576,7 +13345,7 @@ long FileStat::readFrom(char *pszSrcFile, bool bWithFSInfo, bool bSilent)
       #ifdef SFK_W64
       struct __stat64 ostat;
       #else
-      struct _stati64 ostat;
+      struct stat ostat;
       #endif
    #else
       struct stat64 ostat;
@@ -12663,6 +13432,8 @@ long FileStat::readFrom(char *pszSrcFile, bool bWithFSInfo, bool bSilent)
    }
 
    #ifdef _WIN32
+
+   #ifdef WINFULL
    WIN32_FILE_ATTRIBUTE_DATA oinf;
    BOOL bok2 = GetFileAttributesEx(pszSrcFile, GetFileExInfoStandard, &oinf);
    if (!bok2) {
@@ -12673,12 +13444,15 @@ long FileStat::readFrom(char *pszSrcFile, bool bWithFSInfo, bool bSilent)
    }
    src.nAttribs = oinf.dwFileAttributes;
    // => see WINFILE_ATTRIB_MASK
-
    // ftCreationTime; ftLastAccessTime; ftLastWriteTime
    memcpy(&src.ftMTime, &oinf.ftLastWriteTime , sizeof(src.ftMTime));
    memcpy(&src.ftCTime, &oinf.ftCreationTime  , sizeof(src.ftCTime));
    memcpy(&src.ftATime, &oinf.ftLastAccessTime, sizeof(src.ftATime));
    src.nHaveWFT = 2;
+   #else
+   src.nAttribs = GetFileAttributes(pszSrcFile);
+   #endif
+
    #else
 
    // src.bIsReadable, src.bIsWriteable
@@ -12747,7 +13521,7 @@ long makeWinFileTime(num nsrctime, FILETIME &rdsttime, char *pszDstFile)
       4. all above for dst as well
 */
 
-long FileStat::writeTo(char *pszDstFile)
+long FileStat::writeTo(char *pszDstFile, int nTraceLine)
 {
    // totally experimental and incomplete,
    // esp. on NTFS <-> FAT file transfers.
@@ -12762,8 +13536,13 @@ long FileStat::writeTo(char *pszDstFile)
       src.bIsDir ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL,
       0     // template file
       );
-   if (hDst == INVALID_HANDLE_VALUE) 
-      return 9+perr("cannot set attributes (cfile failed): %s %lu\n",pszDstFile,GetLastError());
+   if (hDst == INVALID_HANDLE_VALUE) {
+      ulong nerr = GetLastError();
+      perr("cannot set attributes (rc=%lu): %s\n",nerr,pszDstFile);
+      if (nerr == ERROR_ACCESS_DENIED)
+        pinf("make sure you have full access rights. maybe you have to be administrator.\n");
+      return 9;
+   }
 
    long nrc = 0;
 
@@ -12810,12 +13589,14 @@ long FileStat::writeTo(char *pszDstFile)
       timetToFileTime(nDstATime, &ofta);  // access  , optional
    */
 
+   #ifdef WINFULL
    if (!nrc) {
       if (!SetFileTime(hDst, &nDstCTime, &nDstATime, &nDstMTime)) {
-         perr("cannot set attributes (sftime failed): %s rc %lu %s\n", pszDstFile, (ulong)GetLastError(), numtohex(src.nMTime));
+         perr("cannot set file time (rc=%lu): %s %s\n", (ulong)GetLastError(), pszDstFile, numtohex(src.nMTime));
          nrc = 9;
       }
    }
+   #endif
    
    CloseHandle(hDst);
 
@@ -12827,34 +13608,38 @@ long FileStat::writeTo(char *pszDstFile)
    }
    else
    if (!SetFileAttributes(pszDstFile, src.nAttribs)) {
-      perr("failed to set attributes: %s rc %lu %s\n", pszDstFile, (ulong)GetLastError(), numtohex(src.nMTime));
+      perr("failed to set attributes (rc=%lu): %s %s\n", (ulong)GetLastError(), pszDstFile, numtohex(src.nMTime));
       nrc = 9;
    }
 
    return nrc;
+
    #else
+
+   // linux generic
 
    struct utimbuf otimes;
    if (src.nATime)
       otimes.actime = src.nATime;
    otimes.modtime = src.nMTime;
    int iRC = utime(pszDstFile, &otimes);
-   if (iRC) return 9+perr("failed to set file times: %s rc %d\n",pszDstFile,iRC);
+   if (iRC) return 9+perr("failed to set file times (rc=%d): %s\n",iRC,pszDstFile);
 
    mode_t nmode = (mode_t)src.nAttribs;
    if (nmode == 0) return 9+perr("no attributes to set for %s\n",pszDstFile);
    iRC = chmod(pszDstFile, nmode);
-   if (iRC) return 9+perr("failed to set file attributes: %s rc %d\n",pszDstFile,iRC);
+   if (iRC) return 9+perr("failed to set file attributes (rc=%d): %s\n",iRC,pszDstFile);
 
    return 0;
+
    #endif
 }
 
-long cloneAttributes(char *pszSrc, char *pszDst)
+long cloneAttributes(char *pszSrc, char *pszDst, int nTraceLine)
 {
    FileStat ofs;
-   if (ofs.readFrom(pszSrc))  return 9;
-   if (ofs.writeTo(pszDst))   return 9;
+   if (ofs.readFrom(pszSrc)) return 9;
+   if (ofs.writeTo(pszDst, nTraceLine)) return 9;
    return 0;
 }
 
@@ -12941,6 +13726,7 @@ long getFileMD5NoCache(char *pszFile, uchar *abOut16, bool bSilent)
       FILE_FLAG_NO_BUFFERING,
       0     // template file
       );
+
    if (hDst == INVALID_HANDLE_VALUE) 
       return 9;
 
@@ -14259,7 +15045,7 @@ long CopyCache::flush()
          if (cs.verbose > 2)
             info.print("[%s : about to copy time]\n", pszDst);
          if (!cs.sim)
-            if (!ofsdst.writeTo(pszDst)) {
+            if (!ofsdst.writeTo(pszDst, __LINE__)) {
                cs.dirsCloned++;
                if (cs.verbose)
                   info.print("[%s : time copied]\n", pszDst);
@@ -14311,7 +15097,7 @@ long CopyCache::flush()
                // do NOT proceed, this seems fatal.
       
             // set target meta data
-            if (!ofsdst.writeTo(pszDst))
+            if (!ofsdst.writeTo(pszDst, __LINE__))
                cs.filesCloned++;
             // IGNORE rc. errors are counted.
          
@@ -14384,7 +15170,7 @@ long CopyCache::flush()
                   // do NOT proceed, this seems fatal.
 
                // set target meta data
-               ofsdst.writeTo(pszDst);
+               ofsdst.writeTo(pszDst, __LINE__);
                // IGNORE rc. errors are counted.
                nflags |= 4; // shadow written
                cs.shadowsWritten++;
@@ -14547,6 +15333,7 @@ long mystrnicmp(char *psz1, char *psz2, long nLen)
 // type: 1==onlyDown 2==onlyUp 0==any
 long getKeyPress(long ntype=0)
 {
+   #ifdef WINFULL
    DWORD dwNumEvents, dwEventsPeeked, dwInputEvents;
    INPUT_RECORD aInputBuffer[1];
 
@@ -14575,6 +15362,7 @@ long getKeyPress(long ntype=0)
       if (ntype == 2 &&  bdown) return -1; // no type match
       return ncode;
    }
+   #endif
 
    return -1;
 }
@@ -15834,6 +16622,29 @@ void SnapShot::adjustNamePadding() {
 }
 #endif // USE_SFK_BASE
 
+// used by matchesName only to check .ext dir masks
+bool dirExtEndMatch(char *pszHay, char *pszPat)
+{
+   // hay1: ".svn/"
+   // pat1: ".svn"
+   // pat2: ".svn/"
+   long npatlen = strlen(pszPat);
+   if (npatlen < 1) return 0; // shouldn't happen
+   // case ".svn/" == ".svn/"
+   if (pszPat[npatlen-1] == glblPathChar)
+      return mystricmp(pszHay, pszPat) ? 0 : 1;
+   // pat differs in length to hay,
+   // case ".svn/" == ".svn"
+   long nhaylen = strlen(pszHay);
+   if (nhaylen != npatlen+1)
+      return 0;
+   if (mystrnicmp(pszHay, pszPat, npatlen))
+      return 0;
+   if (pszHay[npatlen] != glblPathChar)
+      return 0;
+   return 1;
+}
+
 bool matchesName(char *pszStr, char *pszMask,
    bool *rPartMatch = 0, long nFlags = 0,
    long *pHitPos = 0, long *pHitLen = 0
@@ -15846,6 +16657,9 @@ bool matchesName(char *pszStr, char *pszMask,
 
     // flags, bit 1: PATH matching mode i/o FILE.
     bool bPathMatch =  (nFlags & 2) ? 1 : 0;
+
+    // flags, bit 2: matchesDirMask mode, no ".ext" comparison.
+    bool bMDirMask = (nFlags & 4) ? 1 : 0;
 
     //  foo         -> thefoosys.txt
     //  *foo*bar*   -> thefooanybar.txt
@@ -15906,11 +16720,15 @@ bool matchesName(char *pszStr, char *pszMask,
             if (cs.verbose >= 4) printf("PART %s neg %d\n", szMatchBuf, bneg);
 
             // special case ".ext" part at end of mask?
-            if (!bwild && !bwild2 && szMatchBuf[0] == '.') {
+            if (!bwild && !bwild2 && szMatchBuf[0] == '.') 
+            {
                 char *psz5 = strrchr(pstr1, '.');
                 bool bmatch1 = false;
                 if (!psz5)
                     bmatch1 = false;
+                else
+                if (bMDirMask)
+                    bmatch1 = dirExtEndMatch(psz5, szMatchBuf);
                 else
                     bmatch1 = !mystricmp(psz5, szMatchBuf);
                 if (bmatch1 && rPartMatch) *rPartMatch = true;
@@ -16103,17 +16921,21 @@ bool matchesDirMask(char *pszStr, bool bQuiet)
       char *pszMask = rMasks.getString(i);
       if (pszMask[0] == glblNotChar)
       {
-         // ,1: disable start-of-name comparison
-         if (matchesName(pszStr, pszMask+1, 0, 1)) {
+         mtklog("mdm: check neg mask: %s %s", pszMask, pszStr);
+         // ,5: disable start-of-name comparison AND disable 
+         //     the .extension comparison (the latter would
+         //     never work as pszStr ends with slash).
+         if (matchesName(pszStr, pszMask+1, 0, 5)) {
             if (!bQuiet && (nGlblTraceSel & 1)) {
                setTextColor(nGlblTraceExcColor);
                info.print("dir-exclude : %s due to \"%s\"\n", skipDotSlash(pszStr), pszMask);
                setTextColor(-1);
             }
-            mtklog("mdm: 0, neg mask hit: %s", pszStr);
+            mtklog("mdm: 0, neg mask hit: %s %s", pszMask, pszStr);
             return 0;
          } else {
             if (cs.verbose >= 4) printf("1 = MDSB (msk %s, str %s)\n", pszMask, pszStr);
+            mtklog("mdm: neg mask miss %s %s", pszMask, pszStr);
          }
       }
       else
@@ -16121,9 +16943,10 @@ bool matchesDirMask(char *pszStr, bool bQuiet)
       {
          if (mystrstriq(pszStr, pszMask+1))
             lRC = 1; // but continue checking for negative masks
-      }
-      else
+      } else {
+         mtklog("mdm: skip wild mask: %s %s (checked later)", pszMask, pszStr);
          lRC = 1; // mask with wildcards: NOT used here, but in matchesPathMask()
+      }
    }
 
    if (!bQuiet && (nGlblTraceSel & 1)) {
@@ -16577,17 +17400,17 @@ long listSingleFile(long lLevel, Coi *pcoi, char *pszParentZip, bool bIsDir, lon
                if (nIndent > (long)strlen(pszGlblBlank)) nIndent = strlen(pszGlblBlank);
                if (nIndent > 10) nIndent = 10;
 
-					switch (cs.listunit) {
-						case 'b':
-		               prtFile(ps,pf,pcoi,pz,nf, "%s,              %.*s%s%s", numtoa_blank(nFileSize, 12), nIndent, pszGlblBlank, p1,p2);
-							break;
-						case 'k':
-		               prtFile(ps,pf,pcoi,pz,nf, "%s kb,              %.*s%s%s", numtoa_blank(nFileSize/1000, 10), nIndent, pszGlblBlank, p1,p2);
-							break;
-						default :
-		               prtFile(ps,pf,pcoi,pz,nf, "%5ld mb,              %.*s%s%s", lMBytes, nIndent, pszGlblBlank, p1,p2);
-							break;
-					}
+               switch (cs.listunit) {
+                  case 'b':
+                     prtFile(ps,pf,pcoi,pz,nf, "%s,              %.*s%s%s", numtoa_blank(nFileSize, 12), nIndent, pszGlblBlank, p1,p2);
+                     break;
+                  case 'k':
+                     prtFile(ps,pf,pcoi,pz,nf, "%s kb,              %.*s%s%s", numtoa_blank(nFileSize/1000, 10), nIndent, pszGlblBlank, p1,p2);
+                     break;
+                  default :
+                     prtFile(ps,pf,pcoi,pz,nf, "%5ld mb,              %.*s%s%s", lMBytes, nIndent, pszGlblBlank, p1,p2);
+                     break;
+               }
             }
          }
          break;
@@ -16711,6 +17534,13 @@ void setSystemSlashes(char *pdst)
    #endif
 }
 
+void setNetSlashes(char *pdst)
+{
+   for (; *pdst; pdst++)
+      if (*pdst == '\\')
+          *pdst = '/';
+}
+
 long execFileStat(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes, num &nLocalMaxTime, num &nTreeMaxTime, long nSinceReason)
 {
    char *pszFileName = pcoi->name();
@@ -16732,14 +17562,20 @@ long execFileStat(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes
    if (pcoi->isHidden())
       cs.numHiddenFiles++;
 
-   if (cs.travelzips) {
-      char *psz1 = strrchr(pszFileName, '.');
-      if (psz1 && 
-          (   !mystricmp(psz1, ".zip") || !mystricmp(psz1, ".jar") 
-           || !mystricmp(psz1, ".war") || !mystricmp(psz1, ".aar") || !mystricmp(psz1, ".ear")
-           || !mystricmp(psz1, ".xpi")
-          )
-         )
+   #ifdef VFILEBASE
+   if (0) // cs.shallowzips) // else skip below
+   #endif // VFILEBASE
+   if (cs.travelzips) 
+   {
+      // char *psz1 = strrchr(pszFileName, '.');
+      // if (psz1 && 
+      //     (   !mystricmp(psz1, ".zip") || !mystricmp(psz1, ".jar") 
+      //      || !mystricmp(psz1, ".war") || !mystricmp(psz1, ".aar") || !mystricmp(psz1, ".ear")
+      //      || !mystricmp(psz1, ".xpi")
+      //     )
+      //    )
+      bool endsWithArcExt(char *pname);
+      if (endsWithArcExt(pszFileName))
       {
          // long getZipMD5(char *pszFile, SFKMD5 &md5, FileList &rFileList, bool bMakeList);
          long getZipList(char *pszFile, FileList &rFileList);
@@ -17200,13 +18036,68 @@ long renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, char *pszCmd)
    return bDoneAny ? 0 : 1;
 }
 
+long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &bFatal);
+
+// run an sfk command, staying in the current process.
+// cannot be used right now, as this requires that command
+// chaining data is pushed and later popped on a stack.
+long runInternal(char *pcmdraw)
+{__
+   mtklog("runint: %s", pcmdraw);
+
+   long nrc = 9;
+
+   #ifndef USE_SFK_BASE
+
+   // split whole command string into command and args
+   char *pcmd = strdup(pcmdraw);
+   CharAutoDel odel(pcmd);
+
+   // e.g.: list mydir .txt
+   int nsubargc = 0; 
+   char *psubargv[100+10];
+   mclear(psubargv);
+
+   char *psz = pcmd;
+   while (*psz && (nsubargc < 100))
+   {
+      skipWhite(&psz);
+      psubargv[nsubargc++] = psz;
+      char *pcur = psz;
+      skipToWhite(&psz);
+      if (*psz) *psz++ = '\0';
+      printf("[%s] ",pcur);
+   }
+   printf("\n");
+
+   char *pszSubCmd = psubargv[0];
+   int iSubDir = 1;
+   // if chain starts like "sfk ...", skip "sfk":
+   if (!strcmp(pszSubCmd, "sfk")) {
+      pszSubCmd = psubargv[1];
+      iSubDir = 2;
+   }
+   
+   bool bFatal = 0;
+
+   // TODO: push command chaining data, provide clean one
+   nrc = submain(nsubargc, psubargv, 0, pszSubCmd, iSubDir, bFatal);
+   // TODO: pop old command chaining data
+
+   #endif // USE_SFK_BASE
+
+   return nrc;
+}
+
 long execRunFile(Coi *pcoi, char *pszOutFile,
    long lLevel, long &lFiles, long &lDirs, num &lBytes
    ) 
-{
+{__
    char *pszFileName = pcoi->name();
    char *pszOptRoot  = pcoi->root(1);  // returns 0 if none
    char *pszOptRef   = pcoi->ref(1);   // returns 0 if none
+
+   mtklog("execRunFile: %s", pszFileName);
 
    long nrc = renderOutMask(szRunCmdBuf, pcoi, cs.runCmd, "run");
    if (nrc >= 9) return nrc;
@@ -17288,7 +18179,10 @@ long execRunFile(Coi *pcoi, char *pszOutFile,
          chain.addLine(szLineBuf3, szAttrBuf3);
       }
 
-      iRC = system(szRunCmdBuf);
+      if (cs.intrun)
+         iRC = runInternal(szRunCmdBuf);
+      else
+         iRC = system(szRunCmdBuf);
 
       if (chain.coldata && pszTmpFile) 
       {
@@ -17433,7 +18327,10 @@ long execRunDir(Coi *pcoi, long lLevel, long &lFiles, long &lDirs, num &lBytes)
       // special case: just dump resulting command to terminal
       printf("%s\n", szLineBuf);
    } else {
-      iRC = system(szLineBuf);
+      if (cs.intrun)
+         iRC = runInternal(szLineBuf);
+      else
+         iRC = system(szLineBuf);
    }
 
    if (!cs.quiet && !cs.sim) {
@@ -17486,22 +18383,22 @@ long execDirStat(Coi *pcoi, long lLevel, long lFiles, long lDirs, num lBytes, nu
          { } // print nothing, there are no stats.
          else
          if (lBytes < nGlblListMinSize)
-			{ } // print nothing, dir content too small to list.
-			else
-			{
+         { } // print nothing, dir content too small to list.
+         else
+         {
             // dir content size can be listed
             if (lLevel <= cs.stathilitelevel) setTextColor(nGlblFileColor);
-				switch (cs.listunit) {
-					case 'b':
-		            oprintf(pout, "%s, %5ld files, %.*s%s\n", numtoa_blank(lBytes, 12), lFiles, nIndent, pszGlblBlank, pszDir);
-						break;
-					case 'k':
-		            oprintf(pout, "%s kb, %5ld files, %.*s%s\n", numtoa_blank(lBytes/1000, 10), lFiles, nIndent, pszGlblBlank, pszDir);
-						break;
-					default :
-		            oprintf(pout, "%5ld mb, %5ld files, %.*s%s\n", lMBytes, lFiles, nIndent, pszGlblBlank, pszDir);
-						break;
-				}
+            switch (cs.listunit) {
+               case 'b':
+                  oprintf(pout, "%s, %5ld files, %.*s%s\n", numtoa_blank(lBytes, 12), lFiles, nIndent, pszGlblBlank, pszDir);
+                  break;
+               case 'k':
+                  oprintf(pout, "%s kb, %5ld files, %.*s%s\n", numtoa_blank(lBytes/1000, 10), lFiles, nIndent, pszGlblBlank, pszDir);
+                  break;
+               default :
+                  oprintf(pout, "%5ld mb, %5ld files, %.*s%s\n", lMBytes, lFiles, nIndent, pszGlblBlank, pszDir);
+                  break;
+            }
             if (lLevel <= cs.stathilitelevel) setTextColor(-1);
          }
       }
@@ -17721,6 +18618,20 @@ long walkFiles(
             printf("empty dir: %s\n", ptop->name());
          return 0; // empty directory
       }
+      #ifdef VFILEBASE
+      // if top is virtual, cache it now, as the child members
+      // may need the data. do not use ptop->name() to check
+      // the cache, as a redirect may have renamed the coi.
+      // NOTE: caching is the reason why automatic cois
+      //       are strictly not allowed as ptop.
+      if (ptop->isVirtual() && !ptop->isCached())
+      {
+         mtklog("vpar-register %s", ptop->orgName());
+         glblVCache.put(ptop->orgName(), ptop, "wf");
+         // ptop is now MANAGED BY CACHE.
+         // cache has incremented the refcnt.
+      }
+      #endif // VFILEBASE
       #ifndef _WIN32
       // remember that we traveled this directory:
       if (ptop->haveFileID()) {
@@ -17772,6 +18683,12 @@ long walkFiles(
             bTravelSub = bTravelTop;
          } else {
             bTravelSub = psub->isTravelDir();
+            #ifdef VFILEBASE
+             #ifdef DEEP_FTP
+             if (psub->isFtp()) { } else
+             #endif
+             if (psub->isNet()) bTravelSub = 0;
+            #endif // VFILEBASE
          }
 
          FileList oLocDirFiles;
@@ -17817,7 +18734,7 @@ long walkFiles(
 
             if (!cs.stopTree(lRC))
             {
-               if (cs.debug) printf("] esd: %d %s files=%ld\n", lLevel, psub->name(), nTreeFileCnt);
+               if (cs.debug) printf("] esd: %d %s files=%ld ts=%d sd=%d\n", lLevel, psub->name(), nTreeFileCnt, bTravelSub, cs.subdirs);
                lRC = execSingleDir(psub, lLevel+1, nTreeFileCnt, oLocDirFiles, nDirDirs, nDirBytes,
                                    nDirLocalMaxTime, nDirTreeMaxTime);
                if (cs.stopTree(lRC))
@@ -17838,13 +18755,13 @@ long walkFiles(
 
          // add subdir stats to next higher level
          if (cs.flatdirstat) {
-	         cs.flatfilecnt += nTreeFileCnt;
-	         cs.flatdircnt  += nDirDirs ;
-	         cs.flatbytecnt += nDirBytes;
+            cs.flatfilecnt += nTreeFileCnt;
+            cs.flatdircnt  += nDirDirs ;
+            cs.flatbytecnt += nDirBytes;
          } else {
-	         nGlobFiles += nTreeFileCnt;
-	         lDirs      += nDirDirs ;
-	         lBytes     += nDirBytes;
+            nGlobFiles += nTreeFileCnt;
+            lDirs      += nDirDirs ;
+            lBytes     += nDirBytes;
          }
 
          if (cs.stopTree(lRC))
@@ -18857,6 +19774,7 @@ long execMD5check(char *pIn, char *pszRefDir)
          // NOTE: this uses abBuf, so we shouldn't use abBuf here.
          if (getFileMD5(pszAbsName, md5)) {
             nError++;   // but continue
+            if (lRC < 9) lRC |= 2;
          }
          else
          {
@@ -18867,7 +19785,7 @@ long execMD5check(char *pIn, char *pszRefDir)
             if (strcmp(pszHex,szBuf2)) {
                perr("MD5 mismatch: %s\n", pszAbsName); // ,*%s*,*%s*\n", pszFile, pszHex, szBuf2);
                nError++;
-               if (!lRC) lRC = 1;
+               if (lRC < 9) lRC |= 1;
             }            
          }
       }
@@ -18973,6 +19891,24 @@ const char *pGlblBlankBuf160 =
    "                                        "
    "                                        ";
 
+#ifdef VFILEBASE
+class AutoCacheDrop {
+public:
+    AutoCacheDrop (Coi *pcoi);
+   ~AutoCacheDrop ( );
+private:
+   Coi *pClCoi;
+};
+
+AutoCacheDrop::AutoCacheDrop(Coi *pcoi) {
+   pClCoi = pcoi; 
+}
+
+AutoCacheDrop::~AutoCacheDrop( ) {
+   pClCoi->releaseContent(); // IF anything cached
+}
+#endif // VFILEBASE
+
 void setAddSnapMeta(ulong nmask) { cs.addsnapmeta = nmask; }
 
 long (*pGlblCallFileDir)(Coi *pcoi) = 0;
@@ -18992,6 +19928,13 @@ long execJamFile(Coi *pcoi)
    char szHeadBuf[250];
    mclear(szHeadBuf);
 
+   #ifdef VFILEBASE
+   // when adding file content to a collection,
+   // we can always expect that the source data can be
+   // dropped from cache afterwards, therefore:
+   AutoCacheDrop odrop(pcoi);
+   #endif // VFILEBASE
+
    mtklog("snap add file, %s", pcoi->name());
 
    bool bIsBinary = pcoi->isBinaryFile();
@@ -19002,11 +19945,11 @@ long execJamFile(Coi *pcoi)
       bool baddsize = (cs.addsnapmeta & (1<<1)) ? 1 : 0;
       bool baddcode = (cs.addsnapmeta & (1<<2)) ? 1 : 0;
 
-      // prepare subfile header with time etc.		123456789012345678901234567890
-      char szTimeInfo[50]; mclear(szTimeInfo);	//	time=1234567890
-      char szSizeInfo[50]; mclear(szSizeInfo);	//	size=1000000000
-      char szCodeInfo[50]; mclear(szCodeInfo);	//	code=utf16le
-      char szWebInfo[50];  mclear(szWebInfo);	//	webrc=404_error_page
+      // prepare subfile header with time etc.     123456789012345678901234567890
+      char szTimeInfo[50]; mclear(szTimeInfo);  // time=1234567890
+      char szSizeInfo[50]; mclear(szSizeInfo);  // size=1000000000
+      char szCodeInfo[50]; mclear(szCodeInfo);  // code=utf16le
+      char szWebInfo[50];  mclear(szWebInfo);   // webrc=404_error_page
 
       long nMetaLen = 0;
 
@@ -19028,6 +19971,17 @@ long execJamFile(Coi *pcoi)
          sprintf(szCodeInfo, " code=utf16%s", (pcoi->isUTF16()==0xFE)?"le":"be");
          nMetaLen += strlen(szCodeInfo);
       }
+
+      #ifdef VFILEBASE
+      char *pwebrc = pcoi->header("webrc");
+      if (pwebrc) {
+         long nwebrc = atol(pwebrc);
+         if (nwebrc >= 400) {
+            sprintf(szWebInfo, " content=%s_error_page", pwebrc);
+            nMetaLen += strlen(szWebInfo);
+         }
+      }
+      #endif // VFILEBASE
 
       long nPreLen  = strlen(pPrefix);
       if (nPreLen > 50) nPreLen = 50;
@@ -19644,9 +20598,38 @@ long execDeblank(char *pszPath)
          psz1 = szLineBuf;
 
    bool bAny = 0;
-   char *psz2 = 0;
-   while (psz2 = strchr(psz1, ' ')) {
-      *psz2 = '_';
+
+   while (*psz1)
+   {
+      char craw = *psz1;
+      char c = craw;
+
+      if (cs.packalnum) 
+      {
+         // alnum reduction mode
+         c = tolower(c);
+         *psz1 = c;
+         if (c != craw)
+            bAny = 1;
+         if (c == '.' || c == glblPathChar)
+            { psz1++; continue; }
+         if (c >= 'a' && c <= 'z')
+            { psz1++; continue; }
+         if (c >= '0' && c <= '9')
+            { psz1++; continue; }
+         // remove char from string
+         int nlen = strlen(psz1);
+         memmove(psz1,psz1+1,nlen); // INCLUDES zero term
+         bAny = 1;
+         continue; // staying at same psz1
+      }
+
+      // normal deblank mode
+      if (c != ' ')
+         { psz1++; continue; }
+      // replace blank by underscore
+      *psz1 = '_';
+      psz1++;
       bAny = 1;
    }
 
@@ -19812,6 +20795,35 @@ long execSingleFile(Coi *pcoi, long lLevel, long &lFiles, long nDirFileCnt, long
    if (pszGlblOutFile)
       if (equalFileName(pszGlblOutFile,pszFile))
          return 0;
+
+   // -text: process only textfiles
+   if (cs.textfiles || cs.binaryfiles) 
+   {
+      bool bbin = pcoi->isBinaryFile();
+      bool binc = 1;
+      char *ptxt1 = "", *ptxt2 = "";
+
+      if (cs.textfiles && bbin)
+         { binc=0; ptxt1="binary"; ptxt2="text"; }
+
+      if (cs.binaryfiles && !bbin)
+         { binc=0; ptxt1="text"; ptxt2="binary"; }
+
+      if (!binc) {
+         if (nGlblTraceSel & 2) {
+            setTextColor(nGlblTraceExcColor);
+            info.print("file-exclude: %s is %s\n", pszFile, ptxt1);
+            setTextColor(-1);
+         }
+         return 0;
+      } else {
+         if (nGlblTraceSel & 2) {
+            setTextColor(nGlblTraceIncColor);
+            info.print("file-include: %s is %s\n", pszFile, ptxt2);
+            setTextColor(-1);
+         }
+      }
+   }
 
    // -since: process only files newer or equal than timestamp
    if (cs.sincetime) {
@@ -20951,6 +21963,16 @@ long execReplaceFix(Coi *pcoi)
          pcoi->close();
          if (bTold) printf("\n");
 
+         #ifdef VFILEBASE
+          #ifndef VFILEMAX
+         if (pcoi->isZipSubEntry()) {
+            setTextColor(nGlblWarnColor);
+            printf("... stopped reading at %ld bytes (demo limit).\n",(long)(nBlockPos-54));
+            setTextColor(-1);
+         }
+         else
+          #endif
+         #endif // VFILEBASE
          perr("failed to fully read %s%s\n", pszFile, cs.sim ? "" : " - stopping write. file may be damaged.");
 
          lRC=1; break;
@@ -22279,7 +23301,83 @@ long testfwrite(char *pszFile, num nSize)
 
 #ifndef USE_SFK_BASE
 
-long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, long nOpts, char *pszReason, ulong nflags)
+#ifdef _WIN32
+DWORD CALLBACK cbCopyFileProgress(
+   LARGE_INTEGER TotalFileSize,
+   LARGE_INTEGER TotalBytesTransferred,
+   LARGE_INTEGER StreamSize,
+   LARGE_INTEGER StreamBytesTransferred,
+   DWORD dwStreamNumber,
+   DWORD dwCallbackReason,
+   HANDLE hSourceFile,
+   HANDLE hDestinationFile,
+   LPVOID lpData  // optional
+ )
+{
+   if (userInterrupt(1))
+      return 1; // PROGRESS_CANCEL;
+
+   num nTotal =  (((num)TotalFileSize.HighPart) << 32)
+               | (((num)TotalFileSize.LowPart ) <<  0);
+
+   num nDone  =  (((num)TotalBytesTransferred.HighPart) << 32)
+               | (((num)TotalBytesTransferred.LowPart ) <<  0);
+
+   info.setAddInfo("%lu / %lu mb", (ulong)(nDone/1000000UL), (ulong)(nTotal/1000000UL));
+   info.setProgress(nTotal, nDone, "bytes");
+
+   return 0; // PROGRESS_CONTINUE;
+}
+
+long copyFileWin(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, ulong nflagsin)
+{
+   char *pszTell = chain.usefiles ? pszDst : pszSrc;
+   if (cs.listTargets) pszTell = pszDst;
+
+   if (cs.sim) {
+      info.setStatus("", pszTell, "-----", eNoCycle);
+      if (!cs.dostat)
+         info.printLine(nGlblCopyStyle);
+      cs.files++;
+      return 0;
+   }
+
+   info.setAction("copy ", pszSrc, "00");
+
+   DWORD nSysFlags = 0;
+
+   // these are yet internal and completely untested
+   if (cs.copyLinks)   nSysFlags |= 0x00000800UL; // COPY_FILE_COPY_SYMLINK;
+   if (cs.copyNoBuf)   nSysFlags |= 0x00001000UL; // COPY_FILE_NO_BUFFERING;
+   if (cs.copyDecrypt) nSysFlags |= 0x00000008UL; // COPY_FILE_ALLOW_DECRYPTED_DESTINATION;
+
+   BOOL bcancel = 0;
+   bool brc = CopyFileExA(pszSrc, pszDst, cbCopyFileProgress, 0, &bcancel, nSysFlags);
+
+   if (!brc) {
+      ulong nerr = GetLastError();
+      switch (nerr) {
+         case ERROR_ACCESS_DENIED:
+            perr("copy failed, access denied (rc=%lu): %s\n", nerr, pszDst);
+            pinf("make sure you have full access rights. maybe you have to be administrator.\n");
+            break;
+         case ERROR_REQUEST_ABORTED:
+            pwarn("copy stopped by user.\n");
+            break;
+         default:
+            perr("copy failed, rc=%lu: %s\n", nerr, pszDst);
+            break;
+      }
+   } else {
+      cs.files++;
+      printCopyCompleted(pszTell, nflagsin);
+   }
+
+   return brc ? 0 : 9;
+}
+#endif // _WIN32
+
+long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, ulong nflags)
 {
    char *pszTell = chain.usefiles ? pszDst : pszSrc;
    if (cs.listTargets) pszTell = pszDst;
@@ -22397,7 +23495,7 @@ long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num n
       FileStat ofs;
       if (ofs.readFrom(pszSrc))
          return 9+perr("failed to read attributes: %s\n", pszSrc);
-      if (ofs.writeTo(pszDst))
+      if (ofs.writeTo(pszDst, __LINE__))
          return 9+perr("failed to write attributes: %s\n", pszDst);
       else
          cs.filesCloned++;
@@ -22481,6 +23579,12 @@ long copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num n
 char *relName(char *pszRoot, char *pszAbs)
 {
    bool bisurl = 0;
+   #ifdef VFILEBASE
+   bisurl = !strncmp(pszRoot, "ftp://", 6) || !strncmp(pszRoot, "http://", 7);
+   // TODO: for now, block relativazation of all http: urls
+   if (!strncmp(pszRoot, "http://", 7))
+      return pszAbs;
+   #endif // VFILEBASE
    if (!pszRoot || !strlen(pszRoot))
        return pszAbs;
    long nsrclen = strlen(pszRoot);
@@ -22608,6 +23712,9 @@ long execDirCopy(char *pszSrc, FileList &oDirFiles)
       return 9;
    }
 
+   char *pszTell = pszSrc;
+   if (cs.listTargets) pszTell = szRefNameBuf;
+
    // checked isDir(szRefNameBuf) above
    if (!ofsDst.readFrom(szRefNameBuf))
    {
@@ -22649,16 +23756,15 @@ long execDirCopy(char *pszSrc, FileList &oDirFiles)
       if (cs.sim) {
          cs.dirsCloned++;
       } else {
-         if (cs.verbose > 2)
-            info.print("%s : about to copy time\n", pszSrc);
-         if (!cloneAttributes(pszSrc, szRefNameBuf)) {
-            if (cs.verbose)
-               info.print("%s : time copied\n", pszSrc);
-            cs.dirsCloned++;
-            info.setAction("", pszSrc, 0, 4);
-            info.printLine(nGlblCopyStyle);
-         }
+         if (cloneAttributes(pszSrc, szRefNameBuf, __LINE__))
+            return 1; // error, but skip and continue
+         cs.dirsCloned++;
       }
+
+      setTextColor(nGlblTimeColor);
+      info.setStatus("", pszTell, "copy time", eNoCycle);
+      info.printLine(nGlblCopyStyle);
+      setTextColor(-1);
    }
 
    return 0;
@@ -22777,7 +23883,9 @@ long execFileCopy(Coi *pcoi)
 
 // does NOT create target subdirs. this is expected to be done by caller.
 long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
-{
+{__
+   mtklog("fcopysub: %s -> %s",pszSrc,pszDst);
+
    char szReason[50];
    szReason[0] = '\0';
 
@@ -22803,6 +23911,7 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
    bool  bSrcUnreadable = 0;
    if (ofsSrc.readFrom(pszSrc)) {
       // filename exists in source, but file is unreadable:
+      mtklog("copy: src unreadable");
       if (filedb.canRead() && pszShSrc) {
          // proceed, as we may use the shadow
          bSrcUnreadable = 1; // but don't issue same error twice
@@ -22881,7 +23990,7 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
          cs.filesCloned++;
       } else {
          // copy timestamp and attributes, but not the content.
-         if (ofsSrc.writeTo(pszDst))
+         if (ofsSrc.writeTo(pszDst, __LINE__))
             return 1; // error, skip but continue
          cs.filesCloned++;
       }
@@ -22932,8 +24041,16 @@ long execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
             return lRes; // fatal error
       }
     
-      if (!bDone) {
-         if (copyFile(pszSrc, pszDst, pszShDst, pGlblWorkBuf, nGlblWorkBufSize, 0, szReason, nflags))
+      if (!bDone) 
+      {
+         #ifdef _WIN32
+         if (!nGlblCopyShadows) {
+            if (copyFileWin(pszSrc, pszDst, pszShDst, pGlblWorkBuf, nGlblWorkBufSize, nflags))
+               return 9;
+         }
+         else
+         #endif
+         if (copyFile(pszSrc, pszDst, pszShDst, pGlblWorkBuf, nGlblWorkBufSize, nflags))
             return 9;
       }
 
@@ -24286,7 +25403,7 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
             ofs.src.nHaveWFT = 0;
             #endif
          }
-         ofs.writeTo(pszFile);
+         ofs.writeTo(pszFile, __LINE__);
          // printf("time set: %ld %s\n",(long)nTime,pszFile);
       }
    }
@@ -24307,8 +25424,11 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
    if (memcmp(abMD5Local, abMD5Remote, 16)) {
       send(hSock, (char*)"EE\n\n", 4, 0);
       perr("md5 mismatch - transfered file corrupted.\n");
-      printf("local: %02X %02X %02X %02X\n",abMD5Local[0],abMD5Local[1],abMD5Local[2],abMD5Local[3]);
-      printf("remot: %02X %02X %02X %02X\n",abMD5Remote[0],abMD5Remote[1],abMD5Remote[2],abMD5Remote[3]);
+      if (cs.verbose) {
+         printf("local: %02X %02X %02X %02X\n",abMD5Local[0],abMD5Local[1],abMD5Local[2],abMD5Local[3]);
+         printf("remot: %02X %02X %02X %02X\n",abMD5Remote[0],abMD5Remote[1],abMD5Remote[2],abMD5Remote[3]);
+      }
+      pinf("check if the file is in use by another process.\n");
       return 9;
    }
 
@@ -24319,24 +25439,35 @@ long getFileBySFT(SOCKET hSock, char *pszFile, long nSFTVer, bool bQuiet=0, bool
    return 0;
 }
 
+long prepareTCP() 
+{
+   static bool bDone = 0;
+   if (!bDone) 
+   {
+      bDone = 1;
+      #ifdef _WIN32
+      WORD wVersionRequested = MAKEWORD(1,1);
+      WSADATA wsaData;
+      if (WSAStartup(wVersionRequested, &wsaData)!=0)
+         return 9+perr("WSAStartup failed\n");
+      #endif
+   }
+   return 0;
+}
+
 long ftpLogin(char *pszHost, ulong nPort, SOCKET &hSock, bool &bSFT, long &nOutSFTVer, char *pszPW)
 {
-   #ifdef _WIN32
-   WORD wVersionRequested = MAKEWORD(1,1);
-   WSADATA wsaData;
-   if (WSAStartup(wVersionRequested, &wsaData)!=0)
-      return 9+perr("WSAStartup failed\n");
-   #endif
+   prepareTCP();
 
    long nSFTVer = 102; // may be downgraded below
-
+ 
    struct hostent *pTarget;
    struct sockaddr_in sock;
    hSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hSock == INVALID_SOCKET) return 9+perr("cannot create socket\n");
 
    if ((pTarget = gethostbyname(pszHost)) == NULL)
-      return 9+perr("cannot get host\n");
+      return 9+perr("cannot get host, rc=%d\n", netErrno());
 
    memcpy(&sock.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
    sock.sin_family = AF_INET;
@@ -24929,7 +26060,7 @@ long ftpClient(char *pszHost, ulong nPort, char *pszCmd, char *pszAuthPW, bool b
                         #ifdef _WIN32
                         ofs.src.nHaveWFT = 0; // no windows filetime
                         #endif
-                        long lRCT = ofs.writeTo(pszFile);
+                        long lRCT = ofs.writeTo(pszFile, __LINE__);
                         printf("] filetime set: %s, %ld\n", timeAsString(nFileTime), lRCT);
                      }
                   }
@@ -25126,14 +26257,8 @@ long makeServerSocket(
    }
 
    int nerr = getsockname(hServSock, (struct sockaddr *)&ServerAdr, &nSockAdrSize);
-   if (nerr == SOCKET_ERROR) {
-      #ifdef _WIN32
-      nerr = WSAGetLastError();
-      #else
-      nerr = errno;
-      #endif
-      return 9+perr("getsockname failed, %d\n", nerr);
-   }
+   if (nerr == SOCKET_ERROR)
+      return 9+perr("getsockname failed, %d\n", netErrno());
 
    bool bTell = (nPort == 0);
    nPort    = (ulong)ntohs(ServerAdr.sin_port);
@@ -25171,14 +26296,218 @@ long connectSocket(char *pszHost, ulong nPort, struct sockaddr_in &ClntAdr, SOCK
    return 0;
 }
 
+long udpAnyServ(ulong nPort, char *pszForward, long nForward, bool bEcho)
+{
+   prepareTCP();
+
+   struct sockaddr_in oOwnAddr; mclear(oOwnAddr);
+   oOwnAddr.sin_family      = AF_INET;
+   oOwnAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+   oOwnAddr.sin_port        = htons(nPort);
+
+   SOCKET nsock = socket(AF_INET, SOCK_DGRAM, 0);
+
+   int bon = 1;
+   setsockopt(nsock, SOL_SOCKET, SO_REUSEADDR, (const char *)&bon, sizeof(bon));
+
+   do
+   {
+      if (bind(nsock, (struct sockaddr *)&oOwnAddr, sizeof(oOwnAddr)) != 0)
+      {
+         perr("cannot bind UDP socket to port %ld (%d %s).\n", nPort, netErrno(), netErrStr());
+         break;
+      }
+
+      listen(nsock, 10);
+
+      // if (listen(nsock, 10))
+      //    {  perr("listen failed (%d %s).\n", netErrno(), netErrStr()); break; }
+
+      printf("[waiting on port %ld for data.]\n", nPort);
+
+      struct timeval tv;
+      fd_set fdvar;
+
+      while (1)
+      {
+         tv.tv_sec  = 0;
+         tv.tv_usec = 0;
+   
+         FD_ZERO(&fdvar);
+         FD_SET(nsock, &fdvar);
+   
+         if (select(nsock+1, &fdvar, 0, 0, &tv) > 0)
+         {
+            struct sockaddr_in inAddr;
+
+            #ifdef _WIN32
+            int nadrlen = sizeof(inAddr);
+            #else
+            socklen_t nadrlen = sizeof(inAddr);
+            #endif
+
+            long nRead = recvfrom(nsock, (char*)abBuf, sizeof(abBuf)-100, 0, (struct sockaddr *)&inAddr, &nadrlen);
+
+            if (!cs.nohead && !cs.quiet)
+               printf("[received %ld bytes:]\n",nRead);
+            execHexdump(0, abBuf, nRead);
+
+            if (bEcho)
+            {
+               if (!cs.nohead && !cs.quiet)
+                  printf("[echoing back]\n");
+               sendto(nsock, (char*)abBuf, nRead, 0, (struct sockaddr*)&inAddr, nadrlen);
+            }
+
+            if (pszForward)
+            {
+               // forward message to given host, port
+               struct sockaddr_in saDstAddr;
+               memset((char *)&saDstAddr, 0,sizeof(saDstAddr));
+
+               saDstAddr.sin_family      = AF_INET;
+               saDstAddr.sin_addr.s_addr = inet_addr(pszForward);
+               saDstAddr.sin_port        = htons((int)nForward);
+
+               if (!cs.nohead && !cs.quiet)
+                  printf("[forwarding to %s:%ld]\n", pszForward, nForward);
+               sendto(nsock, (char*)abBuf, nRead, 0, (struct sockaddr*)&saDstAddr, sizeof(saDstAddr));
+            }
+         }
+         else
+         {
+            doSleep(1);
+         }
+      }
+   }
+   while (0);
+
+   return 0;
+}
+
+int dumpUDPResponses(int nsocket)
+{
+   uchar abBuffer[2000+100];
+
+   struct timeval tv;
+   fd_set fdvar;
+   struct sockaddr addrIncoming;
+   int iBytes = 0;
+
+   for (;;)
+   {
+      memset(abBuffer, 0, sizeof(abBuffer));
+
+      #ifdef _WIN32
+      int clilen = sizeof(addrIncoming);
+      #else
+      socklen_t clilen = sizeof(addrIncoming);
+      #endif
+
+      tv.tv_sec  = 0;
+      tv.tv_usec = 100;
+
+      FD_ZERO(&fdvar);
+      FD_SET(nsocket, &fdvar);
+
+      if (select( nsocket+1, &fdvar, 0, 0, &tv) <= 0)
+         { doSleep(10); continue; }
+
+      if ((iBytes = recvfrom(nsocket, (char*)abBuffer, sizeof(abBuffer), 0, &addrIncoming, &clilen)) <= 0)
+         return -1;
+
+      if (!cs.nohead && !cs.quiet)
+        chain.print("[received %d bytes, %s]\n", iBytes, netErrStr());
+      execHexdump(0, abBuffer, iBytes);
+
+      break;
+   }
+
+   return 0;
+}
+
+long udpClient(char *phost, long ndstport, long nlisten, long nownport, uchar *abMsg, long nMsg, num nTimeout)
+{
+   prepareTCP();
+
+   // setup own port for receive
+
+   struct sockaddr_in saOwnAddr;
+
+   memset((char *)&saOwnAddr, 0,sizeof(saOwnAddr));
+   saOwnAddr.sin_family      = AF_INET;
+   saOwnAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+   saOwnAddr.sin_port        = htons(nownport);
+
+   int nsocket = socket(AF_INET, SOCK_DGRAM, 0);
+
+   if (nownport >= 0) 
+   {
+      if (!nlisten) nlisten = 1;
+      if (bind(nsocket, (struct sockaddr *)&saOwnAddr, sizeof(saOwnAddr)) != 0)
+         return 9+perr("UDP socket failed to bind to port %ld, %s\n", nownport, netErrStr());
+   }
+
+   // send data to target server
+
+   struct sockaddr_in saServerAddr;
+
+   struct hostent *pTarget;
+   if ((pTarget = gethostbyname(phost)) == NULL)
+      return 9+perr("cannot get host %s, rc=%d\n", phost, netErrno());
+
+   memcpy(&saServerAddr.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
+   saServerAddr.sin_family      = AF_INET;
+   saServerAddr.sin_port        = htons((int)ndstport);
+
+   int n = sendto(nsocket, (char*)abMsg, nMsg, 0, (struct sockaddr*)&saServerAddr, sizeof(saServerAddr));
+
+   if (!cs.nohead && !cs.quiet)
+      chain.print("[sent %d bytes, %s]\n", n, netErrStr());
+   if (cs.quiet < 2)
+      execHexdump(0, abMsg, nMsg);
+
+   // receive and dump replies
+
+   if (nlisten)
+   {
+      num nstart = getCurrentTime();
+
+      struct timeval tv;
+      fd_set fdvar;
+   
+      for (long ndone=0; nlisten<0 || ndone<nlisten;)
+      {
+         tv.tv_sec  = 0;
+         tv.tv_usec = 0;
+   
+         FD_ZERO(&fdvar);
+         FD_SET(nsocket, &fdvar);
+   
+         if (select( nsocket+1, &fdvar, 0, 0, &tv) > 0)
+         {   
+            dumpUDPResponses(nsocket);
+            ndone++;
+            continue;
+         }
+
+         num nelaps = getCurrentTime() - nstart;
+
+         if (nTimeout > 0 && nelaps >= nTimeout) {
+            chain.print("[timeout]\n");
+            break;
+         }
+
+         doSleep(10);
+      }
+   }
+
+   return 0;
+}
+
 long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
 {
-   #ifdef _WIN32
-   WORD wVersionRequested = MAKEWORD(1,1);
-   WSADATA wsaData;
-   if (WSAStartup(wVersionRequested, &wsaData)!=0)
-      return 9+perr("WSAStartup failed\n");
-   #endif
+   prepareTCP();
 
    struct sockaddr_in ServerAdr;
    struct sockaddr_in ClientAdr;
@@ -25205,11 +26534,7 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
    {
       hBack = accept(hServer, (struct sockaddr *)&ClientAdr, &nSoLen);
       if (hBack == INVALID_SOCKET) {
-         #ifdef _WIN32
-         int nerr = WSAGetLastError();
-         #else
-         int nerr = errno;
-         #endif
+         int nerr = netErrno();
          if (nerr == WSAEWOULDBLOCK) { doSleep(500); continue; }
          perr("accept on server main port failed\n");
          lRC = 9;
@@ -25300,15 +26625,15 @@ long tcpAnyServ(ulong nPort, char *pszForward, long nForward)
             if (nRead > 0) {
                if (nGlblHexDumpForm == 4 && memchr(abBuf, '\0', nRead)) {
                   // pure form: dump start of binary, but not all
-						long nHexLimit = 1000;
+                  long nHexLimit = 1000;
                   if (nRead > nHexLimit) {
-	                  printf("[received reply from front with binary, %ld bytes. dumping first %ld:]\n", nRead, nHexLimit);
+                     printf("[received reply from front with binary, %ld bytes. dumping first %ld:]\n", nRead, nHexLimit);
                      long nCurForm = nGlblHexDumpForm;
                      nGlblHexDumpForm = 0;
                      execHexdump(0, abBuf, nHexLimit);
                      nGlblHexDumpForm = nCurForm;
                   } else {
-	                  printf("[received reply from front with binary, %ld bytes:]\n", nRead);
+                     printf("[received reply from front with binary, %ld bytes:]\n", nRead);
                      execHexdump(0, abBuf, nRead);
                   }
                } else {
@@ -25427,14 +26752,68 @@ long senderr(SOCKET hSock, char *pszFormat, ...)
    return 0;
 }
 
+char *ownIPList(int &rhowmany, ulong nPort=0, const char *psep=" or ")
+{
+   prepareTCP();
+
+   static char szIPListBuf[200];
+   szIPListBuf[0] = '\0';
+
+   char szPortStr[50];
+   szPortStr[0] = '\0';
+   if (nPort > 0)
+      sprintf(szPortStr, ":%lu", nPort);
+
+   #ifdef _WIN32
+
+   char *pownip = "";
+   struct in_addr addr;
+
+   hostent *pinfo = gethostbyname(""); // fails under linux
+   if (pinfo) {
+      memcpy(&addr,pinfo->h_addr_list[0],sizeof(struct in_addr));
+      pownip = inet_ntoa(addr);
+      strcopy(szIPListBuf, pownip);
+      strcat(szIPListBuf, szPortStr); // if any
+      rhowmany = 1;
+   }
+
+   #else
+
+   // linux: list all existing interface IPV4 addresses
+   struct ifaddrs *pAdrObj = NULL;
+   char szAdrBuf[200]; mclear(szAdrBuf);
+   getifaddrs(&pAdrObj);
+   const char *pprefix = "";
+   int ndone = 0;
+   while (pAdrObj != NULL) {
+     if (pAdrObj->ifa_addr->sa_family==AF_INET && strcmp(pAdrObj->ifa_name, "lo0")) {
+       void *pIPData = &((struct sockaddr_in *)pAdrObj->ifa_addr)->sin_addr;
+       const char *pszIP = inet_ntop(AF_INET, pIPData, szAdrBuf, sizeof(szAdrBuf)-10);
+       if (strcmp(pszIP, "127.0.0.1")) {
+          int nlen = strlen(pszIP);
+          int nrem = (int)sizeof(szIPListBuf) - (int)strlen(szIPListBuf);
+          if (nlen < nrem - 10) {
+             strcat(szIPListBuf, pprefix);
+             strcat(szIPListBuf, pszIP);
+             strcat(szIPListBuf, szPortStr); // if any
+             pprefix = psep;
+             ndone++;
+          }
+       }
+     }
+     pAdrObj = pAdrObj->ifa_next;
+   }
+   rhowmany = ndone;
+
+   #endif
+
+   return szIPListBuf;
+}
+
 long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
 {__
-   #ifdef _WIN32
-   WORD wVersionRequested = MAKEWORD(1,1);
-   WSADATA wsaData;
-   if (WSAStartup(wVersionRequested, &wsaData)!=0)
-      return 9+perr("WSAStartup failed\n");
-   #endif
+   prepareTCP();
 
    struct sockaddr_in ServerAdr;
    struct sockaddr_in ClientAdr;
@@ -25446,21 +26825,19 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
    printf("SFK Instant HTTP Server. For help, type \"sfk httpserv -help\".\n");
 
    // get own ip
-   char *pownip = 0;
+   int   namount = 0;
+   char *pownip  = ownIPList(namount, (nPort==80) ? 0 : nPort);
    struct in_addr addr;
 
-   #ifdef _WIN32
-   hostent *pinfo = gethostbyname(""); // fails under linux
-   if (pinfo) {
-      memcpy(&addr,pinfo->h_addr_list[0],sizeof(struct in_addr));
-      pownip = inet_ntoa(addr);
-   }
-   #endif
- 
-   if (pownip)
-      printf("Waiting on port %lu. Try http://%s:%lu/ in your browser.\n", nPort, pownip, nPort);
-   else
+   if (strlen(pownip)) {
+      if (namount == 1) {
+         printf("Waiting on port %lu. Try http://%s/ in your browser.\n", nPort, pownip, nPort);
+      } else {
+         printf("Waiting on port %lu. Try http://%s in your browser.\n", nPort, pownip, nPort);
+      }
+   } else {
       printf("Waiting on port %lu.\n", nPort);
+   }
  
    char szClientIP[50]; mclear(szClientIP);
    char szStatus[200];  mclear(szStatus);
@@ -25470,11 +26847,7 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
    {
       hBack = accept(hServer, (struct sockaddr *)&ClientAdr, &nSoLen);
       if (hBack == INVALID_SOCKET) {
-         #ifdef _WIN32
-         int nerr = WSAGetLastError();
-         #else
-         int nerr = errno;
-         #endif
+         int nerr = netErrno();
          if (nerr == WSAEWOULDBLOCK) { doSleep(500); continue; }
          perr("accept on server main port failed\n");
          lRC = 9;
@@ -25846,12 +27219,7 @@ long httpServ(ulong nPort, ulong nPort2, bool bDeep, bool bNoList, bool bRW)
 
 long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, char *pszRunPW, bool bDeep, ulong nPort2)
 {
-   #ifdef _WIN32
-   WORD wVersionRequested = MAKEWORD(1,1);
-   WSADATA wsaData;
-   if (WSAStartup(wVersionRequested, &wsaData)!=0)
-      return 9+perr("WSAStartup failed\n");
-   #endif
+   prepareTCP();
 
    if (!pszRunPW)
         pszRunPW = pszAuthPW; // if any
@@ -25871,18 +27239,20 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
 
    char *ppreip = "";
    char *pownip = "";
-   char *pposip = ".";
+   char *pposip = ". ";
    struct in_addr addr;
 
-   #ifdef _WIN32
-   hostent *pinfo = gethostbyname(""); // fails under linux
-   if (pinfo) {
-      memcpy(&addr,pinfo->h_addr_list[0],sizeof(struct in_addr));
-      pownip = inet_ntoa(addr);
+   int   namount = 0;
+   pownip = ownIPList(namount, 0);
+
+   if (strlen(pownip))
+   {
       ppreip = ", IP ";
-      pposip = " -";
+      pposip = " - ";
+      // on multiple ip's, create another line
+      if (strlen(pownip) > 20)
+         pposip = ".\n";
    }
-   #endif
 
    long nDefSFTVer = 102;
 
@@ -25890,9 +27260,9 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
 
    printf("SFK Instant FTP %ld. For help, type \"sfk ftpserv -help\".\n", nDefSFTVer);
    if (bRW)
-      printf("waiting on port %lu%s%s%s write allowed, %lu MB limit per file. ", nPort, ppreip, pownip, pposip, nGlblTCPMaxSizeMB);
+      printf("waiting on port %lu%s%s%swrite allowed, %lu MB limit per file. ", nPort, ppreip, pownip, pposip, nGlblTCPMaxSizeMB);
    else
-      printf("waiting on port %lu%s%s%s only read allowed. ", nPort, ppreip, pownip, pposip);
+      printf("waiting on port %lu%s%s%sonly read allowed. ", nPort, ppreip, pownip, pposip);
    printf("%ld sec timeout.\n",cs.timeOutMSec / 1000);
 
    long lRC = 0;
@@ -25900,11 +27270,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
    {
       hClient = accept(hServer, (struct sockaddr *)&ClientAdr, &nSoLen);
       if (hClient == INVALID_SOCKET) {
-         #ifdef _WIN32
-         int nerr = WSAGetLastError();
-         #else
-         int nerr = errno;
-         #endif
+         int nerr = netErrno();
          if (nerr == WSAEWOULDBLOCK) { doSleep(500); continue; }
          perr("accept on server main port failed\n");
          lRC = 9;
@@ -26089,11 +27455,7 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
                nSoLen = sizeof(sockaddr_in);
                hData  = accept(hPasServ, (struct sockaddr *)&ClientAdr, &nSoLen);
                if (hData == INVALID_SOCKET) {
-                  #ifdef _WIN32
-                  int nerr = WSAGetLastError();
-                  #else
-                  int nerr = errno;
-                  #endif
+                  int nerr = netErrno();
                   if (nerr == WSAEWOULDBLOCK) { doSleep(500); continue; }
                   perr("accept on passive port failed\n");
                   break;
@@ -26300,19 +27662,59 @@ long ftpServ(ulong nPort, bool bRW, bool bRun, char *pszPath, char *pszAuthPW, c
             // getFileBySFT includes ack send
          }
          else
-         if (!strncmp(szLineBuf, "SLST", 4)) { nbail=0;
+         if (!strncmp(szLineBuf, "SLST", 4)) 
+         { 
+            nbail=0;
             // path is ignored. list only current dir.
             strcpy(szLineBuf2, szLineBuf);
             if (sendLine(hClient, "150 Listing Directory")) break;
             long lFiles=0, lDirs=0, lRC=0;
             num nBytes=0;
             if (strlen(szLineBuf2) > 7)
-                sendLine(hClient, "Path ignored - listing only current dir.");
-            hGlblTCPOutSocket = hClient;
-            // we're talking SFT with an sfk client, therefore we can send
-            // an sfk-style dir listing with full, flat timestamps.
-            bGlblFTPListFlatTS = 1;
-            lRC = walkAllTrees(eFunc_FTPList, lFiles, lDirs, nBytes);
+            {
+               // client wants to list a specific dir tree
+               #ifdef DEEP_FTP
+               char *pszTree = szLineBuf2 + 5;
+               // strip trailing slash
+               long nlen = strlen(pszTree);
+               if (nlen > 0 && pszTree[nlen-1]=='/' || pszTree[nlen-1]=='\\')
+                  pszTree[nlen-1] = '\0';
+               long nLocalDirs  = 0, nLocalFiles = 0;
+               num  nLocalBytes = 0;
+               FileList oDirFiles;
+               num nLocalMaxTime = 0, nTreeMaxTime = 0;
+               char *pszRoot = glblFileSet.root(1); // or null
+               Coi *pcoi = 0;
+               #ifdef VFILEBASE
+               if (pcoi = glblVCache.get(pszTree)) {
+                  mtklog("wat: ... reusing root from vcache");
+               }
+               else
+               #endif // VFILEBASE
+               {
+                  pcoi = new Coi(pszTree, pszRoot);
+                  pcoi->incref("slst");
+               }
+               CoiAutoDelete odel(pcoi, 1); // with decref
+               hGlblTCPOutSocket = hClient;
+               bGlblFTPListFlatTS = 1;
+               nGlblFunc = eFunc_FTPList;
+               lRC = walkFiles(pcoi, 0, nLocalFiles, oDirFiles, nLocalDirs, nLocalBytes, nLocalMaxTime, nTreeMaxTime);
+               #else
+               sendLine(hClient, "Path ignored - listing only current dir.");
+               hGlblTCPOutSocket = hClient;
+               bGlblFTPListFlatTS = 1;
+               lRC = walkAllTrees(eFunc_FTPList, lFiles, lDirs, nBytes);
+               #endif
+            }
+            else
+            {
+               hGlblTCPOutSocket = hClient;
+               // we're talking SFT with an sfk client, therefore we can send
+               // an sfk-style dir listing with full, flat timestamps.
+               bGlblFTPListFlatTS = 1;
+               lRC = walkAllTrees(eFunc_FTPList, lFiles, lDirs, nBytes);
+            }
             if (cs.quiet < 2)
                printf("dir done, RC %ld, %ld files.\n", lRC, lFiles);
             if (sendLine(hClient, "226 Listing Done")) break; // 226, 250
@@ -26970,6 +28372,130 @@ long decodeUrl(char *pszInOut, long nMaxDst)
             psz++;
     }
     return 0;
+}
+
+// -------- base64 en/decoding ----------
+
+static const char aenc64[] = 
+   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+   "0123456789+/";
+
+void encodeSub64(uchar in[3], uchar out[4], int nlen)
+{
+   out[0] = aenc64[in[0] >> 2];
+   out[1] = aenc64[((in[0] & 0x03) << 4) | ((in[1] & 0xf0) >> 4) ];
+   out[2] = (uchar)(nlen > 1 ? aenc64[((in[1] & 0x0f) << 2) | ((in[2] & 0xc0) >> 6)] : '=');
+   out[3] = (uchar)(nlen > 2 ? aenc64[in[2] & 0x3f ] : '=');
+}
+
+// rc  0: ok
+// rc >0: error
+long encode64(uchar *psrc, int nsrc, uchar *pdst, int nmaxdst, int nlinechars)
+{
+   uchar in[3], out[4];
+   int i=0, nlen=0, nchars = 0;
+
+   uchar *pmaxsrc = psrc + nsrc;
+   uchar *pmaxdst = pdst + nmaxdst;
+   
+   while (psrc < pmaxsrc)
+   {
+      nlen = 0;
+      for (i = 0; i < 3; i++ ) 
+      {
+         if (psrc < pmaxsrc) {
+            in[i] = *psrc++;
+            nlen++;
+         } else {
+            in[i] = 0;
+         }
+      }
+      if (nlen) {
+         encodeSub64(in, out, nlen);
+         for (i = 0; i < 4; i++ ) {
+            if (pdst >= pmaxdst-1)
+               return 9;   // output buffer overflow
+            *pdst++ = out[i];
+         }
+         nchars++;
+      }
+      if (nchars >= (nlinechars/4) || (psrc >= pmaxsrc)) {
+         if (nchars) {
+            if (pdst < pmaxdst-3) {
+               *pdst++ = '\r';
+               *pdst++ = '\n';
+            }
+         }
+         nchars = 0;
+      }
+   }
+
+   // zero terminate output as it's a string
+   *pdst = '\0';
+
+   return 0;
+}
+
+void decodeSub64(uchar in[4], uchar out[3])
+{   
+   out[0] = (uchar)(in[0] << 2 | in[1] >> 4);
+   out[1] = (uchar)(in[1] << 4 | in[2] >> 2);
+   out[2] = (uchar)(((in[2] << 6) & 0xc0) | in[3]);
+}
+
+// return valid value+1, or 0 if it is noise.
+uchar mapchar(char ch)
+{
+   if ((ch >= 'A') && (ch <= 'Z'))
+      return (uchar)(ch - 'A')+1;
+   else if ((ch >= 'a') && (ch <= 'z'))
+      return (uchar)(ch - 'a' + 26)+1;
+   else if ((ch >= '0') && (ch <= '9'))
+      return (uchar)(ch - '0' + 52)+1;
+   else if (ch == '+')
+      return 62+1;
+   else if (ch == '/')
+      return 63+1;
+   return 0;
+}
+
+// result: number of bytes decoded, or -1 on error
+long decode64(uchar *psrc, int nsrc, uchar *pdst, int nmaxdst)
+{
+   uchar in[4], out[3], v;
+   int i=0, nlen=0;
+   
+   uchar *pmaxsrc = psrc + nsrc;
+   uchar *pmaxdst = pdst + nmaxdst;
+   uchar *pdstraw = pdst;
+
+   while (psrc < pmaxsrc) {
+      for (nlen=0, i=0; i < 4 && (psrc < pmaxsrc); i++ ) {
+         v = 0;
+         while ((psrc < pmaxsrc) && v == 0) {
+            v = *psrc++;
+            v = mapchar(v);
+         }
+         if (psrc < pmaxsrc) {
+            nlen++;
+            if (v) in[i] = v - 1;
+         } else {
+            in[i] = 0;
+         }
+      }
+      if (nlen) {
+         decodeSub64(in, out);
+         for (i=0; i<nlen-1; i++) {
+            if (pdst >= pmaxdst)
+               return -1;
+            *pdst++ = out[i];
+         }
+      }
+   }
+
+   // no zero termination as it's a binary
+
+   return pdst - pdstraw;
 }
 
 // convert "*pattern" or "pattern*" to pattern with left/right flags isolated.
@@ -29590,6 +31116,14 @@ bool haveParmOption(char *argv[], int argc, int &iDir, char *pszOptBase, char **
    return 0;
 }
 
+#ifdef VFILEBASE
+void resetLoadCaches(bool bfinal)
+{
+   glblVCache.reset(bfinal);
+   glblConCache.reset();
+}
+#endif // VFILEBASE
+
 // template,tpl: command option handling loop
 /*
       if (!chain.usefiles && (nparm < 1)) {
@@ -29661,6 +31195,10 @@ void shutdownAllGlobalData()
    glblFileSet.shutdown();
    glblCircleMap.reset();
 
+   #ifdef VFILEBASE
+   resetLoadCaches(1);
+   #endif // VFILEBASE
+
    if (pGlblFileParms)  delete pGlblFileParms;
    if (apGlblFileParms) delete [] apGlblFileParms;
    if (pszGlblJamRoot)  delete [] pszGlblJamRoot;
@@ -29689,6 +31227,11 @@ void shutdownAllGlobalData()
    #ifdef SFK_WINPOPUP_SUPPORT
    winCleanupGUI();
    #endif
+
+   #ifdef VFILEBASE
+   // in case any tcp was used
+   TCPCore::sysCleanup();
+   #endif // VFILEBASE
 }
 
 void cleanupTmpCmdData()
@@ -29706,8 +31249,6 @@ void cleanupTmpCmdData()
    glblErrorLog.resetEntries();
    glblStaleLog.resetEntries();
 }
-
-long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &bFatal);
 
 #ifndef USE_SFK_BASE
 
@@ -29937,6 +31478,133 @@ long groupChainText(char *pcmd, bool brev, bool bcnt, long ndig)
    return 0;
 }
 
+#ifdef VFILENET
+long execWGet(Coi *psrc, char *pDstDir, ulong nmode)
+{__
+   char *pSrcName = psrc->name();
+
+   bool bpath2path = (nmode & 2) ? 1 : 0;
+
+   long nMaxDst= 500;
+   char szDstBuf[500+10]; mclear(szDstBuf);
+
+   if (pDstDir) {
+      mystrcopy(szDstBuf, pDstDir, nMaxDst);
+      strcat(szDstBuf, glblPathStr);
+   }
+
+   char *pcat = szDstBuf + strlen(szDstBuf);
+   long  nrem = nMaxDst  - strlen(szDstBuf);
+
+   num nSize = psrc->getSize(); // if any
+
+   if (psrc->open("rb"))
+      return 9+perr("cannot read: %s%s\n", psrc->name(),psrc->lasterr());
+
+   char *pctype = psrc->header("content-type");
+
+   // if content is not in memory yet, try to collect,
+   // up to a limit of 200 MB
+   num    nalloc = 0;
+   uchar *pdata  = 0;
+   num    nused  = 0;
+   bool   btomem = psrc->data().src.data ? 0 : 1;
+
+   // make sure to use the redirected source name
+   pSrcName = psrc->name();
+
+   bool bSetDefault = 0;
+   if (!flatURLName(pSrcName, pctype, pcat, nrem, nmode, bSetDefault))
+      return 9+perr("wrong URL format: %s\n", pSrcName);
+
+   if (bSetDefault && !nmode)
+      return 9+perr("need -path2name or -fullpath on URL's like : %s\n", pSrcName);
+
+   char *pDstName = szDstBuf;
+
+   if (bpath2path)
+      if (createOutDirTree(pDstName))
+         return 9;
+
+   Coi *pdst = new Coi(pDstName, "wb");
+   if (!pdst) return 9+perr("out of memory");
+   CoiAutoDelete odel2(pdst, 0); // no decref
+
+   num nread    = 0;
+   num nWritten = 0;
+
+   // if (!cs.quiet && !cs.nowarn && pdst->existsFile())
+   //    pwarn("file exists, overwriting: %s\n", pdst->name());
+
+   if (pdst->open("wb"))
+      perr("cannot write: %s%s\n", pdst->name(),pdst->lasterr());
+   else
+   {
+      info.setAction("write", pdst->name(), "");
+
+      while ((nread = psrc->read(abBuf, sizeof(abBuf)-1000)) > 0) 
+      {
+         if (pdst->write(abBuf, nread) != nread) {
+            perr("cannot fully write %s, probably disk full.\n", pdst->name());
+            break;
+         }
+
+         if (btomem)
+         {
+            num nrem = nalloc - nused;
+            if (nrem < nread + 1000) 
+            {
+               // expand buffer
+               if (!nalloc) nalloc = 10000; // initial
+
+               num nalloc2 = nalloc * 2 + nread;
+
+               if (nalloc2 >= 100 * 1000000) {
+                  pinf("download will not be cached (too large).\n");
+                  btomem = 0;
+                  delete [] pdata;
+                  pdata  = 0;
+                  nalloc = 0;
+               } else {
+                  uchar *ptmp = new uchar[nalloc2+100];
+                  memcpy(ptmp, pdata, nused);
+                  // swap old and new
+                  delete [] pdata;
+                  pdata  = ptmp;
+                  nalloc = nalloc2;
+                  nrem   = nalloc - nused;
+               }
+            }
+         }
+
+         if (btomem)
+         {
+            // add block to memory
+            if (nused+nread > nalloc)
+               { perr("int. #228290640"); btomem=0; break; }
+            memcpy(pdata+nused, abBuf, nread);
+            nused += nread;
+         }
+
+         nWritten += nread;
+         info.setProgress(nSize, nWritten, "bytes");
+      }
+   }
+ 
+   pdst->close();
+   psrc->close();
+
+   if (btomem && pdata && nused)
+      psrc->setContent(pdata, nused, 0);
+
+   // NO cleanup of pdata, as it is cached!
+
+   if (cs.quiet < 2)
+      info.print("done : %s (%s bytes).\n", pdst->name(), numtoa(nWritten));
+
+   return 0;
+}
+#endif // VFILENET
 
 bool startsLikeHttpCommand(char *psz)
 {
@@ -29945,6 +31613,20 @@ bool startsLikeHttpCommand(char *psz)
    if (strBegins(psz, "HEAD ")) return 1;
    return 0;
 }
+
+class CharAutoRestore {
+public:
+      CharAutoRestore (char **pp) {
+         pClPPtr   = pp;
+         pClOldVal = *pClPPtr;
+      }
+     ~CharAutoRestore ( ) { 
+         *pClPPtr  = pClOldVal;
+      }
+private:
+      char **pClPPtr;
+      char *pClOldVal;
+};
 
 // block all trivial signals like SIGPIPE.
 
@@ -29985,8 +31667,33 @@ void initSignalHandlers()
    signal(SIGTRAP , sfkSignalHandler);
 }
 
+#ifdef WINCE
+#define ushort unsigned short
+int wmain(int argc, char *argvw[])
+{
+   char **penv = 0;
+
+   char **argv = new char*[100];
+   for (int iarg=0; iarg<argc; iarg++)
+   {
+      ushort *praw = (ushort*)argvw[iarg];
+      int nlen = 0;
+      while (praw[nlen]) nlen++;
+      char *pstr = new char[nlen+1];
+      for (int k=0; k<nlen; k++)
+            pstr[k] = (char)praw[k];
+      pstr[nlen] = '\0';
+      argv[iarg] = pstr;
+      // printf("   arg %d = %s\n",iarg,pstr);
+   }
+
+   wce_SetCurrentDir();
+
+#else
 int main(int argc, char *argv[], char *penv[])
 {
+#endif
+
    // catch all help requests
    if (argc == 2) {
       char *pfirst = argv[1];
@@ -30036,6 +31743,14 @@ int main(int argc, char *argv[], char *penv[])
          if (strstr(pszCfg, "ignore-exec-name"))
             bSkipCNA = 1;
          #endif
+         #ifdef VFILEBASE
+         if (strstr(pszCfg, "xdemo"))
+            gs.xelike = cs.xelike = 1;
+         #endif // VFILEBASE
+         #ifdef VFILENET
+         // if (strstr(pszCfg, "nocache"))
+         //    setDiskCacheActive(0);
+         #endif // VFILENET
       }
    }
 
@@ -30140,6 +31855,20 @@ int main(int argc, char *argv[], char *penv[])
       if (gs.utf16found && gs.verbose)
          printx("<time>%ld utf-16 file(s) found. (see \"sfk help utf\")<def>\n", gs.utf16found);
    }
+
+   #ifdef VFILEBASE
+   if (gs.cachestat) {
+      num nmax  = glblVCache.bytesMax();
+      num ndrop = glblVCache.filesDropped();
+      printx(
+         "<time>peak cache usage = %ld mb. "
+         "the memlimit was %sreached (%ld drops).<def>\n",
+         (long)(nmax / 1000000),
+         (ndrop > 0) ? "":"not ",
+         (long)ndrop
+         );
+   }
+   #endif // VFILEBASE
 
    // print error and warning stats
    if (nGlblErrors) {
@@ -30447,7 +32176,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    regtest("list -sincedif rdir -relnames .");
 
    ifcmd (   !strcmp(pszCmd, "list") || !strncmp(pszCmd, "sel", 3) // +chaining
-          || !strcmp(pszCmd, "dir")
+          || !strcmp(pszCmd, "dir")  || !strcmp(pszCmd, "larc")
          )
    {
       ifhelp ((iDir < 3) && !chain.usefiles && (nparm < 1))
@@ -30479,6 +32208,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      -allowdups disable detection of duplicate dir contents.\n"
              #endif
              "      -arc       list contents of .zip .jar .ear etc. archives\n"
+             #ifdef VFILEBASE
+             "                 and also .gz, .bz2, .tar, .tar.gz and .tar.bz2\n"
+             "                 as deep as possible, including nested archives.\n"
+             "      -qarc      quick list archives, lists only archive entries\n"
+             "                 at the top level, skipping nested archives.\n"
+             #endif // VFILEBASE
              "      -sort[=n]  sort by name, list all or last n files\n"
              "      -sortrev   sort by name, in reverse order\n"
              "      -late[=n]  sort by time, list latest   [n] files last\n"
@@ -30533,10 +32268,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      +list accepts files from previous commands. +select ignores them,\n"
              "      allowing scripts to run many independent selects in one chain.\n"
              );
+             #ifdef VFILEBASE
+      if (cs.xelike)
+      printx("\n"
+             "   $no default archive content processing:\n"
+             "      .zip .jar .tar .tgz .bz2 archive contents are NOT listed by default,\n"
+             "      as this is not desirable if you just want a quick dir tree overview.\n"
+             "      specify -arc or -qarc to activate archive content listing.\n"
+             "      type \"sfk help opt\" to list all supported archive extensions.\n");
+             #endif // VFILEBASE
       printx("\n"
              "   $aliases:\n"
              "      #sfk dir<def>         same as \"sfk list -stat\".\n"
-             "      #sfk select<def>      same as list, but ignoring chain input.\n");
+             "      #sfk select<def>      same as list, but ignoring chain input.\n"
+             "      #sfk larc<def>        same as \"sfk list -arc\".\n"
+             );
       printx("\n"
              "   $see also:\n"
              "      #sfk help opt<def>    for further general options.\n"
@@ -30577,6 +32323,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "         select all .bak files in src, then delete them.\n"
              "      #sfk list -late mydir +sleep 5000 +loop\n"
              "         list most recent files of mydir every 5 seconds.\n"
+             "      #sfk list . .jpg +count\n"
+             "         tell the number of .jpg files in current directory tree.\n"
              "      #sfk list . >lslr\n"
              "         list files of the current directory and all subdirectories into\n"
              "         an index text file \"lslr\" (named after the unix command \"ls -lR\").\n"
@@ -30589,6 +32337,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "         instead of \">lslrx\" redirection allows you to see a progress info.\n"
              "         doing this in a root dir like C:\\ may produce a filename listing\n"
              "         of several hundred MB in size.\n"
+             #ifdef VFILEBASE
+             "      #sfk list -hidden -arc -tofile lslrxl .\n"
+             "         produce an ultimate file listing, including hidden and system files,\n"
+             "         .zip and .jar contents, .tar, tar.gz and tar.bz2 contents, as well as\n"
+             "         archive contents embedded within archives, like .class files embedded\n"
+             "         within .jar files within a .tar.bz2 archive. running this command in a\n"
+             "         root dir like C:\\ may take some hours, and it may produce a 1 GB\n"
+             "         or more file listing, so make sure there is enough disk space.\n"
+             #endif // VFILEBASE
              );
       ehelp;
 
@@ -30597,10 +32354,24 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       // the "dir" command is more verbose
       bool bStat = !strcmp(pszCmd, "dir") ? 1 : 0;
 
+      // larc is the same as list -arc
+      if (!strcmp(pszCmd, "larc")) {
+         cs.travelzips = 1;
+         #ifdef VFILEBASE
+         cs.xelike     = 1;  // process zips as deep as possible
+         #endif // VFILEBASE
+      }
+
       nGlblListMode = 2;
       cs.listByTime = 0;
       cs.listBySize = 0;
       cs.listByName = 0;
+
+      #ifdef VFILEBASE
+      // list is the only command where traveling
+      // of text content links is allowed.
+      cs.travelHttp = 1;
+      #endif // VFILEBASE
 
       // in case of multiple select in a chain, reset fileset:
       glblFileSet.reset();
@@ -30617,6 +32388,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       for (; iDir < argc; iDir++) 
       {
          char *pszParm = 0;
+         #ifdef VFILEBASE
+         if (!strcmp(argv[iDir], "-qarc")) {
+            cs.travelzips  = 1;
+            cs.xelike      = 1;
+            cs.shallowzips = 1;  // toplevel only
+         }
+         else
+         #endif // VFILEBASE
          if (!strcmp(argv[iDir], "-qarc")) {
             cs.travelzips  = 1;
          }
@@ -31196,17 +32975,19 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "   $return codes for batch files\n"
              "      0   normal execution, all checksums matched.\n"
              "      1   normal execution, checksum(s) mismatched.\n"
-             "     >1   severe error occurred, e.g. wrong checksum file format.\n"
+             "      2   some files were missing, all other checksums matched.\n"
+             "      3   some files were missing, and some checksums mismatched.\n"
+             "    >=9   severe error occurred, e.g. wrong checksum file format.\n"
              #ifdef _WIN32
              "\n"
              "         #@rem windows batchfile example\n"
              "         @echo off\n"
              "         sfk md5check mysums.txt -quiet >nul 2>nul\n"
              "         IF ERRORLEVEL 1 GOTO mdfailed\n"
-             "         sfk echo [[green]]all ok[[def]]\n"
+             "         sfk echo \"[[green]]all ok[[def]]\"\n"
              "         GOTO mddone\n"
              "         :mdfailed\n"
-             "         sfk echo [[red]]verification failed[[def]]\n"
+             "         sfk echo \"[[red]]verification failed[[def]]\"\n"
              "         :mddone\n"
              #endif
             );
@@ -31688,6 +33469,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "\n"
              "    $options\n"
              "\n");
+             #ifdef VFILEBASE
+      if (cs.xelike)
+      printx("       -arc        include content of .zip .jar .tar etc. archives.\n");
+             #endif // VFILEBASE
              #ifdef _WIN32
       printx("       -hidden     include hidden and system files (not default).\n");
              #endif
@@ -31737,6 +33522,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       bool bstat = 0;
       cs.addsnapmeta = 0xFFFFUL; // add as much infos as possible
+
+      #ifdef VFILEBASE
+      cs.precachezip = 1;
+      #endif // VFILEBASE
 
       for (; iDir < argc; iDir++) {
          if (!strncmp(argv[iDir],"-prefix=",strlen("-prefix="))) {
@@ -32674,6 +34463,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "   $aliases\n"
              "      #sfk stat10<def>       does the same as #sfk stat -minsize=10<def>\n"
              "      #sfk treesize100<def>  does the same as #sfk stat -minsize=100<def>\n"
+             #ifdef VFILEBASE
+             "\n"
+             "   $limitations\n"
+             "      this command cannot summarize zip file contents.\n"
+             #endif // VFILEBASE
              "\n"
              "   $examples\n"
              "      #sfk stat . -minsize=10m\n"
@@ -32694,14 +34488,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bool bSummary = 1;
       cs.hidden     = 1; // INCLUDE HIDDEN FILES BY DEFAULT (windows)
 
-		// command aliases: "stat10" == "stat -minsize=10"
-		char *pqsize = pszCmd + 4;
+      // command aliases: "stat10" == "stat -minsize=10"
+      char *pqsize = pszCmd + 4;
       if (strBegins(pszCmd, "treesize"))
             pqsize = pszCmd + 8;
-		if (*pqsize) {
-			if (!isdigit(*pqsize)) return 9+perr("supply a number after stat, like stat10.\n");
-			nGlblListMinSize = atol(pqsize) * 1000000;
-		}
+      if (*pqsize) {
+         if (!isdigit(*pqsize)) return 9+perr("supply a number after stat, like stat10.\n");
+         nGlblListMinSize = atol(pqsize) * 1000000;
+      }
 
       int iChainNext = 0;
       for (; iDir < argc; iDir++) 
@@ -32752,7 +34546,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          break; // short file set expected
       }
 
-		int nAutoComp = (bGlblStdInAny || chain.usefiles) ? 3 : 1;
+      int nAutoComp = (bGlblStdInAny || chain.usefiles) ? 3 : 1;
       if (lRC = processDirParms(pszCmd, argc, argv, iDir, nAutoComp, &iChainNext))
          return lRC;
       if (btest) return 0;
@@ -32775,17 +34569,17 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       if (!cs.quiet && bSummary) {
          // chained mode: no dir stats, just add filesizes.
          setTextColor(nGlblHeadColor);
-			switch (cs.listunit) {
-				case 'b':
-		         printf("%s, %5ld files, %ld dirs, %s bytes.\n", numtoa_blank(nBytes, 12), lFiles, lDirs, numtoa(nBytes));
-					break;
-				case 'k':
-		         printf("%s kb, %5ld files, %ld dirs, %s bytes.\n", numtoa_blank(nBytes/1000, 10), lFiles, lDirs, numtoa(nBytes));
-					break;
-				default :
-		         printf("%5ld mb, %5ld files, %ld dirs, %s bytes.\n", lMBytes, lFiles, lDirs, numtoa(nBytes));
-					break;
-			}
+         switch (cs.listunit) {
+            case 'b':
+               printf("%s, %5ld files, %ld dirs, %s bytes.\n", numtoa_blank(nBytes, 12), lFiles, lDirs, numtoa(nBytes));
+               break;
+            case 'k':
+               printf("%s kb, %5ld files, %ld dirs, %s bytes.\n", numtoa_blank(nBytes/1000, 10), lFiles, lDirs, numtoa(nBytes));
+               break;
+            default :
+               printf("%5ld mb, %5ld files, %ld dirs, %s bytes.\n", lMBytes, lFiles, lDirs, numtoa(nBytes));
+               break;
+         }
          setTextColor(-1);
          if (cs.noFiles)
             printf("%lu non-regular files skipped.\n", cs.noFiles);
@@ -32817,6 +34611,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "    chars to be listed as a hit.\n"
              "\n"
              "    $options\n");
+             #ifdef VFILEBASE
+      if (cs.xelike)
+      printx("    -arc      include content of .zip .jar .tar etc. archives.\n");
+             #endif // VFILEBASE
       printx("    -text     process only text files, skip all binary files.\n"
              "              finds patterns also over long lines, avoiding line breaks.\n"
              "    -bin      do not autodetect file content, process all as binary.\n"
@@ -32893,6 +34691,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          bGlblBinGrep = 0;
          bGlblBinGrepAutoDetect = 0;
       }
+
+      #ifdef VFILEBASE
+      cs.precachezip = 1;
+      #endif // VFILEBASE
 
       // only enable colorful scan status if console is available
       if (!bGlblConsColumnsSet)
@@ -33195,9 +34997,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      -[ls/le]where pattern -replace | -highlight | -sep ... -form\n"
              "          replace, highlight or reformat lines matching the given pattern.\n"
              "          all lines that do not match the pattern stay unchanged.\n"
-          // "      -[ls/le]within pattern -replace _from_to_\n"
-          // "          replace text within a part of a line matching the given pattern.\n"
-          // "          the rest of the line text stays unchanged.\n"
+             "      -within pattern -replace _from_to_\n"
+             "          replace text in a part of the line matching the given pattern.\n"
+             "          the rest of the line text stays unchanged.\n"
              "\n");
       printx("   $pattern support\n"
              "      wildcards * and ? are active by default. add -lit[eral] to disable.\n"
@@ -33216,6 +35018,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      filter ... -uform or filter -upat ... -form uses ## instead of $$.\n"
              "\n"
              "   $further options\n");
+             #ifdef VFILEBASE
+      if (cs.xelike)
+      printx("      -arc            include content of .zip .jar .tar etc. archives.\n");
+             #endif // VFILEBASE
       printx("      -verbose        show names of all files which are currently scanned.\n"
              "      -write          do not print output to console but overwrite input file(s).\n"
              "                      only files with actual text changes will be rewritten.\n"
@@ -33273,8 +35079,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              );
       printx("\n"
              "   $see also\n"
-             "      #sfk find<def>      find text in text and binary files.\n"
-             "      #sfk hexfind<def>   find text or binary data in binary files.\n"
+             "      #sfk find<def>      find words in text and binary files. faster, but less flexible.\n"
+             "      #sfk hexfind<def>   find text or binary data in binary files, with hex dump output.\n"
              "      #sfk replace<def>   replaces many strings in parallel, in text and binary files.\n"
              );
       printx("\n"
@@ -33342,6 +35148,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       printx("      #sfk filt foo.cpp -cut \"ifdef barmode\" to \"endif // barmode\"\n"
              "         strip blocks of lines from foo.cpp, surrounded by the given patterns.\n"
              );
+      printx("      #sfk filt csv.txt -spat -within \"\\q*\\q\" -rep _,_\\x01_ -rep _,_\\t_ -rep _\\x01_,_\n"
+             "         change separators in comma separated data from comma to tab, also taking\n"
+             "         care of quotes, by replacing in-quote commas by a placeholder (\\x01).\n"
+             "         if the data contains escaped quotes like \"\" then further prefiltering\n"
+             "         can be necessary, like removing those quotes by -sreplace _\\q\\q__\n"
+             );
       ehelp;
 
       CommandScope ocmd("Filter");
@@ -33355,6 +35167,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       gfilter.bDumpLF = 1;
       gfilter.bSkipBinaries = 1; // always, this is a text-only filter.
       gfilter.bFilenames = 1;
+
+      #ifdef VFILEBASE
+      cs.precachezip = 1;
+      #endif // VFILEBASE
 
       char *pszInPath = 0;
 
@@ -34001,6 +35817,277 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    }
    #endif // USE_SFK_BASE
 
+   ifcmd (!strcmp(pszCmd, "if"))
+   {
+      ifhelp (!chain.usefiles && (nparm < 1))
+      printx("<help>$sfk ... +if expression command1 ... +command2\n"
+             "\n"
+             "   execute command1 if expression is true, then continue to command2.\n"
+             "   if expression is not true, skip directly to command2.\n"
+             "   can be used only in a command chain, after another command.\n"
+             "\n"
+             "   $supported expressions\n"
+             "      rc=n   return code of previous command equal  to   n\n" 
+             "      rc>n   return code of previous command higher than n\n"
+             "      rc<n   return code of previous command lower  than n\n"
+             "\n"
+             "   $see also\n"
+             "      sfk call labelname - call sub functions in a script.\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk filter in.txt -+err +if \"rc>0\" run -yes \"x.bat\" +echo done\n"
+             "         if file in.txt contains the word \"err\", run x.bat.\n"
+             "         the \"echo done\" is always executed.\n"
+            );
+      ehelp;
+
+      int iChainNext = 0;
+      char *pexpr    = 0;
+      int iThenCmd   = 0;
+
+      for (; iDir<argc; iDir++)
+      {
+         char *pszParm = 0;
+         if (!strncmp(argv[iDir], "-", 1)) {
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argv[iDir]);
+         }
+         else
+         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (!pexpr)
+            { pexpr = argv[iDir]; continue; }
+         if (!iThenCmd)
+            { iThenCmd = iDir; continue; }
+         // ignore all other parms as they probably belong
+         // to the thenCmd.
+      }
+
+      if (!pexpr)    return 9+perr("need an expression after if.");
+      if (!iThenCmd) return 9+perr("need a command after \"if expression\".");
+
+      // evaluate expression
+      bool btrue = 0;
+      if (strBegins(pexpr, "rc=")) {
+         long ncmp = atol(pexpr+3);
+         btrue = (lRC == ncmp) ? 1 : 0;
+      }
+      else
+      if (strBegins(pexpr, "rc<")) {
+         long ncmp = atol(pexpr+3);
+         btrue = (lRC < ncmp) ? 1 : 0;
+      }
+      else
+      if (strBegins(pexpr, "rc>")) {
+         long ncmp = atol(pexpr+3);
+         btrue = (lRC > ncmp) ? 1 : 0;
+      }
+      else
+         return 9+perr("unsupported expression: %s\n", pexpr);
+
+      if (btrue)
+         iChainNext = iThenCmd;
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
+   ifcmd (!strcmp(pszCmd, "call"))
+   {
+      ifhelp (!chain.usefiles && (nparm < 1))
+      printx("<help>$sfk ... +call label [parm1 parm2 ...]\n"
+             "\n"
+             "    call a sub function in the current script,\n"
+             "    starting at the given label.\n"
+             "\n"
+             "    $see also\n"
+             "       type \"sfk tail\" for a script example.\n"
+            );
+      ehelp;
+
+      char *pszLabel     = 0;
+      char *pszFlatParms = 0;
+
+      int  iChainNext =  0;
+      int  iLocalParm = -1;
+      int  nLocalParm =  0;
+      int  nState     =  0;
+      bool bliteral   =  0;
+
+      for (; iDir<argc; iDir++)
+      {
+         char *pszParm = 0;
+         if (nState < 1 && !strncmp(argv[iDir], "-", 1)) {
+            // general options are interpreted only before script name,
+            // i.e. as long as nState == 0.
+            if (strBegins(argv[iDir], "-lit")) {
+               bliteral = 1;
+               continue;
+            }
+            else
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argv[iDir]);
+         }
+         else
+         if (!bliteral && isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (!pszLabel) {
+            pszLabel = argv[iDir];
+            nState = 1;
+         }
+         else
+         if (iLocalParm < 0) {
+            iLocalParm = iDir;
+            nLocalParm = 1;
+            nState = 2;
+         }
+         else
+            nLocalParm++;
+      }
+
+      if (!pGlblCurrentScript)
+         return 9+perr("cannot use call outside a script.");
+
+      // pGlbl is the original script data we're running within.
+      // make a copy as this will be stuffed with terminators.
+      char *pScript = strdup(pGlblCurrentScript);
+
+      // this copy must then be auto deleted.
+      CharAutoDel odel(pScript);
+
+      lRC = 0;
+
+      // create temporary argv[] from script file
+      StringTable oDynaStrings;
+      char **psubargv = 0;
+      int    nsubargc = 0;
+      for (long npass=0; npass<2; npass++)
+      {
+         char *psz1 = pScript;
+         char  cold = 0; // old char before current one
+
+         // jump to start label, if any.
+         if (pszLabel) {
+            sprintf(szLineBuf, "label %s", pszLabel);
+            psz1 = strstr(pScript, szLineBuf);
+            if (!psz1) {
+               perr("label not found: %s\n", pszLabel);
+               pinf("use \"sfk label %s +...\" to start with a label.\n", pszLabel);
+               pinf("use \"sfk ... +label %s +...\" to insert a label.\n", pszLabel);
+               lRC = 9;
+               break;
+            }
+            // do NOT skip anything, let the chain
+            // start with the "label" command.
+            cold = '\0';
+         }
+
+         // main processing, until +end token.
+         while (*psz1)
+         {
+            bool bnewline = 0;
+            nextToken(&psz1, cold, bnewline);
+            if (*psz1)
+            {
+               // on next (non-blank) token
+               char *ptok = psz1;
+               if (bnewline && !strncmp(ptok, "//", 2)) {
+                  // skip remark line
+                  while (*ptok && *ptok != '\n') ptok++;
+                  // do NOT skip lf, set newline on next cycle
+                  psz1 = ptok;
+                  continue;
+               }
+
+               // find end of token
+               skipPastToken(&psz1, cold);
+               long ntoklen = psz1 ? (psz1-ptok) : 0;
+
+               long nrc = 0;
+               if (npass && *psz1) {
+                  cold = *psz1;   // e.g. lf will be overwritten
+                  *psz1++ = '\0';
+                  // post-process token: strip quotes, transform inner quotes,
+                  // substitute parameters.
+                  // uses: szLineBuf
+                  nrc = postProcessToken(&ptok, oDynaStrings, argc, argv, iLocalParm, nLocalParm);
+                  if (nrc >= 9) return 9+perr("unexpected format: \"%s\"\n", ptok);
+                  // nrc==1 means skip EMPTY token.
+               }
+
+               // special first token "-prefix=..." ?
+               // printf("tok %d: \"%s\"\n",nsubargc,ptok);
+               if (!nrc && nsubargc<3 && strBegins(ptok, "-prefix=")) {
+                  // give script input parameters a user-defined name
+                  if (npass) { // not in prescan phase
+                     strcopy(cs.paramprefix, ptok+8);
+                  }
+                  continue;
+               }
+
+               // count and register token
+               if (!nrc) {
+                  if (npass)
+                     psubargv[nsubargc] = ptok;
+                  nsubargc++;
+               }
+
+               // reached "+end"?
+               if (ntoklen==4 && !strncmp(ptok, "+end", 4))
+                  break;
+
+            }  // endif *psz1
+
+         }  // endwhile *psz1
+
+         // at end of first pass, alloc token array
+         if (!npass) {
+            psubargv = new char*[nsubargc+10];
+            nsubargc = 0;
+         }
+
+      }  // endfor pass
+
+      if (cs.verbose > 0) {
+         printf("loaded %d words from global script:\n", nsubargc);
+         for (long i=0; i<nsubargc; i++)
+            printf("%s,",psubargv[i]);
+         printf("\n");
+      }
+
+      if (!lRC)
+      {
+         char *pszSubCmd = psubargv[0];
+         int iSubDir = 1;
+         // if chain starts like "sfk ...", skip "sfk":
+         if (!strcmp(pszSubCmd, "sfk")) {
+            pszSubCmd = psubargv[1];
+            iSubDir = 2;
+         }
+         if (cs.verbose > 0)
+            printf("  run from \"%s\" (index %d)\n", pszSubCmd, iSubDir);
+         lRC = submain(nsubargc, psubargv, penv, pszSubCmd, iSubDir, bFatal);
+      }
+
+      if (psubargv) delete [] psubargv;
+      oDynaStrings.resetEntries();
+
+      // pScript is auto deleted.
+
+      if (lRC >= 9) return lRC;
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
    regtest("run echo_$purefile xdir .cpp .hpp");
    regtest("list xdir +run echo_$pfile");
 
@@ -34150,6 +36237,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             if (bGlblStdInFiles) return 9+perr("cannot use -ifiles and -idirs together.\n");
             bGlblStdInDirs = 1;
             cs.justdirs  = 1;
+            continue;
+         }
+         else
+         if (strBegins(argv[iDir], "-int")) {
+            cs.intrun = 1;
             continue;
          }
          else
@@ -34368,6 +36460,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             continue;
          }
 
+         if (strBegins(argv[iDir], "-int")) {
+            cs.intrun = 1;
+            continue;
+         }
+
          if (!strncmp(argv[iDir], "-", 1)) {
             if (setGeneralOption(argv, argc, iDir))
                continue;
@@ -34472,7 +36569,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             else
                printf("%s\n", szLineBuf);
          } else {
-            iRC = system(szLineBuf);
+            if (cs.intrun)
+               iRC = runInternal(szLineBuf);
+            else
+               iRC = system(szLineBuf);
          }
       
          if (!cs.quiet && !cs.sim) {
@@ -34721,6 +36821,29 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "         deblanks filenames and directories.\n"
             );
       ehelp;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         if (!strcmp(argv[iDir], "-packalnum")) {
+            cs.packalnum = 1;
+            continue;
+         }
+         else
+         if (!strncmp(argv[iDir], "-", 1)) {
+            if (isDirParm(argv[iDir]))
+               break; // fall through
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argv[iDir]);
+         }
+         else
+         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         break; // fall through
+      }
 
       // sfk deblank -yes
       if (lRC = processDirParms(pszCmd, argc, argv, iDir, 1)) return lRC;
@@ -35551,7 +37674,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bDone = 1;
    }
 
-   #ifdef _WIN32
+   #ifdef WINFULL
    if (!strcmp(pszCmd, "messagebox"))
    {
       if (argc < 4) return 9+perr("missing parameters, specify title and text\n");
@@ -35563,7 +37686,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    #endif
 
    #ifdef WITH_TCP
-   ifcmd (strBegins(pszCmd, "httpserv") || strBegins(pszCmd, "serv"))
+   ifcmd (strBegins(pszCmd, "httpserv") || strBegins(pszCmd, "webserv"))
    {
       if (!bhelp && blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
 
@@ -35598,6 +37721,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "\n"
          "   $see also:\n"
          "     #sfk ftpserv -h<def>    the SFK Instant FTP server.\n"
+         #ifdef VFILENET
+         "     #sfk wget<def>          a web file download command.\n"
+         #endif // VFILENET
          );
       ehelp;
 
@@ -36117,20 +38243,42 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
    regtest("tcpdump 5000 -forward xhost:xport -timeout 20000");
 
    bool btcpdump = 0;
+   bool budpdump = 0;
+   bool bnetdump = 0;
 
-   ifcmd (!strcmp(pszCmd, "hexdump") || !strcmp(pszCmd, "tcpdump"))
+   ifcmd (   !strcmp(pszCmd, "hexdump")
+          || !strcmp(pszCmd, "tcpdump")
+          || !strcmp(pszCmd, "udpdump")
+         )
    {
       bool btcp = btcpdump = !strcmp(pszCmd, "tcpdump");
+      bool budp = budpdump = !strcmp(pszCmd, "udpdump");
+      bool bnet = bnetdump = btcp || budp;
 
-      ifhelp ((argc < 3) && (btcp || !chain.usefiles))
+      ifhelp ((argc < 3) && (bnet || !chain.usefiles))
 
-      // if dumping all help text, run two passes
-      for (long i=0; i<2; i++) {
+      // if dumping all help text, run three passes
+      for (long ihelp=0; ihelp<3; ihelp++) {
 
-      if (!btcp)
+      // create different help pages for sfk ask:
+      if (bhelp)
+         switch (ihelp) {
+            case 0 : btcp=0; budp=0; bnet=0; break; // hexdump help
+            case 1 : btcp=1; budp=0; bnet=1; break; // tcpdump help
+            case 2 : btcp=0; budp=1; bnet=1; break; // udpdump help
+         }
+
+      if (!bnet)
       printx("<help>$sfk hexdump [-showle] [-wide] [...] dir .ext1 .ext2 .ext3\n"
              "\n"
              "   create human-readable hexdump of binary file(s).\n"
+            );
+      else
+      if (budp)
+      printx("<help>$sfk udpdump [-showle] [...] port\n"
+             "\n"
+             "   create human-readable hexdump of UDP socket input,\n"
+             "   for debugging of UDP network applications.\n"
             );
       else
       printx("<help>$sfk tcpdump [-showle] [...] port [-forward host:port] [...]\n"
@@ -36145,28 +38293,40 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      -wide    dumps 32 input bytes per line.\n"
              "      -lean    dumps 16 input bytes per line.\n"
              );
-      if (btcp)
+      if (bnet) {
+      if (budp)
+      printx("      -echo    echo received packets back to sender.\n");
+      else
       printx("      -forward specifies a host and port to which to forward\n"
              "               incoming requests, to dump a tcp conversation.\n"
              "      -timeout number of milliseconds to wait after last transfer\n"
              "               until connections are closed. default is 60000,\n"
              "               or 10000 if http is detected.\n");
-      else
+      } else {
       printx("      -nofile  or -nofilenames does not list the filename(s).\n");
+      }
 
       printx("      -pure    lists flat hex characters:\n"
              "               #53464B2D544553540D0A\n"
              "      -hexsrc  lists hex comma separated values:\n"
              "               #0x53,0x46,0x4B,0x2D,0x54,0x45,0x53,0x54,0x0D,0x0A,\n"
              "      -decsrc  lists decimal comma separated values:\n"
-             "               #83,70,75,45,84,69,83,84,13,10,\n"
-             "      -offlen n1 n2   dump from offset n1 only n2 bytes.\n"
-             );
-      if (btcp)
+             "               #83,70,75,45,84,69,83,84,13,10,\n");
+
+      if (!bnet)
+      printx("      -offlen n1 n2   dump from offset n1 only n2 bytes.\n");
+
+      if (bnet)
       printx("      -flat    no hexdump at all, dump characters as they come.\n");
+
+      if (budp)
+      printx("      -nohead  does not show the \"received n bytes\" message.\n");
 
       if (btcp)
       printx("\n"
+             "   $see also:\n"
+             "     #sfk udpdump   - dump incoming UDP packets.\n"
+             "\n"
              "   $example:\n"
              "     #sfk tcpdump 9000 -showle -forward www.google.com:80 -timeout 2000\n"
              "        then connect with your browser to localhost:9000 and see\n"
@@ -36185,6 +38345,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "        After the test, disable the proxy setting in your browser.\n"
              );
       else
+      if (budp)
+      printx("\n"
+             "   $example:\n"
+             "     #sfk udpdump 5000\n"
+             "        waits on port 5000 for incoming udp packages.\n"
+             );
+      else
       printx("\n"
              "  $examples:\n"
              "    #sfk hexdump -offlen 4221566976 96 part1.avi\n"
@@ -36194,8 +38361,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "        the same as above, but using hexadecimal numbers\n"
              );
 
-      if (bhelp) { btcp = btcp ? 0 : 1; printx("\n"); } else break; }
-      // end of two passes if dumping all help text
+      if (bhelp) { printx("\n"); } else break; }
+      // end of three passes if dumping all help text
 
       ehelp;
 
@@ -36211,6 +38378,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       long nForward = 0;
       long nTimeout = 60000;
       int  iChainNext = 0;
+      bool bEcho = 0;
+
       for (; iDir < argc; iDir++)
       {
          char *pszParm = 0;
@@ -36287,6 +38456,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             continue;
          }
          else
+         if (!strcmp(argv[iDir], "-echo")) {
+            bEcho = 1;
+            continue;
+         }
+         else
          if (!strncmp(argv[iDir], "-", 1)) {
             if (isDirParm(argv[iDir]))
                break; // fall through
@@ -36299,7 +38473,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
             break;
 
-         if (btcpdump && (nPort == -1)) {
+         if (bnetdump && (nPort == -1)) {
             nPort = atol(argv[iDir]);
             continue;
          }
@@ -36317,6 +38491,18 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          tcpAnyServ(nPort, pszForward, nForward);
          if (pszForward)
             delete [] pszForward;
+      }
+      else
+      if (!strcmp(pszCmd, "udpdump")) {
+         if (nPort == -1)
+            return 9+perr("specify port number to listen on.\n");
+         if (btest) return 0;
+         // get pszForward out of szLineBuf
+         if (pszForward)
+            pszForward = strdup(pszForward);
+         udpAnyServ(nPort, pszForward, nForward, bEcho);
+         if (pszForward)
+            delete [] pszForward;
       } else {
          if (lRC = processDirParms(pszCmd, argc, argv, iDir, 3, &iChainNext)) return lRC;
          if (btest) return 0;
@@ -36328,6 +38514,201 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       } else {
          STEP_CHAIN(iChainNext, 0);
       }
+
+      bDone = 1;
+   }
+
+   // not yet official
+   if (!strcmp(pszCmd, "sendudp") || !strcmp(pszCmd, "udpsend"))
+   {
+      // if (!bhelp && blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
+
+      if (nparm < 1) {
+      printx("<help>$sfk sendudp host port [options] data [data2] [...]\n"
+             "\n"
+             "   send a UDP message, and optionally receive replies.\n"
+             "\n"
+             "   $options:\n"
+             "      -listen        wait for a single reply, and dump it.\n"
+             "      -listen=n      wait for so many replies and dump them.\n"
+             "      -listenall     receive endless.\n"
+             "      -timeout=n     wait up to n msec for replies.\n"
+             "      -wide, -lean   etc. change hex dump output format.\n"
+             "                     for details, type \"sfk hexdump\"\n"
+             "\n"
+             "   $input data format:\n"
+             "      0x123456       a hex string which is converted to binary\n"
+             "      foo            any other plain text is sent as is, but\n"
+             "                     zero termination is NOT done automatically.\n"
+             "\n"
+             "      all given data fragments are joined into one large block.\n"
+             "      how long the block can be is system dependent, but it must\n"
+             "      always stay below 2000 bytes.\n"
+             "\n"
+             "   $examples\n"
+             "\n"
+             "      #sfk udpsend localhost 12345 -listen hello 0x00\n"
+             "         send \"hello\" followed by a zero byte to localhost\n"
+             "         on port 12345, then receive a single reply.\n"
+             "\n"
+             );
+      return 9;
+      }
+
+      int ndstport = -1;
+      int nownport = -1;
+      long  nlisten = 0;
+      char  szDstIP[200+10];
+      uchar abMsg[2000+100];
+      long  nMsg = 0;
+      long  nMsgMax = sizeof(abMsg)-100;
+      char szBuf[10];
+      num   nTimeout = 0;
+
+      mclear(szDstIP);
+      mclear(abMsg);
+      mclear(szBuf);
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszParm = 0;
+         if (haveParmOption(argv, argc, iDir, "-replyport", &pszParm)) {
+            if (!pszParm) return 9;
+            nownport = atol(pszParm);
+            continue;
+         }
+         else
+         if (haveParmOption(argv, argc, iDir, "-timeout", &pszParm)) {
+            if (!pszParm) return 9;
+            nTimeout = atol(pszParm);
+            continue;
+         }
+         else
+         if (!strcmp(argv[iDir], "-listen")) {
+            nlisten = 1;
+            continue;
+         }
+         else
+         if (strBegins(argv[iDir], "-listen=")) {
+            nlisten = atol(argv[iDir]+8);
+            continue;
+         }
+         else
+         if (!strcmp(argv[iDir], "-listenall")) {
+            nlisten = -1;
+            continue;
+         }
+         else
+         if (   !strcmp(argv[iDir], "-show-line-endings")
+             || !strcmp(argv[iDir], "-showle")
+            )
+         {
+            bGlblHexdumpShowLE = 1;
+            continue;
+         }
+         else
+         if (!strcmp(argv[iDir], "-wide")) {
+            bGlblHexDumpWide = 1;
+            continue;
+         }
+         else
+         if (!strcmp(argv[iDir], "-lean") || !strcmp(argv[iDir], "-narrow"))
+         {
+            bGlblHexDumpWide = 0;
+            continue;
+         }
+         else
+         if (!strcmp(argv[iDir], "-pure"))   { nGlblHexDumpForm=1; continue; }
+         else
+         if (!strcmp(argv[iDir], "-hexsrc")) { nGlblHexDumpForm=2; continue; }
+         else
+         if (!strcmp(argv[iDir], "-decsrc")) { nGlblHexDumpForm=3; continue; }
+         else
+         if (!strcmp(argv[iDir], "-flat")) { nGlblHexDumpForm=4; continue; }
+         else
+         if (!strncmp(argv[iDir], "-", 1)) {
+            if (isDirParm(argv[iDir]))
+               break; // fall through
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argv[iDir]);
+         }
+         else
+         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+
+         // process non-option keywords:
+         if (!szDstIP[0])
+            { strcopy(szDstIP, argv[iDir]); continue; }
+         if (ndstport < 0)
+            { ndstport = atol(argv[iDir]); continue; }
+
+         // join data parts
+         char *ppart = argv[iDir];
+         if (strBegins(ppart, "0x")) {
+            char *pszHex = ppart+2;
+            while (*pszHex) {
+               szBuf[0] = *pszHex++;
+               if (!*pszHex) return 9+perr("wrong hex format: %s\n",ppart);
+               szBuf[1] = *pszHex++;
+               if (!isxdigit(szBuf[0])) return 9+perr("wrong hex format: %s\n",ppart);
+               if (!isxdigit(szBuf[1])) return 9+perr("wrong hex format: %s\n",ppart);
+               abMsg[nMsg++] = (uchar)strtol(szBuf, 0, 0x10);
+               if (nMsg > nMsgMax) return 9+perr("data too long");
+            }
+         } else {
+            long nlen = strlen(ppart);
+            if (nMsg+nlen > nMsgMax) return 9+perr("data too long");
+            memcpy(abMsg+nMsg, ppart, nlen);
+            nMsg += nlen;
+         }
+      }
+
+      udpClient(szDstIP, ndstport, nlisten, nownport, abMsg, nMsg, nTimeout);
+
+      STEP_CHAIN(iChainNext, 1);
+
+      bDone = 1;
+   }
+
+   ifcmd (strBegins(pszCmd, "ip") || strBegins(pszCmd, "ownip"))
+   {
+      if (!bhelp && blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
+      
+      ifhelp (argc >= 3 && isHelpOpt(argv[2]))
+      printx("<help>$sfk ip [-help], sfk ownips [-help]\n"
+             "\n"
+             "   list the current machines ip address(es).\n"
+             "\n"
+             );
+      ehelp;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         if (!strncmp(argv[iDir], "-", 1)) {
+            if (isDirParm(argv[iDir]))
+               break; // fall through
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argv[iDir]);
+         }
+         else
+         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         return 9+perr("unexpected: %s\n", argv[iDir]);
+      }
+
+      int   nnum  = 0;
+      char *plist = ownIPList(nnum, 0, "\t");
+ 
+      chain.print("%s", plist);
+
+      STEP_CHAIN(iChainNext, 1);
 
       bDone = 1;
    }
@@ -37062,12 +39443,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          nPort = atol(psz1);
       }
 
-      #ifdef _WIN32
-      WORD wVersionRequested = MAKEWORD(1,1);
-      WSADATA wsaData;
-      if (WSAStartup(wVersionRequested, &wsaData)!=0)
-         return 9+perr("WSAStartup failed\n");
-      #endif
+      prepareTCP();
 
       struct hostent *pTarget;
       struct sockaddr_in sock;
@@ -37171,6 +39547,151 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bDone = 1;
    }
 
+   #ifdef VFILENET
+   ifcmd (!strcmp(pszCmd, "wget"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk wget [options] url [outdir] [options]\n"
+             "\n"
+             "   download content from a given http:// URL.\n"
+             "   an optional output directory can be specified.\n"
+             "\n"
+             "   $options:\n"
+             "      -proxy     hostname:port of a proxy server. from within a company\n"
+             "                 network, it is often required to connect through proxies.\n"
+             "                 alternatively, set the environment variable SFK_PROXY :\n"
+             #ifdef _WIN32
+             "                   #set SFK_PROXY=myproxyhost:8000\n"
+             #else
+             "                   #export SFK_PROXY=myproxyhost:8000\n"
+             #endif
+             "                 to find out what proxy your browser is using, see\n"
+             "                 - Firefox: tools/options/advanced/network/settings\n"
+             "                 - IE: tools/internet options/connections/lan settings\n"
+             "      -path2name include web path in generated output name,\n"
+             "                 to create unique names on multiple downloads.\n"
+             "                 this option is default on chained processing.\n"
+             "      -fullpath  recreate the whole web path within output dir.\n"
+             "      -nodom     do not include domain name in output name.\n"
+             "      -nopath    do not include any path and domain information\n"
+             "                 within the output names. will not work if URL\n"
+             "                 does not contain any relative filename.\n"
+             "      -quiet     or -noprog shows no download progress indicator.\n"
+             "\n"
+             "   $limitations:\n"
+             "      although sfk wget can download a list of URL's, it is not\n"
+             "      a real webpage downloader/archiver, as this would require\n"
+             "      the conversion of html pages to adapt contained links.\n"
+             "\n"
+             "   $examples:\n"
+             "      #sfk wget http://foobar.com/thefile.zip\n"
+             "         download thefile.zip, connecting directly.\n"
+             "\n"
+             "      #sfk wget -proxy myproxy:8000 http://foobar.com/x.zip foo.zip\n"
+             "         download x.zip, writing the content into a file foo.zip,\n"
+             "         connecting through a proxy server myproxy on port 8000.\n"
+             "\n"
+             "      #sfk filt urls.txt +wget mydir\n"
+             "         if urls.txt contains a list of http:// URL's, load it\n"
+             "         and download all contents into mydir. the output names\n"
+             "         will include path information found in the source URL.\n"
+             "\n"
+             "      #sfk filt urls.txt +wget -fullpath mydir\n"
+             "         the same as above, but create the whole dir structure.\n"
+            );
+      ehelp;
+
+      CommandScope oscope("WGet");
+
+      char *pSrcName    = 0;
+      char *pDstDir     = 0;
+      bool  bchained    = chain.useany();
+      bool  bpath2name  = bchained;
+      bool  bpath2path  = 0;
+      bool  bwithdom    = 1;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         if (!strcmp(argv[iDir], "-path2name")) {
+            bpath2name = 1;
+            continue;
+         }
+         else
+         if (!strcmp(argv[iDir], "-fullpath") || !strcmp(argv[iDir], "-path2path"))
+         {
+            bpath2path = 1;
+            continue;
+         }
+         else
+         if (!strcmp(argv[iDir], "-nopath")) {
+            bpath2name = bpath2path = 0;
+            continue;
+         }
+         else
+         if (!strcmp(argv[iDir], "-nodom")) {
+            bwithdom = 0;
+            continue;
+         }
+         else
+         if (!strncmp(argv[iDir], "-", 1)) {
+            if (isDirParm(argv[iDir]))
+               break; // fall through
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argv[iDir]);
+         }
+         else
+         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (!pSrcName && !bchained)
+            { pSrcName = argv[iDir]; continue; }
+         if (!pDstDir)
+            { pDstDir  = argv[iDir]; continue; }
+         return 9+perr("unexpected parameter: %s\n", argv[iDir]);
+      }
+
+      if (!pSrcName && !bchained)      return 9+perr("missing URL\n");
+      if (pDstDir && !isDir(pDstDir))  return 9+perr("target dir does not exist: %s\n", pDstDir);
+
+      ulong nmode = bpath2name ? 1 : 0;
+      if (bpath2path) nmode |= 2;
+      if (bwithdom) nmode |= 4;
+
+      if (pSrcName) 
+      {
+         Coi *psrc = glblVCache.get(pSrcName);
+         if (!psrc) {
+            psrc = new Coi(pSrcName, 0);
+            if (!psrc) return 9+perr("out of memory");
+            psrc->incref("wget");
+         }
+         CoiAutoDelete odel(psrc, 1); // with decref
+
+         execWGet(psrc, pDstDir, nmode);
+
+         if (!psrc->isCached() && psrc->data().src.data)
+            glblVCache.put(psrc->orgName(), psrc, "wget");
+      }
+      else
+      if (chain.usefiles)
+      {
+         for (long i=0; i<chain.numberOfInFiles(); i++)
+         {
+            Coi *pcoi = chain.getFile(i);
+            if (!pcoi) return 9+perr("int. #9529726");
+            execWGet(pcoi, pDstDir, nmode);
+         }
+      }
+      else
+         return 9+perr("wrong chain input, need filenames.");
+
+      bDone = 1;
+   }
+   #endif // VFILENET
+
    if (!strcmp(pszCmd, "filesys") || !strcmp(pszCmd, "fsinfo"))
    {
       if (!chain.usefiles && (nparm < 1)) {
@@ -37243,7 +39764,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          #ifdef SFK_W64
          struct __stat64 ostat;
          #else
-         struct _stati64 ostat;
+         struct stat ostat;
          #endif
       #else
          struct stat64 ostat;
@@ -37286,7 +39807,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bDone = 1;
    }
 
-   #ifdef _WIN32
+   #ifdef WINFULL
    if (!strcmp(pszCmd, "rawcol"))
    {
       long nval = atol(argv[2]);
@@ -37322,6 +39843,77 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       printf("time3: %ld localPath: %s\n",(long)nFileTime,localPath(pszFile));
       printf("time4: %s", timeAsString(nFileTime, 1));
       #endif
+
+      bDone = 1;
+   }
+
+   if (!strcmp(pszCmd, "loadlib") || !strcmp(pszCmd, "loaddll"))
+   {
+      int iChainNext = 0;
+
+      for (; iDir<argc; iDir++) 
+      {
+         if (!strncmp(argv[iDir], "-", 1)) {
+            if (isDirParm(argv[iDir]))
+               break; // fall through
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argv[iDir]);
+         }
+         else
+         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+
+         // load another library:
+         char *pszFile = argv[iDir];
+
+         #ifdef _WIN32
+   
+         HINSTANCE hlib = LoadLibraryA(pszFile);
+         if (hlib != NULL)
+            printf("loaded: %s   (%lxh)\n", pszFile, (ulong)hlib);
+         else
+         {
+            int nerr = GetLastError();
+            char buffer[128];
+            buffer[0] = '\0';
+            FormatMessageA(
+               FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_FROM_SYSTEM,
+               NULL, nerr, 
+               MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+               buffer, sizeof(buffer)-10, NULL);
+            printf("failed to load %s : rc=%d %s\n",pszFile,nerr,buffer);
+         }
+   
+         #else
+   
+      /*
+         #ifdef MAC_OS_X
+         NSObjectFileImage himg = 0;
+         NSObjectFileImageReturnCode hres = 0;
+         hres = NSCreateObjectFileImageFromFile(pszFile, &himg);
+         if (hres == NSObjectFileImageSuccess) {
+            NSModule hmod = NSLinkModule(himg, pszFile, NSLINKMODULE_OPTION_PRIVATE | NSLINKMODULE_OPTION_RETURN_ON_ERROR);
+            NSDestroyObjectFileImage(himg);
+            if (hmod != NULL)
+               printf("loaded: %s\n", pszFile);
+            else
+               printf("failed to load: %s\n", pszFile);
+         } else {
+            printf("failed to load: %s\n", pszFile);
+         }
+         #else
+         void *plib = dlopen(pszFile, RTLD_NOW);
+         if (plib)
+            printf("loaded: %s\n", pszFile);
+         else
+            printf("failed to load: %s\n", pszFile);
+         #endif
+      */
+   
+         #endif
+      }
 
       bDone = 1;
    }
@@ -37384,7 +39976,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bDone = 1;
    }
 
-   #ifdef _WIN32
+   #ifdef WINFULL
    if (!strcmp(pszCmd, "coninfo"))
    {
       hGlblConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -37423,17 +40015,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
         - copy hidden dirs, files by default
         - do NOT copy empty directories
    */
-   if (   !strcmp(pszCmd, "copy")  || !strcmp(pszCmd, "sync")
-       || !strcmp(pszCmd, "xcopy") || !strcmp(pszCmd, "xsync")
-      )
+   ifcmd (   !strcmp(pszCmd, "copy")  || !strcmp(pszCmd, "sync")
+          || !strcmp(pszCmd, "xcopy") || !strcmp(pszCmd, "xsync")
+         )
    {
-      // if (blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
-
       bool bext = 0;
       if (pszCmd[0] == 'x') { bext=1; pszCmd++; }
 
-      if (!chain.usefiles && (argc < 4))
-      {
+      ifhelp (!chain.usefiles && (argc < 4))
+
          printx("<help>$sfk copy srcRoot dstRoot [-dir subdir1 subdir2] [-file .ext1 .ext2]\n"
                 "$sfk sync srcRoot dstRoot [-dir subdir1 subdir2] [-file .ext1 .ext2]\n"
                 "\n");
@@ -37442,15 +40032,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          else
          printx("   Directory tree copy, update copy and synchronization.\n");
          printx("\n"
-                #ifdef _WIN32
                 "   If destination does not yet exist, whole content of source is copied,\n"
-                "   including hidden and system files. If destination exists, only updates\n"
-                "   are copied.\n"
-                #else
-                "   If destination does not yet exist, whole content of source is copied,\n"
-                "   including hidden files, system files, and all contents of symbolic link\n"
-                "   directories. If destination exists, only updates are copied.\n"
-                #endif
+                "   #INCLUDING HIDDEN AND SYSTEM FILES.<def> If destination already exists,\n"
+                "   only updates are copied.\n"
+                "\n"
+                "   #Symbolic links are NOT kept<def>, but their content is duplicated. If this\n"
+                "   is a problem, use a copy command of your operating system instead.\n"
                 "\n"
                 "   $copy<def>   copies files from source to destination if the target file\n"
                 "          doesn't exist yet, or if the source is NEWER than the target.\n"
@@ -37460,23 +40047,17 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                 "\n"
                 "   $sync<def>   does the same as copy, however files that exist in source,\n"
                 "          but not in destination, are called STALE files, and are DELETED\n"
-                "          if their age is >= %ld days.\n",
-                nGlblActiveFileAgeLimit);
+                "          if their age is >= %ld days. USE WITH CARE. If you specify wrong\n"
+                "          folders or file masks, this may delete files unintentionally.\n"
+                "          Take a close look at the output of the simulation mode, which\n"
+                "          is active by default.\n"
+                ,nGlblActiveFileAgeLimit);
          printx("\n"
-                /*
-                #ifdef _WIN32
-                "   -noverify   by default, copy does 1) a write phase, writing all files and\n"
-                "               2) a verify phase, re-reading all written files. the verify\n"
-                "               phase can be skipped by pressing Escape during verify,\n"
-                "               or totally avoided by specifying -noverify or -nov.\n"
-                #else
-                "   -noverify   by default, all files are verified (re-read) after writing.\n"
-                "               specify -noverify or -nov to avoid this.\n"
-                #endif
-                */
-                "   -verify     try(!) to verify files after write. not active by default,\n"
-                "               as verify may succeed even if files have been corrupted on the\n"
-                "               target media (written data is often cached by operating system).\n"
+            //  "   -cache      try to cache many small files in memory before writing\n"
+            //  "               them to the target directory.\n"
+            //  "   -verify     try(!) to verify files after write. not active by default,\n"
+            //  "               as verify may succeed even if files have been corrupted on the\n"
+            //  "               target media (written data is often cached by operating system).\n"
                 "   -mirror     with sync, copy even older files from source over destination.\n"
                 /*
                 "   -del        delete files in destination that do not exist in source,\n"
@@ -37508,8 +40089,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                 "               like C:\\ or /tmp will be stripped automatically.\n"
                 "               some chain commands may provide filenames without separate\n"
                 "               directories, in this case -relnames will produce an error.\n"
-                "   -mem=mb     during read, data is cached in memory to reduce head movements\n"
-                "               on HD. the buffer size (default=100mb) can be changed here.\n"
+             // "   -mem=mb     during read, data is cached in memory to reduce head movements\n"
+             // "               on HD. the buffer size (default=100mb) can be changed here.\n"
                 "   -ltarg      always list target filenames (instead of source filenames).\n"
                 );
          if (bext)
@@ -37557,12 +40138,38 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                 "   files with differing time but equal content are listed in <time>time color<def>.\n"
                 "\n"
                );
+         printx("   $completeness and efficiency:\n"
+                "   -  under Windows, SFK uses the CopyFileEx API function, which should\n"
+                "      be able to copy most file attributes and contents as good and fast\n"
+                "      as the XCopy command provided with Windows.\n"
+                "   -  under Linux, no native copy function is available, therefore SFK may\n"
+                "      not be able to copy all attributes, access rights and timestamps\n"
+                "      of the original files. Furthermore, copying can be slower than \"cp\".\n"
+                "   -  Directory attributes, access rights and time stamps may not be\n"
+                "      completely reproduced both on Windows and Linux.\n"
+                "   -  Changes from/to Daylight Saving Time, differing time zones or copies\n"
+                "      between FAT and NTFS may always copy files which were copied already.\n"
+                "      this is a general problem with all copy commands.\n"
+                "\n"
+               );
          printx("   $using file system views:\n"
-                "      if you want so specify many directory trees and dir/file masks,\n"
+                "      if you want to specify many directory trees and dir/file masks,\n"
                 "      you may create a fileset, containing a list of directories.\n"
                 "      type \"sfk help fileset\" for details.\n"
                 "\n"
+                "   #NO WARRANTY FOR DATA INTEGRITY.<def> SFK copy is very convenient to use,\n"
+                "   but if you need to copy massive amounts of highly important data, it is\n"
+                "   recommended to use the original copy command of your operating system.\n"
+                "   Always keep backups of important stuff. After large copies, do some spot\n"
+                "   checking if important files were really copied without modifications.\n"
+                "   Always double-check the reliability of external media like USB sticks,\n"
+                "   e.g. by creating md5 lists (see \"sfk md5gento\").\n"
+                "\n"
                 );
+      // printx("   $see also:\n"
+      //        "      #sfk help select<def> - about the file selection syntax.\n"
+      //        "\n"
+      //        );
          printx("   $examples:\n"
                 "      #sfk copy c:\\work d:\\arc\\work -dir . <not>\\tmp\\ <not>\\save\\ -file <not>.bak\n"
                 "         copy directory tree c:\\work to d:\\arc\\work, excluding all dirs\n"
@@ -37579,6 +40186,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                 "         copy the files listed in myflist.txt from work to archive.\n"
                 "         note that \"-yes\" must be specified directly after \"copy\".\n"
                 "         see also \"sfk help fileset\".\n"
+                "\n"
+                "      #sfk list mydir .txt .doc code.cpp +copy d:\\save\n"
+                "         copies all .txt, .doc and code.cpp files from within mydir,\n"
+                "         including all subdirs, to d:\\save. ALSO copies mycode.cpp,\n"
+                "         subcode.cpp.1 etc. as \"code.cpp\" ist just a pattern.\n"
                 "\n");
          if (bext)
          printx("      #sfk sync -save x:\\ e:\\ -dir src -wipe\n"
@@ -37600,8 +40212,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                 "         copies today's changed or added files from X:\\src to E:\\src.\n"
                 "\n"
                 );
-         return 0;
-      }
+
+      ehelp;
 
       bool bchain = chain.usefiles;
 
@@ -37674,6 +40286,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             continue;
          }
          else
+         if (!strcmp(argv[iDir], "-cache")) {
+            bGlblUseCopyCache = 1;
+            continue;
+         }
+         else
          if (!strcmp(argv[iDir], "-deep")) {
             bGlblIgnoreTime = 1;
             continue;
@@ -37681,6 +40298,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          else
          if (!strcmp(argv[iDir], "-style")) {
             nGlblCopyStyle = 0;
+            continue;
+         }
+         else
+         if (strBegins(argv[iDir], "-link")) {
+            cs.copyLinks = 1; // windows only, untested.
+            continue;
+         }
+         else
+         if (strBegins(argv[iDir], "-nobuf")) {
+            cs.copyNoBuf = 1; // windows only, untested.
+            continue;
+         }
+         else
+         if (strBegins(argv[iDir], "-decrypt")) {
+            cs.copyDecrypt = 1; // windows only, untested.
             continue;
          }
          else
@@ -37749,6 +40381,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          break; // fall through
       }
 
+      // init source and target dirs or files.
+
       if (!bchain && !pszSrc) return 9+perr("missing source directory or file.\n");
       if (!pszDst) return 9+perr("missing target directory%s.\n", bchain? "":" or file");
 
@@ -37763,6 +40397,9 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       // now we know if in simulation or not
       cs.sim = !cs.yes;
+
+      // reset global statistics
+      nGlblBytes = 0;
 
       // activate source shadow skip implicitely if meta data are found
       if (!bchain && !cs.skipOwnMetaDir) {
@@ -37982,7 +40619,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          }
          if (nGlblBytes > 0) {
             num nmbytes = nGlblBytes / 1000000;
-            printx(" <time>%s mb.<def>",numtoa(nmbytes));
+            num nkbytes = nGlblBytes / 1000;
+            if (nmbytes > 0)
+               printx(" <time>%s mb.<def>",numtoa(nmbytes));   
+            else
+            if (nkbytes > 0)
+               printx(" <time>%s kbytes.<def>",numtoa(nkbytes));
+            else
+               printx(" <time>%s bytes.<def>",numtoa(nGlblBytes));
          }
          bTold = 1;
       }
@@ -38251,7 +40895,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       getcwd(szLineBuf,sizeof(szLineBuf)-10);
       #endif
 
-      if (chain.colany()) {
+      if (chain.colfiles) {
+         Coi ocoi(szLineBuf, 0);
+         chain.addFile(ocoi); // is copied
+      }
+      else
+      if (chain.coldata) {
          chain.addLine(szLineBuf, "", 0);
       } else {
          printf("%s\n", szLineBuf);
@@ -39121,6 +41770,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      #as well as all subdirs within them<def>. specify -nosub to disable this.\n"
              "\n"
              "   $options:\n");
+             #ifdef VFILEBASE
+      if (cs.xelike)
+      printx("      -arc          : hexfind only: include content of .zip .jar etc. archives.\n");
+             #endif // VFILEBASE
       printx("      -nosub        : do not include files in subdirectories.\n"
              "      -quiet        : do not print progress status and total hits statistics.\n"
              "      -case         : case-sensitive text comparison. default is case-insensitive\n"
@@ -39205,6 +41858,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       bool bforcedump   = 0;
 
       cs.repDumpHalve   = bIsHexFind;
+
+      #ifdef VFILEBASE
+      if (bIsHexFind) cs.precachezip = 1;
+      #endif // VFILEBASE
 
       memset(abBuf, 0, sizeof(abBuf)); // for direct patterns
 
@@ -39627,7 +42284,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          ofs.src.nHaveWFT = 0;
          #endif
       }
-      if (ofs.writeTo(pszDst))   return 9;
+      if (ofs.writeTo(pszDst, __LINE__))   return 9;
       bDone = 1;
    }
 
@@ -39672,7 +42329,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       return 0;
    }
 
-   #ifdef _WIN32
+   #ifdef WINFULL
    if (!strcmp(pszCmd, "ansitooem"))
    {
       char szBuf[20];
@@ -40029,7 +42686,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
                break;
             // else ignore non-printable keys, esp. CTRL (0x11)
          }
-         doSleep(ntimeout ? 500 : 100);
+         long ndelay = ntimeout ? 500 : 100;
+         doSleep(ndelay);
          num nelapsed = getCurrentTime() - nstart;
          if (ntimeout) {
             if (nelapsed > ntimeout) break;
@@ -40091,16 +42749,25 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      -polltime=n  with -follow, specifies the delay in milliseconds before\n"
              "                   the file is checked again for changes. default is 500.\n"
              "\n"
-             "   $example\n"
-             "\n"
+             "   $examples\n"
              "      #sfk tail -follow logs\\access.log\n"
              "         immediately lists last lines, then all added lines over time.\n"
-             "\n"
              "      #sfk tail -f c:\\temp\\log.txt +filter -+error: -+warning: +loop\n"
              "         endless filter of error and warning messages from log.txt.\n"
-             "\n"
              "      #type myfile.txt | sfk filter +thead -lines=50\n"
              "         filter first 50 lines from stdin, via sfk filter.\n"
+             "\n"
+             "   $example sfk script with conditional execution\n"
+             "     #file logfilter.txt:\n"
+             "       sfk label checklog\n"
+             "          +tail -follow logfile.txt\n"
+             "          +tee toterm +filter -+error:\n"
+             "          +if \"rc>0\" call myalert\n"
+             "          +loop +end\n"
+             "       sfk label myalert\n"
+             "          +run -yes \"myalert.bat\" +end\n"
+             "     #sfk script logfilter.txt\n"
+             "        will run myalert.bat whenever errors appear in logfile.txt.\n"
              );
       ehelp;
 
@@ -40578,6 +43245,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             }
             fclose(fout);
    
+            #ifdef VFILEBASE
+            // cleanup possible connections to sfk ftp server
+            mtklog("view: cleanup connections");
+            resetLoadCaches(0);
+            #endif // VFILEBASE
 
             #ifdef _WIN32
             sprintf(szLineBuf2, "%s%s%s -flist %s", pszsopt, pszTarg, (char*)abBuf, pszTmpFile);
@@ -40815,6 +43487,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "      -time  list also file times.\n"
              "      -size  list also file sizes.\n"
              );
+             #ifdef VFILEBASE
+      if (cs.xelike)
+      printx("      -arc   include .zip .jar .tar etc. archive contents.\n");
+             #endif // VFILEBASE
       printx("\n"
              "   $chaining support\n"
              "      output chaining is supported.\n"
@@ -40963,6 +43639,199 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       p->reset();
       delete p;
+
+      bDone = 1;
+   }
+
+   // yet internal
+   if (strBegins(pszCmd, "tobase64") || strBegins(pszCmd, "frombase64"))
+   {
+      if (nparm < 1) {
+         printx("<help>$sfk tobase64 infile [outfile]\n"
+            "$sfk frombase64 infile outfile\n"
+            );
+         return 9;
+      }
+
+      bool bencode = strBegins(pszCmd, "tobase64");
+
+      char *pszInFile  = 0; 
+      char *pszOutFile = 0;
+      int iChainNext   = 0;
+
+      for (; iDir<argc; iDir++) 
+      {
+         if (!strncmp(argv[iDir], "-", 1)) {
+            if (isDirParm(argv[iDir]))
+               break; // fall through
+            if (setGeneralOption(argv, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argv[iDir]);
+         }
+         else
+         if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (!pszInFile)  pszInFile = argv[iDir];
+         else
+         if (!pszOutFile) pszOutFile = argv[iDir];
+         else
+            return 9+perr("unexpected: %s\n", argv[iDir]);
+      }
+
+      if (!pszInFile)  return 9+perr("missing input filename.\n");
+      if (!bencode && !pszOutFile) return 9+perr("missing output filename.\n");
+
+      num nFileSize = 0;
+      uchar *pdata = loadBinaryFile(pszInFile, nFileSize);
+      if (!pdata) return 9;
+
+      num nOutSize = nFileSize * 2; // approx.
+      uchar *pout = new uchar[nOutSize+100];
+      if (!pout) return 9+perr("out of memory.\n");
+
+      long nrc = 0;
+      long nsave = -1;
+      if (bencode) {
+         nrc = encode64(pdata, nFileSize, pout, nOutSize, 40);
+         if (nrc)
+            perr("encoding failed, rc %ld\n", nrc);
+         else
+            nsave = strlen((char*)pout);
+      } else {
+         nrc = decode64(pdata, nFileSize, pout, nOutSize);
+         if (nrc < 0)
+            perr("decoding failed.");
+         else
+            nsave = nrc;
+      }
+
+      if (nsave >= 0)
+      {
+         if (!pszOutFile) {
+            printf("%s",pout);
+         } else {
+            FILE *fout = fopen(pszOutFile, "wb");
+            if (fout) {
+               long ndone = myfwrite(pout, nsave, fout);
+               if (ndone != nsave)
+                  perr("failed to fully write output file");
+               fclose(fout);
+            }
+         }
+      }
+
+      delete [] pdata;
+      delete [] pout;
+
+      bDone = 1;      
+   }
+
+   ifcmd (strBegins(pszCmd, "char"))
+   {
+      ifhelp (!chain.usefiles && (nparm < 1))
+      printx("<help>$sfk char[s] word\n"
+             "\n"
+             "   print ascii codes of all chars of a word,\n"
+             "   or print chars for the given code(s).\n"
+             "\n"
+             "   $options\n"
+             "      -codes    force listing of character codes,\n"
+             "                do not check if word is a number.\n"
+             "      -literal  or -lit stops interpretation of any further\n"
+             "                options or chain commands. required if you\n"
+             "                need the code of \"-\" or \"+\".\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk chars hello\n"
+             "         prints 5 lines of codes, one for each char.\n"
+             "\n"
+             "      #sfk chars 0x53464b\n"
+             "         prints 'SFK', the letters for these hex codes.\n"
+             "         any number of hex values can be provided.\n"
+             "\n"
+             "      #sfk char 65\n"
+             "         prints 'A', the letter for that decimal code.\n"
+             "         only a single decimal value can be provided.\n"
+             "\n"
+             "      #sfk char -lit +\n"
+             "         print the code of the plus char.\n"
+             );
+      ehelp;
+      
+      char *pword  = 0;
+      bool bdecode = 0;
+      bool blit    = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         if (!blit) {
+            if (strBegins(argv[iDir], "-code")) {
+               bdecode = 1;
+               continue;
+            }
+            else
+            if (strBegins(argv[iDir], "-lit")) {
+               blit = 1;
+               continue;
+            }
+            else
+            if (!strncmp(argv[iDir], "-", 1)) {
+               if (isDirParm(argv[iDir]))
+                  break; // fall through
+               if (setGeneralOption(argv, argc, iDir))
+                  continue;
+               else
+                  return 9+perr("unknown option: %s\n", argv[iDir]);
+            }
+            else
+            if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
+               break;
+         }
+         // process non-option keywords:
+         if (!pword)
+            { pword = argv[iDir]; continue; }
+         return 9+perr("unexpected parameter: %s\n", argv[iDir]);
+      }
+
+      if (!pword)
+         return 9+perr("missing argument\n");
+
+      char *psz = pword;
+      bool bjustdigits = 1;
+      for (; *psz; psz++)
+         if (!isdigit(*psz))
+            bjustdigits = 0;
+
+      if (!bdecode && (bjustdigits || strBegins(pword, "0x")))
+      {
+         if (bjustdigits) {
+            long npre = atol(pword);
+            if (npre > 255)
+               return 9+perr("value too large");
+            uchar n = (uchar)npre;
+            printf("%d\t0x%02X\t%c\n", n, n, (char)n);
+         } else {
+            pword += 2;
+            for (; *pword; pword+=2) {
+               if (strlen(pword) == 0)
+                  break;
+               if (strlen(pword) == 1)
+                  return 9+perr("unexpected character: %s\n", pword);
+               uchar n = (uchar)getTwoDigitHex(pword);
+               printf("%d\t0x%02X\t%c\n", n, n, (char)n);
+            }
+         }
+      }
+      else
+      {
+         for (; *pword; pword++) {
+            uchar uc = (uchar)*pword;
+            printf("%d\t0x%02X\t%c\n", uc, uc, *pword);
+         }
+      }
 
       bDone = 1;
    }
@@ -42089,11 +44958,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "    }\n"
          "\n"
          "    // to run it as an applet:\n"
-         "	public void init() {\n"
-         "		clPane = new JPanel();\n"
-         "		this.setContentPane(clPane);\n"
-         "		fillPane();\n"
-         "	}\n"
+         "  public void init() {\n"
+         "     clPane = new JPanel();\n"
+         "     this.setContentPane(clPane);\n"
+         "     fillPane();\n"
+         "  }\n"
          "    /*\n"
          "       create a page \"show.html\" containing\n"
          "\n"
@@ -42106,7 +44975,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "}\n"
           ,pszClassName,pszClassName
         );
-		  break;
+        break;
 
       case 15:
       chain.printFile(
@@ -42493,12 +45362,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       SOCKET hSock = 0;
 
-      #ifdef _WIN32
-      WORD wVersionRequested = MAKEWORD(1,1);
-      WSADATA wsaData;
-      if (WSAStartup(wVersionRequested, &wsaData)!=0)
-         return 9+perr("WSAStartup failed\n");
-      #endif
+      prepareTCP();
    
       struct hostent *pTarget;
       struct sockaddr_in sock;
@@ -42705,10 +45569,23 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          if (!pszAbsScript) return 9+perr("%s not found in current dir or PATH.\n", pszScriptFile);
       }
 
-      char *pScript = loadFile(pszAbsScript);
-      if (!pScript) return 9+perr("failed to load script file: %s\n", pszAbsScript);
+      char *pScriptRaw = loadFile(pszAbsScript);
+      if (!pScriptRaw)
+         return 9+perr("failed to load script file: %s\n", pszAbsScript);
 
-      // NO RETURN W/O DELETE FROM HERE
+      // pScriptRaw is the original script data.
+      // pScript will be stuffed with terminators
+      // and therefore is not reusable.
+      char *pScript = strdup(pScriptRaw);
+
+      // auto delete all script data on return.
+      CharAutoDel odel1(pScriptRaw);
+      CharAutoDel odel2(pScript);
+
+      // in case "call" is used inside script:
+      CharAutoRestore oclear(&pGlblCurrentScript);
+      pGlblCurrentScript = pScriptRaw;
+      // on return, pGlbl will have it's old value set.
 
       lRC = 0;
 
@@ -42817,15 +45694,17 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             pszSubCmd = psubargv[1];
             iSubDir = 2;
          }
+         if (cs.verbose > 0)
+            printf("  run from \"%s\" (index %d)\n", pszSubCmd, iSubDir);
          lRC = submain(nsubargc, psubargv, penv, pszSubCmd, iSubDir, bFatal);
       }
 
       if (psubargv) delete [] psubargv;
       oDynaStrings.resetEntries();
 
-      // NO RETURN W/O DELETE UNTIL HERE
-
-      delete [] pScript;
+      // pScript is auto deleted.
+      // pGlblCurrentScript is auto restored to old value,
+      // in case that nested script commands are used.
 
       if (lRC >= 9) return lRC;
 
@@ -43418,6 +46297,10 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       printx("   $sfk list [-late|-old|-big|-small] [...] dir [mask]\n"
              "       list latest, oldest or biggest files within a directory tree.\n"
              "       find identical files. list changed files between directories.\n");
+      #ifdef VFILEBASE
+      printx("       list zip jar tar gz bz2 contents. type \"sfk list\" for more.\n");
+      if (0) // skip next printx
+      #endif // VFILEBASE
       printx("       list zip and jar contents. type \"sfk list\" for more.\n");
       printx("          #sfk list -dir src1 -file .cpp -dir src2 -file .hpp\n"
              "          #sfk list -late=20 -pure\n"
@@ -43464,9 +46347,14 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "       instant http server, providing access to current directory.\n"
              "       type \"sfk httpserv -help\" for details.\n"
              #endif
+             #ifdef VFILENET
+             "   $sfk wget url [outdir] [-fullpath]\n"
+             "       download http:// content. type \"sfk wget\" for more.\n"
+             #endif // VFILENET
              "   $sfk split 2000m infile.dat [outfile.dat]\n"
              "   $sfk join infile.dat.part1 [outfile.dat]\n"
              "       split and join large binary files. \"sfk split\" for more.\n"
+             "   $sfk copy<def>     copy or synchronize files and dir trees.\n"
              "   $sfk partcopy<def> copy some bytes from a file into another file.\n"
              );
       printx("   $sfk detab=tabsize dir ext1 [ext2 ...]\n"
@@ -43577,6 +46465,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "   $sfk ... +sort<def>    sort text output of a previous command.\n"
              "   $sfk ... +count<def>   count no. of lines, or duplicate occurences.\n"
              "   $sfk ... +loop<def>    repeat the execution of command(s).\n"
+             "   $sfk ... +if ...<def>  conditional execution. \"sfk if\" for more.\n"
+             "   $sfk ... +call<def>    call script functions. \"sfk call\" for more.\n"
              );
 
       printx(
@@ -43585,6 +46475,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              #endif
 
              "   $sfk make-random-file<def>   create a file full of random data.\n"
+             "   $sfk ownip<def>        print ip address(es) of own machine.\n"
+             "   $sfk udpdump<def>      print content of incoming UDP packets.\n"
 
              #ifdef _WIN32
              "\n"
@@ -43594,11 +46486,12 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              #endif
 
              #ifdef _WIN32
-             "   $sfk help ascii [-ansi|-dos]<def> - list ascii character set.\n"
-             "   $sfk help shell<def> - how to optimize your windows Command Prompt.\n"
+             "   $sfk [help] ascii [-ansi|-dos]<def> - list ascii character set.\n"
+             "   $sfk help shell<def>   - how to optimize your windows Command Prompt.\n"
              #else
-             "   $sfk help ascii<def> - list ascii character set.\n"
+             "   $sfk [help] ascii<def> - list ascii character set.\n"
              #endif
+             "   $sfk chars phrase<def> - list character codes of given phrase.\n"
 
              "\n"
              "   $All tree walking commands support file selection this way:\n"
@@ -43646,6 +46539,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
              "   type \"sfk help options\"   to list all general options and configs.\n"
              "   type \"sfk help chain\"     about how to combine multiple commands.\n"
              "   type \"sfk help patterns\"  for supported wildcards and slash patterns.\n"
+             #ifdef VFILEBASE
+             #endif // VFILEBASE
           // "   type \"sfk help fileset\"   for how to list dir names in a text file.\n"
             );
       printx("\n"
@@ -43657,14 +46552,21 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       return 9;
    }
 
-   ifcmd (!strcmp(argv[1], "help"))
+   ifcmd (!strcmp(argv[1], "help") || !strcmp(argv[1], "ascii"))
    {
-      if (!bhelp && nparm < 1) {
+      bool bShortAscii = strcmp(argv[1], "ascii") ? 0 : 1;
+
+      if (!bhelp && !bShortAscii && (nparm < 1)) {
          fprintf(stderr, "please type just \"sfk\" to list the sfk main help.\n");
          return 9; 
       }
 
-      char *pszSub = bhelp ? (char*)"" : argv[2];
+      char *pszSub = "";
+
+      if (bShortAscii)
+         pszSub = "ascii";
+      else
+         pszSub = bhelp ? (char*)"" : argv[2];
 
       #ifdef _WIN32
       char *pszSet = "set";
@@ -43753,7 +46655,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
 
       if (bhelp)
       {
-         printx("<help>$sfk help ascii\n"
+         printx("<help>$sfk help ascii  (or just \"sfk ascii\")\n"
                 "\n"
                 "   print a table of ASCII characters with their codes.\n"
                 "\n"
@@ -43764,7 +46666,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
       {
          char *pszSubSub = "";
 
-         int iDir = 3;
+         int iDir = bShortAscii ? 2 : 3;
+
          for (; iDir<argc; iDir++) 
          {
             if (!strcmp(argv[iDir], "-ansi")) { pszSubSub=argv[iDir]; continue; }
@@ -43913,6 +46816,11 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "              as soon as you add -yes, however, everything is fully executed.\n"
       // "   $-nonames<def>   or -nofile[names] does not create :file name records when\n"
       // "              chaining text data from one command to another.\n"
+         "   $-textfiles<def> process only text files, no binaries. -text is the same,\n"
+         "              but this may interfere with some command's local -text option.\n"
+         "              text/binary detection only checks the file's first 4096 bytes.\n"
+         "   $-binfiles<def>  process only binary files. -bin is the same, but this may\n"
+         "              interfere with some command's local -bin option.\n"
          "   $-umlauts<def>   with binary-to-text conversion, include german characters.\n"
          "   $-nocol<def>     disable all colored output. important if your shell has\n"
          "              a background color incompatible to the default color scheme,\n"
@@ -43938,6 +46846,7 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "              with some commands like replace, filter -form and -replace.\n"
          "   $-literal<def>   or -lit disables interpretation of wildcards * and ?\n"
          "              and slash patterns, if they were activated previously.\n"
+         "   $-nospat<def>    disables only slash patterns.\n"
          );
          #ifdef _WIN32
   printx("   $-nocconv<def>   when printing output to the windows console, sfk tries\n"
@@ -43951,6 +46860,18 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          );
          #endif
   printx("   $-arc<def>       with sfk list, lists also archive file contents.\n");
+  #ifdef VFILEBASE
+  printx("              with some other commands, also process archive file contents.\n"
+         "              archives recognized by sfk must have one of these extensions:\n"
+         "              .zip .jar .ear .war .aar .xpi .tar .tar.gz .tar.bz2 .tgz .gz .bz2\n"
+   #ifndef VFILEMAX
+         "              this binary (SFK Base/XD) can read only the first 1000 bytes\n"
+         "              of every archive entry. listing of contents is not limited.\n"
+   #endif
+         "              type \"sfk help xe\" for all details and restrictions.\n"
+         );
+  if (0) // skip next printx
+  #endif // VFILEBASE
   printx("              zip files recognized by sfk must have one of these extensions:\n"
          "              .zip .jar .ear .war .aar .xpi\n");
   printx("   $-utf<def>       activate EXPERIMENTAL utf-16 (ucs-2, wide char) decoding,\n"
@@ -43973,6 +46894,15 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
   printx("   $-memlimit=n<def> set the caching memory limit to n mbytes (default=%ld).\n"
          "              used if a function needs to load whole files into memory.\n"
          ,(long)(nGlblMemLimit / 1048576));
+         #ifdef VFILEBASE
+  printx("              if zip etc. archive processing is very slow, it may be caused by\n"
+         "              a cache overflow. try to increase the -memlimit then.\n"
+         "              if you think sfk uses too much memory while processing files,\n"
+         "              try to reduce -memlimit (values below 200 are not recommended).\n"
+         "   $-cachestat<def> at program end, tell amount of memory used by the cache.\n"
+         "   $-nocache<def>   disable the disk cache (for network files).\n"
+         );
+         #endif // VFILEBASE
   printx("\n"
          "   $shell return code handling and error processing:\n"
          "\n"
@@ -44049,6 +46979,13 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
             if (!bhelp) setTextColor(-1);
          }
          #endif
+
+  printx("      $%s SFK_ZIP_EXT=\".foo .bar .myext\"\n"
+         "        set additional, user defined zip file extensions. in this example,\n"
+         "        files ending with .foo, .bar or .myext are also treated like zip files.\n"
+         "\n"
+         ,pszSet
+         );
    
          if (bGlblConsColumnsSet)
             printx("   sfk currently uses %ld console columns for output with some commands.\n", nGlblConsColumns);
@@ -44226,7 +47163,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          "\n"
          "      - subdirectory (subfolder) processing is done by default.\n"
          "      - filename comparison is case insensitive.\n"
-         "      - hidden and system files are not processed.\n"
+         "      - hidden and system files are not processed,\n"
+         "        except for some commands like copy.\n"
          "      - symbolic links are followed.\n"
          "\n"
          "        type \"sfk help options\" on how to change that.\n"
@@ -44429,6 +47367,8 @@ long submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool 
          bDone = 1;
       }
 
+      #ifdef VFILEBASE
+      #endif // VFILEBASE
 
       if (bhelp || !strcmp(pszSub, "fileset"))
       {
@@ -44573,7 +47513,8 @@ printx(
 #endif
 "if content(s) are too large to load, see -memlimit under \"sfk help opt\"\n"
 "replace colors in text lines: \"sfk filter\" with -highlight\n"
-"jpeg, jpg, png image processing, conversion: \"sfk samp javaimg\", \"sfk samp phpimg\"\n"
+"jpeg, jpg, png image processing, conversion: \"sfk samp javaimg\", \"sfk samp phpimg\""
+ " or google for imagemagick.\n"
 "all zip tar gz bz2 file extensions recognized by sfk: type \"sfk help opt\"\n"
 "process files changed from, until a date: see option -since and -before\n"
 
@@ -44600,6 +47541,12 @@ printx(
       printx("<help>$sfk ... +loop\n"
              "\n"
              "   repeat (loop) the execution of a command chain.\n"
+             "\n"
+             "   when using +loop in an sfk script file,\n"
+             "   always add +end after it (+loop +end).\n"
+             "\n"
+             "   $see also\n"
+             "      sfk tail - a script example with looping\n"
              "\n"
              "   $examples\n"
              "      #sfk list -late mydir +sleep 5000 +loop\n"
@@ -44635,6 +47582,7 @@ printx(
       bool bhit      = 0;
       int  iDirRaw   = iDir;
       bool bprocopt  = 0;
+      int  nrawpat   = 0;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++) 
@@ -44662,6 +47610,7 @@ printx(
          // if (isChainStart(pszCmd, argv, argc, iDir, &iChainNext))
          //    break;
          // process non-option keywords:
+         nrawpat++;
          char *prawpat  = argv[iDir];
          char *pfiltpat = filterAskPattern(prawpat, ppre1, ppre2);
          if (pfiltpat) apat.addEntry(pfiltpat);
@@ -44669,11 +47618,18 @@ printx(
          ppre1 = prawpat;
       }
 
+      // did user supply a useable query phrase?
+      long npat = apat.numberOfEntries();
+      if (nrawpat > 0 && !npat) {
+         perr("the given words are too generic, and cannot be used for search.");
+         pinf("please rephrase your query with more precise words.\n");
+         return 9;
+      }
+
       // just for chaining:
       if (lRC = processDirParms(pszCmd, argc, argv, iDir, 0, &iChainNext)) return lRC;
 
       // if search terms are supplied
-      long npat = apat.numberOfEntries();
       if (!iChainNext || (npat > 0))
       {
          // dump help contents now, optionally filtered by words

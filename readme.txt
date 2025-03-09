@@ -231,17 +231,18 @@ See also:
 
          http://stahlworks.com/dev/sfkxe.html
 
-   -  Depeche View for Windows is the world's fastest text search tool,
-      a must-have for anyone doing many repeated searches
-      within thousands of text files, especially source code.
+   -  Depeche View for Windows is a realtime text browser
+      that allows instant repeated searches across thousands
+      of text files, especially source code.
 
       The Base edition (provided also within the sfknnn.zip file)
-      is free for private use, and allows to load up to 10000 files.
+      is free for private, non-commercial use.
 
-      Depeche View Extended Edition (XE) can even view .zip, .tar.gz
-      and .tar.bz2 contents directly, without the need for extraction -
-      allowing to research downloaded open source packages instantly
-      with the least possible effort.
+      Depeche View Extended Edition (XE) also provides an integrated
+      text editor, allowing search and edit on the fly. Furthermore, 
+      it can view .zip, .tar.gz and .tar.bz2 contents directly, 
+      without the need for extraction - allowing to research downloaded 
+      open source packages instantly with the least possible effort.
 
          http://stahlworks.com/dev/dvxe.html
 

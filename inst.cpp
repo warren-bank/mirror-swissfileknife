@@ -5,78 +5,7 @@
                instead of just "{".
 */
 
-// enable LFS esp. on linux:
-#define _LARGEFILE_SOURCE
-#define _LARGEFILE64_SOURCE
-#define _FILE_OFFSET_BITS 64
-
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdarg.h>
-#include <ctype.h>
-#include <assert.h>
-#include <time.h>
-#include <string.h>
-#include <sys/timeb.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-
-#ifdef _WIN32
-  #include <windows.h>
-  #include <eh.h>
-  #include <sys/timeb.h>
-  #include <time.h>
-  #include <process.h>
-  #define getpid() _getpid()
-  #include <errno.h>
-  #include <direct.h>
-#else
-  #include <unistd.h>
-  #include <dirent.h>
-  // #include <ndir.h>
-  // #include <sys/ndir.h>
-  // #include <sys/dir.h>
-  // #define dirent direct
-#endif
-
-#define uchar unsigned char
-#define ulong unsigned long
-#define bool  unsigned char
-
-#ifdef CALLBACK_TRACING
- #define mtklog  cbtrace
- #define mtkerr  cbtrace
- #define mtkwarn cbtrace
- #define mtkdump 
-#else
- #ifdef WITH_TRACING
-  #include "mtk/mtktrace.hpp"
- #else
-  #define mtklog
-  #define mtkerr
-  #define mtkwarn
-  #define mtkdump
- #endif
-#endif
-
-#ifdef _MSC_VER
-typedef __int64 mysize_t;
-#else
-typedef long mysize_t;
-#endif
-
-#ifdef _WIN32
-static const char  glblPathChar    = '\\';
-static const char *glblPathStr     = "\\";
-static const char *glblAddWildCard = "*";
-static const char *glblDotSlash    = ".\\";
-#else
-static const char  glblPathChar    = '/';
-static const char *glblPathStr     = "/";
-static const char *glblAddWildCard = "";
-static const char *glblDotSlash    = "./";
-#endif
+#include "sfkbase.hpp"
 
 // #define SFK_MEMTRACE
 #ifdef _WIN32
@@ -84,6 +13,14 @@ static const char *glblDotSlash    = "./";
   #define  MEMDEB_JUST_DECLARE
   #include "memdeb.cpp"
  #endif
+#endif
+
+#ifdef WINCE
+   #undef stat
+   #undef stat64
+   extern int mystat(const char *_Name, struct stat *_Stat);
+   extern char *strdup(char *);
+   extern int remove(char *);
 #endif
 
 static char szLineBuf[4096];
@@ -550,10 +487,16 @@ bool SrcParse::hasFunctionStart(ulong &rnline)
    return false;
 }
 
-static long fileSize(char *pszFile) {
+static long fileSize(char *pszFile) 
+{
    struct stat sinfo;
+   #ifdef WINCE
+   if (mystat(pszFile, &sinfo))
+      return -1;
+   #else
    if (stat(pszFile, &sinfo))
       return -1;
+   #endif
    return sinfo.st_size;
 }
 
@@ -577,8 +520,6 @@ static char *loadFile(char *pszFile, int nLine)
    pOut[lFileSize] = '\0';
    return pOut;
 }
-
-extern long fileExists(char *pszFileName, bool bOrDir=0);
 
 int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke)
 {

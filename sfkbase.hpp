@@ -1,6 +1,329 @@
 /*
-   swiss file knife base classes
+   swiss file knife base include
 */
+
+// ========== core includes and operating system abstraction ==========
+
+// enable LFS esp. on linux:
+#define _LARGEFILE_SOURCE
+#define _LARGEFILE64_SOURCE
+#define _FILE_OFFSET_BITS 64
+
+#ifdef _WIN32
+ #ifdef WINCE
+  #define UNALIGNED __unaligned
+  #define _INC_TIME_INL
+ #else
+  #define WINFULL
+ #endif
+#endif
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdarg.h>
+#include <ctype.h>
+#include <assert.h>
+#include <time.h>
+#include <string.h>
+#include <sys/timeb.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+#ifdef _WIN32
+  #define FD_SETSIZE 200   // must be set before windows.h
+  #include <windows.h>
+  #ifdef WINCE
+    #include "winsock2.h"
+  #endif
+  #include <eh.h>
+  #include <sys/timeb.h>
+  #include <time.h>
+  #include <process.h>
+  #define getpid() _getpid()
+  #include <errno.h>
+  #include <direct.h>
+  #include <signal.h>
+  #include <io.h>
+  #ifndef socklen_t
+   #define socklen_t int
+  #endif
+  #ifndef SD_RECEIVE
+   #define SD_RECEIVE 0x00
+   #define SD_SEND    0x01
+   #define SD_BOTH    0x02
+  #endif
+  #ifndef SHUT_RD
+   #define  SHUT_RD   SD_RECEIVE
+   #define	SHUT_WR   SD_SEND
+   #define	SHUT_RDWR SD_BOTH
+  #endif
+  #define vsnprintf _vsnprintf
+  #define snprintf  _snprintf
+  // FILE_ATTRIBUTE_READONLY    0x00000001
+  // FILE_ATTRIBUTE_HIDDEN      0x00000002
+  // FILE_ATTRIBUTE_SYSTEM      0x00000004
+  // FILE_ATTRIBUTE_DIRECTORY   0x00000010
+  // FILE_ATTRIBUTE_ARCHIVE     0x00000020
+  // FILE_ATTRIBUTE_NORMAL      0x00000080
+  // FILE_ATTRIBUTE_TEMPORARY   0x00000100
+  #define WINFILE_ATTRIB_MASK   0x0000001F
+#else
+  #include <unistd.h>
+  #include <dirent.h>
+  #include <sys/stat.h>
+  #include <netinet/in.h>
+  #include <sys/socket.h>
+  #include <sys/ioctl.h>
+  #include <sys/time.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>
+  #include <errno.h>
+  #include <sched.h>
+  #include <signal.h>
+  #include <sys/statvfs.h>
+  #include <utime.h>
+  #include <pthread.h>
+  #include <pwd.h>
+  #include <ifaddrs.h>
+  #ifndef  _S_IFDIR
+   #define _S_IFDIR 0040000 // = 0x4000
+  #endif
+  #ifndef  _S_IREAD
+   #ifdef S_IREAD
+    #define _S_IREAD  S_IREAD
+    #define _S_IWRITE S_IWRITE
+   #else
+    #define _S_IREAD  __S_IREAD  // by owner
+   #define  _S_IWRITE __S_IWRITE // by owner
+   #endif
+  #endif
+  typedef int SOCKET;
+  #define INVALID_SOCKET -1
+  #define SOCKET_ERROR   -1
+  #define ioctlsocket ioctl
+  #define WSAEWOULDBLOCK EWOULDBLOCK
+#endif
+
+// - - - - - basic types and tracing - - - - -
+
+#ifdef MAC_OS_X
+ #define fpos64_t  fpos_t
+ #define fgetpos64 fgetpos
+ #define fsetpos64 fsetpos
+ #define statvfs64 statvfs
+ #define stat64    stat
+ #define __dev_t   dev_t
+#endif // MAC_OS_X
+
+#define uchar unsigned char
+#define ulong unsigned long
+#define bool  unsigned char
+
+#define mclear(x) memset(&x, 0, sizeof(x))
+
+#ifdef CALLBACK_TRACING
+ #define mtklog  cbtrace
+ #define mtkerr  cbtrace
+ #define mtkwarn cbtrace
+ #define mtkdump
+ #define _
+ #define __
+#else
+ #ifdef WITH_TRACING
+  #include "mtk/mtktrace.hpp"
+  #ifdef MTKTRACE_CODE
+   #include "mtk/mtktrace.cpp"
+  #endif
+  #define _  mtklog("[sfk %d]",__LINE__);
+  #define __ MTKBlock tmp983452(__FILE__,__LINE__,"");tmp983452.dummy();
+ #else
+  #define mtklog
+  #define mtkerr
+  #define mtkwarn
+  #define mtkdump
+  #define _
+  #define __
+ #endif
+#endif
+
+#ifdef _WIN32
+static const char  glblPathChar    = '\\';
+static const char  glblWrongPChar  = '/';
+static const char *glblPathStr     = "\\";
+static const char *glblAddWildCard = "*";
+static const char *glblDotSlash    = ".\\";
+static       char  glblNotChar     = '!';
+static       char  glblRunChar     = '$';
+static const char *glblWildStr     = "*";
+static const char  glblWildChar    = '*';
+static const char *glblWildInfoStr = "*";
+#define SFK_FILT_NOT1 "-!"
+#define SFK_FILT_NOT2 "-ls!"
+#define SFK_FILT_NOT3 "-le!"
+#define EXE_EXT ".exe"
+#define SFK_SETENV_CMD "set"
+#else
+static const char  glblPathChar    = '/';
+static const char  glblWrongPChar  = '\\';
+static const char *glblPathStr     = "/";
+static const char *glblAddWildCard = "";    // not used w/ linux
+static const char *glblDotSlash    = "./";
+static       char  glblNotChar     = ':';
+static       char  glblRunChar     = '#';
+static       char  glblWildStr[10];       // "+";
+static       char  glblWildChar;          // '+';
+static       char  glblWildInfoStr[20];   // "+ or \\*";
+#define SFK_FILT_NOT1 "-:"
+#define SFK_FILT_NOT2 "-ls:"
+#define SFK_FILT_NOT3 "-le:"
+#define EXE_EXT ""
+#define SFK_SETENV_CMD "export"
+#endif
+
+// - - - - - 64 bit abstractions - - - - -
+
+#ifdef WINFULL
+ #if _MSC_VER >= 1310
+  #define SFK_W64
+ #endif
+#endif
+
+#ifdef _WIN32
+ typedef __int64 num;
+ #ifdef SFK_W64
+ typedef __time64_t mytime_t;
+ #else
+ typedef time_t mytime_t;
+ #endif
+#else
+ typedef long long num;
+ typedef time_t mytime_t;
+#endif
+
+extern char *numtostr(num n, int nDigits, char *pszBuf, int nRadix);
+extern char *numtoa_blank(num n, int nDigits=12);
+extern char *numtoa(num n, int nDigits, char *pszBuf);
+extern char *numtohex(num n, int nDigits, char *pszBuf);
+extern num   atonum(char *psz);
+extern num   myatonum(char *psz);
+extern mytime_t getSystemTime();
+
+#ifndef SIG_UNBLOCK
+   #define SIG_UNBLOCK 2
+#endif
+
+#ifndef SIGALRM
+   #define SIGALRM 14
+#endif
+
+#ifndef sigset_t
+   #define sigset_t int
+#endif
+
+#ifndef sigemptyset
+   #define sigemptyset(sig)
+#endif
+
+#ifndef sigaddset
+   #define sigaddset( set, sig)
+#endif
+
+#ifndef sigprocmask
+   #define sigprocmask(a, b, c)
+#endif
+
+// ========== end core includes and operating system abstraction ==========
+
+#ifndef SFKNOVFILE
+ #define VFILEBASE
+ #define VFILENET
+#endif // SFKNOVFILE
+
+long isDir(char *pszName);
+char *sfkLastError();
+
+#define MAX_ABBUF_SIZE 100000
+#define MAX_LINE_LEN     4096
+
+extern long (*pGlblJamFileCallBack)(char *pszFilename, num &rLines, num &rBytes);
+extern long (*pGlblJamLineCallBack)(char *pszLine, long nLineLen, bool bAddLF);
+extern long (*pGlblJamStatCallBack)(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes, ulong nSkipped, char *pszSkipInfo);
+
+char *findPathLocation(char *pszCmd, bool bExcludeWorkDir=0);
+extern long fileExists(char *pszFileName, bool bOrDir=0);
+
+#define strcopy(dst,src) mystrcopy(dst,src,sizeof(dst)-10)
+void  mystrcopy      (char *pszDst, char *pszSrc, long nMaxDst);
+long  mystrstri      (char *pszHayStack, char *pszNeedle, long *lpAtPosition = 0);
+char *mystrrstr      (char *psrc, char *ppat);
+char *mystrristr     (char *psrc, char *ppat);
+long  mystrncmp      (char *psz1, char *psz2, long nLen, bool bCase=0);
+long  mystricmp      (char *psz1, char *psz2);
+long  mystrnicmp     (char *psz1, char *psz2, long nLen);
+bool  strBegins      (char *pszStr, char *pszPat);
+bool  striBegins     (char *pszStr, char *pszPat);
+bool  strEnds        (char *pszStr, char *pszPat);
+void  removeCRLF     (char *pszBuf);
+bool  sfkisalnum     (uchar uc);
+bool  sfkisprint     (uchar uc);
+void  myrtrim        (char *pszBuf);
+void  skipToWhite    (char **pp);
+void  skipWhite      (char **pp);
+
+char *loadFile       (char *pszFile, bool bquiet=0);
+num   getFileSize    (char *pszName);
+num   getCurrentTime ( );
+num   atonum         (char *psz);   // decimal only
+num   myatonum       (char *psz);   // with 0x support
+char *numtoa         (num n, int nDigits=1, char *pszBuf=0);
+char *numtohex       (num n, int nDigits=1, char *pszBuf=0);
+long  timeFromString (char *psz, num &nRetTime);
+void  doSleep        (long nmsec);
+uchar *loadBinaryFile(char *pszFile, num &rnFileSize);
+bool  infoAllowed    ( );
+
+class IOStatusPhase {
+public:
+		IOStatusPhase	(char *pinfo);
+	  ~IOStatusPhase	( );
+};
+
+void	resetIOStatus	( );
+num   countIOBytes	(num nbytes);
+char	*getIOStatus	(num &nagemsec, num &nbytes, num &nmaxbytes);
+// returns NULL if no status is set
+
+class CharAutoDel {
+public:
+      CharAutoDel (char *p) { pClPtr = p; }
+     ~CharAutoDel ( )       { if (pClPtr) delete [] pClPtr; }
+private:
+      char *pClPtr;
+};
+
+// max length of sfk (internal) filenames and URL's
+#define SFK_MAX_PATH 512
+
+#ifdef  MAX_PATH
+ #undef MAX_PATH
+#endif
+#define MAX_PATH error_use_sfk_max_path
+
+#ifdef  PATH_MAX
+ #undef PATH_MAX
+#endif
+#define PATH_MAX error_use_sfk_max_path
+
+#ifdef VFILEBASE
+extern void  setDiskCacheActive(bool b);
+extern bool  getDiskCacheActive( );
+extern void  setDiskCachePath(char *p);
+extern char *getDiskCachePath( );
+#endif // VFILEBASE
+
+extern void myclosesocket(SOCKET hsock, bool bread=1, bool bwrite=1);
+bool userInterrupt   (bool bSilent=0, bool bWaitForRelease=0);
 
 // some linux/mac sys\param.h define that:
 #ifdef isset
@@ -342,6 +665,10 @@ public:
    char  *root(bool braw=0);  // "" if none, with braw: 0 if none
    char  *ref (bool braw=0);  // "" if none, with braw: 0 if none
 
+   #ifdef VFILEBASE
+   char  *orgName( );      // same as name() except on redirects
+   #endif // VFILEBASE
+
    long  status   ( );
    // 0:yet_unknown 1:ok 9:fails_to_read
 
@@ -414,6 +741,38 @@ public:
    void   closeDir   ( );  // required after processing.
    bool   isDirOpen  ( );
 
+   #ifndef VFILEZIP
+   long  isZipSubEntry  ( )   { return 0; }
+   bool   isTravelZip   (bool braw=0) { return 0; }
+   void   setArc        (bool bIsArchive) { }
+   bool   isKnownArc    ( )   { return 0; }
+   #endif // NVFILEZIP
+
+   #ifdef VFILEBASE
+
+   long   rawLoadDir ( );
+   Coi   *getElementByAbsName (char *pabs); // result is NOT locked
+
+   bool  isNet    ( );  // ftp OR http
+   bool  isFtp    ( );
+   bool  isHttp   ( );
+
+   // if it's zip, http or ftp, then it's virtual
+   bool  isVirtual(bool bWithRootZips=0);
+
+   num   getUsedBytes   ( );  // info for the cache
+
+	long	 prefetch		(bool bLoadNonArcBinaries, num nFogSizeLimit, num nHardSizeLimit);
+
+   // direct query of http header fields, if any given
+   StringMap &headers     ( );            // creates on demand
+   char      *header      (char *pname);  // returns NULL or the value
+
+   static char *cacheName (char *pnamein, char *pbufin, long nbufsize, long *prDirPartLen=0);
+   // nbufsize should be >= SFK_MAX_PATH
+
+   #endif // VFILEBASE
+
    // reference counting:
    long  incref   (char *pTraceFrom); // increment refcnt
    long  decref   ( );  // decrement refcnt
@@ -455,6 +814,35 @@ private:
    long   rawOpenDir    ( );  // prep for nextEntry()
    Coi   *rawNextEntry  ( );  // result owned by CALLER.
    void   rawCloseDir   ( );  // required after processing.
+
+   #ifdef VFILEBASE
+
+   long   provideInput  (int nTraceLine, bool bsilent=0);
+   long   loadOwnFileRaw(num nmaxsize, uchar **ppout, num &rsize);
+
+   // ftp folders and files
+   bool   rawIsFtpDir    ( );
+   //     rawLoadDir     ( )  // is generic
+   Coi   *rawNextFtpEntry( );
+   void   rawCloseFtpDir ( ); 
+   long   rawLoadFtpDir  ( ); // load remote dir listing
+
+   long   rawOpenFtpSubFile   (char *pmode);
+   size_t rawReadFtpSubFile   (void *pbufin, size_t nBufSize);
+   void   rawCloseFtpSubFile  ( );
+
+   // http pages and files
+   bool   rawIsHttpDir    ( );
+   //     rawLoadDir     ( )  // is generic
+   Coi   *rawNextHttpEntry( );
+   void   rawCloseHttpDir ( ); 
+   long   rawLoadHttpDir  ( );
+
+   long   rawOpenHttpSubFile  (char *pmode);
+   size_t rawReadHttpSubFile  (void *pbufin, size_t nBufSize);
+   void   rawCloseHttpSubFile ( );
+
+   #endif // VFILEBASE
 
    bool  debug    ( );
 
@@ -504,6 +892,12 @@ public: // not really
    CoiData  &data    ( );
    bool   hasData    ( );  // has a CoiData object
 
+   #ifdef VFILEBASE
+   bool   bClInCache;
+	bool	 isCached	( );
+   bool   hasContent ( );  // has CoiData AND cached data
+   #endif // VFILEBASE
+
    // adapt ctr and copy() on extensions!
 };
 
@@ -540,6 +934,12 @@ private:
    Coi  **apClArray;
 };
 
+#ifdef VFILEBASE
+class ZipReader;
+class HTTPClient;
+class FTPClient;
+#endif // VFILEBASE
+
 // data for directory and archive processing:
 // must be declared before ~coi otherwise data dtr is not called?
 class CoiData {
@@ -559,6 +959,10 @@ public:
    num    ntotalread;    // bytes read since open()
    ulong  ntold;         // warnings told about this file
    char   szlasterr[50]; // most recent error info
+   #ifdef VFILEBASE
+   bool   bloaddirdone;  // don't repeat dir loading
+   bool   bstopread;
+   #endif // VFILEBASE
    bool   banyread;      // anything yet read after open()?
 
    // this buffer is for high-level Coi read functions:
@@ -590,6 +994,46 @@ public:
    DIR     *ptrav;
    #endif
    FILE    *pfile;   // managed by Coi, not by CoiData
+
+   #ifdef VFILEBASE
+   // INTERNAL list of subfiles (zip, net).
+   // elements shall NOT be passed directly
+   // to callers, but only copies of them.
+   CoiTable *pelements;
+   CoiTable &elements ( );
+
+   long nNextElemEntry;
+
+   num  nPreCacheFileCnt;
+   num  nPreCacheFileBytes;
+
+   // ftp support
+   FTPClient *pClFtp;
+   // when set, it is allocated by the coi,
+   // and must be released after use.
+   long  getFtp(char *purl);
+   // on rc0, can use pClFtp.
+   long  releaseFtp( );
+   // does NOT close connection, but clears pClFtp.
+
+   // http support
+   HTTPClient *pClHttp;
+   // when set, it is allocated by the coi,
+   // and must be released after use.
+   long  getHttp(char *purl);
+   // on rc0, can use pClHttp.
+   long  releaseHttp( );
+   // clears pClHttp, but if connection is
+   // in keep-alive, does NOT close it yet.
+   StringMap &headers( );
+   // http headers, so far only non-redundant entries
+   // like content-type, but not multiple set-cookies.
+   StringMap *pClHeaders;
+
+   // if the coi was http redirected, then
+   bool  bRedirected;   // this is true
+   char  *pClOrgName;   // this is the first coi name
+   #endif // VFILEBASE
 };
 
 class CoiAutoDelete {
@@ -654,78 +1098,41 @@ private:
 
 extern ProgressInfo info;
 
-long isDir(char *pszName);
-char *sfkLastError();
+// simple double linked list
 
-#define MAX_ABBUF_SIZE 100000
-#define MAX_LINE_LEN 4096
-
-extern long (*pGlblJamFileCallBack)(char *pszFilename, num &rLines, num &rBytes);
-extern long (*pGlblJamLineCallBack)(char *pszLine, long nLineLen, bool bAddLF);
-extern long (*pGlblJamStatCallBack)(char *pszInfo, ulong nFiles, ulong nLines, ulong nMBytes, ulong nSkipped, char *pszSkipInfo);
-
-char *findPathLocation(char *pszCmd, bool bExcludeWorkDir=0);
-extern long fileExists(char *pszFileName, bool bOrDir=0);
-
-#define strcopy(dst,src) mystrcopy(dst,src,sizeof(dst)-10)
-void  mystrcopy      (char *pszDst, char *pszSrc, long nMaxDst);
-long  mystrstri      (char *pszHayStack, char *pszNeedle, long *lpAtPosition = 0);
-char *mystrrstr      (char *psrc, char *ppat);
-long  mystrncmp      (char *psz1, char *psz2, long nLen, bool bCase=0);
-long  mystricmp      (char *psz1, char *psz2);
-long  mystrnicmp     (char *psz1, char *psz2, long nLen);
-bool  strBegins      (char *pszStr, char *pszPat);
-bool  striBegins     (char *pszStr, char *pszPat);
-bool  strEnds        (char *pszStr, char *pszPat);
-void  removeCRLF     (char *pszBuf);
-bool  sfkisalnum     (uchar uc);
-bool  sfkisprint     (uchar uc);
-void  myrtrim        (char *pszBuf);
-void  skipToWhite    (char **pp);
-void  skipWhite      (char **pp);
-
-char *loadFile       (char *pszFile, bool bquiet=0);
-num   getFileSize    (char *pszName);
-num   getCurrentTime ( );
-num   atonum         (char *psz);   // decimal only
-num   myatonum       (char *psz);   // with 0x support
-char *numtoa         (num n, int nDigits=1, char *pszBuf=0);
-char *numtohex       (num n, int nDigits=1, char *pszBuf=0);
-long  timeFromString (char *psz, num &nRetTime);
-void  doSleep        (long nmsec);
-uchar *loadBinaryFile(char *pszFile, num &rnFileSize);
-bool  infoAllowed    ( );
-
-class IOStatusPhase {
+class ListEntry
+{
 public:
-		IOStatusPhase	(char *pinfo);
-	  ~IOStatusPhase	( );
+    ListEntry   ( );
+   ~ListEntry   ( );
+
+   ListEntry *next      ( ) { return pClNext; }
+   ListEntry *previous  ( ) { return pClPrevious; }
+
+   ListEntry *pClNext;
+   ListEntry *pClPrevious;
+
+   // user payload
+   void  *data;
 };
 
-void	resetIOStatus	( );
-num   countIOBytes	(num nbytes);
-char	*getIOStatus	(num &nagemsec, num &nbytes, num &nmaxbytes);
-// returns NULL if no status is set
-
-class CharAutoDel {
+class List
+{
 public:
-      CharAutoDel (char *p) { pClPtr = p; }
-     ~CharAutoDel ( )       { if (pClPtr) delete [] pClPtr; }
+   List  ( );
+  ~List  ( );
+
+   ListEntry *first  ( ) { return pClFirst; }
+   ListEntry *last   ( ) { return pClLast; }
+
+   void add          (ListEntry *p);
+   void addAsFirst   (ListEntry *p);
+   void addAfter     (ListEntry *after, ListEntry *toadd);
+   void remove       (ListEntry *entry);
+   void reset        ( );
+
 private:
-      char *pClPtr;
+   ListEntry *pClFirst;
+   ListEntry *pClLast;
 };
 
-// max length of sfk (internal) filenames and URL's
-#define SFK_MAX_PATH 512
-
-#ifdef  MAX_PATH
- #undef MAX_PATH
-#endif
-#define MAX_PATH error_use_sfk_max_path
-
-#ifdef  PATH_MAX
- #undef PATH_MAX
-#endif
-#define PATH_MAX error_use_sfk_max_path
-
-extern void myclosesocket(SOCKET hsock, bool bread=1, bool bwrite=1);

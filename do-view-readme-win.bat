@@ -1,2 +1,2 @@
 @echo off
-dview readme.txt
+start dview readme.txt

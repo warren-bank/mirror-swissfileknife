@@ -12,62 +12,12 @@
    - fix: added error checks
 */
 
-// enable LFS esp. on linux:
-#define _LARGEFILE_SOURCE
-#define _LARGEFILE64_SOURCE
-#define _FILE_OFFSET_BITS 64
+#include "sfkbase.hpp"
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdarg.h>
-#include <ctype.h>
-#include <assert.h>
-#include <time.h>
-#include <string.h>
-#include <sys/timeb.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-
-#ifdef _WIN32
-  #include <windows.h>
-  #include <eh.h>
-  #include <sys/timeb.h>
-  #include <time.h>
-  #include <process.h>
-  #define getpid() _getpid()
-  #include <errno.h>
-  #include <direct.h>
-#else
-  #include <unistd.h>
-  #include <dirent.h>
-  // #include <ndir.h>
-  // #include <sys/ndir.h>
-  // #include <sys/dir.h>
-  // #define dirent direct
-#endif
-
-#define uchar unsigned char
-#define ulong unsigned long
-#define bool  unsigned char
-
-#define MAX_LINE_LEN    4096
 #define MAX_CMD_LINES   10000 // max lines per :file ... :done block
 #define MAX_CACHE_LINES 10000 // max lines per :from ... :to pattern
 #define MAX_CMD         500   // max number of :from commands per patchfile
 #define MAX_OUT_LINES   50000 // max lines per target file
-
-#ifdef _WIN32
-static const char  glblPathChar    = '\\';
-static const char *glblPathStr     = "\\";
-static const char *glblAddWildCard = "*";
-static const char *glblDotSlash    = ".\\";
-#else
-static const char  glblPathChar    = '/';
-static const char *glblPathStr     = "/";
-static const char *glblAddWildCard = "";
-static const char *glblDotSlash    = "./";
-#endif
 
 FILE *fpatch  = 0;
 char *pszRoot = 0;
@@ -95,8 +45,6 @@ int  bGlblNoPID  = 0;
 int  bGlblIgnoreRoot = 0;
 
 char **apOut = 0; // [MAX_OUT_LINES];
-
-extern long fileExists(char *pszFileName, bool bOrDir=0);
 
 // select-replace table over all targets
 #define MAX_GLOBAL_CHANGES 50
