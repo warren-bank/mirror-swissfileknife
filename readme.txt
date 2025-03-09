@@ -1,6 +1,6 @@
 
 This is the Swiss File Knife (SFK), a command line multi function tool,
-made by Vincent Stahl, StahlWorks Art & Technology, http://stahlworks.com/
+made by Vincent Stahl, StahlWorks Technologies, http://stahlworks.com/
 
 SFK was made to make things easy.
 
@@ -244,29 +244,17 @@ See also:
       .tar.bz2 file contents. Binaries are available for Windows
       and 32-Bit Linux (newer and lib5 systems), but not for Mac.
 
-         http://stahlworks.com/dev/sfkxe.html
+         http://stahlworks.com/sfkxe.html
 
    -  Depeche View for Windows is a realtime source code viewer 
       that allows instant repeated searches across thousands of files.
 
-      The Lite edition is free for private, non-commercial use.
-      It is portable, requiring no installation.
-
-         http://stahlworks.com/dview/
-         sfk wget http://stahlworks.com/dview.exe
-
-      Depeche View Pro allows to search and edit any number of files,
+      Depeche View Pro allows to search and edit thousands of files,
       edit text on the fly, and to load and view .zip, .tar.gz and 
       .tar.bz2 contents without the need for extraction, allowing to 
       research downloaded open source packages instantly.
       
-      A 30 days trial version is available (Installer for Windows).
+      A trial version is available under:
 
-         http://stahlworks.com/dev/dvpro.html
-         sfk wget http://stahlworks.com/dvdemo.exe
+         http://stahlworks.com/depeche-view.html
 
-   -  Vincent Stahl: Computer Art of the 21st century is provided as
-      posters, mousepads, suitcase stickers, coffee mugs, CGI movies,
-      desktop backgrounds and ring tones under:
-
-         http://stahlworks.com/

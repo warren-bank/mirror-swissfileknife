@@ -1,11 +1,37 @@
 /*
    The Swiss File Knife Command Line Multi Function Tool
    =====================================================
-   Vincent Stahl, StahlWorks Art & Technology
-   http://stahlworks.com/dev/swiss-file-knife.html
+   Vincent Stahl, StahlWorks Technologies.
+   http://stahlworks.com/
    Provided under the BSD license.
 
+   1.6.4
+   Revision 2:
+   -  fix: ftpserv under linux, and other commands:
+           CTRL+C was ignored.
+   Initial Release:
+   -  fix: sfk select ... +copy ... crashed esp. on linux.
+   -  fix: sfk httpserv: filenames with blanks or special
+           characters could not be transferred.
+   -  fix: sfk wget: no longer including port number
+           in Host header if it's default port 80.
+   -  fix: hextobin: now also accepts single character
+           hex expressions like "0xa".
+   -  fix: windows compile with mingw.
+   -  add: tarball with configure script.
+   -  add: sfk chars: options -hexlist, -hexsrc.
+   -  add: sfk httpserv: mime type for favicon.ico file.
+   
    1.6.3
+   Revision 4:
+   -  add: sfk hexdump: options -notrail, -norectrail,
+           -recsize for hex/decsrc output format.
+   -  fix: sfk hexdump -offlen : hex values didn't work
+           when ending with non-digit characters.
+   -  fix: sfk hexdump -pure -offlen : offlen was ignored.
+   -  fix: sfk hexdump -offlen : ignored length values
+           not being a multiple of no. of output bytes.
+   -  add: sfk filter help text: reference to printf.
    Revision 3:
    -  fix: sfk select ... -file foo*.txt did not select
            files with extension .txt. (internal mismatch
@@ -85,6 +111,7 @@
            produced line numbers at the wrong place.
    -  fix: help text typos.
    internal:
+   -  fix: resetFileCounter: cs.lines was not reset.
    -  chg: subdir and path masks now stored in
            separate arrays.
    -  add: profiler class.
@@ -1458,8 +1485,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.6.3"  // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "3"
+#define SFK_VERSION  "1.6.4" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -1547,10 +1574,6 @@ static const char *pszGlblVerType = SFK_VERTYPE;
  #ifdef SFK_MEMTRACE
   #include "memdeb.cpp"
  #endif
-#endif
-
-#ifdef WINCE
- // #include "sfkwince.cpp"
 #endif
 
 #ifdef _WIN32
@@ -2476,6 +2499,8 @@ public:
    bool separator;         // print separator between outputs
    bool nolf;              // skip lf output on some commands
    bool multicast;         // udpclient
+   int  dumptrail;         // hexdump: trailing chars at line end
+   int  bytesperline;      // hexdump: when using hex/decsrc
 };
 
 struct CommandStats gs; // global settings accross whole chain
@@ -3070,6 +3095,7 @@ class FileList;
 class StringPipe;
 class Coi;
 
+int decodeUrl       (char *pszInOut);
 int execDetab       (char *pszFile, char *pszOutFile);
 int execEntab       (char *pszFile);
 int execScantab     (char *pszFile);
@@ -3090,7 +3116,8 @@ int execDirCopy     (char *pszSrc, FileList &oDirFiles);
 int execFileCleanup (char *pszFile);
 int execDirCleanup  (char *pszSrc, FileList &oDirFiles);
 int timeFromString  (char *psz, num &nRetTime);
-bool tryGetRelTime   (cchar *psz, num &nRetTime);
+bool tryGetRelTime  (cchar *psz, num &nRetTime);
+int diffDump        (uchar *p1, uchar *p2, num nlen, num nListOffset);
 int execReplaceFix  (Coi *pcoi);
 int execReplaceVar  (Coi *pcoi);
 size_t myfread       (uchar *pBuf, size_t nBytes, FILE *fin , num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
@@ -7281,14 +7308,14 @@ size_t myfwrite(uchar *pBuf, size_t nBytes, FILE *fout, num nMax, num nCur, SFKM
 void timetToFileTime(num ntimet, FILETIME *pft)
 {
    time_t t = (time_t)ntimet;
-   LONGLONG ll = Int32x32To64(t, 10000000) + 116444736000000000;
+   LONGLONG ll = Int32x32To64(t, 10000000) + 116444736000000000LL;
    pft->dwLowDateTime  = (DWORD)ll;
    pft->dwHighDateTime = (DWORD)(ll>>32);
 }
 
 num fileTimeToTimeT(num nwft)
 {
-   nwft -= 116444736000000000;
+   nwft -= 116444736000000000LL;
    nwft /= 10000000;
    return nwft;
 }
@@ -7297,7 +7324,7 @@ num fileTimeToTimeT(FILETIME *pft)
 {
    num nwft =     (((num)pft->dwHighDateTime) << 32)
                |  (((num)pft->dwLowDateTime));
-   nwft -= 116444736000000000;
+   nwft -= 116444736000000000LL;
    nwft /= 10000000;
    return nwft;
 }
@@ -7442,15 +7469,6 @@ int perr(const char *pszFormat, ...)
    ::vsnprintf(szErrBuf, sizeof(szErrBuf)-10, pszFormat, argList);
    szErrBuf[sizeof(szErrBuf)-10] = '\0';
 
-   #ifdef WINCE
-
-   printf("error: %s", szErrBuf);
-   bErrBufSet = 1;
-   nGlblErrors++;
-   return 0;
-
-   #else
-
    if (pGlblSFKStatusCallBack) {
       // output to callback
       removeCRLF(szErrBuf);
@@ -7475,8 +7493,6 @@ int perr(const char *pszFormat, ...)
    }
 
    return 0;
-
-   #endif
 }
 
 int pwarn(const char *pszFormat, ...)
@@ -8117,7 +8133,7 @@ bool InfoCounter::checkTime() {
 
 InfoCounter glblFileCount;
 
-void resetFileCounter()   { glblFileCount.reset(); }
+void resetFileCounter()   { glblFileCount.reset(); cs.lines = 0; }
 bool fileCountCheckTime() { return glblFileCount.checkTime(); }
 
 class NoCaseText
@@ -8194,23 +8210,24 @@ uchar *memIFind(uchar *pNeedle, num nNeedleSize, uchar *pHayStack, num nHaySize)
    return 0;
 }
 
-class FileInfo {
+class FileInfo 
+{
 public:
       FileInfo    (bool bWriteOnly=false);
      ~FileInfo    ( );
-int  init        (char *pszFileName, int nShortNameLen=60, num nFileSize=0);
+int   init        (char *pszFileName, int nShortNameLen=60, num nFileSize=0);
 bool  fileValid   ( );
 bool  timeToTell  ( );
-int  percentage  (num nPosition);
-cchar  *prefix    ( );
-cchar  *shortName ( );
+int   percentage  (num nPosition);
+cchar *prefix     ( );
+cchar *shortName  ( );
 num   fileSize    ( ) { return nClFileSize; }
 void  printBlankLine (int nChars);
 private:
 bool  bClWriteOnly;
 char  *pszClName;
-int  nClNameLen;
-int  nClShortNameLen;
+int   nClNameLen;
+int   nClShortNameLen;
 num   nClStartTime;
 num   nClNextTell;
 num   nClFileSize;
@@ -14011,6 +14028,8 @@ num numFromSizeStr(char *psz, cchar *pszLoudInfo=0)
    int nLen = strlen(psz);
    if (nLen >= 1) {
       num lNum = myatonum(psz);
+      if (!strncmp(psz, "0x", 2))
+         return lNum; // hex: always byte values
       char cPostFix = psz[nLen-1];
       switch (cPostFix) {
          case 'b': return lNum;
@@ -16495,7 +16514,11 @@ bool userInterrupt(bool bSilent, bool bWaitForRelease) {
    return 0;
 }
 #else
-bool userInterrupt(bool bSilent, bool bWait) { return 0; }
+bool userInterrupt(bool bSilent, bool bWait) 
+{ 
+   // FIX 1642: always returned 0
+   return bGlblEscape;
+}
 #endif
 
 char *loadFile(char *pszFile, bool bquiet)
@@ -21176,8 +21199,10 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
       #endif
       case eFunc_Hexdump   : return execHexdump(pszFile, 0, 0);   break;
       case eFunc_AliasList : return execAliasList(pszFile);  break;
+      #ifndef SFKLAB
       case eFunc_ReplaceFix: return execReplaceFix(pcoi);    break;
       case eFunc_ReplaceVar: return execReplaceVar(pcoi);    break;
+      #endif
       case eFunc_Filter    : return execFilter(pcoi, 0, 0, -1, pszOutFile); break;
       case eFunc_Delete    : return execDelFile(pszFile);    break;
       #ifndef USE_SFK_BASE
@@ -22041,7 +22066,7 @@ uchar **apRepSrcExp = 0; // source expressions
 int  *apRepSrcLen   = 0; // length of source expressions
 uchar **apRepDstExp = 0; // dest. expressions
 int  *apRepDstLen   = 0; // length of dest. expressions
-int  *apRepFlags    = 0; // 0:is it text or binary, 1:was it found
+int  *apRepFlags    = 0; // 0:is it text or binary, 1:was it found, 2:use case
 num   *apRepOffs    = 0; // current offset in file to continue search
 
 int execReplaceFix(Coi *pcoi)
@@ -22059,8 +22084,6 @@ int execReplaceFix(Coi *pcoi)
 
    FileInfo finf;
    if (finf.init(pszFile, 56, nFileSize)) return 9;
-
-   int diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset);
 
    int lRC = 0;
 
@@ -22233,7 +22256,8 @@ int execReplaceFix(Coi *pcoi)
                   diffDump((uchar*)szRefNameBuf, abBuf+nHitLow, nDumpLen, nListOff);
                   nLastOff = nAbsOff;
                }
-            }
+            }  // endif dump
+            
             // this cpy is done always, no matter if RepDump or not:
             if (nExpLen == nDstLen) // else hexfind or sim
                memcpy(pHit, apRepDstExp[iexp], nExpLen);
@@ -22369,8 +22393,6 @@ int execReplaceVar(Coi *pcoi)
 
    FileInfo finf;
    if (finf.init(pszFile, 56)) return 9;
-
-   int diffDump(uchar *p1, uchar *p2, num nlen, num nListOffset);
 
    int lRC = 0;
 
@@ -22647,6 +22669,192 @@ int execReplaceVar(Coi *pcoi)
    }
 
    return 0;
+}
+
+// RC : 0 == match, <> 0 == no match.
+// Not suitable for sorting algorithms.
+int sfkmemcmp(uchar *psrc1, uchar *psrc2, num nlen, bool bcase)
+{
+   if (bcase)
+      return memcmp(psrc1, psrc2, nlen);
+      
+   num i=0, idiff=0;
+
+   // optim: compare last character first.
+   // requires at least a 2-char phrase.     
+   if (nlen > 1)
+   {
+      idiff =     glblNoCase.lowerUChar(psrc1[nlen-1])
+               -  glblNoCase.lowerUChar(psrc2[nlen-1]);
+      if (idiff)
+         return idiff;
+   }
+   
+   for (; i<nlen; i++)
+   {
+      idiff =     glblNoCase.lowerUChar(psrc1[i])
+               -  glblNoCase.lowerUChar(psrc2[i]);
+               
+      if (idiff)
+         break;
+   }
+
+   return idiff;
+}
+
+class SFKMemListEntry
+ : public ListEntry
+{
+public:
+   SFKMemListEntry(int iBlockSize);
+  ~SFKMemListEntry( );
+   
+   bool   isValid ( ) { return pmem ? 1 : 0;  }
+   int    remain  ( ) { return isize - iused; }
+
+   uchar *pmem;
+   int    isize;
+   int    iused;
+};
+
+SFKMemListEntry::SFKMemListEntry(int iBlockSize) 
+{
+   pmem  = 0;
+   isize = 0;
+   iused = 0;
+   
+   if (!(pmem = new uchar[iBlockSize+10]))
+      return; // isValid will be false
+      
+   isize = iBlockSize;
+   iused = 0;
+}
+
+SFKMemListEntry::~SFKMemListEntry( )
+{
+   if (pmem) delete [] pmem;
+}
+
+class SFKDataSink
+{
+public:
+      SFKDataSink ( );
+     ~SFKDataSink ( );
+     
+int   openFileWrite     (Coi *pCoi); // NOT managed by sink
+int   openMemoryWrite   (num nBlockSize);
+num   write             (uchar *pData, num nSize);
+void  closeFileIfOpen   ( );
+bool  isMemoryCache     ( ) { return bClInMemoryMode; }
+
+Coi   *pClCoi;    // NOT managed by sink
+List  clMemList;  // memory IS managed by sink
+SFKMemListEntry *pClCurMem;
+num   nClBlockSize;
+bool  bClInMemoryMode;
+};
+
+SFKDataSink::SFKDataSink( ) 
+{
+   pClCoi = 0;
+   pClCurMem = 0;
+   nClBlockSize = 0;
+   bClInMemoryMode = 0;
+}
+
+SFKDataSink::~SFKDataSink( ) 
+{
+   if (pClCoi) {
+      if (pClCoi->isFileOpen())
+         pClCoi->close();
+   }
+   ListEntry *pnext=0;
+   for (ListEntry *p=clMemList.first();
+        p; p=pnext)
+   {
+      pnext = p->next();
+      SFKMemListEntry *p2 = (SFKMemListEntry *)p;
+      delete p2;
+   }
+}
+
+int SFKDataSink::openFileWrite(Coi *pCoi) 
+{
+   pClCoi = pCoi;
+   return pClCoi->open("wb");
+}
+
+void SFKDataSink::closeFileIfOpen( )
+{
+   if (pClCoi && pClCoi->isFileOpen())
+      pClCoi->close();
+}
+
+int SFKDataSink::openMemoryWrite(num nBlockSize) 
+{
+   nClBlockSize = nBlockSize;
+   pClCurMem = new SFKMemListEntry(nBlockSize);
+   if (!pClCurMem)
+      return 9+perr("out of memory");
+   if (!pClCurMem->isValid())
+      return 9+perr("out of memory");
+   clMemList.add(pClCurMem);
+   bClInMemoryMode = 1;
+   return 0; // OK
+}
+
+num SFKDataSink::write(uchar *pData, num nSize) 
+{
+   if (pClCoi) 
+   {
+      if (pClCoi->write(pData, nSize) < nSize) {
+         perr("failed to write (disk full?): %s", pClCoi->name());
+         return -1;
+      }
+      return nSize;
+   } 
+   else 
+   {
+      if (!pClCurMem) return -1;
+      
+      // write to memory, splitting over two blocks
+      int iRemain1   = pClCurMem->remain();
+      int iPart1Size = (int)nSize;
+      int iPart2Size = 0;
+      if (iPart1Size > iRemain1) {
+          iPart1Size = iRemain1;
+          iPart2Size = (int)nSize - iPart1Size;
+      }
+      if (iPart1Size > 0) {
+         memcpy(pClCurMem->pmem + pClCurMem->iused, pData, iPart1Size);
+         pClCurMem->iused += iPart1Size;
+      }
+      if (iPart2Size > 0) 
+      {
+         // append another block with at least blocksize
+         int iNewBlockSize = (int)nClBlockSize;
+         // if part2 is very large, new block will be made that large
+         // and completely filled.
+         if (iNewBlockSize < iPart2Size)
+             iNewBlockSize = iPart2Size;
+         SFKMemListEntry *pnext = new SFKMemListEntry(iNewBlockSize);
+         if (!pnext || !pnext->isValid())
+            { perr("out of memory"); return -1; }
+         memcpy(pnext->pmem, pData+iPart1Size, iPart2Size);
+         pnext->iused = iPart2Size;
+         clMemList.add(pnext);
+         pClCurMem = pnext;
+      }   
+   }
+   
+   return nSize;
+}
+
+int execReplaceNew(Coi *pcoi, char *pszOptOutFile, bool bSameLengthAndFile)
+{__
+   int  iRC = 0;
+
+   return iRC;
 }
 
 int aGlblIndentStats[10];
@@ -23315,12 +23523,15 @@ int execHexdump(char *pszFile, uchar *pBuf, uint nBufSize)
    int lRelPos=0;
    uchar *pTmp = 0;
    uchar ucTmp;
-   uchar abBlockBuf[100];
+   uchar abBlockBuf[1000];
 
    int nbpl  = bGlblHexDumpWide ?  32 : 16; // bytes per line
    int itext = bGlblHexDumpWide ?  75 : 39; // text begin
    int ioffs = bGlblHexDumpWide ? 108 : 56; // offset begin
    int ieol  = ioffs + 20;
+   
+   if (nGlblHexDumpForm && cs.bytesperline)
+       nbpl  = cs.bytesperline;
 
    num  nTotalMax = 0;
    if (nGlblHexDumpLen > 0)
@@ -23331,6 +23542,9 @@ int execHexdump(char *pszFile, uchar *pBuf, uint nBufSize)
       printf("to %s ",numtoa(nTotalMax));
       printf("a total of %s bytes\n",numtoa(nGlblHexDumpLen));
    }
+
+   bool bNoBlockTrail = (cs.dumptrail & 1) ? 1 : 0;
+   bool bNoLineTrail  = (cs.dumptrail & 2) ? 1 : 0;
 
    while (1)
    {
@@ -23350,9 +23564,24 @@ int execHexdump(char *pszFile, uchar *pBuf, uint nBufSize)
       pTmp = abBlockBuf;
 
       int lOutLen = nread;
+      
+      // dump a full or partial output line?
+      if (nTotalMax > 0) {
+         num nTotalRemain = nTotalMax - ntotal;
+         if (lOutLen > nTotalRemain)
+            lOutLen = nTotalRemain;
+         if (lOutLen <= 0)
+            break;
+      }
 
       szLineBuf[0] = '\0';
       bool bshort  = 0;
+      bool bEOD    = 0;
+      
+      // last record?
+      if (nTotalMax > 0)
+         if (ntotal + nread >= nTotalMax)
+            bEOD = 1;
 
       switch (nGlblHexDumpForm)
       {
@@ -23370,6 +23599,10 @@ int execHexdump(char *pszFile, uchar *pBuf, uint nBufSize)
          case 2: { // source, hex
             for (int i=0; i<lOutLen; i++)
                mystrcatf(szLineBuf,MAX_LINE_LEN,"0x%02X,",pTmp[i]);
+            int iLen = strlen(szLineBuf);
+            if (bNoLineTrail || (bEOD && bNoBlockTrail))
+               if (iLen > 0 && szLineBuf[iLen-1] == ',')
+                  szLineBuf[iLen-1] = '\0';
             strcat(szLineBuf,"\n");
             bshort = 1;
             break;
@@ -23378,6 +23611,10 @@ int execHexdump(char *pszFile, uchar *pBuf, uint nBufSize)
          case 3: { // source, dec
             for (int i=0; i<lOutLen; i++)
                mystrcatf(szLineBuf,MAX_LINE_LEN,"%u,",(uint)pTmp[i]);
+            int iLen = strlen(szLineBuf);
+            if (bNoLineTrail || (bEOD && bNoBlockTrail))
+               if (iLen > 0 && szLineBuf[iLen-1] == ',')
+                  szLineBuf[iLen-1] = '\0';
             strcat(szLineBuf,"\n");
             bshort = 1;
             break;
@@ -23402,79 +23639,78 @@ int execHexdump(char *pszFile, uchar *pBuf, uint nBufSize)
          }
       }
 
-      if (bshort) {
+      if (bshort) 
+      {
          // dump short form created above
          if (chain.coldata)
             chain.addLine(szLineBuf, str(""), 0);
          else
             printf("%s",szLineBuf);
-         // then continue with next chunk
-         continue;
       }
-
-      // else fall through to human-readable
-
-      memset(szLineBuf, ' ', ieol);
-      memset(szAttrBuf, ' ', ieol);
-      szLineBuf[ieol] = '\0';
-      szAttrBuf[ieol] = '\0';
-
-      szLineBuf[1] = '>';
-      szAttrBuf[1] = 'i';
-
-      char *pszHexOff = numtohex(ntotal, 8);
-      strcpy(&szLineBuf[ioffs], pszHexOff);
-      // adds zero terminator after offset info!
-      int ieol = strlen(szLineBuf);
-      szAttrBuf[ieol] = '\0';
-
-      lOutLen2 = lOutLen;
-
-      for(lIndex = 2, lIndex2 = itext, lRelPos = 0;
-          lOutLen2;
-          lOutLen2--, lIndex += 2, lIndex2++
-         )
+      else
       {
-         ucTmp = *pTmp++;
-
-         sprintf(szLineBuf + lIndex, "%02X ", (unsigned short)ucTmp);
-
-         // optional: highlight CR and LF characters
-         if (bGlblHexdumpShowLE)
-            if (ucTmp == '\r' || ucTmp == '\n') {
-               szAttrBuf[lIndex+0] = 'e';
-               szAttrBuf[lIndex+1] = 'e';
-               szAttrBuf[lIndex2 ] = 'e';
-            }
-
-         if(isprint(ucTmp))
-            szAttrBuf[lIndex2] = 'i';  // mark printable text
-         else
-            ucTmp = '.'; // nonprintable char
-
-         szLineBuf[lIndex2] = ucTmp;
-
-         if (!(++lRelPos & 3))     // extra blank after 4 bytes
-         {  lIndex++; szLineBuf[lIndex+2] = ' '; }
-      }
-
-      if (!(lRelPos & 3)) lIndex--;
-
-      szLineBuf[lIndex  ]   = '<';
-      szLineBuf[lIndex+1]   = ' ';
-      szAttrBuf[lIndex ]   = 'i';
-
-      if (chain.coldata) {
-         chain.addLine(szLineBuf, szAttrBuf);
-      } else {
-         printColorText(szLineBuf, szAttrBuf);
+         // dump full hex format with offset and ascii
+         memset(szLineBuf, ' ', ieol);
+         memset(szAttrBuf, ' ', ieol);
+         szLineBuf[ieol] = '\0';
+         szAttrBuf[ieol] = '\0';
+   
+         szLineBuf[1] = '>';
+         szAttrBuf[1] = 'i';
+   
+         char *pszHexOff = numtohex(ntotal, 8);
+         strcpy(&szLineBuf[ioffs], pszHexOff);
+         // adds zero terminator after offset info!
+         int ieol = strlen(szLineBuf);
+         szAttrBuf[ieol] = '\0';
+   
+         lOutLen2 = lOutLen;
+   
+         for(lIndex = 2, lIndex2 = itext, lRelPos = 0;
+             lOutLen2;
+             lOutLen2--, lIndex += 2, lIndex2++
+            )
+         {
+            ucTmp = *pTmp++;
+   
+            sprintf(szLineBuf + lIndex, "%02X ", (unsigned short)ucTmp);
+   
+            // optional: highlight CR and LF characters
+            if (bGlblHexdumpShowLE)
+               if (ucTmp == '\r' || ucTmp == '\n') {
+                  szAttrBuf[lIndex+0] = 'e';
+                  szAttrBuf[lIndex+1] = 'e';
+                  szAttrBuf[lIndex2 ] = 'e';
+               }
+   
+            if(isprint(ucTmp))
+               szAttrBuf[lIndex2] = 'i';  // mark printable text
+            else
+               ucTmp = '.'; // nonprintable char
+   
+            szLineBuf[lIndex2] = ucTmp;
+   
+            if (!(++lRelPos & 3))     // extra blank after 4 bytes
+            {  lIndex++; szLineBuf[lIndex+2] = ' '; }
+         }
+   
+         if (!(lRelPos & 3)) lIndex--;
+   
+         szLineBuf[lIndex  ]   = '<';
+         szLineBuf[lIndex+1]   = ' ';
+         szAttrBuf[lIndex ]   = 'i';
+   
+         if (chain.coldata) {
+            chain.addLine(szLineBuf, szAttrBuf);
+         } else {
+            printColorText(szLineBuf, szAttrBuf);
+         }
       }
 
       ntotal += (num)nread;
 
-      if (nTotalMax > 0)
-         if (ntotal >= nTotalMax)
-            break;
+      if (bEOD)
+         break;      
    }
 
    if (!pBuf)
@@ -23796,14 +24032,15 @@ int copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nB
 char *relName(char *pszRoot, char *pszAbs)
 {
    bool bisurl = 0;
+   // FIX: 163R5: crash on sfk sel ... +copy due to missing null ptr check
+   if (!pszRoot || !strlen(pszRoot))
+       return pszAbs;
    #ifdef VFILEBASE
    bisurl = !strncmp(pszRoot, "ftp://", 6) || !strncmp(pszRoot, "http://", 7);
    // TODO: for now, block relativazation of all http: urls
    if (!strncmp(pszRoot, "http://", 7))
       return pszAbs;
    #endif // VFILEBASE
-   if (!pszRoot || !strlen(pszRoot))
-       return pszAbs;
    int nsrclen = strlen(pszRoot);
    if (!strcmp(pszRoot, "."))
        return pszAbs;
@@ -27413,6 +27650,9 @@ int httpServ(uint nPort, uint nPort2, bool bDeep, bool bNoList, bool bRW)
             if (strrchr(pname, '/'))  pname = strrchr(pname, '/') + 1;
             if (strrchr(pname, '\\')) pname = strrchr(pname, '\\') + 1;
             strcopy(szFile, localPath(pname));
+            
+            // FIX: 163R5: decode POST URLs with blanks or special chars
+            decodeUrl(szFile);
 
             // receive file data
             if (isPathTraversal(szFile, 0))
@@ -27561,6 +27801,9 @@ int httpServ(uint nPort, uint nPort2, bool bDeep, bool bNoList, bool bRW)
          memcpy(szFile, psz1, nlen);
          szFile[nlen] = '\0';
 
+         // FIX: 163R5: decode GET URLs with blanks or special chars
+         decodeUrl(szFile);
+
          // requested file is now in szFile
          if (!szFile[0] && bNoList) {
             strcpy(szFile, "index.html");
@@ -27634,6 +27877,7 @@ int httpServ(uint nPort, uint nPort2, bool bDeep, bool bNoList, bool bRW)
             if (strstr(szFile, ".jp"))  pctype = "image/jpg";
             if (strstr(szFile, ".png")) pctype = "image/png";
             if (strstr(szFile, ".gif")) pctype = "image/gif";
+            if (!strcmp(szFile, "favicon.ico")) pctype = "image/x-icon";
          } else {
             pctype = "text/plain";
             if (strstr(szFile, ".htm"))
@@ -28851,7 +29095,7 @@ int encodeUrl(char *pszSrcIn, char *pszDstIn, int nMaxDst)
     return 0;
 }
 
-int decodeUrl(char *pszInOut, int nMaxDst)
+int decodeUrl(char *pszInOut)
 {
     char *psz = pszInOut;
     while (*psz) {
@@ -30722,7 +30966,7 @@ int processTextLine(char *argv[], int iPat, int nPat,
       }
       else
       if (isopt(pszPat, str("-decode-perc"))) {
-         decodeUrl(szLineBuf, MAX_LINE_LEN); // ignore rc
+         decodeUrl(szLineBuf); // ignore rc
       }
       else
       if (   !strcmp(pszPat, "-ansitodos")
@@ -32481,33 +32725,8 @@ void initSignalHandlers()
    signal(SIGTRAP , sfkSignalHandler);
 }
 
-#ifdef WINCE
-#define ushort unsigned short
-int wmain(int argc, char *argvw[])
-{
-   char **penv = 0;
-
-   char **argv = new char*[100];
-   for (int iarg=0; iarg<argc; iarg++)
-   {
-      ushort *praw = (ushort*)argvw[iarg];
-      int nlen = 0;
-      while (praw[nlen]) nlen++;
-      char *pstr = new char[nlen+1];
-      for (int k=0; k<nlen; k++)
-            pstr[k] = (char)praw[k];
-      pstr[nlen] = '\0';
-      argv[iarg] = pstr;
-      // printf("   arg %d = %s\n",iarg,pstr);
-   }
-
-   wce_SetCurrentDir();
-
-#else
 int main(int argc, char *argv[], char *penv[])
 {
-#endif
-
    // catch all help requests
    if (argc == 2) 
    {
@@ -35619,9 +35838,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              );
       printx("      -sep[arate] \"; \" -form \"<run>col1 mytext <run>[-0n.nq]col2 ...\"\n"
              "         break every line into columns separated by any character listed after -sep,\n"
-             "         then reformat the text according to a user-defined mask. when leaving out -sep,\n"
-             "         the whole line is packed into column 1. if -spat was specified, then -form\n"
-             "         also supports slash patterns like \\t.\n"
+             "         then reformat the text according to a user-defined mask similar to printf.\n"
+             "         when leaving out -sep, the whole line is packed into column 1. if -spat was\n"
+             "         specified, then -form also supports slash patterns like \\t.\n"
+             "         google for \"printf syntax\" to get more details. example:\n"
              "      -form \"<run>40col1 <run>-3.5col2 <run>05qline <run>(10.10qcount+1000)\"\n"
              "         reformat column 1 as right-ordered with at least 40 chars, column 2 left-\n"
              "         ordered with at least 3 and a maximum of 5 chars, then add the input line\n"
@@ -36742,7 +36962,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    ifcmd (!strcmp(pszCmd, "run"))
    {
       ifhelp (!chain.usefiles && !chain.usedata && (nparm < 1))
-      printx("<help>$sfk run \"your command <run>pfile [<run>prfile] [...]\" [-yes] [-nohead] [-quiet] [...]\n"
+      printx("<help>$sfk run \"your command <run>file [<run>relfile] [...]\" [-yes] [-nohead] [-quiet] [...]\n"
              "\n"
              "    run a self-defined command on every file- or directory name.\n"
              "    within your command string, you may specify:\n"
@@ -39374,10 +39594,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -hexsrc  lists hex comma separated values:\n"
              "               #0x53,0x46,0x4B,0x2D,0x54,0x45,0x53,0x54,0x0D,0x0A,\n"
              "      -decsrc  lists decimal comma separated values:\n"
-             "               #83,70,75,45,84,69,83,84,13,10,\n");
-
+             "               #83,70,75,45,84,69,83,84,13,10,\n"
+             );
       if (!bnet)
-      printx("      -offlen n1 n2   dump from offset n1 only n2 bytes.\n");
+      printx("      -offlen n1 n2   dump from offset n1 only n2 bytes.\n"
+             "      -notrail     no trailing comma \",\" at end of hex/dec src\n"
+             "      -norectrail  no trailing comma at end of every src record\n"
+             "      -recsize n   only with -hex/decsrc, -pure or -flat:\n"
+             "               change no. of input bytes dumped per record.\n"
+             "               with default output format, use -wide instead.\n"
+             );
 
       if (bnet)
       printx("      -flat    no hexdump at all, dump characters as they come.\n");
@@ -39388,7 +39614,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (btcp)
       printx("\n"
              "   $see also:\n"
-             "     #sfk udpdump   - dump incoming UDP packets.\n"
+             "     #sfk udpdump<def> - dump incoming UDP packets.\n"
+             "     #sfk hexdump<def> - for further format options.\n"
              "\n"
              "   $example:\n"
              "     #sfk tcpdump 9000 -showle -forward www.google.com:80 -timeout 2000\n"
@@ -39412,6 +39639,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("\n"
              "   $see also:\n"
              "     #sfk udpsend<def> - send UDP packets.\n"
+             "     #sfk hexdump<def> - for further format options.\n"
              "\n"
              "   $examples:\n"
              "     #sfk udpdump 5000\n"
@@ -39474,11 +39702,24 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          else
          if (!strcmp(argv[iDir], "-decsrc")) { nGlblHexDumpForm=3; continue; }
          else
+         if (strBegins(argv[iDir], "-notrail")) { cs.dumptrail=1; continue; }
+         else
+         if (strBegins(argv[iDir], "-norectrail")) { cs.dumptrail=2; continue; }
+         else
          if (!strcmp(argv[iDir], "-flat")) { nGlblHexDumpForm=4; continue; }
          else
          if (strBegins(argv[iDir], "-sep")) { cs.separator=1; continue; }
          else
          if (!strcmp(argv[iDir], "-nolf")) { cs.nolf=1; continue; }
+         else
+         if (haveParmOption(argv, argc, iDir, "-recsize", &pszParm)) {
+            if (!pszParm) return 9;
+            cs.bytesperline = atoi(pszParm);
+            int iMaxBytes = (MAX_LINE_LEN / 5) - 10; // "0x00,"
+            if (cs.bytesperline < 1 || cs.bytesperline > iMaxBytes)
+               return 9+perr("-recsize must be 1 ... %d\n", iMaxBytes);
+            continue;
+         }
          else
          if (haveParmOption(argv, argc, iDir, "-forward", &pszParm)) {
             if (!pszParm) return 9;
@@ -39563,6 +39804,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          }
 
          break; // fall through to non-option processing
+      }
+      
+      if (cs.bytesperline && !nGlblHexDumpForm) {
+         perr("-recsize requires -hex/decsrc, -flat or -pure format.\n");
+         pinf("use -wide to print 32 bytes per line in default format.\n");
+         return 9;
       }
 
       if (!strcmp(pszCmd, "tcpdump")) {
@@ -40558,7 +40805,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
 
       // szLineBuf3 is the Host: header
-      snprintf(szLineBuf3, MAX_LINE_LEN, "Host: %s:%d", szHost, nPort);
+      if (nPort == 80) // FIX: 163R5: no longer include default port 80
+         snprintf(szLineBuf3, MAX_LINE_LEN, "Host: %s", szHost);
+      else
+         snprintf(szLineBuf3, MAX_LINE_LEN, "Host: %s:%d", szHost, nPort);
       char *pszHostHead = szLineBuf3;
       
       do
@@ -40679,9 +40929,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      the conversion of html pages to adapt contained links.\n"
              "\n"
              "   $examples:\n"
-             "      #sfk wget http://stahlworks.com/dview.exe\n"
-             "         download the Depeche View text search tool.\n"
-             "\n"
              "      #sfk wget -proxy myproxy:8000 http://foobar.com/x.zip foo.zip\n"
              "         download x.zip, writing the content into a file foo.zip,\n"
              "         connecting through a proxy server myproxy on port 8000.\n"
@@ -43237,6 +43484,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              #endif // VFILEBASE
       printx("      -nosub        : do not include files in subdirectories.\n"
              "      -quiet        : do not print progress status and total hits statistics.\n"
+             "      -quiet=2      : also do not print the files checked / changed message.\n"
+             "      -verbose      : tell more details about what is done.\n"
              "      -case         : case-sensitive text comparison. default is case-insensitive\n"
              "                      comparison for all -text strings, but NOT for -bin blocks.\n"
              "                      case-sensitive comparison is faster then case-insensitive.\n"
@@ -43261,7 +43510,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -memlimit=nm  : with different-length replacements, files must be loaded\n"
              "                      into memory for processing. the default limit for memory\n"
              "                      use is 300 MB. set -memlimit=500m to select 500 MB.\n"
-             "\n"
+             );
+      printx("\n"
              "   #Run a simulation first,<def> to see what would be changed. Changing binaries\n"
              "   may lead to unpredictable results, therefore keep backups in any case.\n"
              "\n"
@@ -43312,7 +43562,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       char *pszRepFile  = 0;
       bool  bRevert     = 0;
-      int  nstate      = 0;
+      int  nstate       = 0;
       char *pszFirstPat = 0;
       bool bGotFileDir  = 0;
       bool bcolpat      = 0;
@@ -43323,6 +43573,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       #ifdef VFILEBASE
       if (bIsHexFind) cs.precachezip = 1;
       #endif // VFILEBASE
+      
 
       memset(abBuf, 0, sizeof(abBuf)); // for direct patterns
 
@@ -43499,9 +43750,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       // In case of parameter errors, nGlblError must be set,
       // to avoid memory leak checks on exit.
 
-      int nLenErrLine = -1;
-      bool bVarMode = 0;
- 
+      bool bHaveDiffLen = 0;
+      bool bVarMode     = 0;
+      
       // 2. parse expressions
       nstate = 0;
       char *psz2  = 0;
@@ -43561,8 +43812,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (shrinkFormTextBlock(pszfs, nFromLen)) return 9+reperr("wrong syntax in pattern", pszfs);
          if (shrinkFormTextBlock(pszts, nToLen))   return 9+reperr("wrong syntax in pattern", pszts);
          // => nFromLen, nToLen may have been reduced.
-         if (!bIsHexFind && nFromLen != nToLen && nLenErrLine == -1) {
+         if (!bIsHexFind && nFromLen != nToLen) {
             // different source / pattern length: select variable mode
+            bHaveDiffLen = 1;
             bVarMode = 1;
             cs.repDumpHalve = 1;
          }
@@ -43579,6 +43831,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             apRepSrcExp[nBinRepExp] = (uchar*)mymemdup(pszfs, nFromLen);
             apRepDstExp[nBinRepExp] = (uchar*)mymemdup(pszts, nToLen);
             apRepFlags[nBinRepExp]  = (0 << 0); // is text
+            bool bUseCase = cs.nocase ? 0 : cs.usecase;
+            if (bUseCase)
+               apRepFlags[nBinRepExp] |= (1 << 2); // case sensitive
             nBinRepExp++;
          } else {
             // as binary
@@ -43595,6 +43850,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             if (hexToBin(pszts, apRepDstExp[nBinRepExp], nDstBinLen))
                return 9+reperr("syntax error in hex expression",pszts,nLine);
             apRepFlags[nBinRepExp]  = (1 << 0); // is binary
+            bool bUseCase = cs.nocase ? 0 : 1;
+            if (bUseCase)
+               apRepFlags[nBinRepExp] |= (1 << 2); // case sensitive
             nBinRepExp++;
          }
       }
@@ -43613,14 +43871,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             pinf("if %s is a filename, specify it BEFORE -spat or -pat.\n", pszFirstPat);
          nGlblError=1;
          return 9;
-      }
-
-      if (cs.yes && (nLenErrLine != -1)) {
-         nGlblError=1;
-         if (pszRepFile)
-            return 9+perr("length mismatch in line %d: source and target pattern must have same length\n",nLine);
-         else
-            return 9+perr("length mismatch: source and target pattern must have same length\n");
       }
 
       cs.sim = !cs.yes;
@@ -43646,9 +43896,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          cs.nohead = 1;
          bGlblHexDumpWide = 1; // always wide, listing just source part
       }
-      // -to ... not yet supported
+      #ifndef SFKLAB
+      // -to ... not supported
       if (cs.tomask)
          { nGlblError=1; return 9+perr("-to not yet supported with %s\n", pszCmd); }
+      #endif
 
       if (cs.sim && !cs.nohead)
          printx("$[simulating:]\n");
@@ -43661,32 +43913,24 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          cs.repDumpHalve = 1; // only source hits, no replacement preview
       }
 
-      if (bVarMode)
+      if (bVarMode || cs.tomask)
          lRC = walkAllTrees(eFunc_ReplaceVar, lFiles, lDirs, nBytes);
       else
          lRC = walkAllTrees(eFunc_ReplaceFix, lFiles, lDirs, nBytes);
       if (!lRC && (cs.filesChg > 0)) lRC = 1; // any hits or changes
 
-      if (!chain.colfiles) {
+      if (!chain.colfiles && (cs.quiet < 2)) {
          if (bIsHexFind)
             chain.print("%d files checked, %d files matched.\n", cs.files, cs.filesChg);
          else
             chain.print("%d files checked, %d%s changed.\n", cs.files, cs.filesChg, cs.sim?" would be":"");
       }
 
-      if (nLenErrLine != -1) {
-         setTextColor(nGlblTimeColor);
-         const char *pextinf = cs.verbose ? "" : " (-verbose for more)";
-         if (pszRepFile)
-            printf("source and target patterns have differing length, line %d%s.\n",nLine,pextinf);
-         else
-            printf("source and target patterns have differing length%s.\n",pextinf);
-         setTextColor(-1);
-      }
-
+      #ifndef SFKLAB
       if (cs.sim && bVarMode && cs.verbose) {
          pinf("source and target patterns have differing lengths. replacement may be slow.\n");
       }
+      #endif
 
       if (cs.sim && !cs.nohead)
          printx("$[add -yes to execute.]\n");
@@ -44492,7 +44736,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       printx("<help>$sfk list ... +[f]view [-noshl|-nocol] [\"-...\"]\n"
              "\n"
              "   Depeche View is a high speed text browser and editor,\n"
-             "   available from http://stahlworks.com/dev/\n"
+             "   available from http://stahlworks.com/\n"
              "\n"
              "   It is used to search, filter and edit huge amounts of ASCII text,\n"
              "   like source code, log files, or html documentation. The tool loads\n"
@@ -44565,9 +44809,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      specify -verbose to see what is invoked in detail.\n"
              "\n"
              "   $examples\n"
-             "      #sfk wget http://stahlworks.com/dview.exe\n"
-             "         download Depeche View Lite for instant use. (no installation)\n"
-             "\n"
              "      #sfk list docs .txt +fview\n"
              "         view content of all .txt files in directory docs.\n"
              "\n"
@@ -45234,6 +45475,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -literal  or -lit stops interpretation of any further\n"
              "                options or chain commands. required if you\n"
              "                need the code of \"-\" or \"+\".\n"
+             "      -hexlist  print flat list of hex codes\n"
+             "      -hexsrc   print as hex source code\n"
              "\n"
              "   $examples\n"
              "      #sfk chars hello\n"
@@ -45255,6 +45498,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       char *pword  = 0;
       bool bdecode = 0;
       bool blit    = 0;
+      int  iFormat = 0;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
@@ -45267,6 +45511,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             else
             if (strBegins(argv[iDir], "-lit")) {
                blit = 1;
+               continue;
+            }
+            else
+            if (!strcmp(argv[iDir], "-hexlist")) {
+               iFormat = 1;
+               continue;
+            }
+            else
+            if (!strcmp(argv[iDir], "-hexsrc")) {
+               iFormat = 2;
                continue;
             }
             else
@@ -45319,9 +45573,21 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
       else
       {
-         for (; *pword; pword++) {
+         for (; *pword; pword++) 
+         {
             uchar uc = (uchar)*pword;
-            printf("%d\t0x%02X\t%c\n", uc, uc, *pword);
+            switch (iFormat) 
+            {
+               case 1: 
+                  printf("%02X", uc); 
+                  break;
+               case 2: 
+                  printf("0x%02X%s", uc, pword[1]?",":""); 
+                  break;
+               default:
+                  printf("%d\t0x%02X\t%c\n", uc, uc, *pword);
+                  break;
+            }
          }
       }
 
@@ -45400,7 +45666,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       SFKMD5 outmd;
 
       uchar *poutmax = abBuf + sizeof(abBuf) - 100;
-      bool berr=0;
+      bool berr=0,bprefix=0;
       int nConvLines=0, nSkippedLines=0;
       num nTotalBytes = 0;
       for (int i=0; !berr && i<chain.indata->numberOfEntries(); i++)
@@ -45416,9 +45682,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          char  *psz  = pszLine;
          uchar *pout = abBuf;
          char szByte[10];
-         while (*psz) {
-            while (*psz && !isxdigit(*psz)) psz++;
-            if (!strncmp(psz, "0x", 2)) psz += 2; // 0x12,0x15, 0x19
+         while (*psz) 
+         {
+            // skip over noise like " > "
+            while (*psz && !isxdigit(*psz)) 
+               psz++;
+            bprefix = 0;
+            if (!strncmp(psz, "0x", 2)) {
+               bprefix = 1;
+               psz += 2; // 0x12,0x15, 0x19
+            }
             if (!*psz) break;
             szByte[0] = psz[0];
             if (isxdigit(psz[1])) {
@@ -45426,7 +45699,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                szByte[1] = psz[1];
                szByte[2] = '\0';
                psz += 2;
-            } else {
+            }
+            else if (bprefix) {
+               // FIX 163R5: accept single hex char expression "0xa "
+               szByte[1] = '\0';
+               psz += 1;
+            }
+            else {
                perr("wrong hex format: \"%s\"\n", psz); 
                berr=1;
                break;
@@ -48632,9 +48911,7 @@ sfk fromclip +filt -sform "         \q$col1\\n\q" +toclip
          "    - an \".xpi\" file is downloaded by Firefox. this is basically a .zip file.\n"
          "    - the file is extracted, the contents are placed within \"extensions\".\n"
          "    So after installation, you find a new folder under \"extensions\",\n"
-         "    containing all source code files of that extension. To fly over the code,\n"
-         "    get the free Depeche View, and type #dview foldername<def> to have all\n"
-         "    text files from within that folder loaded and shown instantly.\n"
+         "    containing all source code files of that extension.\n"
          "    The important starting points are #install.rdf<def> and #chrome.manifest<def> .\n"
          "    Whenever you change anything in the code, you have to restart Firefox\n"
          "    to apply those changes.\n"

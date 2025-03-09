@@ -12,12 +12,7 @@
 #define _FILE_OFFSET_BITS 64
 
 #ifdef _WIN32
- #ifdef WINCE
-  #define UNALIGNED __unaligned
-  #define _INC_TIME_INL
- #else
-  #define WINFULL
- #endif
+ #define WINFULL
 #endif
 
 #include <stdlib.h>
@@ -35,8 +30,8 @@
 #ifdef _WIN32
   #define FD_SETSIZE 200   // must be set before windows.h
   #include <windows.h>
-  #ifdef WINCE
-    #include "winsock2.h"
+  #ifndef _MSC_VER
+   #include <ws2tcpip.h>
   #endif
   #include <sys/timeb.h>
   #include <time.h>
@@ -576,6 +571,7 @@ public:
    void  shutdown       ( );
    bool  hasRoot        (int iIndex);
    char* setCurrentRoot (int iIndex);
+   bool  changeFirstRoot(char *pszNewRoot);
    char* getCurrentRoot ( );
    char* root           (bool braw=0); // like above, but returns "" if none, with braw: 0 if none
    int  numberOfRootDirs ( );
@@ -1045,13 +1041,15 @@ public:
       CoiAutoDelete (Coi *pcoi, bool bDecRef)
          { pClCoi = pcoi; bClDecRef = bDecRef; }
      ~CoiAutoDelete ( ) {
+         if (!pClCoi)
+            return;
          if (bClDecRef)
             pClCoi->decref();
          if (!pClCoi->refcnt())
             delete pClCoi; 
       }
 private:
-      Coi *pClCoi;
+      Coi *pClCoi;      // can be NULL
       bool bClDecRef;   // on dtr, do a single decref
 };
 

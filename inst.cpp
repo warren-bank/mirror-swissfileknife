@@ -17,14 +17,6 @@
  #endif
 #endif
 
-#ifdef WINCE
-   #undef stat
-   #undef stat64
-   extern int mystat(const char *_Name, struct stat *_Stat);
-   extern char *strdup(char *);
-   extern int remove(char *);
-#endif
-
 static char szLineBuf[4096];
 static char szLineBuf2[4096];
 static char szLineBuf3[4096];
@@ -505,13 +497,8 @@ bool SrcParse::hasFunctionStart(uint &rnline)
 static int fileSize(char *pszFile) 
 {
    struct stat sinfo;
-   #ifdef WINCE
-   if (mystat(pszFile, &sinfo))
-      return -1;
-   #else
    if (stat(pszFile, &sinfo))
       return -1;
-   #endif
    return sinfo.st_size;
 }
 
