@@ -482,6 +482,7 @@ private:
 extern ConCache glblConCache;
 extern CoiMap glblVCache;
 extern KeyMap glblCircleMap;
+extern KeyMap glblOutFileMap;
 
 #endif // VFILEBASE
 

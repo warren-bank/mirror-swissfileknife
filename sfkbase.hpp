@@ -693,6 +693,7 @@ class Coi
 {
 public:
     Coi  (char *pszName, char *pszRootDir);
+    Coi  (int iFromInfo);  // any number, to avoid unwanted tmp objects
    ~Coi  ( );
 
     // create deep copy, however containing only
@@ -706,6 +707,8 @@ public:
    char  *root(bool braw=0);  // "" if none, with braw: 0 if none
    char  *ref (bool braw=0);  // "" if none, with braw: 0 if none
 
+   // ushort *wname( );
+
    #ifdef VFILEBASE
    char  *orgName( );      // same as name() except on redirects
    #endif // VFILEBASE
@@ -717,6 +720,8 @@ public:
    // but it can be changed later by this:
    int  setName  (char *pszName, char *pszOptRootDir=0);
    // if rootdir is not given, the old one is kept.
+
+   bool hasName  ( );
 
    void  setIsDir    (bool bYesNo); // sets anydir status
    bool  isAnyDir    ( );
@@ -783,6 +788,9 @@ public:
    // rc: number of bytes written
    // in case of error, rc != nbytes
 
+   int writeLine     (char *psz);
+   // auto appends LF or CRLF depending on mode used in open()
+
    // heuristic check by file header if it's binary.
    // status can also be set from external.
    void   setBinaryFile (bool bYesNo);
@@ -793,8 +801,10 @@ public:
    // readLine alloc's another I/O buffer on demand:
    int   readLine   (char *pszOutBuf, int nOutBufLen);
 
+   int   renameto   (char *pszDst);
+
    // directory and archive processing:
-   int   openDir    ( );  // prep for nextEntry()
+   int   openDir     ( );  // prep for nextEntry()
    Coi   *nextEntry  ( );  // result owned by CALLER.
    void   closeDir   ( );  // required after processing.
    bool   isDirOpen  ( );
@@ -921,6 +931,7 @@ public:
 
    // core data for every lightweight Coi:
    char  *pszClName;
+   ushort *pwClName; // windows: wide char name
    char  *pszClRoot;
    char  *pszClRef;
    char  *pszClExtStr;
@@ -1334,6 +1345,7 @@ extern int (*pGlblSFKStatusCallBack)(int nMsgType, char *pmsg);
 
 char *dataAsHex(void *pAnyData, int iDataSize, char *pszBuf=0, int iMaxBuf=0);
 char *dataAsTrace(void *pAnyData, int iDataSize=-1, char *pszBuf=0, int iMaxBuf=0);
+char *dataAsTraceW(ushort *pAnyData);
 
 /*
     Simplest possible utf8 decoder, primarily for 16 bit code points.
@@ -1369,6 +1381,442 @@ private:
    int   icur, imax;
    uchar *psrc;
 };
+
+struct CommandStats
+{
+public:
+   CommandStats   ( );
+   void reset     ( );
+
+   int debug     ;
+   int memcheck  ;
+   int verbose   ;  // 0,1,2
+   bool delStaleFiles      ;
+   bool skipOwnMetaDir     ;
+   bool blockAutoComplete  ;
+   int tabSize   ;
+   int tabsDone  ;
+   int tabFiles  ;
+   int scanTabs  ;
+   bool scanIndent;
+   int indentFilt;
+
+   int files     ; // visible plus hidden
+   int filesChg  ; // no. of files changed
+   int noFiles   ; // fnames that failed to stat etc.
+   int dirs      ; // visible plus hidden
+   int filesCloned ; // no. of files with attributes copied
+   int dirsCloned  ; // no. of dirs with attributes copied
+   bool hidden    ; // include hidden files and dirs
+   int numHiddenFiles ; // for list stats
+   int numHiddenDirs  ; // for list stats
+   int numHiddenFilesSkipped ;
+   int numHiddenDirsSkipped  ;
+   int binariesSkipped ;
+   int addedFilesSkipped ; // on -sincedif
+   int shadowsWritten ;
+   int shadowFallbacks ;
+   int filesDeleted ;
+   int filesDeletedWP;
+   int dirsDeleted  ;
+   int dirsDeletedWP;
+   int filesScanned ;
+   int dirsScanned  ;
+   int filesNewerInDst ;
+   int filesStale ; // deletion candidate
+   int filesRedundant;  // rename
+   int filesExisting;   // rename
+   int noOutDir;        // rename
+   int badOutDir;       // rename
+   int lines    ;
+   num  maxFileTime;
+   uint listForm;   // list -size etc.
+   bool listTabs;   // split columns by tab char
+   int  flatTime;   // show flat file times
+   bool sim   ;      // just simulate command
+   bool nohead;      // leave out some header, trailer info
+   bool pure  ;      // extra info if -pure was specified
+   bool dostat;      // copy: list just size statistics
+   bool tailTail;    // running tail, not head
+   int tailLines;   // head, tail
+   bool tailFollow;  // head, tail
+   char *tomask;     // output filename mask
+   bool  tomaskfile; // -to mask is a single filename
+   char *curcmd;     // current command
+   bool rootrelname; // use filenames relative to root dir
+   bool rootabsname;  // copy
+   bool forceabsname; // list
+   bool writeall;    // write all files, not only changed ones
+   bool spat;        // enable slash patterns \t etc.
+   bool wpat;        // support * and ?
+   bool xpat;        // dummy within base
+   bool usecase;     // case-sensitive search or not
+   bool nocase;      // optional: forced nocase on binary search
+   int blankRunFiles;  // no. of filenames w/blanks passing run
+   int wrongpcRunFiles;// no. of filenames w/wrong path chars
+   int badNameForm;    // set by execRunFile on bad filename formats
+   bool nocheck;     // do not perform any checks
+   bool noinfo;      // do not tell infos
+   bool nochain;     // disable command chains
+   bool useJustNames;// create a list of filenames
+   bool countMatchLines; // count no. of matching lines
+   bool yes;
+   bool force;
+   bool syncFiles;   // sync files instead of copy
+   bool syncOlder;   // with sync, copy older over newer files
+   bool nonames;     // do NOT print/pass :file records
+   bool noind;       // no indentation
+   char *runCmd;     // default: "" if not set.
+   bool printcmd;    // run: print raw command
+   int stoprc;      // run: stop on rc >= stoprc
+   bool anymatches;  // find: found at least 1 matching line in 1 file
+   bool showrc;      // print rc at program end
+   bool deplist;     // deplist command selected
+   int refsrccnt;   // reflist, deplist: no. of sources
+   bool depsingle;   // process dependencies of a single file
+   bool coldstnames; // reflist, deplist: execRefColSrc also collects DstNames
+   bool refstripsrc; // strip source file contents from unused chars
+   int listByTime;
+   bool listByTimeAll;
+   int listBySize;
+   bool listBySizeAll;
+   int listByName;
+   bool listByNameAll;
+   bool tellExecTime;
+   int timeOutMSec;
+   bool timeOutAutoSelect;
+   num  selMinSize;  // consider only files >= so many bytes
+   bool nowarn;      // disable all warning output
+   bool noerr;       // disalbe all error output
+   bool nonotes;     // disalbe all note output
+   bool skipLinks;   // do not follow symbolic directory links
+   bool traceFileFlags;
+   bool fileMaskAndMatch;  // AND match of file mask parts
+   bool dirMaskAndMatch;  // AND match of path mask parts
+   bool incFNameInPath;    // include filename in path mask check
+   bool verifyEarly;       // copy: verify directly after write
+   bool verifyLate;        // copy: verify in a separate pass
+   FILE *outfile;          // can be used by chain.print
+   bool listTargets;       // force target name listing i/o src
+   int idleMode;          // low prio processing, 0 (off) to 2
+   int walkDirDelay;      // low prio file processing with delays
+   int walkFileDelay;     // low prio file processing with delays
+   int treeStopRC;        // stop tree processing on internal RC >= this
+   bool stopTree(int nrc, bool *psilent=0); // tells if to stop on the supplied rc
+   bool toldTreeStop;
+   bool skipDirFileColl;   // optim: do not collect flist per dir.
+   // cannot be set w/functions that strictly need those lists.
+   bool rcFromError;       // change shell rc on skipped errors
+   bool repDump;           // replace: create hexdump of hits
+   bool repDumpHalve;      // replace: hexdump only source side
+   bool useFirstHitOnly;   // skip to next file after first hit
+   bool withdirs;          // include directories in command
+   bool withrootdirs;      // if withdirs is used, include root dirs?
+   bool justdirs;          // process only directories
+   bool usesnap;           // interpret snapfile format and list titles
+   bool usesnapfiltname;   // filter filenames as well
+   int addsnapraw;        // snapto raw mode 1 or 2
+   const char *addsnaplf;  // "\n" or "\r\n" depending on mode and OS
+   uint addsnapmeta;      // bit 0:time 1:size 2:encoding
+   int stathilitelevel;   // stat command: highlight dirs <= this
+   bool travelzips;        // traverse zipfile contents
+   bool incbin;            // include binary files in processing
+   bool reldist;           // hexfind: tell also relative distances
+   #ifdef VFILEBASE
+   bool shallowzips;       // list only first level of zips
+   bool precachezip;
+   bool extdomref;         // include external domain refs
+   bool xelike;            // set xe default behaviour and help text
+   bool cacheall;          // no direct processing of files
+   bool cachestat;         // cache statistics at program end
+   bool travelHttp;        // decided per command, esp. list
+   #endif // VFILEBASE
+   bool subdirs;           // process subdirs
+   bool utf8dec;           // utf-8  detect and decode (not yet impl.)
+   bool wchardec;          // utf-16 detect and decode
+   int utf16found;         // statistic for post-command info
+   int utf16read;          // statistic for post-command info
+   bool showdupdirs;       // linux: tell if dir link contents are skipped
+   bool usecirclemap;      // linux: allow circle map, on by default
+   num  sincetime;         // process only files modified since that time
+   num  untiltime;         // process only files modified until that time
+   bool usectime;          // use creation time instead of modification time
+   bool useutc;            // all times in UTC/GMT instead of local
+   char paramprefix[30];   // for user defined script input parameter names
+   int wrapcol;            // if >0, auto-wrap lines in snapfile
+   int wrapbincol;         // only on binary to text conversion
+   bool rewrap;            // ignore linefeeds, rewrap all
+   char listunit;          // stat output in 'b'ytes, 'k'bytes or default.
+   bool flatdirstat;       // list no. of files per dir, not dir tree
+   int flatfilecnt;        // global stats if flatdirstat is set
+   int flatdircnt;         // "
+   num  flatbytecnt;       // "
+   bool statonlysum;       // sfk stat: quiet except summary
+   int quiet;              // quiet mode
+   bool ftpupdate;         // mput, mget: explicite -update
+   bool ftpall;            // mput, mget: disable -update mode
+   bool noclone;           // disable time stamp replication
+   bool preserve;          // copy full attributes with sft
+   int fast;               // command dependent optimization
+   bool verify;            // command dependent optimization
+   bool prog;              // with progress indicator
+   bool noprog;            // no progress indicator
+   bool notext;            // no result text
+   bool test;              // filter: run in test mode
+   bool copyLinks;         // copy symlinks     , windows only, untested
+   bool copyNoBuf;         // copy w/o buffering, windows only, untested
+   bool copyDecrypt;       // copy and decrypt  , windows only, untested
+   bool intrun;            // sfk run -internal option
+   bool textfiles;         // process only textfiles
+   bool binaryfiles;       // process only binaryfiles
+   bool packalnum;         // deblank: reduce filenames to alnum
+   bool noipexpand;        // disallow ip number expansion
+   int  stopcnt;           // stop command after n events
+   char szownip[60];       // manually set own ip
+   bool anyFileTooLarge;   // info after command execution
+   bool crashtest;         // enforce crash to test handling
+   bool justvernum;        // version command
+   bool separator;         // print separator between outputs
+   char szseparator[100];  // with xfind
+   bool nolf;              // skip lf output on some commands
+   bool multicast;         // udpclient
+   int  dumptrail;         // hexdump: trailing chars at line end
+   int  bytesperline;      // hexdump: when using hex/decsrc
+   num  recordsize;        // for some commands
+   bool usetmp;            // use temporary file
+   bool knx;               // internal
+   char *knxtext;          // internal
+   bool ntp;               // internal
+   bool echoonerr;         // echo whole command on error
+   int  argc;              // copy of main() argument
+   char **argv;            // copy of main() argument
+   int  selfilenum;        // current processed file number
+   int  selfileoff;        // process only files from this offset
+   int  selfilerange;      // process only so many files
+   bool stopfiletree;      // stop dir tree processing silently
+   bool showip;            // show automatic ip expansion result
+   bool justrc;            // no terminal output on filter
+   num  minsize;           // select only files >= that size
+   num  maxsize;           // select only files <= that size
+   bool keeptime;          // keep input filetime on output file
+   uint timemask;          // bit mask of what times to list
+   bool tabform;           // use tab separators
+   bool autoclose;         // ftpserv: on second client
+   num  diskspace;         // required free disk space for writing
+   bool xchars;            // treat \xnn as characters
+   bool extract;           // replace, hexfind
+   FILE *extractOutFile;   // ""
+   int  xmaxlen;           // xpat default maxlen
+   int  xmaxlit;           // xpat max literal size
+   bool nodirtime;         // copy should not clone dir times
+   bool tolines;           // with extract
+   bool fixedbylist;       // force fixed record -bylist file
+   bool showpre;           // replace
+   bool showpost;          // replace
+   bool showlist;          // replace
+   bool rawfilename;       // with hexdump
+   bool hexfind;           // running (x)hexfind
+   bool xtext;             // running xtext
+   bool xfind;             // running xfind
+   char placeholder;       // for null bytes
+   bool rawterm;           // dump output as is
+   bool usefilehead;       // use mask given below
+   char szfilehead[200];   // per result file header with "%s" internal
+   bool maxdump;           // tcpdump -maxdump
+   bool fullhelp;
+   int  reprep;            // repeat replace option
+   bool perf;              // performance statistics
+   char szeol[10];         // crlf or lf
+   bool toiso;             // utf8 to iso conversion
+   char toisodef;          // default character '.'
+   bool toutf;             // iso to utf8 conversion
+   char *delim;            // list of delimiters for soft word wrapping
+   bool astext;            // with xhexdump
+   bool joinlines;         // with find
+   int  rtrim;             // with find
+   bool nostat;            // xhexfind: no no. of hits statistics
+   char litattr;           // literal highlight attribute, or 0 for none
+   char leattr;            // line end attribute, or 0 for none
+   bool forcele;           // force line endings with addcr/remcr
+   int  fastopt;           // fast option, function specific
+   // csvtotab, tabtocsv
+   char cinsep;
+   char coutsep;
+   char cquote;
+   char coutsepesc;
+   bool quotetext;
+   bool quoteall;
+   int  contextlines;      // xfind: 1=currentline 2=previous and post line
+   int  contextchars;      // max chars of all context lines together
+   int  indent;
+   char *renexp;           // rename expression
+   char *rentodir;         // rename moveto dir
+   bool exact;
+   bool listfiles;
+   bool vname;             // windows only: virtual utf names
+   bool dewide;            // fixfile
+   bool rewide;            // fixfile
+   bool setftime;          // fixfile
+   bool setndate;          // fixfile
+   bool dumpfrom;          // (x)replace
+   bool dumpboth;          // (x)replace
+};
+
+extern struct CommandStats cs;
+
+// temporary file class, REMOVING THE FILE IN DESTRUCTOR.
+class SFTmpFile
+{
+public:
+   SFTmpFile   (const char *pszExt, bool bNoAutoDelete, uint nTmpFileNum = 0);
+  ~SFTmpFile   ( );
+   char *name  ( );
+   static void setTmpDir(char *pszDir);
+   static bool tmpDirWasSet( );
+private:
+   bool  bClAutoDel;
+   uint nClNum;
+   char szClExt[100];
+   char *pszClName;
+   static int ncnt;
+   static char *pszTmpDir;
+};
+
+class FileStat {
+public:
+   FileStat       ( );
+   int  readFrom (char *pszSrcFile, bool bWithFSInfo=0, bool bSilent=0);
+   int  writeTo  (char *pszDstFile, int nTraceLine, bool bWriteJustTime=0);
+   int  differs  (FileStat &oref, bool bSameIfOlderSrc, bool *pSrcIsOlder=0);
+   int  copyFrom (FileStat &src);
+   int  setFilename(char *psz);
+   char *filename( );
+   int  writeStat(int iTraceLine); // using stored filename
+   int  dump     ( );
+   int  dumpTimeDiff (FileStat &rdst);
+   num   getSize  ( )   { return src.nSize; }
+   uchar *marshal (int &nRetSize);
+   int  setFrom  (uchar *pBuf, int nBufSize);
+   char  *attrStr ( );
+   const char *diffReason  (int nReason);
+
+   num   getUnixTime ( ) { return src.nMTime; }
+   num   getWinTime  ( );
+
+public:
+   int   dumpSub  (int nRow, uint nmask, char *pszOut, int iMaxOut);
+   void  reset    ( );
+
+   struct FileStatSrcInfo
+   {
+      int  bIsDir;
+      int  bIsReadable;
+      int  bIsWriteable;
+ 
+      // time of MODIFICATION or LAST WRITE is ALWAYS available.
+      num   nMTime;
+ 
+      // time of CREATION and LAST ACCESS is only available on
+      // SOME file systems, e.g. NTFS. on FAT32, ATime is 0,
+      // and CTime == MTime.
+      num   nCTime;
+      num   nATime;
+ 
+      #ifdef _WIN32
+      FILETIME ftMTime;
+      FILETIME ftCTime;
+      FILETIME ftATime;
+      bool  nHaveWFT;   // 1 = have at least windows mod file time
+      #endif            // 2 = also have windows C and A time
+ 
+      num   nSize;
+      int  bIsUTCTime;
+      uint nAttribs;
+   }
+   src;
+
+   char  szClFileName[SFK_MAX_PATH+10];
+   char  szClSrcPath[SFK_MAX_PATH+10];
+   char  szClSrcFSName[200];
+   char  szClSrcVolID[200];
+   char  szClTextBuf1[200];
+   char  szClTextBuf2[200];
+   char  szClAttrStr[50];
+   char  szClDiffReason[100];
+};
+
+#define MAX_MOV_CMD 100
+#define SFKMOV_KEEP   1
+#define SFKMOV_CUT    2
+
+class Media
+{
+public:
+      Media ( );
+
+   void  reset             ( );
+   void  closeOutput       ( );
+   void  clearCommands     ( );
+   void  shutdown          ( );
+   int   parseM3UFile      (char *pszFilename);
+   int   processMediaFile  (char *pszSrc, char *pszOutFile);
+   int   findSeconds       (num nBytePos); // with M3U only
+   int   renderTempName    (char *pszFromname);
+   int   analyze           (uchar *pbuf, int isize);
+   void  setFixParms       (char *psz);
+
+static Media *pClCurrent;
+static Media &current ( );
+
+int   aCmd[MAX_MOV_CMD];
+num   aBeg[MAX_MOV_CMD];
+num   aEnd[MAX_MOV_CMD];
+int   aBegSec[MAX_MOV_CMD];
+int   aEndSec[MAX_MOV_CMD];
+int   iFirstCmd,iCmd;
+int   iClInvalidFiles;
+int   iClDoneFiles;
+int   iClDoneTS;
+bool  bClHaveM3UCommands;
+bool  bClHaveKeep;
+bool  bClKeepAll;
+bool  bClJoinOutput;
+bool  bClFixOutput;
+bool  bClScan;
+bool  bClKeepTmp;
+bool  bClShowTmp;
+num   nClGlobalBytes;
+
+char  szClTmpOutFile[SFK_MAX_PATH+10];
+char  szClRecentOutFile[SFK_MAX_PATH+10];
+char  szClFinalFile[SFK_MAX_PATH+10];
+char  szClFixParms[200];
+
+char  szClMoveSrcOutDir[200];
+char  szClMoveSrcOutFile[SFK_MAX_PATH+10];
+
+FILE  *fClOut;
+FileStat clOutStat;
+
+char  *pszClM3UText;
+char  *pszClM3UFileEntry;  // pointer into M3UText
+};
+
+int joinPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2, int *pFlexible=0);
+void printColorText(char *pszText, char *pszAttrib, bool bWithLF=1);
+char *timeAsString(num nTime, int iMode=0);
+void dumpRepOut(uchar *pSrcCtxData, int iSrcCtxLen,
+   int iHitOff, int iHitLen,
+   uchar *pDstData, int iDstLen,
+   num nListOffset
+ );
+void dumpFromToSeparator();
+int atomovrange(char *psz, num *pstart, num *pend);
+int atomovrange(char *psz, int *pstart, int *pend, bool bUseBytes);
+
+#ifdef _WIN32
+int makeWinFileTime(num nsrctime, FILETIME &rdsttime, num nSrcNanoSec=0);
+#endif
 
 #ifndef USE_SFK_BASE
  #if defined(WINFULL) && defined(_MSC_VER)

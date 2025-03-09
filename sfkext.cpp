@@ -31,10 +31,15 @@
  #define SO_REUSEPORT 15
 #endif
 
+extern unsigned char abBuf[MAX_ABBUF_SIZE+100];
+
 int perr(const char *pszFormat, ...);
 int pwarn(const char *pszFormat, ...);
 int pinf(const char *pszFormat, ...);
 int printx(const char *pszFormat, ...);
+int esys(const char *pszContext, const char *pszFormat, ...);
+int myfseek(FILE *f, num nOffset, int nOrigin);
+bool endsWithExt(char *pname, char *pszextin);
 
 bool endsWithArcExt(char *pname);
 extern cchar *arcExtList[];
@@ -5712,6 +5717,8 @@ int UDPIO::getTextSendDelay( )
    return iClNonDuplexSendDelay;
 }
 
+#ifndef USE_SFK_BASE
+
 // ------------- sfk patch - Text File Patching support -----------------
 
 #define SFKPATCH_MAX_CMDLINES    10000 // max lines per :file ... :done block
@@ -7821,4 +7828,1841 @@ int sfkInstrument(char *pszFile, cchar *pszInc, cchar *pszMac, bool bRevoke, boo
 
    return 0;
 }
+
+static char abLineEditPartInfo[1024];
+char abLineEditPartInfo2[1024];
+
+int pointedit(char *pszMaskIn, char *pszSrc, int *pOutMatchLen, char *pszDst, int iMaxDst, bool verb)
+{
+   ushort aFrom[1024];
+   ushort aInfoIdx[1024];
+   ushort aTo[1024];
+   char   aLitPart[22][610];
+   char   aPart[22][610];
+   int    iPartIdx= 0, iPartIdxMax = 12-2;
+   int    iPartChr= 0, iPartChrMax = 610-10;
+
+   char *pszMask = pszMaskIn;
+
+   int iMaskLen = strlen(pszMask);
+   if (iMaskLen < 3)
+      return 10+(verb?perr("/from/to/ too short"):0);
+
+   int iFromCur = 0;
+   int iFromMax = (sizeof(aFrom)/sizeof(ushort))-10;
+   int iToCur   = 0;
+   int iToMax   = (sizeof(aTo)/sizeof(ushort))-10;
+
+   // --- split from/to and tokenize ---
+
+   char csep = *pszMask++;
+   char ccur = 0, csub = 0;
+   char *pszCur = 0;
+
+   while (*pszMask!=0 && *pszMask!=csep)
+   {
+      if (iFromCur >= iFromMax)
+         return 11+(verb?perr("from text too long"):0);
+
+      pszCur = pszMask;
+
+      ccur = *pszMask++;
+
+      if (cs.spat!=0 && ccur=='\\') {
+         int iskip=1;
+         ccur=0;
+         switch (*pszMask) {
+            case 't': ccur='\t'; break;
+            case 'q': ccur='"'; break;
+            case '\\': case '*': case '?':
+            case '[': case ']': case '#':
+               ccur=*pszMask; break;
+            case 'x':
+               if (pszMask[1] && pszMask[2])
+                  ccur = (char)getTwoDigitHex(pszMask+1);
+               iskip=3;
+               break;
+         }
+         if (!ccur)
+            return 12+(verb?perr("invalid slash pattern: %s",pszMask-1):0);
+         pszMask+=iskip;
+         aInfoIdx[iFromCur] = (ushort)(pszMask-1-pszMaskIn);
+         aFrom[iFromCur++] = ccur;
+         continue;
+      }
+
+      if (ccur == '*') {
+         aFrom[iFromCur] = 0x2000U;
+         // determine stop literal and store as part
+         if (iPartIdx >= 20)
+            return 13+(verb?perr("too many parts"):0);
+         int iLitChrIdx = pszMask-pszMaskIn;
+         int iLitChrLen = 0;
+         for (; pszMask[iLitChrLen]; iLitChrLen++) {
+            csub = pszMask[iLitChrLen];
+            if (csub==csep || csub=='*' || csub=='?')
+               break;
+            aLitPart[iPartIdx][iLitChrLen] = csub;
+         }
+         aLitPart[iPartIdx][iLitChrLen] = '\0';
+         aFrom[iFromCur] += iPartIdx;
+         aInfoIdx[iFromCur] = (ushort)(pszMask-1-pszMaskIn);
+         iFromCur++;
+         iPartIdx++;
+         continue;
+      }
+
+      if (ccur == '?') {
+         int ilen = 1;
+         while (*pszMask!=0 && *pszMask=='?') {
+            ilen++;
+            pszMask++;
+         }
+         aInfoIdx[iFromCur] = (ushort)(pszMask-1-pszMaskIn);
+         aFrom[iFromCur++] = 0x1000U + ilen;
+         continue;
+      }
+
+      if (ccur == '[') {
+         // [2 chars]
+         int ilen = atoi(pszMask);
+         while (isdigit(*pszMask))
+            pszMask++;
+         if (*pszMask!=' ')
+            return 14+(verb?perr("wrong [] syntax: %s",pszCur):0);
+         pszMask++;
+         if (strBegins(pszMask, "chars]")) {
+            pszMask += strlen("chars]");
+            aInfoIdx[iFromCur] = (ushort)(pszMask-1-pszMaskIn);
+            aFrom[iFromCur++] = 0x1000U + ilen;
+            continue;
+         }
+         return 15+(verb?perr("wrong [] syntax: %s",pszCur):0);
+      }
+
+      aInfoIdx[iFromCur] = (ushort)(pszMask-1-pszMaskIn);
+      aFrom[iFromCur++] = tolower(ccur);
+   }
+   aFrom[iFromCur] = 0;
+   iFromMax = iFromCur;
+   if (*pszMask!=csep)
+      return 16+(verb?perr("missing end separator '%c'",csep):0);
+   pszMask++;
+
+   int iToPart = 0;
+
+   while (*pszMask!=0 && *pszMask!=csep)
+   {
+      if (iToCur >= iToMax)
+         return 17+(verb?perr("to text too long"):0);
+
+      if (cs.spat!=0 && *pszMask=='\\') {
+         pszMask++;
+         int iskip=1;
+         ccur=0;
+         switch (*pszMask) {
+            case 't': ccur='\t'; break;
+            case 'q': ccur='"'; break;
+            case '\\': case '*': case '?':
+            case '[': case ']': case '#': 
+               ccur=*pszMask; break;
+            case 'x':
+               if (pszMask[1] && pszMask[2])
+                  ccur = (char)getTwoDigitHex(pszMask+1);
+               iskip=3;
+               break;
+         }
+         if (!ccur)
+            return 18+(verb?perr("invalid slash pattern: %s",pszMask-1):0);
+         pszMask+=iskip;
+         aTo[iToCur++] = ccur;
+         continue;
+      }
+
+      if (*pszMask=='#') {
+         pszMask++;
+         if (isdigit(*pszMask)) {
+            iToPart = atoi(pszMask);
+            while (isdigit(*pszMask))
+               pszMask++;
+         } else {
+            iToPart++;
+         }
+         int ipart = iToPart;
+         if (ipart > 0)
+             ipart--;
+         aTo[iToCur++] = 0x1000U + ipart;
+         continue;
+      }
+
+      if (!strncmp(pszMask, "[parts ", 7))
+      {
+         pszMask += 7;
+         bool bfill = 0;
+         while (1)
+         {
+            // expect partno or ]
+            if (isdigit(*pszMask)) {
+               int ipart = atoi(pszMask);
+               if (ipart < 1)
+                  return 19+(verb?perr("wrong part number: %d",ipart):0);
+               while (isdigit(*pszMask))
+                  pszMask++;
+               if (bfill) {
+                  bfill=0;
+                  iToPart++;
+                  for (; iToPart<ipart; iToPart++)
+                     aTo[iToCur++] = 0x1000U + (iToPart-1);
+                  aTo[iToCur++] = 0x1000U + (ipart-1);
+                  iToPart=ipart;
+               } else {
+                  iToPart=ipart;
+                  aTo[iToCur++] = 0x1000U + (ipart-1);
+               }
+               continue;
+            }
+            if (*pszMask==',') {
+               pszMask++;
+               bfill=0;
+               continue;
+            }
+            if (*pszMask=='-') {
+               pszMask++;
+               bfill=1;
+               continue;
+            }
+            if (*pszMask==']') {
+               pszMask++;
+               break;
+            }
+            return 20+(verb?perr("wrong parts syntax"):0);
+         }
+         continue;
+      }
+
+      if (!strncmp(pszMask, "[part", 5)) {
+         pszMask += 5;
+         if (*pszMask==' ')
+            pszMask++;
+         int ipart = atoi(pszMask);
+         if (ipart > 0)
+             ipart--;
+         iToPart=ipart+1;
+         while (*pszMask!=0 && isdigit(*pszMask))
+            pszMask++;
+         if (*pszMask != ']')
+            return 21+(verb?perr("missing ]"):0);
+         pszMask++;
+         aTo[iToCur++] = 0x1000U + ipart;
+         continue;
+      }
+
+      aTo[iToCur++] = *pszMask++;
+   }
+   aTo[iToCur] = 0;
+   iToMax = iToCur;
+   if (*pszMask!=csep)
+      return 22+(verb?perr("missing end separator '%c'",csep):0);
+
+   pszMask++;
+   if (*pszMask)
+      return 23+(verb?perr("unexpected text after end separator '%c': %s",csep,pszMask):0);
+
+   // --- match source and collect dynamic parts ---
+
+   char *pSrcCur = pszSrc;
+   int   iFrom   = 0;
+   int   istate  = 0;
+   int   imaxcol = 0;
+   int   iLitPart= 0;
+
+   iPartIdx = 0;
+   iPartChr = 0;
+
+   if (aFrom[iFrom] >= 0x2000U) {
+      istate   = 2;
+      iLitPart = aFrom[iFrom] & 0x0FFU;
+      if (aLitPart[iLitPart][0])
+         istate = 3;
+   }
+   else
+   if (aFrom[iFrom] >= 0x1000U) {
+      istate  = 1;
+      imaxcol = aFrom[iFrom] & 0x0FFFU;
+   }
+
+   bool btrace = 0;
+
+   if (iMaskLen+10 < sizeof(abLineEditPartInfo))
+     memset(abLineEditPartInfo, ' ', iMaskLen);
+
+   while (*pSrcCur && aFrom[iFrom])
+   {
+      // int ipinf = pSrcCur - pszSrc;
+      // if (ipinf+10 < sizeof(abLineEditPartInfo))
+      //    abLineEditPartInfo[ipinf] = '1'+(iPartIdx%10);
+
+      ushort ninfidx = aInfoIdx[iFrom];
+      if (ninfidx+10 < sizeof(abLineEditPartInfo))
+         abLineEditPartInfo[ninfidx] = '1'+(iPartIdx%10);
+
+      char csrc = *pSrcCur++;
+
+      if (iPartIdx >= iPartIdxMax)
+         return 24+(verb?perr("too many match parts"):0);
+      if (iPartChr >= iPartChrMax)
+         return 25+(verb?perr("match part overflow"):0);
+
+      switch (istate)
+      {
+         case 0: // any or single char
+            if (aFrom[iFrom] >= 0x1000U) {
+               pSrcCur--;
+               break;
+            }
+            if (tolower(csrc) != aFrom[iFrom]) {
+               if (btrace) {
+                  printf("miss %c %c\n",csrc,aFrom[iFrom]);
+                  for (int i=0; i<iPartIdx; i++)
+                     printf("p%d %s\n",i+1,aPart[i]);
+               }
+               return 1; // no match
+            }
+            // single char matched
+            aPart[iPartIdx][iPartChr++] = csrc;
+            iFrom++;
+            continue;
+
+         case 1: // group of ?
+            aPart[iPartIdx][iPartChr++] = csrc;
+            imaxcol--;
+            if (imaxcol > 0)
+               continue;
+            iFrom++;
+            break;
+
+         case 2: // open *
+            aPart[iPartIdx][iPartChr++] = csrc;
+            continue;
+
+         case 3: // * then literal
+            // look for stop literal part
+            char *psz  = pSrcCur-1;
+            int   ichr = 0;
+            char  c1=0, c2=0;
+            for (;;ichr++) {
+               c1 = tolower(psz[ichr]);
+               c2 = tolower(aLitPart[iLitPart][ichr]);
+               // if (btrace) printf("cmp %c %c\n",c1,c2);
+               if (!c1 || !c2) break;
+               if (c1 != c2) break;
+            }
+            if (c2) {
+               aPart[iPartIdx][iPartChr++] = csrc;
+               continue;
+            }
+            // stop literal match
+            istate = 4;
+            pSrcCur--;
+            if (btrace) printf("stoplit match: %s\n",pSrcCur);
+            iFrom++;
+            break;
+      }
+
+      if (istate > 0 || iPartChr > 0) {
+         aPart[iPartIdx][iPartChr] = '\0';
+         iPartIdx++;
+         iPartChr = 0;
+      }
+
+      if (aFrom[iFrom] >= 0x2000U) {
+         istate   = 2;
+         iLitPart = aFrom[iFrom] & 0x0FFU;
+         if (aLitPart[iLitPart][0])
+            istate = 3;
+         if (btrace) printf("to state %d seeking \"%s\"\n",istate,aLitPart[iLitPart]);
+      }
+      else
+      if (aFrom[iFrom] >= 0x1000U) {
+         istate  = 1;
+         imaxcol = aFrom[iFrom] & 0x0FFFU;
+         if (btrace) printf("to state %d over %d chars on %s\n",istate,imaxcol,pSrcCur);
+      }
+      else if (aFrom[iFrom])
+      {
+         istate  = 0;
+         if (btrace) printf("to state %d on %s mask %c\n",istate,pSrcCur,aFrom[iFrom]);
+      }
+   }
+   if (iMaskLen+10 < sizeof(abLineEditPartInfo))
+      abLineEditPartInfo[iMaskLen] = '\0';
+
+   if (istate > 0) {
+      aPart[iPartIdx][iPartChr] = '\0';
+      iPartIdx++;
+   }
+
+   // is it a match?
+   if (aFrom[iFrom]!=0 && istate!=2) {
+      if (btrace) printf("mask not done at end of src\n");
+      return 1;
+   }
+   // if (aFrom[iFrom]==0 && *pSrcCur!=0) {
+   //    if (btrace) printf("src not done at end of mask\n");
+   //    return 1;
+   // }
+   *pOutMatchLen = (int)(pSrcCur - pszSrc);
+   if (btrace) printf("point match len=%d\n", *pOutMatchLen);
+
+   if (btrace) {
+      for (int i=0; i<iPartIdx; i++)
+         printf("p%d %s\n",i+1,aPart[i]);
+   }
+
+   // --- build output from to mask and parts ---
+ 
+   ushort *pToSrc = aTo;
+   char *pDstCur = pszDst;
+   char *pDstMax = pszDst+iMaxDst-10;
+   while (*pToSrc)
+   {
+      if (pDstCur >= pDstMax)
+         return 26+(verb?perr("output buffer overflow"):0);
+
+      ushort csrc = *pToSrc++;
+
+      if (csrc < 0x1000) {
+         *pDstCur++ = (char)csrc;
+         continue;
+      }
+
+      int ipart = csrc & 0xFFFU;
+      if (ipart < 0 || ipart >= iPartIdxMax)
+         return 27+(verb?perr("invalid part number: %d",ipart+1):0);
+
+      char *ppart = aPart[ipart];
+      while (*ppart) {
+         if (pDstCur >= pDstMax)
+            return 28+(verb?perr("output buffer overflow"):0);
+         *pDstCur++ = *ppart++;
+      }
+   }
+   *pDstCur = '\0';
+
+   return 0;
+}
+
+void lineeditinit()
+{
+   memset(abLineEditPartInfo2, 0, sizeof(abLineEditPartInfo2));
+}
+
+char *lineeditinfo()
+{
+   return abLineEditPartInfo2;
+}
+
+int lineedit(char *pszMaskIn, char *pszSrc, char *pszDst, int iMaxDst, char *pAtt1, char *pAtt2, 
+   uint flags, int *poff, int *plen)
+{
+   bool bexact = (flags & 1) ? 1 : 0;
+   bool bverb  = (flags & 2) ? 1 : 0;
+
+   char aPointBuf[1024];
+   mclear(aPointBuf);
+
+   char *pSrcOld = pszSrc;
+   char *pSrcCur = pszSrc;
+   char *pDstCur = pszDst;
+   char *pDstMax = pszDst+iMaxDst-10;
+
+   bool  bAnyDone = 0;
+
+   while (*pSrcCur)
+   {
+      int imatch = 0;
+      int isubrc = pointedit(pszMaskIn, pSrcCur, &imatch, aPointBuf, sizeof(aPointBuf), bverb);
+      if (isubrc >= 10)
+         return isubrc;
+      if (isubrc > 0) {
+         if (bexact)
+            return 1;
+         if (pDstCur > pDstMax)
+            return 30+perr("ledit: output overflow");
+         *pDstCur++ = *pSrcCur++;
+         continue;
+      }
+      if (imatch < 1)
+         return 31+perr("ledit: invalid match");
+      int iedit = strlen(aPointBuf);
+      // mark match src
+      if (pAtt1) memset(pAtt1+(pSrcCur-pszSrc),'i',imatch);
+      // mark match dst
+      if (pAtt2) memset(pAtt2+(pDstCur-pszDst),'a',iedit);
+      // copy edited part
+      if (pDstCur+iedit > pDstMax)
+         return 32+perr("ledit: output overflow");
+      memcpy(pDstCur, aPointBuf, iedit);
+      pDstCur += iedit;
+      if (!bAnyDone)
+      {
+         bAnyDone = 1;
+         if (!abLineEditPartInfo2[0]) {
+            memcpy(abLineEditPartInfo2, abLineEditPartInfo, sizeof(abLineEditPartInfo));
+            myrtrim(abLineEditPartInfo2);
+         }
+         if (poff) *poff = (int)(pSrcCur-pszSrc);
+         if (plen) *plen = imatch;
+      }
+      // skip matched source
+      pSrcCur += imatch;
+      if (bexact && *pSrcCur)
+         return 1;
+   }
+   *pDstCur = '\0';
+
+   return bAnyDone ? 0 : 1;
+}
+
+int execRename(Coi *pcoi)
+{
+   char abSrcBuf[1024];
+   char abDstRel[1024];
+   char abSrcRelAtt[1024];
+   char abDstRelAtt[1024];
+   char abDstAbs[1024];
+   char abSrcAbsAtt[1024];
+   char abDstAbsAtt[1024];
+   char abSrcPrint[1024];
+   char abDstPrint[1024];
+
+   mclear(abDstRel);
+   mclear(abDstAbs);
+
+   strcopy(abSrcBuf, pcoi->name());
+
+   char *pszSrcPath = 0;
+   char *pszRelFile = 0;
+
+   char *prel = strrchr(abSrcBuf, glblPathChar);
+   if (prel) {
+      *prel++ = '\0';
+      pszRelFile = prel;
+      pszSrcPath = abSrcBuf;
+   } else {
+      pszRelFile = abSrcBuf;
+      pszSrcPath = str("");
+   }
+
+   memset(abSrcRelAtt, 0, sizeof(abSrcRelAtt));
+   memset(abSrcRelAtt, ' ', sizeof(abSrcRelAtt)-10);
+   memset(abDstRelAtt, 0, sizeof(abDstRelAtt));
+   memset(abDstRelAtt, ' ', sizeof(abDstRelAtt)-10);
+
+   memset(abSrcAbsAtt, 0, sizeof(abSrcAbsAtt));
+   memset(abSrcAbsAtt, ' ', sizeof(abSrcAbsAtt)-10);
+   memset(abDstAbsAtt, 0, sizeof(abDstAbsAtt));
+   memset(abDstAbsAtt, ' ', sizeof(abDstAbsAtt)-10);
+
+   memset(abLineEditPartInfo, 0, sizeof(abLineEditPartInfo));
+
+   if (cs.listfiles)
+   {
+      // just print selected files
+      strcopy(abSrcPrint, pcoi->name());
+      int iFullLen = strlen(abSrcPrint);
+      int iPathLen = strlen(pszSrcPath)+1;
+      int iRelOff  = iPathLen;
+      int iRelLen  = iFullLen-iPathLen;
+      if (iRelOff>=0 && iRelLen>0)
+         memset(abSrcAbsAtt+iRelOff, 'i', iRelLen);
+      printColorText(abSrcPrint, abSrcAbsAtt);
+      return 0;
+   }
+
+   int iMatchOff=0,iMatchLen=0;
+   int isubrc = lineedit(cs.renexp, pszRelFile,
+                  abDstRel, sizeof(abDstRel),
+                  abSrcRelAtt, abDstRelAtt,
+                  cs.exact|2, &iMatchOff, &iMatchLen);
+
+   if (isubrc) {
+      // printf("miss: %s\n", pszFile);
+      return 0; // no match
+   }
+   // printf("match: %s\n", pszFile);
+
+   // fromtext matches
+   int iDstRelSkip=0;
+   if (cs.rentodir)
+      joinPath(abDstAbs, sizeof(abDstAbs), cs.rentodir, abDstRel, &iDstRelSkip);
+   else
+      joinPath(abDstAbs, sizeof(abDstAbs), pszSrcPath, abDstRel, &iDstRelSkip);
+
+   // ignore if no name change
+   if (!strcmp(pcoi->name(), abDstAbs))
+      return 0;
+
+   // isolate output folder
+   char szOutPath[1024];
+   strcopy(szOutPath, abDstAbs);
+   prel = strrchr(szOutPath, glblPathChar);
+   #ifdef _WIN32
+   if (!prel) {
+      prel = strrchr(szOutPath, ':');
+      if (prel)
+         prel++;
+   }
+   #endif
+   if (prel)
+      *prel = '\0';
+   else
+      szOutPath[0] = '\0';
+   // is output folder same as input?
+   bool bMayCheckOutPath=1;
+   if (!strcmp(szOutPath, pszSrcPath))
+      bMayCheckOutPath=0;
+
+   // highlight source match
+   {
+      int iCopyLen = strlen(pszRelFile);
+      int iCopyPos = strlen(pcoi->name()) - iCopyLen;
+      if (iCopyPos >= 0)
+         memcpy(abSrcAbsAtt+iCopyPos+6, abSrcRelAtt, iCopyLen);
+   }
+
+   // highlight dst match
+   {
+      int iCopyLen = (int)strlen(abDstRel) - iDstRelSkip;
+      int iCopyPos = (int)strlen(abDstAbs) - iCopyLen;
+      if (iCopyPos >= 0 && iCopyLen > 0)
+         memcpy(abDstAbsAtt+iCopyPos+6, abDstRelAtt+iDstRelSkip, iCopyLen);
+   }
+
+   snprintf(abSrcPrint, sizeof(abSrcPrint)-10, "FROM: %s", pcoi->name());
+   abSrcPrint[sizeof(abSrcPrint)-10] = '\0';
+   memset(abSrcAbsAtt, 'f', 6);
+   printColorText(abSrcPrint, abSrcAbsAtt);
+
+   if (cs.sim < 2)
+   {
+      bool bredundant=0;
+      bool bexists=0;
+      bool bnooutdir=0;
+      bool bbadoutdir=0;
+
+      if (cs.sim)
+      {
+         if (glblOutFileMap.isset(abDstAbs)) {
+            bredundant=1;
+            cs.filesRedundant++;
+         } else {
+            glblOutFileMap.put(abDstAbs);
+         }
+
+         Coi ocoi(abDstAbs, 0);
+         if (ocoi.existsFile(1)) {
+            bexists=1;
+            cs.filesExisting++;
+         }
+
+         if (bMayCheckOutPath)
+         {
+            Coi opath(szOutPath, 0);
+            if (opath.existsFile(0)) {
+               if (cs.verbose>1)
+                  printf("ERR : file exist with name: %s\n", szOutPath);
+               bbadoutdir=1;
+               cs.badOutDir++;
+            }
+            else if (!opath.existsFile(1)) {
+               if (cs.verbose>1)
+                  printf("ERR : dir does not exist: %s\n", szOutPath);
+               bnooutdir=1;
+               cs.noOutDir++;
+            }
+         }
+      }
+
+      if (bredundant || bexists || bnooutdir || bbadoutdir)
+      {
+         char szinfo[200];
+         szinfo[0]='\0';
+         cchar *szcont="";
+
+         if (bredundant)
+            { strcat(szinfo, "redundant"); szcont=","; }
+         if (bexists)
+            { strcat(szinfo, szcont); strcat(szinfo, "exists"); szcont=","; }
+         if (bnooutdir)
+            { strcat(szinfo, szcont); strcat(szinfo, "no outdir"); szcont=","; }
+         if (bbadoutdir)
+            { strcat(szinfo, szcont); strcat(szinfo, "bad outdir"); szcont=","; }
+
+         snprintf(abDstPrint, sizeof(abDstPrint)-10, "ERR : %s - %s", abDstAbs, szinfo);
+         abDstPrint[sizeof(abDstPrint)-10] = '\0';
+         memset(abDstAbsAtt, 'e', 6);
+         printColorText(abDstPrint, abDstAbsAtt);
+      }
+      else
+      {
+         snprintf(abDstPrint, sizeof(abDstPrint)-10, "TO  : %s", abDstAbs);
+         abDstPrint[sizeof(abDstPrint)-10] = '\0';
+         memset(abDstAbsAtt, 'f', 6);
+         printColorText(abDstPrint, abDstAbsAtt);
+      }
+   }
+
+   if (!cs.sim && cs.yes)
+   {
+      isubrc = pcoi->renameto(abDstAbs);
+      if (isubrc)
+         return 1+perr("... rename failed, rc=%d\n", isubrc);
+   }
+
+   return 0;
+}
+
+bool getistr(char *psz, int idigits, int ifrom, int ito, int &rout)
+{
+   int r=0;
+   for (int i=0; i<idigits; i++)
+   {
+      char c = *psz++;
+      if (!isdigit(c))
+         return 0;
+      r = r * 10 + (c - '0');
+   }
+   if (r < ifrom) return 0;
+   if (r > ito) return 0;
+   rout = r;
+   return 1;
+}
+
+bool matchdate(char *pszsrcio, cchar *pszmask, int *adate, bool breorder=0)
+{
+   char *pszsrc = pszsrcio;
+
+   int Y=0,M=0,D=0,h=0,m=0,s=0;
+   int i=0,istate=0;
+
+   int ireqdigits = 0;
+   for (char *psz=(char*)pszmask; *psz; psz++)
+      switch (*psz) {
+         case 'Y': ireqdigits += 4; break;
+         case 'M': ireqdigits += 2; break;
+         case 'D': ireqdigits += 2; break;
+         case 'h': ireqdigits += 2; break;
+         case 'm': ireqdigits += 2; break;
+         case 's': ireqdigits += 2; break;
+      }
+
+   int ihavedigits = 0;
+   for (char *psz=pszsrc; *psz; psz++)
+      if (isdigit(*psz))
+         ihavedigits++;
+      else
+         break;
+
+   if (ihavedigits < ireqdigits)
+      return 0;
+
+   while (*pszmask && *pszsrc)
+   {
+      switch (*pszmask)
+      {
+         case 'Y':
+            if (!getistr(pszsrc,4,1970,3000,Y)) {
+               if (istate) return 0;
+               pszsrc++;
+               continue;
+            }
+            adate[0] = Y;
+            pszmask++;
+            pszsrc += 4;
+            istate=1;
+            continue;
+         case 'M':
+            if (!getistr(pszsrc,2,01,12,M)) {
+               if (istate) return 0;
+               pszsrc++;
+               continue;
+            }
+            adate[1] = M;
+            pszmask++;
+            pszsrc += 2;
+            istate=1;
+            continue;
+         case 'D':
+            if (!getistr(pszsrc,2,01,31,D)) {
+               if (istate) return 0;
+               pszsrc++;
+               continue;
+            }
+            adate[2] = D;
+            pszmask++;
+            pszsrc += 2;
+            istate=1;
+            continue;
+         case 'h':
+            if (!getistr(pszsrc,2,00,23,h)) {
+               if (istate) return 0;
+               pszsrc++;
+               continue;
+            }
+            adate[3] = h;
+            pszmask++;
+            pszsrc += 2;
+            istate=1;
+            continue;
+         case 'm':
+            if (!getistr(pszsrc,2,00,59,m)) {
+               if (istate) return 0;
+               pszsrc++;
+               continue;
+            }
+            adate[4] = m;
+            pszmask++;
+            pszsrc += 2;
+            istate=1;
+            continue;
+         case 's':
+            if (!getistr(pszsrc,2,00,59,s)) {
+               if (istate) return 0;
+               pszsrc++;
+               continue;
+            }
+            adate[5] = s;
+            pszmask++;
+            pszsrc += 2;
+            istate=1;
+            continue;
+      }
+   }
+
+   if (!*pszmask)
+   {
+      if (breorder==1 && (pszsrc-pszsrcio)==8)
+      {
+         // rebuild date in order: YMD
+         pszsrcio[0] = ((adate[0] / 1000) % 10) + '0';
+         pszsrcio[1] = ((adate[0] /  100) % 10) + '0';
+         pszsrcio[2] = ((adate[0] /   10) % 10) + '0';
+         pszsrcio[3] = ((adate[0] /    1) % 10) + '0';
+         pszsrcio[4] = ((adate[1] /   10) % 10) + '0';
+         pszsrcio[5] = ((adate[1] /    1) % 10) + '0';
+         pszsrcio[6] = ((adate[2] /   10) % 10) + '0';
+         pszsrcio[7] = ((adate[2] /    1) % 10) + '0';
+      }
+      return 1;
+   }
+
+   return 0;
+}
+
+#ifdef SFK_W64
+char *dataAsTraceQ(ushort *pAnyData)
+{
+   static char szBuf[300];
+
+   char *pszBuf = szBuf;
+   int  iMaxBuf = sizeof(szBuf);
+ 
+   ushort *pSrcCur = (ushort *)pAnyData;
+ 
+   char *pszDstCur = pszBuf;
+   char *pszDstMax = pszBuf + iMaxBuf - 20;
+ 
+   int i=0;
+   for (; pSrcCur[i] != 0 && pszDstCur < pszDstMax; i++)
+   {
+      ushort uc = pSrcCur[i];
+ 
+      if (uc < 0x100U && isprint((char)uc))
+      {
+         *pszDstCur++ = (char)uc;
+         continue;
+      }
+
+      *pszDstCur++ = '?';
+   }
+ 
+   *pszDstCur = '\0';
+ 
+   return pszBuf;
+}
+
+int execFixFile(ushort *ain, __wfinddata64_t *pdata)
+{
+   cs.files++;
+
+   // derive all possibly needed data
+
+   ushort apure[1024];  // for dewide, rewide
+   char   szpure[1024]; // same in ascii
+   int    adate[20];    // for setftime
+   uchar  szcp[50];
+
+   int isrc=0,idst=0,iuni=0;
+   int msrc=1000,mdst=1000;
+   mclear(adate);
+
+   while (ain[isrc]!=0 && isrc<msrc && idst<mdst)
+   {
+      ushort uc = ain[isrc++];
+      if (uc >= 0x100U)
+      {
+         iuni++;
+
+         if (cs.dewide)
+            continue;
+
+         if (cs.rewide)
+         {
+            sprintf((char*)szcp, "{%04x}", uc);
+            for (int i=0; szcp[i]!=0 && idst<mdst; i++)
+            {
+               apure[idst] = szcp[i];
+               szpure[idst] = szcp[i];
+               idst++;
+            }
+            continue;
+         }
+
+         apure[idst] = uc;
+         szpure[idst] = '?';
+         idst++;
+         continue;
+      }
+      apure[idst] = uc;
+      szpure[idst] = (char)uc;
+      idst++;
+   }
+   apure[idst] = 0;
+   szpure[idst] = '\0';
+
+   /*
+      scan for date, time
+      -------------------
+      01312015    MDY   201501   hms
+      20150131    YMD   2015     hm
+
+      01172015-0737  MDYhm
+      20150131201501 YMDhms
+   */
+   bool bdate=0,btime=0,btsdiff=0;
+   char *psz = strrchr(szpure, glblPathChar);
+   if (!psz)
+         psz = szpure;
+   while (*psz)
+   {
+      if (!bdate) {
+         if (matchdate(psz, "MDY", adate, cs.setndate)) {
+            if (cs.setndate) {
+               // write back possible reordered date
+               int ioff = psz-szpure;
+               for (int i=0; i<8; i++) {
+                  if (apure[ioff+i] != ((ushort)psz[i]&0xFFU))
+                     btsdiff = 1;
+                  apure[ioff+i] = psz[i];
+               }
+            }
+            bdate=1; 
+            psz += 8;
+            continue; 
+         }
+         if (matchdate(psz, "YMD", adate))
+            { bdate=1; psz += 8; continue; }
+         psz++;
+         continue;
+      }
+      if (!btime) {
+         if (matchdate(psz, "hms", adate))
+            { btime=1; psz += 6; continue; }
+         if (matchdate(psz, "hm", adate))
+            { btime=1; psz += 4; continue; }
+         psz++;
+         continue;
+      }
+      break;
+   }
+
+   bool bNameDiffers = memcmp(ain, apure, (isrc+1)*2) ? 1 : 0;
+
+   time_t now = time(NULL);
+   struct tm *tm = 0;
+   tm = localtime(&now);
+   tm->tm_isdst = -1;
+
+   tm->tm_year = adate[0] - 1900;
+   tm->tm_mon  = adate[1] - 1;
+   tm->tm_mday = adate[2];
+   tm->tm_hour = adate[3];
+   tm->tm_min  = adate[4];
+   tm->tm_sec  = adate[5];
+
+   time_t nTime = mktime(tm);
+   num nTime2 = (num)nTime;
+
+   bool bTimeDiffers = 0;
+
+   if (nTime2 > 0 && nTime2 != pdata->time_write)
+      bTimeDiffers = 1;
+
+   // ignore, list, change?
+   bool bChgName=0, bChgTime=0;
+   
+   if ((cs.dewide || cs.rewide) && bNameDiffers)
+      bChgName = 1;
+
+   if (cs.setftime && bTimeDiffers)
+      bChgTime = 1;
+
+   if (btsdiff)
+      bChgName = 1;
+
+   if (!bChgName && !bChgTime)
+      return 0;
+
+   printx("$FROM:<def> <time>%s<def> %s\n", 
+      pdata->time_write > 0 ? timeAsString(pdata->time_write,1) : "[invalid time]",
+      dataAsTraceQ(ain));
+
+   // printx("$DIFF:<def> name=%d time=%d %llu %llu\n",bChgName,bChgTime,pdata->time_write,nTime2);
+
+   cchar *ptimecol = (bChgTime != 0 && nTime2 > 0) ? "<rep>":"<time>";
+   cchar *pnamecol = bChgName ? "<rep>":"";
+   
+   printx("$  TO:<def> %s%s<def> %s%s<def>\n", ptimecol, timeAsString(nTime2,1),
+      pnamecol, dataAsTraceW(apure));
+
+   if (idst < 1) {
+      pwarn("... cannot change, name would be empty: %s\n", dataAsTraceW(ain));
+      return 0;
+   }
+
+   if (cs.yes)
+   {
+      do
+      {
+         if (bChgName && _wrename(ain, apure))
+         {
+            perr("... rename failed: %s\n", dataAsTraceW(ain));
+            break;
+         }
+
+         bool berr = 0;
+
+         if (bChgTime != 0 && nTime2 > 0)
+         {
+            HANDLE hDst = CreateFileW(
+               apure,
+               FILE_WRITE_ATTRIBUTES,
+               0,    // share
+               0,    // security
+               OPEN_EXISTING,
+               FILE_ATTRIBUTE_NORMAL,
+               0     // template file
+               );
+            if (hDst == INVALID_HANDLE_VALUE)
+               { perr("... set filetime failed (1)\n"); break; }
+
+            FILETIME nDstMTime, nDstCTime;
+            FILETIME *pMTime=0, *pCTime=0;
+ 
+            if (!makeWinFileTime(nTime2, nDstMTime))
+               pMTime = &nDstMTime;
+ 
+            // if (nClCTime > 0)
+            // {
+            //    if (!makeWinFileTime(nClCTime, nDstCTime))
+            //       pCTime = &nDstCTime;
+            // }
+
+            if (pMTime || pCTime)
+               if (!SetFileTime(hDst, pCTime, 0, pMTime))
+                  { perr("... set filetime failed (2)\n"); berr=1; }
+
+            CloseHandle(hDst);
+         }
+
+         if (!berr)
+            cs.filesChg++;
+      }
+      while (0);
+   }
+   else
+   {
+      cs.filesChg++;
+   }
+
+   return 0;
+}
+#endif
+
+int iGlblMovTotalTime = 0;
+num nGlblMovFileSize  = 0;
+
+int movtimetoms(int i)
+{
+   int ifrac = i % 100;
+       i /= 100;
+ 
+   int isec = i % 60;
+       i /= 60;
+
+   int imin = i % 60;
+       i /= 60;
+
+   int ihou = i;
+
+   return (ihou * 100 + imin) * 100 + isec;
+}
+
+char *movtimetoa(int i, char *szBuf=0)
+{
+   static char szBuf2[100];
+ 
+   if (!szBuf)
+      szBuf = szBuf2;
+
+   int ifrac = i % 100;
+       i /= 100;
+ 
+   int isec = i % 60;
+       i /= 60;
+
+   int imin = i % 60;
+       i /= 60;
+
+   int ihou = i;
+
+   sprintf(szBuf, "%02u:%02u:%02u", ihou, imin, isec);
+
+   return szBuf;
+}
+
+// RC 0: error
+int atomovtime(char *psz, int ioptlen, bool bUseBytes)
+{
+   char szBuf[100];
+
+   int ilen = ioptlen ? ioptlen : strlen(psz);
+
+   if (ilen > sizeof(szBuf)-10)
+      return 0+perr("buffer overflow");
+
+   if (bUseBytes)
+   {
+      if (!nGlblMovFileSize)
+         return 0+perr("missing filesize. specify as first parameter.");
+
+      if (!iGlblMovTotalTime)
+         return 0+perr("missing total time. specify as second parameter.");
+
+      memcpy(szBuf, psz, ilen);
+      szBuf[ilen] = '\0';
+
+      num nBytePos = atonum(szBuf);
+
+      int ires = nBytePos * iGlblMovTotalTime / nGlblMovFileSize;
+ 
+      // printf("# time %08u = \"%s\" * %u / %s (inlen=%d)\n",
+      //   ires, szBuf, iGlblMovTotalTime, numtoa(nGlblMovFileSize), ilen);
+
+      if (cs.verbose > 1)
+         printf("itime : %s = %s bytes\n", movtimetoa(ires, szBuf), numtoa(nBytePos));
+ 
+      return ires;
+   }
+
+   // 3053     -> ((30 * 60) + 53) * 100
+   // 305395   -> ((30 * 60) + 53) * 100 + 95
+
+   char szHou[10]; mclear(szHou);
+   char szMin[10]; mclear(szMin);
+   char szSec[10]; mclear(szSec);
+   char szFrc[10]; mclear(szFrc);
+
+   if (strchr(psz, ':'))
+   {
+      // 30:53 and 01:30:53
+      switch (ilen)
+      {
+         case 5:
+            memcpy(szMin, psz, 2);
+            memcpy(szSec, psz+3, 2);
+            break;
+ 
+         case 8:
+            memcpy(szHou, psz, 2);
+            memcpy(szMin, psz+3, 2);
+            memcpy(szSec, psz+6, 2);
+            break;
+      }
+   }
+   else
+   {
+      // 3053 and 013053
+      switch (ilen)
+      {
+         case 4:
+            memcpy(szMin, psz, 2);
+            memcpy(szSec, psz+2, 2);
+            break;
+ 
+         case 6:
+            memcpy(szHou, psz, 2);
+            memcpy(szMin, psz+2, 2);
+            memcpy(szSec, psz+4, 2);
+            break;
+      }
+   }
+
+   int iTime =
+         (atoi(szHou) * 3600) * 100
+      +  (atoi(szMin) *   60) * 100
+      +  (atoi(szSec)       ) * 100
+      ;
+
+   return iTime;
+}
+
+// RC 0: OK
+int atomovrange(char *psz, num *pstart, num *pend)
+{
+   char *pszStart = psz;
+   char *pszEnd   = strchr(psz, '-');
+   if (!pszEnd)
+      return 9+perr("wrong time range format: %s", psz);
+
+   *pstart = atonum(pszStart);
+
+   pszEnd++;
+
+   if (!(*pend = atonum(pszEnd)))
+      return 10+perr("wrong time range end: %s", psz);
+
+   return 0;
+}
+
+// RC 0: OK
+int atomovrange(char *psz, int *pstart, int *pend, bool bUseBytes)
+{
+   char *pszStart = psz;
+   char *pszEnd   = strchr(psz, '-');
+   if (!pszEnd)
+      return 9+perr("wrong time range format: %s", psz);
+
+   *pstart = atomovtime(pszStart, pszEnd-pszStart, bUseBytes);
+
+   pszEnd++;
+
+   if (!(*pend = atomovtime(pszEnd, 0, bUseBytes)))
+      return 10+perr("wrong time range end: %s", psz);
+
+   return 0;
+}
+
+int Media::findSeconds(num n)
+{
+   for (int i=0; i<iCmd; i++) {
+      if (aBeg[i]==n && aBegSec[i]!=-1)
+         return aBegSec[i];
+      if (aEnd[i]==n && aEndSec[i]!=-1)
+         return aEndSec[i];
+   }
+   return -1;
+}
+
+Media *Media::pClCurrent = 0;
+
+Media::Media( )
+{
+   memset(this, 0, sizeof(*this));
+}
+
+void Media::reset( )
+{
+   iClInvalidFiles = 0;
+   iClDoneFiles = 0;
+   nClGlobalBytes = 0;
+   bClHaveKeep = 0;
+   bClKeepAll = 0;
+   bClJoinOutput = 0;
+   bClFixOutput = 0;
+   iClDoneTS = 0;
+   if (fClOut)
+      perr("media: output file open on init\n");
+   fClOut = 0;
+   mclear(szClTmpOutFile);
+   mclear(szClRecentOutFile);
+   mclear(szClFinalFile);
+   mclear(szClFixParms);
+   clearCommands();
+}
+
+void Media::setFixParms(char *psz)
+{
+   if (!strcmp(psz, "pal-dvd") || !strcmp(psz, "dvd-pal"))
+      strcopy(szClFixParms, "-target pal-dvd");
+   else
+   if (!strcmp(psz, "ntsc-dvd") || !strcmp(psz, "dvd-ntsc"))
+      strcopy(szClFixParms, "-target ntsc-dvd");
+   else
+      strcopy(szClFixParms, psz);
+}
+
+void Media::closeOutput( )
+{
+   char szCmd[SFK_MAX_PATH+100];
+
+   if (bClFixOutput)
+   {
+      snprintf(szCmd, sizeof(szCmd)-10,
+         "ffmpeg -y -i \"%s\" %s -codec copy \"%s\"",
+         szClTmpOutFile, szClFixParms, szClFinalFile);
+
+      if (cs.sim && (cs.quiet<2))
+         printx("$%s\n", szCmd);
+      else
+      if (!cs.sim && fClOut)
+         printx("$%s\n", szCmd);
+   }
+
+   if (!fClOut)
+      return;
+
+   fclose(fClOut);
+   fClOut = 0;
+ 
+   if (bClFixOutput)
+   {
+      int iSubRC = system(szCmd);
+
+      if (iSubRC > 0) {
+         pwarn("ffmpeg possible error, RC=%d\n", iSubRC);
+         pinf("use -keeptmp to keep temporary output file.\n");
+      }
+ 
+      if (!bClKeepTmp) {
+         if (cs.verbose)
+            printf("cleaning up temporary: %s\n", szClTmpOutFile);
+         remove(szClTmpOutFile);
+      }
+   }
+
+   if (cs.keeptime)
+   {
+      // this checks if it was really set
+      clOutStat.writeStat(__LINE__);
+   }
+}
+
+void Media::clearCommands( )
+{
+   bClHaveM3UCommands=0;
+   mclear(aCmd);
+   mclear(aBeg);
+   mclear(aEnd);
+   mclear(aBegSec);
+   mclear(aEndSec);
+   iFirstCmd=0;
+   iCmd=0;
+   for (int i=0; i<MAX_MOV_CMD; i++) {
+      aBegSec[i]=-1;
+      aEndSec[i]=-1;
+   }
+}
+
+void Media::shutdown( )
+{
+   if (pszClM3UText) {
+      delete [] pszClM3UText;
+      pszClM3UText = 0;
+   }
+   if (!pClCurrent)
+      return; // safety
+   Media *pThis = pClCurrent;
+   pClCurrent = 0;
+   delete pThis;
+   // no further processing
+}
+
+Media &Media::current( )
+{
+   if (!pClCurrent)
+      pClCurrent = new Media();
+   return *pClCurrent;
+}
+
+int Media::parseM3UFile(char *pszm3u)
+{
+   bClHaveM3UCommands=1;
+
+   iFirstCmd=0;
+   iCmd=0;
+
+   if (pszClM3UText)
+      delete [] pszClM3UText;
+   if (!(pszClM3UText = loadFile(pszm3u, 0)))
+      return 9;
+   if (cs.verbose)
+      printf("--- Using bookmarks: ---\n");
+   /*
+      #EXTVLCOPT:bookmarks={name=the.mpg0,bytes=56119296,time=93}
+      #EXTVLCOPT:bookmarks={name=the.mpg0,bytes=56119296,time=93},{name=the.mpg1,bytes=1334441410,time=2354},...
+      C:\video\the.mpg
+   */
+   bool  bNextIsFile = 0;
+   char *pszMeta = 0;
+   char *pszCur  = pszClM3UText;
+   char *pszNext = 0;
+   char *pszTime = 0;
+   int iCurLine=0,iMetaLine=0,iFileLine=0;
+
+   char  szTimeBuf1[100],szTimeBuf2[100],szTimeBuf3[100];
+
+   // find last EXTVLCOPT entry
+   while (pszCur && *pszCur) {
+      pszNext = strchr(pszCur, '\n');
+      if (pszNext)
+         *pszNext++ = '\0';
+      removeCRLF(pszCur);
+      iCurLine++;
+      if (strBegins(pszCur, "#EXTVLCOPT:bookmarks=")) {
+         pszMeta = pszCur;
+         bNextIsFile = 1;
+         iMetaLine = iCurLine;
+      }
+      else
+      if (bNextIsFile) {
+         bNextIsFile = 0;
+         pszClM3UFileEntry = pszCur;
+         iFileLine = iCurLine;
+      }
+      pszCur = pszNext;
+   }
+   if (!pszMeta)
+      return 9+perr("no #EXTVLCOPT:bookmarks= found within %s\n", pszm3u);
+   if (!pszClM3UFileEntry || !strlen(pszClM3UFileEntry))
+      return 9+perr("no input file filename found within %s\n", pszm3u);
+   if (!fileExists(pszClM3UFileEntry)) {
+      perr("input file not found: %s\n", pszClM3UFileEntry);
+      pinf("from line %03u of M3U: %s\n", iFileLine, pszm3u);
+      return 9;
+   }
+   if (cs.verbose) {
+      printf("using: line %u, %.60s ...\n", iMetaLine, pszMeta);
+      printf("using: line %u, %s\n", iFileLine, pszClM3UFileEntry);
+   }
+ 
+   // parse that entry
+   pszCur = pszMeta;
+   int istate2 = 0;
+   int nTimeSec = 0;
+   while (pszCur && *pszCur) {
+      // convert bookmarks into keep commands
+      if (!(pszNext = strstr(pszCur, "bytes=")))
+         break;
+      pszNext += 6;
+      num nPos = atonum(pszNext);
+      if (pszTime = strstr(pszNext, "time="))
+         nTimeSec = atoi(pszTime+5);
+      if (!(istate2++ & 1)){
+         aCmd[iCmd] = SFKMOV_KEEP;
+         aBeg[iCmd] = nPos;
+         aBegSec[iCmd] = nTimeSec;
+      } else {
+         aEnd[iCmd] = nPos;
+         aEndSec[iCmd] = nTimeSec;
+         if (cs.verbose)
+            printf("%s : %s-%s (%s-%s)\n",
+               aCmd[iCmd] == SFKMOV_KEEP ? "keep":"skip",
+               numtoa(aBeg[iCmd],10,szTimeBuf1), numtoa(aEnd[iCmd],10,szTimeBuf2),
+               movtimetoa(aBegSec[iCmd]*100,szTimeBuf3),movtimetoa(aEndSec[iCmd]*100));
+         iCmd++;
+      }
+      pszCur = pszNext;
+   }
+ 
+   // plausi check
+   if (istate2 & 1)
+      return 9+perr("uneven number of boomarks found in %s\n", pszm3u);
+   if (cs.verbose) {
+      printf("------------------------\n");
+   }
+
+   return 0;
+}
+
+int Media::analyze(uchar *pbuf, int isize)
+{
+   return 0;
+}
+
+int Media::renderTempName(char *pszFinal)
+{
+   // from: pszFinal == output.mpg
+   // to  : pszFinal == output-tmp.mpg
+   //       szClFinalFile  == output.mpg
+   strcopy(szClFinalFile, pszFinal);
+
+   char szNameBuf[SFK_MAX_PATH+10];
+   strcopy(szNameBuf, pszFinal);
+
+   char *pszBase = szNameBuf;
+   char *pszExt  = strrchr(szNameBuf, '.');
+
+   if (!pszExt)
+      return 9+perr("missing file extension on output name: %s\n", pszFinal);
+
+   if (SFTmpFile::tmpDirWasSet()) {
+      // NO *pszExt del here, using full ".ext"
+      SFTmpFile otmp(pszExt, 1);
+      char *psz = otmp.name();
+      strcopy(szClTmpOutFile, psz);
+   } else {
+      *pszExt++ = '\0';
+      snprintf(szClTmpOutFile, sizeof(szClTmpOutFile)-10,
+         "%s-tmp.%s", pszBase, pszExt);
+   }
+
+   if (bClShowTmp)
+      printf("using temporary: %s\n", szClTmpOutFile);
+
+   return 0;
+}
+
+int Media::processMediaFile(char *pszSrc, char *pszOutFile)
+{
+   if (!bClKeepAll && !iCmd) {
+      pwarn("no commands given, skipping: %s\n", pszSrc);
+      return 5;
+   }
+
+   const char *pszind = bClHaveM3UCommands ? "  ":"";
+   if (cs.quiet >= 2) pszind = "";
+
+   printf("input: %s%s\n", pszind, pszSrc);
+
+   if (bClFixOutput)
+   do
+   {
+      if (bClJoinOutput && szClTmpOutFile[0]) {
+         pszOutFile = szClTmpOutFile;
+         break; // names already rendered
+      }
+
+      if (!pszOutFile)
+         return 9+perr("missing output filename");
+
+      if (renderTempName(pszOutFile))
+         return 9;
+      // szClOut   is now TEMPORARY name
+      // szClFinal is the final filename
+
+      pszOutFile = szClTmpOutFile;
+   }
+   while (0);
+
+   if (pszOutFile)
+      strcopy(szClRecentOutFile, pszOutFile);
+
+   if ((cs.quiet<2) && pszOutFile)
+      printf("out  : %s%s%s\n", pszind, pszOutFile, bClJoinOutput ? " (joined)":"");
+
+   FileStat ofsSrc;
+   if (ofsSrc.readFrom(pszSrc, 0, 1))
+      return 9+perr("no such input file: %s", pszSrc);
+
+   num nFileSize = ofsSrc.getSize();
+
+   if (nFileSize <= 0)
+      return 9+perr("empty input file: %s", pszSrc);
+
+   if (!cs.sim && !pszOutFile)
+      return 9+perr("missing output filename");
+
+   int iRC = 0;
+
+   num nTotalTime = nFileSize;
+
+   FILE *fin = fopen(pszSrc, "rb");
+   if (!fin) return 9+perr("unable to open input file: %s\n", pszSrc);
+
+   if (!cs.sim) {
+      if (!fClOut) {
+         fClOut = fopen(pszOutFile, "wb");
+         if (!fClOut) { fclose(fin); return 9+perr("unable to write: %s\n", pszOutFile); }
+         clOutStat.copyFrom(ofsSrc);
+         clOutStat.setFilename(pszOutFile);
+      }
+   }
+
+   num nTotalBytes=0;
+
+   // set start state
+   int iCopyState = 1; // keep
+   if (   aCmd[iFirstCmd] == SFKMOV_KEEP
+       && aBeg[iFirstCmd] > 0
+      )
+       iCopyState = 0; // keep, but not from start
+   else
+   if (   aCmd[iFirstCmd] == SFKMOV_CUT
+       && aBeg[iFirstCmd] == 0
+      )
+       iCopyState = 0; // cut from start
+
+   // define current switch point
+   num nCurBeg = 0;
+   num nCurEnd = nTotalTime;
+ 
+   char szBuf1[100],szBuf2[100],szBuf3[100];
+   char szInfoBuf[100];
+ 
+   num tLastInfo = 0;
+
+   while (iRC==0 && nCurBeg<nTotalTime)
+   {
+      // BEGIN state of current cmd was set already.
+      // find next switch point.
+      int iNextCmd   = -1;
+      int bNextIsBeg =  0;
+      num iNextTime  = nTotalTime;
+      for (int iTmp=iFirstCmd; aCmd[iTmp]; iTmp++)
+      {
+         num ibeg = aBeg[iTmp];
+         num iend = aEnd[iTmp];
+
+         if (ibeg > nCurBeg && ibeg < iNextTime) {
+            iNextTime=ibeg; iNextCmd=iTmp; bNextIsBeg=1;
+            // printf("curmin: #%d with beg %s\n", iTmp, numtoa(ibeg, 10));
+            continue;
+         }
+
+         if (iend > nCurBeg && iend < iNextTime) {
+            iNextTime=iend; iNextCmd=iTmp; bNextIsBeg=0;
+            // printf("curmin: #%d with end %s\n", iTmp, numtoa(iend, 10));
+            continue;
+         }
+      }
+
+      // calc current range to keep or cut
+      if (iNextCmd >= 0)
+         nCurEnd = iNextTime;
+      else
+         nCurEnd = nTotalTime;
+
+      if (!cs.quiet)
+      {
+         info.clear();
+
+         int iBegSec = findSeconds(nCurBeg);
+         int iEndSec = findSeconds(nCurEnd);
+
+         if (iBegSec >= 0 && iEndSec >= 0)
+            sprintf(szInfoBuf, "%s-%s (%s-%s)",
+               numtoa(nCurBeg, 10, szBuf1), numtoa(nCurEnd, 10, szBuf2),
+               movtimetoa(iBegSec*100,szBuf3),movtimetoa(iEndSec*100));
+         else
+            sprintf(szInfoBuf, "%s-%s",
+               numtoa(nCurBeg, 10, szBuf1), numtoa(nCurEnd, 10, szBuf2));
+
+         if (iCopyState)
+            printx("$copy : %s\n", szInfoBuf);
+         else
+            printx("#skip : %s\n", szInfoBuf);
+      }
+
+      // apply current range
+      while (1)
+      {
+         info.setProgress(nTotalTime, nCurBeg, "bytes");
+         info.setStatus(iCopyState ? "copy":"skip", pszOutFile ? pszOutFile : pszSrc);
+
+         if (iCopyState)
+         {
+            // copy part
+            int iMaxRead = sizeof(abBuf)-100;
+ 
+            if (nCurEnd < nCurBeg + iMaxRead)
+               iMaxRead = (int)(nCurEnd - nCurBeg);
+ 
+            if (iMaxRead <= 0) {
+               perr("invalid section length: %d at %s\n", iMaxRead, numtoa(nCurBeg, 10));
+               iRC = 9;
+               break;
+            }
+ 
+            int nread = (cs.sim && !bClScan) ? iMaxRead : fread(abBuf, 1, iMaxRead, fin);
+ 
+            if (nread <= 0)
+            {
+               info.print("file end reached.\n");
+               iRC = 9;
+               break; // EOF on input
+            }
+
+            if (bClScan)
+               analyze(abBuf, nread);
+ 
+            if (!cs.sim && fClOut) {
+               int nwrite = myfwrite(abBuf, nread, fClOut);
+               if (nwrite != nread) {
+                  esys("fwrite", "error while writing: %s   \n", pszOutFile);
+                  iRC = 9;
+                  break;
+               }
+            }
+
+            nTotalBytes += nread;
+            nClGlobalBytes += nread;
+            nCurBeg += nread;
+         }
+         else
+         {
+            // skip part
+            if (myfseek(fin, nCurEnd, SEEK_SET)) {
+               iRC = 9;
+               break;
+            }
+            nCurBeg = nCurEnd;
+         }
+
+         if (nCurBeg >= nCurEnd)
+            break;
+
+      }  // endwhile part read loop
+
+      if (iRC > 0)
+         break;
+
+      // switch copy state
+      if (iNextCmd >= 0)
+      {
+         if (aCmd[iNextCmd]==SFKMOV_KEEP && bNextIsBeg) {
+            iCopyState = 1; // start of keep
+            if (cs.verbose > 2)
+               info.print("part : kb.KEEP from %s\n", numtoa(nCurBeg, 10));
+         }
+         else
+         if (aCmd[iNextCmd]==SFKMOV_KEEP && !bNextIsBeg) {
+            iCopyState = 0; // end of keep
+            if (cs.verbose > 2)
+               info.print("part : ke.SKIP from %s\n", numtoa(nCurBeg, 10));
+         }
+         else
+         if (aCmd[iNextCmd]==SFKMOV_CUT && bNextIsBeg) {
+            iCopyState = 0; // start of cut
+            if (cs.verbose > 2)
+               info.print("part : cb.SKIP from %s\n", numtoa(nCurBeg, 10));
+         }
+         else
+         if (aCmd[iNextCmd]==SFKMOV_CUT && !bNextIsBeg) {
+            iCopyState = 1; // end of cut
+            if (cs.verbose > 2)
+               info.print("part : ce.KEEP from %s\n", numtoa(nCurBeg, 10));
+         }
+      }
+
+   }  // endwhile overall I/O loop
+
+   info.clear();
+
+   if (!bClJoinOutput)
+      closeOutput();
+   // else called later
+
+   fclose(fin);
+
+   if (!iRC && cs.verbose) {
+      if (cs.sim) {
+         printf("would copy %d mb (%s bytes).\n",
+            (int)(nTotalBytes/1000000), numtoa(nTotalBytes));
+      } else {
+         printf("copied %s bytes.\n", numtoa(nTotalBytes));
+      }
+   }
+
+   if (!iRC && szClMoveSrcOutDir[0]) {
+      char *pszSrcRelName = strrchr(pszSrc, glblPathChar);
+      if (pszSrcRelName)
+         pszSrcRelName++;
+      else
+         pszSrcRelName = pszSrc;
+      joinPath(szClMoveSrcOutFile, sizeof(szClMoveSrcOutDir),
+               szClMoveSrcOutDir, pszSrcRelName);
+      const char *pszInfo = "";
+      if (fileExists(szClMoveSrcOutFile)) {
+         if (cs.sim) {
+            pszInfo = " (output file exists)";
+         } else {
+            if (cs.force) {
+               remove(szClMoveSrcOutFile);
+               pszInfo = " (overwritten)";
+            } else {
+               pszInfo = " "; // dummy for following error
+            }
+         }
+      }
+      if (!cs.quiet)
+         printx("$move : %s -> %s%s\n", pszSrc, szClMoveSrcOutFile, pszInfo);
+      if (!cs.sim) {
+         if (rename(pszSrc, szClMoveSrcOutFile)) {
+            perr("cannot move %s -> %s\n", pszSrc, szClMoveSrcOutFile);
+            static bool btold=0;
+            if (!btold) {
+               btold=1;
+               if (pszInfo[0])
+                  pinf("add option -force to overwrite existing output file.\n");
+               else
+                  pinf("output dir must be on same file system as input file.\n");
+            }
+         }
+      }
+   }
+
+   iClDoneFiles++;
+
+   return iRC;
+}
+
+int execMedia(char *pszSrc, char *pszOutFile)
+{
+   Media &m = Media::current();
+ 
+   int iRC = 0;
+
+   if (m.bClHaveM3UCommands) {
+      // these are valid per single file only
+      m.clearCommands();
+   }
+ 
+   if (endsWithExt(pszSrc, str(".m3u"))) {
+      if (!m.bClHaveKeep) {
+         pwarn("missing \"-keepbook\" command, skipping: %s\n", pszSrc);
+         return 5;
+      }
+      if (cs.quiet<2)
+         printf("using: %s\n", pszSrc);
+      if (iRC = m.parseM3UFile(pszSrc)) {
+         // a single M3U batch is invalid,
+         // but overall processing may keep running
+         m.iClInvalidFiles++;
+         return iRC;
+      }
+      if (!(pszSrc = m.pszClM3UFileEntry)) {
+         m.iClInvalidFiles++;
+         return 9; // safety
+      }
+   }
+
+   if (iRC = m.processMediaFile(pszSrc, pszOutFile))
+      m.iClInvalidFiles++;
+
+   return iRC;
+}
+
+#endif // USE_SFK_BASE
 
