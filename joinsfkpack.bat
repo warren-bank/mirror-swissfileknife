@@ -14,7 +14,7 @@ sfk label begin -var
 
    +echo -spat "
       /*
-         SFKPack V1.0, a frozen monolithic code containing
+         SFKPack V1.0.1, a frozen monolithic code containing
 
             zlib     1.2.11
 
@@ -57,9 +57,11 @@ sfk label begin -var
       #include <errno.h>
       #define TBLS 8
       #define NO_DUMMY_DECL
-      #ifndef _PTRDIFF_T_DEFINED
-       #define _PTRDIFF_T_DEFINED
-       typedef long ptrdiff_t;
+      #ifdef _MSC_VER
+       #ifndef _PTRDIFF_T_DEFINED
+        #define _PTRDIFF_T_DEFINED
+        typedef long ptrdiff_t;
+       #endif
       #endif
       typedef unsigned int u4;
       #define DIST_CODE_LEN  512

@@ -433,6 +433,7 @@ public:
 
    void   update  (uchar *pData, uint32_t nLen);
    uchar *digest  ( );
+   void   reset   ( );
 
 private:
    void   update     (uchar c);
@@ -1588,6 +1589,7 @@ public:
    bool yes;
    bool logcmd;
    bool force;
+   bool nostop;
    bool syncFiles;   // sync files instead of copy
    bool syncOlder;   // with sync, copy older over newer files
    bool flat;        // copy: flat output filenames
@@ -1849,6 +1851,7 @@ public:
    bool addmeta;
    char *tozipname;
    uint nzipredundant;
+   uint mofftime;          // apply for 0:dos 1:unix 2:ntfs
    #endif // SFKPACK
    int  tracecase;
    bool nocasemin;         // sfk190 just latin a-z
@@ -1864,6 +1867,10 @@ public:
    int  iexecfiles;
    bool bzipto;
    bool bnoextutf;
+   int  nmore;
+   int  imore;
+   int  morepage;
+   int  makemd5;
 };
 
 // extern struct CommandStats gs;
@@ -1910,6 +1917,7 @@ enum eWalkTreeFuncs {
    eFunc_XRename     ,
    eFunc_GetPic      ,
    eFunc_XFind       ,
+   eFunc_Move        ,
    eFunc_SumFiles
    #ifdef SFKPACK
    , eFunc_ZipTo
@@ -2156,6 +2164,7 @@ int matchesFileMask (char *pszFile, char *pszInfoAbsName=0);
 extern bool bGlblNoRootDirFiles;
 int saveFile(char *pszName, uchar *pData, int iSize, const char *pszMode="wb");
 int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc=0, char *pszShDst=0);
+int execFileMoveSub(char *pszSrc, char *pszDst);
 int joinShadowPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2);
 int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot);
 int mygetpos64(FILE *f, num &rpos, char *pszFile);
@@ -2343,12 +2352,13 @@ public:
    char       **clargx;
    bool         bDoneAlloc;
 
-   char         szClEvalOut[200];   // for small results
+   char         szClEvalOut[300];   // for small results
    char        *pszClEvalOut;       // for large results
 };
 
 #ifdef SFKINT
  #define WITH_FTP_LIMITS
+ // #define WITH_VAR_CALC
 #endif
 
 #define MAX_FTP_VDIR 10

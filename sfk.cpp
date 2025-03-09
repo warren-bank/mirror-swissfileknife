@@ -7,6 +7,73 @@
    The whole source code was created with Depeche View Professional,
    the world's fastest source code browser and editor.
 
+   1.9.2
+   -  rel: 04.07.2018, Major Update
+   -  sum: added sfk move to move files,
+           getcol and tabcol to easily get a column
+           from space or tab separated text.
+           improvements of xed, getvar, scripting.
+           fixed context cleanup of perline.
+   -  chg: Syntax Change: sfk zip: no longer adds .zip
+           to output filename if it contains any dot '.'.
+           this allows to create zip files with any
+           extension, like .odt or .jar.
+           use option -zipext for the old behaviour.
+   -  add: checkzip: option -md5 to show md5 checksums
+           of zip file contents
+   -  add: general option -more to pause output
+           per page.
+   -  add: xhexfind: option -context=n to show
+           n bytes of context around results.
+   -  add: sfk for: now supports counting down,
+           negative start/end values, and optional
+           step size.
+   -  add: sfk zip: option -rel to strip top level
+           folder name of filenames within zip.
+   -  add: sfk xed: option -write to rewrite a given
+           file with changed output.
+   -  fix: sfk if: now supports expression starting
+           with plus like: if "+a = +a" ...
+   -  fix: perline: context and options were not
+           fully reset between two lines, e.g.
+           load files.txt +perline "list #qtext" -yes
+           produced wrong output.
+   -  add: sfk move: move files between two folders.
+   -  add: sfk mkdir: option -forfile to create dir tree
+           for a given filename
+   -  add: scripts: #(substr(s,o,l)) now also supports
+           variable (names) for o and l.
+   -  add: scripts: #(rsubstr(s,o,l)) to get substring
+           from the right side in left direction.
+   -  add: sfk getcol, tabcol to get one column from
+           whitespace or tab separated text.
+           alias of sfk filter.
+   -  add: sfk ping: option -every to ping every n sec.
+   -  add: make-random-file: output folder creation.
+   -  add: sfk times, alias for sfk list -times.
+   -  add: list: now also accepts -times with 's'.
+   -  add: sfk getvar: option -numline=n to get
+           a line by number.
+   -  add: zip/unzip: option -offtime to support
+           file times which are one hour off.
+   -  fix: xtext: with -to out\$file it produced error -4
+           during simulation.
+   -  fix: xtext: -to out\$file no longer writes :file
+           headers into output files.
+   -  fix: rand: missing range check.
+   -  fix: ifexist file stop -all ... was not possible.
+   -  fix: windows mingw g++ compile.
+   -  chg: sfk if: improved "need a command" error info.
+   -  doc: list: example how to keep only existing
+           filenames from a list of filenames
+   -  doc: count: example for filter/setvar/count.
+   -  doc: copy: reference to move.
+   -  doc: xtext: how to extract text starting at a line.
+   -  doc: help var: new (r)substr behaviour.
+   -  doc: addcr: example for current folder.
+   -  doc: sfk times example.
+   -  doc: sfk zip: example to unzip/zip an .odt file.
+
    1.9.1
    Revision 3:
    -  rel: 28.05.2018, Minor Update
@@ -999,8 +1066,8 @@
 // NOTE: if you change the source and create your own derivate,
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
-#define SFK_VERSION  "1.9.1" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "3"
+#define SFK_VERSION  "1.9.2" // ver_ and check the _PRE definition
+#define SFK_FIXPACK  ""
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -3697,6 +3764,8 @@ int execFileCopy    (Coi  *pcoi);
 int execDirCopy     (char *pszSrc, FileList &oDirFiles);
 int execFileCleanup (char *pszFile);
 int execDirCleanup  (char *pszSrc, FileList &oDirFiles);
+int execFileMove    (Coi  *pcoi);
+int execDirMove     (char *pszSrc, FileList &oDirFiles);
 bool tryGetRelTime  (cchar *psz, num &nRetTime);
 int diffDump        (uchar *p1, uchar *p2, num nlen, num nListOffset, int iHiOff, int iHiLen);
 int execReplaceFix  (Coi *pcoi);
@@ -4153,6 +4222,8 @@ char *mystrristr(char *psrc, cchar *ppat)
 
 int   nGlblConsColumns    = 80;
 bool  bGlblConsColumnsSet =  0;
+int   nGlblConsRows       = 30;
+bool  bGlblConsRowsSet    =  0;
 
 int setWriteEnabled(char *pszFile)
 {
@@ -4778,8 +4849,10 @@ void printColorText(char *pszText, char *pszAttrib, bool bWithLF)
       i1 += i2;
    }
    setTextColor(-1);
-   if (bWithLF)
-      putchar('\n');
+   if (bWithLF) {
+      // putchar('\n');
+      oprintf("\n"); // sfk1914
+   }
 }
 
 char attribFromHumanColor(char *pszCol, char cDefault='i')
@@ -5930,6 +6003,8 @@ char *flatURLName(char *purl, char *pctype, char *pbuf, int nmaxbuf, uint nmode,
    return pbuf;
 }
 #endif // VFILENET
+
+extern uchar *sfkgetvarexp(char *pname, int *plen);
 
 // - - - - - Coi(Table) begin - - - - -
 
@@ -8642,11 +8717,18 @@ void initConsole()
    printf("   %u  BACKGROUND_GREEN\n", nGlblConsAttrib & BACKGROUND_GREEN);
    printf("   %u  BACKGROUND_RED\n"  , nGlblConsAttrib & BACKGROUND_RED);
    */
- 
+
+   int nConCol = oConInf.srWindow.Right - oConInf.srWindow.Left + 1;
+   int nConRow = oConInf.srWindow.Bottom - oConInf.srWindow.Top + 1;
+
    if (!bGlblConsColumnsSet && (oConInf.dwSize.X >= 60)) {
       nGlblConsColumns = oConInf.dwSize.X;
       bGlblConsColumnsSet = true;
       info.setWidth(nGlblConsColumns);
+   }
+   if (!bGlblConsRowsSet && (nConRow >= 10)) {
+      nGlblConsRows = nConRow;
+      bGlblConsRowsSet = true;
    }
 
    if (!pszColEnv)
@@ -11130,6 +11212,35 @@ void StringPipe::dump(cchar *pszTitle)
       printf("[   \"%s\"]\n",getEntry(i,__LINE__));
 }
 
+bool strEndsWith(char *psz, char c)
+{
+   int ilen=strlen(psz);
+   if (ilen>0 && psz[ilen-1]==c)
+      return 1;
+   return 0;
+}
+
+// .
+void stepMore()
+{
+   if (!cs.nmore)
+      return;
+
+   if (cs.imore+1 >= cs.nmore)
+   {
+      cs.morepage++;
+      setTextColor(nGlblTimeColor, 1);
+      printf("--- %03u [enter/c/x] ---\r", cs.morepage); fflush(stdout);
+      int c = getchar();
+      setTextColor(-1);
+      cs.imore = 0;
+      if (c == 'c')
+         cs.nmore = 0;
+      if (c == 'x' || c == 'q')
+         bGlblEscape = 1;
+   }
+}
+
 void oprintf(cchar *pszFormat, ...)
 {
    va_list argList;
@@ -11149,6 +11260,14 @@ void oprintf(cchar *pszFormat, ...)
 
    printf("%s", szPrintBufMap);
    fflush(stdout);
+
+   if (cs.nmore) {
+      for (int i=0; szPrintBufMap[i]; i++)
+         if (szPrintBufMap[i]=='\n')
+            cs.imore++;
+      if (strEndsWith(szPrintBufMap, '\n'))
+         stepMore();
+   }
 }
 
 void oprintf(StringPipe *pOutData, cchar *pszFormat, ...)
@@ -11178,6 +11297,13 @@ void oprintf(StringPipe *pOutData, cchar *pszFormat, ...)
       #endif
       printf("%s", szPrintBufMap);
       fflush(stdout);
+      if (cs.nmore) {
+         for (int i=0; szPrintBufMap[i]; i++)
+            if (szPrintBufMap[i]=='\n')
+               cs.imore++;
+         if (strEndsWith(szPrintBufMap, '\n'))
+            stepMore();
+      }
    }
 }
 
@@ -12903,7 +13029,9 @@ num NumTable::getEntry(int nIndex, int nTraceLine) {
 
 // ==========================================================
 
-SFKMD5::SFKMD5()
+SFKMD5::SFKMD5() { reset(); }
+
+void SFKMD5::reset()
 {
    bClDigDone  = 0;
 
@@ -15529,6 +15657,10 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
       }
       return true;
    }
+   if (!strcmp(psz1, "-more"))
+      { pcs->nmore = nGlblConsRows; return true; }
+   if (strBegins(psz1, "-more") && isdigit(psz1[5])!=0)
+      { pcs->nmore = atoi(psz1+5); return true; }
 
    return false;
 }
@@ -15716,6 +15848,7 @@ cchar *aGlblChainCmds[] =
    #endif
    "1dup",          // receive filenames
    "1copy",         // receive filenames
+   "1move",         // sfk1914 internal
    "2script",       // receive TEXT
    "1fscript",      // receive TEXT
    "1ftee",         // receive filenames
@@ -15816,6 +15949,8 @@ cchar *aGlblChainCmds[] =
    // "8index", "8gindex",
    // "8reflist", "8deplist",
    // "8ip", "8bin-to-src",
+   "2getcol",  // internal
+   "2tabcol",  // internal
    0
 };
 
@@ -24632,6 +24767,7 @@ int execSingleFile(Coi *pcoi, int lLevel, int &lFiles, int nDirFileCnt, int &lDi
       case eFunc_Delete    : return execDelFile(pszFile);    break;
       #ifndef USE_SFK_BASE
       case eFunc_Copy      : return execFileCopy(pcoi);      break;
+      case eFunc_Move      : return execFileMove(pcoi);      break;
       case eFunc_Cleanup   : return execFileCleanup(pszFile);     break;
       case eFunc_MetaUpd   : return execMetaFileUpdate(pszFile); break;
       case eFunc_MetaCheck : return execMetaFileCheck(pszFile); break;
@@ -25091,6 +25227,8 @@ int execSingleDir(Coi *pcoi, int lLevel, int &nTreeFiles, FileList &oDirFiles, i
            return execDirCopy(pszName, oDirFiles);
       case eFunc_Cleanup :
            return execDirCleanup(pszName, oDirFiles);
+      case eFunc_Move    :
+           return execDirMove(pszName, oDirFiles);
       case eFunc_MetaUpd: execMetaDirUpdate(pszName); break;
       #if defined(SFKPACK)
       case eFunc_ZipTo:  return execZipFile(pcoi, 1, 0); break;
@@ -25232,6 +25370,8 @@ uchar *memFind(uchar *pNeedle, num nNeedleSize, uchar *pHayStack, num nHaySize)
 
 int provideExtractOutFile(char *pszFilename)
 {
+   if (cs.sim)
+      return 0;
    if (cs.extractOutFile)
       return 0; // OK
    if (createOutDirTree(pszFilename))
@@ -25246,6 +25386,8 @@ int provideExtractOutFile(char *pszFilename)
 
 int addToExtractOutFile(uchar *pData, int iSize)
 {
+   if (cs.sim) // sfk1914
+      return 0;
    if (!cs.extractOutFile)
       return 9;
    if (fwrite(pData, 1, iSize, cs.extractOutFile) != iSize)
@@ -27011,7 +27153,7 @@ int execHexdump(Coi *pcoi, uchar *pBuf, uint nBufSize, int iHighOff, int iHighLe
 
    uint uiCharPos = 0;
 
-   while (1)
+   while (!userInterrupt()) // sfk1914
    {
       int nread = 0;
       if (pBuf) {
@@ -39756,13 +39898,12 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       }
       return 1;
    }
-   else if (strBegins(argv[iDir], "-kbpure"))   { cs.listunit = 'K'; nGlblListDigits =  9; SFK_ADD_SIZE; return 1; }
-   else if (strBegins(argv[iDir], "-mbpure"))   { cs.listunit = 'M'; nGlblListDigits =  6; SFK_ADD_SIZE; return 1; }
-   else if (strBegins(argv[iDir], "-gbpure"))   { cs.listunit = 'G'; nGlblListDigits =  3; SFK_ADD_SIZE; return 1; }
-   else if (strBegins(argv[iDir], "-kb"))       { cs.listunit = 'k'; nGlblListDigits = 12; SFK_ADD_SIZE; return 1; }
-   else if (strBegins(argv[iDir], "-mb"))       { cs.listunit = 'm'; nGlblListDigits =  9; SFK_ADD_SIZE; return 1; }
-   else if (strBegins(argv[iDir], "-gb"))       { cs.listunit = 'g'; nGlblListDigits =  6; SFK_ADD_SIZE; return 1; }
-   else
+   if (strBegins(argv[iDir], "-kbpure"))   { cs.listunit = 'K'; nGlblListDigits =  9; SFK_ADD_SIZE; return 1; }
+   if (strBegins(argv[iDir], "-mbpure"))   { cs.listunit = 'M'; nGlblListDigits =  6; SFK_ADD_SIZE; return 1; }
+   if (strBegins(argv[iDir], "-gbpure"))   { cs.listunit = 'G'; nGlblListDigits =  3; SFK_ADD_SIZE; return 1; }
+   if (strBegins(argv[iDir], "-kb"))       { cs.listunit = 'k'; nGlblListDigits = 12; SFK_ADD_SIZE; return 1; }
+   if (strBegins(argv[iDir], "-mb"))       { cs.listunit = 'm'; nGlblListDigits =  9; SFK_ADD_SIZE; return 1; }
+   if (strBegins(argv[iDir], "-gb"))       { cs.listunit = 'g'; nGlblListDigits =  6; SFK_ADD_SIZE; return 1; }
    if (!strncmp(argv[iDir], "-size=", strlen("-size="))) {
       // size format with digits specified
       if (!bSize) {
@@ -39773,7 +39914,6 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       nGlblListDigits = atol(psz1);
       return 1;
    }
-   else
    if (bFull && !strncmp(argv[iDir], "-small", 6)) {
       // list sorted by size, show smallest 50 by default
       cs.listBySize = -50;
@@ -39792,7 +39932,6 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       }
       return 1;
    }
-   else
    if (bFull && !strncmp(argv[iDir], "-big", 4)) {
       // list sorted by size, show biggest 50 by default
       cs.listBySize = 50;
@@ -39811,7 +39950,6 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       }
       return 1;
    }
-   else
    if (bFull && !strncmp(argv[iDir], "-sort", 5))
    {
       // list sorted by name, ALL by default
@@ -39843,7 +39981,6 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       }
       return 1;
    }
-   else
    if (!strcmp(argv[iDir], "-nosize")) {
       // reverse implicite size listing by "-big"
       if ((cs.listForm & 0xFF) == 0x01) {
@@ -39852,8 +39989,9 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       }
       return 1;
    }
-   else
-   if (!strcmp(argv[iDir], "-time")) {
+   if (   !strcmp(argv[iDir], "-time")
+       || !strcmp(argv[iDir], "-times")) // sfk1920
+   {
       // do not just remember the flag, but also option sequence.
       if (!bTime) {
          cs.listForm = ((cs.listForm << 8) | 0x02);
@@ -39861,7 +39999,6 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       }
       return 1;
    }
-   else
    if (!strcmp(argv[iDir], "-flattime")) {
       if (!bTime) {
          cs.listForm = ((cs.listForm << 8) | 0x02);
@@ -39870,7 +40007,6 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       cs.flatTime = 1;
       return 1;
    }
-   else
    if (bFull && !strncmp(argv[iDir], "-old", 4)) {
       // list sorted by time, show oldest 50 by default
       cs.listByTime = -50;
@@ -39889,7 +40025,6 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       }
       return 1;
    }
-   else
    if (bFull && !strncmp(argv[iDir], "-late", 5)) {
       // list sorted by time, show latest 50 by default
       cs.listByTime = 50;
@@ -39908,7 +40043,6 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       }
       return 1;
    }
-   else
    if (bFull && haveParmOption(argv, argc, iDir, "-sort", &pszParm)) {
       if (!pszParm) {
          bOptErr = 1;
@@ -39932,7 +40066,6 @@ int parseListOpt(bool bFull, int argc, char *argv[], int &iDir, bool &bTime, boo
       }
       return 1;
    }
-   else
    if (!strcmp(argv[iDir], "-notime")) {
       // reverse implicite time listing by "-late"
       if ((cs.listForm & 0xFF) == 0x02) {
@@ -40516,7 +40649,12 @@ SFKMapArgs::SFKMapArgs(char *pszCmd, int argc, char *argv[], int iDir)
          else
          {
             // replace #(foo) by value
+            #ifdef WITH_VAR_CALC
+            pval = (char*)sfkgetvarexp(szVarExp, 0);
+            #else
             pval = (char*)sfkgetvar(szVarExp, 0);
+            #endif
+            // result is TEMPORARY.
             if (!pval) {
                // sfk181 sfk filter: skip #(10.10col1)
                if (cs.relaxedvar) {
@@ -40602,7 +40740,9 @@ struct ForBlock {
    char *pszCmd;
    int   iDir;
    char  szVar[16+2]; // loop vars must be short
-   num   nVarMax;
+   num   nVarSrc;
+   num   nVarDst;
+   num   nVarStep;
 };
 
 // submain.begin
@@ -40886,9 +41026,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    ifcmd (   !strcmp(pszCmd, "list") || !strncmp(pszCmd, "sel", 3) // +wref
           || !strcmp(pszCmd, "dir")  || !strcmp(pszCmd, "larc")
           || !strcmp(pszCmd, "late") || !strcmp(pszCmd, "big")
-          || !strcmp(pszCmd, "old") || !strcmp(pszCmd, "small") // sfk1840
+          || !strcmp(pszCmd, "old")  || !strcmp(pszCmd, "small") // sfk1840
           || !strcmp(pszCmd, "today")
           || !strcmp(pszCmd, "seluni")
+          || !strcmp(pszCmd, "times")
          )
    {
       // fix sfk1833: unwanted list on: sfk tell foo +list
@@ -40960,6 +41101,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (!strcmp(pszCmd, "today")) {
          pszCmd = str("list");
          tryGetRelTime("today", cs.sincetime);
+      }
+      // times is the same as list -times
+      if (!strcmp(pszCmd, "times")) {
+         cs.listForm = ((cs.listForm << 8) | 0x02);
+         bTime = 1;
+         pszCmd = str("list");
       }
 
       for (; iDir < argc; iDir++)
@@ -43466,6 +43613,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n");
       webref("addcrlf");
       printx("   $examples\n"
+             "      #sfk addcr . .csv\n"
+             "         add crlf on all .csv files in current folder.\n"
+             "\n"
              "      #sfk addcr src .cpp .hpp\n"
              "         add crlf on all .cpp and .hpp files within src.\n"
              "\n"
@@ -44887,20 +45037,25 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                return 9+perr("unknown option: %s\n", argx[iDir]);
             continue;
          }
-         if (   !strcmp(argv[iDir], "begin")
-             || !strcmp(argv[iDir], "+begin"))
-         {
-            // begin ... +endif support since sfk189
-            if (iDir+1<argc)
-               iThenCmd = iDir+1;
-            while (iDir<argc && strcmp(argv[iDir],"+endif")!=0)
-               iDir++;
-            if (iDir>=argc)
-               return 9+perr("missing +endif after if \"%s\" begin", pexpr?pexpr:"");
-            continue;
+         // sfk1920: support if "+a = +a" ...
+         // as long as no expression was found 
+         // do not accept begin or +tell etc.
+         if (pexpr) { // sfk1920 support if "+a = +a" ...
+            if (   !strcmp(argv[iDir], "begin")
+                || !strcmp(argv[iDir], "+begin"))
+            {
+               // begin ... +endif support since sfk189
+               if (iDir+1<argc)
+                  iThenCmd = iDir+1;
+               while (iDir<argc && strcmp(argv[iDir],"+endif")!=0)
+                  iDir++;
+               if (iDir>=argc)
+                  return 9+perr("missing +endif after if \"%s\" begin", pexpr?pexpr:"");
+               continue;
+            }
+            if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+               break;
          }
-         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
-            break;
          // non-option parms
          if (!pexpr) {
             pexpr = argx[iDir];
@@ -44921,7 +45076,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       }
 
       if (!pexpr)    return 9+perr("need an expression after if.");
-      if (!iThenCmd) return 9+perr("need a command after \"if expression\", without \"+\".");
+      if (!iThenCmd) return 9+perr("need a command after if \"%s\", without \"+\".", pexpr);
 
       // evaluate expression
       bool btrue = 0;
@@ -45062,6 +45217,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk goto<def>  jump to a local label.\n"
              "\n"
              "   $examples\n"
+             "      #sfk ifexist out.txt stop -all \"output file exists\" +endif\n"
+             "         stop whole sfk script if out.txt exists already\n"
              "      #sfk ifexist in.txt begin load in.txt +appendto out.txt +endif\n"
              "         if in.txt exists append it's content to out.txt\n"
              "      #sfk ifexist foo begin +if \"rc=2\" stop -all nofile +endif\n"
@@ -45077,11 +45234,12 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       int iMode      = 0;
       bool bOrDir    = 1;
       bool bJustDir  = 0;
+      int istate     = 0;
 
       for (; iDir<argc; iDir++)
       {
          char *pszArg = argx[iDir];
-         if (!strncmp(pszArg, "-", 1)) {
+         if (!istate && !strncmp(pszArg, "-", 1)) {
             if (setGeneralOption(argx, argc, iDir))
                continue;
             else
@@ -45104,6 +45262,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          // non-option parms
          if (!pexpr) {
             pexpr = argx[iDir];
+            istate = 1;
             continue;
          }
          if (!iThenCmd)
@@ -47367,6 +47526,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   sd card, before creating an .iso image of that card,\n"
              "   which is then compressed for distribution.\n"
              "\n"
+             "   if filename contains folder(s) the directory tree\n"
+             "   is created automatically.\n"
+             "\n"
              "   $example\n"
              "      #sfk make-zero-file tmp1.dat 1m\n"
              "         produce a file tmp1.dat with 1 mbyte of size.\n"
@@ -47390,9 +47552,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   $see also\n"
              "      #sfk make-zero-file<def>    create file with null bytes\n"
              "\n"
-             "   $example\n"
+             "   $examples\n"
              "      #sfk make-random-file tmp1.dat 1m -seed=1234\n"
              "         produce a file tmp1.dat with 1 mbyte of size.\n"
+             "      #sfk make-random-file mydir<sla>foo.txt 1k -text\n"
+             "         create folder mydir, and foo.txt within.\n"
             );
       ehelp;
 
@@ -47449,6 +47613,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       num nSize = numFromSizeStr(pszSize, "size");
       if (nSize < 0)
          return 9+perr("invalid output size");
+
+      // sfk1914: create out dir tree
+      if (strchr(pszFile, glblPathChar))
+         if (createOutDirTree(pszFile))
+            return 9+perr("Cannot create folder for: %s\n", pszFile);
 
       Coi ocoi(pszFile, 0);
       int isubrc = 0;
@@ -49593,10 +49762,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                 "   e.g. by creating md5 lists (see \"sfk md5gento\").\n"
                 "\n"
                 );
-      // printx("   $see also\n"
-      //        "      #sfk help select<def> - about the file selection syntax.\n"
-      //        "\n"
-      //        );
+         printx("   $see also\n"
+                "      #sfk move<def>   move files between two folders.\n"
+                "\n"
+                );
          webref("copy");
          printx("   $examples\n"
                 "      #sfk copy g:\\myimage.zip .\n"
@@ -49678,7 +49847,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       cs.hidden = 1; // include hidden/system by default
       cs.syncFiles = !strncmp(pszCmd, "sync", 4);
 
-      // int iDir = 2;
       for (; iDir<argc; iDir++)
       {
          char *pszParm = 0;
@@ -50151,6 +50319,234 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
+   // .
+   ifcmd (!strcmp(pszCmd, "move")) // sfk1914
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk move srcRoot dstRoot [-dir subdir1 subdir2] [-file .ext1 .ext2]\n"
+             "\n"
+             "   move files between two folders.\n"
+             "\n"
+             "   can be used only within the same drive/partition.\n"
+             "\n"
+             "   moving across drives can be done by:\n"
+             "   1. select ... +copy\n"
+             "   2. select ... +delete\n"
+             "\n"
+             "   move does not copy folder meta informations like\n"
+             "   folder modification time, and it cannot clean up\n"
+             "   empty leftover folders.\n"
+             "\n"
+             "   $options\n"
+             "      -rel     do not include srcRoot in output names.\n"
+             "               normally used with chained commands like\n"
+             "               sfk select ... +move\n"
+             "      -nostop  continue on conflicts. normally move\n"
+             "               stops on the first file that already\n"
+             "               exists in the target folder.\n"
+             "      -flat    do not keep folder structure in output,\n"
+             "               but move all into one folder with long\n"
+             "               unique filenames\n"
+             "      -flat2   move filenames without any path info\n"
+             "               to out folder. may cause conflicts\n"
+             "               on identical filenames.\n"
+             "\n"
+             "   $command chaining\n"
+             "      accepts filename lists from previous commands\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk xrename<def>   flexible rename over all files\n"
+             "                    of a folder, also allowing to move\n"
+             "                    renamed files to an output folder.\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk move mydir outdir -dir . -subdir trash\n"
+             "         move files from mydir to outdir which are\n"
+             "         in sub folders like trash, trash2 etc.\n"
+             "      #sfk sel mydir .bak +move -rel outdir\n"
+             "         select all .bak files in mydir, then move\n"
+             "         them to outdir. do not include 'mydir' in\n"
+             "         the output path.\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool bchain = chain.usefiles;
+
+      char *pszSrc   = 0;
+      char *pszDst   = 0;
+      int iChainNext = 0;
+
+      cs.hidden = 1; // include hidden/system by default
+      cs.movefiles = 1;
+
+      for (; iDir<argc; iDir++)
+      {
+         char *pszParm = 0;
+         if (!strcmp(argx[iDir], "-flat")) {
+            cs.flat = 1;
+            cs.cflatpat = '-';
+            cs.listTargets = 1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-flat2")) {
+            cs.flat = 2;
+            cs.cflatpat = '-';
+            cs.listTargets = 1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-nostop"))
+            { cs.nostop = 1; continue; }
+         if (haveParmOption(argx, argc, iDir, "-flat", &pszParm)) {
+            if (!pszParm) return 9;
+            if (strlen(pszParm)>1)
+               return 9+perr("supply only a single character for -flat\n");
+            cs.flat = 1;
+            cs.cflatpat = pszParm[0];
+            cs.listTargets = 1;
+            continue;
+         }
+         if (!strncmp(argx[iDir], "-", 1)) {
+            if (isDirParm(argx[iDir]))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", argx[iDir]);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!bchain && !pszSrc) {
+            pszSrc = argx[iDir];
+            if (!coiExists(pszSrc, 1)) // 1: or dir
+               return 9+pferr(pszSrc, "no such file or directory: %s\n", pszSrc);
+            continue;
+         }
+         if (!pszDst) { pszDst = argx[iDir]; continue; }
+         // further parms: file selection masks
+         break; // fall through
+      }
+
+      // init source and target dirs or files.
+
+      if (!bchain && !pszSrc) return 9+perr("missing source directory or file.\n");
+      if (!pszDst) return 9+perr("missing target directory%s.\n", bchain? "":" or file");
+
+      // remember this, have to strip it from full paths
+      pszGlblCopySrc = pszSrc; // NULL on chaining
+
+      // parse subdirs and general options
+      if ((lRC = processDirParms(pszCmd, argc, argx, iDir, 3, &iChainNext)))
+         return lRC;
+
+      // now we know if in simulation or not
+      cs.sim = !cs.yes;
+
+      bool bSrcDir = bchain || isDir(pszSrc);
+      bool bDstDir = isDirByName(pszDst) || isDir(pszDst);
+
+      glblOutFileMap.reset();
+
+      if (!bchain && !bSrcDir && !bDstDir) {
+         cs.sim = !cs.yes;
+         if (cs.sim && !cs.nohead)
+            printx("$[simulating:]\n");
+         // single file move.
+         createOutDirTree(pszDst);
+         lRC = execFileMoveSub(pszSrc, pszDst);
+      }
+      else
+      if (!bchain && !bSrcDir) {
+         cs.sim = !cs.yes;
+         if (cs.sim && !cs.nohead)
+            printx("$[simulating:]\n");
+         // src is a file, target a dir.
+         strcopy(szRefNameBuf, pszDst);
+         int nLen = strlen(szRefNameBuf);
+         if ((nLen > 0) && (szRefNameBuf[nLen-1] != glblPathChar))
+            strcat(szRefNameBuf, glblPathStr);
+         // isolate last part of source name
+         char *pszRelName = strrchr(pszSrc, glblPathChar);
+         #ifdef _WIN32
+         if (!pszRelName) pszRelName = strrchr(pszSrc, ':');
+         #endif
+         if (pszRelName) pszRelName++;
+         else pszRelName = pszSrc;
+         // combine target filename
+         strcat(szRefNameBuf, pszRelName);
+         if (cs.verbose)
+            info.print("%s => %s\n",pszSrc,szRefNameBuf);
+         createOutDirTree(szRefNameBuf);
+         lRC = execFileMoveSub(pszSrc, szRefNameBuf);
+      }
+      else if (bSrcDir)
+      {
+         // copy directory tree to a target tree.
+         pszGlblPreRoot = pszSrc; // NULL on chaining
+         pszGlblCopyDst = pszDst;
+
+         cs.sim = !cs.yes;
+         if (cs.sim && !cs.nohead)
+            printx("$[simulating:]\n");
+
+         lRC = walkAllTrees(eFunc_Move, lFiles, lDirs, nBytes);
+      }
+
+      info.clear();
+
+      if (cs.sim && !cs.nohead) {
+         if (cs.files || cs.dirs || cs.filesDeleted || cs.dirsDeleted)
+            printx("$[add -yes to execute.]\n");
+         else
+            printx("$[no differences.]\n");
+      }
+
+      bool bsilent = (cs.nohead || cs.quiet);
+
+      bool bTold = 0;
+      if (!bSrcDir && !bDstDir)
+         { } // single file copy
+      else
+      if (!bsilent && (cs.files || cs.dirs))
+      {
+         const char *pszVerb = cs.sim ? "would move":"moved";
+         // printx("$%s %u files, %u dirs.", pszVerb, cs.files, cs.dirs);
+         printx("$%s %u files.", pszVerb, cs.files);
+         bTold = 1;
+      }
+      if (!bsilent && (cs.filesDeleted || cs.dirsDeleted)) {
+         const char *pszVerb = cs.sim ? "would delete":"deleted";
+         setTextColor(nGlblWarnColor, 1);
+         // printf("%s%s %d files, %d dirs.", bTold?" ":"", pszVerb, cs.filesDeleted, cs.dirsDeleted);
+         printf("%s%s %d files.", bTold?" ":"", pszVerb, cs.filesDeleted);
+         setTextColor(-1);
+         bTold = 1;
+      }
+      if (!bsilent && cs.filesNewerInDst) {
+         printx("%s$(%d differing files in dest)", bTold?" ":"", cs.filesNewerInDst);
+         bTold = 1;
+      }
+      if (!bsilent && (cs.numHiddenFilesSkipped || cs.numHiddenDirsSkipped)) {
+         setTextColor(nGlblWarnColor, 1);
+         printf("%sskipped %d hidden files, %d dirs.", bTold?" ":"", cs.numHiddenFilesSkipped, cs.numHiddenDirsSkipped);
+         setTextColor(-1);
+         bTold = 1;
+      }
+      if (bTold)
+         printf("\n");
+      if (cs.filesRedundant)
+         printx("<err>%d output name conflicts found.\n", cs.filesRedundant);
+
+      glblOutFileMap.reset();
+
+      pszGlblPreRoot = 0;
+
+      STEP_CHAIN(iChainNext, 0); // move
+
+      bDone = 1;
+   }
+
    if (!strcmp(pszCmd, "verify") ||!strcmp(pszCmd, "syncver"))
    {
       if (blockChain(pszCmd, iDir, argc, argv)) return 9; // not yet supported
@@ -50569,51 +50965,78 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   $options\n"
              "      -echo     echo the command on execution\n"
+             "      -forfile  path is a filename, create folder\n"
+             "                for that file. does nothing if\n"
+             "                path contains no <sla> character.\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk dir -withdirs tmp\n"
+             "         list all folder names within tmp\n"
              "\n"
              "   $examples\n"
              "      #sfk mkdir tmp\\foo\\bar\n"
              "         create directory bar within foo within tmp.\n"
+             "      #sfk mkdir -forfile tmp\\foo\\index.html\n"
+             "         create directory foo within tmp.\n"
              );
       ehelp;
 
       sfkarg;
 
-      char *pszDir = 0;
-      bool  becho  = 0;
+      char *pszPathIn=0;
+      char szPath[SFK_MAX_PATH+10];
+      bool becho=0, bforfile=0;
+      szPath[0] = '\0';
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
       {
-         if (!strcmp(argx[iDir], "-echo")) {
-            becho = 1;
-            continue;
-         }
-         else
-         if (!strncmp(argx[iDir], "-", 1)) {
-            if (isDirParm(argx[iDir]))
+         char *pszArg = argx[iDir];
+         if (!strcmp(pszArg, "-echo"))
+            { becho = 1; continue; }
+         if (!strcmp(pszArg, "-forfile"))
+            { bforfile = 1; continue; }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
                continue;
-            else
-               return 9+perr("unknown option: %s\n", argx[iDir]);
+            return 9+perr("unknown option: %s\n", pszArg);
          }
-         else
          if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
             break;
-         // process non-option keywords:
-         if (!pszDir)
-            pszDir = argx[iDir];
-         else
-            return 9+perr("unexpected: %s", argx[iDir]);
+         if (!szPath[0]) {
+            pszPathIn = pszArg;
+            strcopy(szPath, pszArg);
+         } else {
+            return 9+perr("unexpected: %s", pszArg);
+         }
       }
 
-      if (!pszDir) return 9+perr("missing dir name for mkdir");
+      if (!szPath[0])
+         return 9+perr("missing name for mkdir");
 
-      lRC = createSubDirTree(pszDir, str(""));
-      if (lRC) return lRC;
+      if (bforfile) {
+         char *psz = strrchr(szPath, glblPathChar);
+         if (psz)
+            *psz = '\0';
+         else
+            szPath[0] = '\0'; // nothing to do
+      }
 
-      if (becho)
-         printx("<time>mkdir %s<def>\n", pszDir);
+      lRC = 0;
+
+      if (szPath[0])
+      {
+         lRC = createSubDirTree(szPath, str(""));
+         if (lRC) return lRC;
+   
+         if (becho)
+            printx("<time>mkdir %s<def>\n", szPath);
+      } else {
+         if (becho)
+            printx("<time>mkdir : skipped for %s<def>\n", pszPathIn);
+      }
 
       STEP_CHAIN(iChainNext, 0); // mkdir
 
@@ -51624,6 +52047,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (bIsHexFind)
       printx("      -wide         show 16 bytes per line in output.\n"
              "      -lean         show  8 bytes per line in output.\n"
+             "      -context=n    show  n bytes of  context around results.\n"
              "      -fullhead[er] print offset/length of hits both in decimal and hex.\n"
              "      -maxdump=n    show up to n bytes only.\n"
              "      -nodump       do not create a hexdump, list only matching files.\n");
@@ -51663,6 +52087,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (!bIsReplace)
       printx("      +tofile x     as last parameter (command chaining): write text as\n"
              "                    displayed on terminal to a file x.\n");
+      printx("      -more[n]      pause output every 30 or n lines.\n");
 
       printx("\n");
       // if (bFullHelp) // sfk185
@@ -51926,6 +52351,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         context (-pure), and display this in dview. [15]\n"
              "      #sfk xtext -arc in.zip \"/class*/\"\n"
              "         XE: find phrases starting with \"class\" in .zip contents\n"
+             "      #sfk xtext mydir \"/[lstart]---info---[eol]**/[part4]/\"\n"
+             "       #-to out<sla><run>file\n"
+             "         from all files within mydir extract text after line\n"
+             "            $---info---\n"
+             "         writing resulting data to files in the out folder.\n"
+             "         the $**<def> will collect up to 4000 bytes by default,\n"
+             "         use $[1.100000 bytes]<def> to collect more.\n"
              );
 
       if (bhelp || bIsXHexFind)
@@ -53158,7 +53590,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -i           process text stream from standard input\n"
              "      -nomark      do not highlight changes in output\n"
              "      -nocol       no colors at all to allow more memory\n"
-             "      -tofile f    write output to file f. do not use +tofile\n"
+             "      -write       if input filename is given, rewrite file\n");
+      if (bIsXex)
+      printx("                   with the changed data. produces an empty\n"
+             "                   file if search patterns are not found.\n");
+      else
+      printx("                   with the changed data.\n");
+      printx("      -tofile f    write output to file f. do not use +tofile\n"
              "                   chaining as it splits data into text lines.\n"
              "      -rawterm     on output to terminal do not strip codes\n"
              "                   below 32. Null bytes are always stripped.\n"
@@ -53233,6 +53671,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "         read from file in.txt, replace \"foo\" and \"bar\" with\n"
              "         up to 4000 characters inbetween, in the same line,\n"
              "         by the word \"goo\". write output to a file out.txt.\n"
+             "      #sfk xed in.txt \"/foo*bar/goo/\" -write\n"
+             "         same as above, but replace within file in.txt\n" 
              "      #sfk xed in.html \"/<!--**-->//\" -tofile out.html\n"
              "         remove all remark blocks starting with \"<!--\" and\n"
              "         ending with \"-->\", across any number of lines,\n"
@@ -53417,6 +53857,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bool  bstdin = 0;
       bool  bHexDump = 0;
       bool  bIncomplete = 0;
+      bool  bReWrite = 0;
       char *pszRepFile = 0;
       char *pszInFile = 0;
       int   iShowPreState = 0;
@@ -53502,6 +53943,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             cs.rawterm = 1;
             continue;
          }
+         if (!strcmp(argx[iDir], "-write"))
+            { bReWrite = 1; continue; }
          if (strBegins(argx[iDir], "-show")) {
             char *psz = argx[iDir]+5;
             int iwhat = 0;
@@ -53648,6 +54091,17 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          iExp++;
        }
       }
+
+      if (bReWrite && !pszInFile) {
+         perr("-write requires single file reading.\n");
+         pinf("e.g. sfk xed in.txt -write\n");
+         return 9;
+      }
+
+      cs.sim = !cs.yes;
+
+      if (bReWrite && bIsXex && cs.sim)
+         pinf("xex -write may cause massive changes.\n");
 
       // if -bylist is loaded, text has a scope until this
       // commands end, to keep pattern text for later info output.
@@ -53856,6 +54310,15 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       nOutSize = 0;
 
+      if (bReWrite) {
+         if (cs.yes) {
+            cs.tomask = pszInFile;
+            cs.tomaskfile = 1;
+         } else {
+            printx("$[simulating:]\n");
+         }
+      }
+
       // ------- search/replace -------
 
       num    nStart2 = getCurrentTime();
@@ -54048,7 +54511,15 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       num nStart3 = getCurrentTime();
 
-      dumpOutput(pOutText, pOutAttr, nOutSize, bHexDump);
+      if (bReWrite) {
+         info.setStatus("write", pszInFile);
+         info.setAddInfo("%5d %s", iLocalMatches, bIsXex ? "results":"changes");
+         info.printLine(1<<2);
+         if (cs.yes)
+            dumpOutput(pOutText, pOutAttr, nOutSize, bHexDump);
+      } else {
+         dumpOutput(pOutText, pOutAttr, nOutSize, bHexDump);
+      }
 
       if (cs.perf)
          printf("%d msec to handle %d output bytes\n", (int)(getCurrentTime()-nStart3), (int)nOutSize);
@@ -54069,6 +54540,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                printf("%u/%u ", k+1, pObj->aiClBestData[k]);
             printf("\n");
          }
+      }
+
+      if (cs.sim && bReWrite) {
+         printx("$[add -yes to really write changes.]\n");
       }
 
       // cleanup
@@ -58713,6 +59188,77 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       bDone = 1;
    }
 
+   ifcmd (!strcmp(pszCmd, "getcol")    // sfk1914
+       || !strcmp(pszCmd, "getcolumn")
+       || !strcmp(pszCmd, "tabcol")
+      )
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk ... +getcol n\n"
+             "$sfk ... +tabcol n\n"
+             "\n"
+             "   get column n of space or tab separated text.\n"
+             "   see alias section of sfk filter for more.\n"
+             "\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      // one parameter
+      char szBuf[1024];
+
+      int iValue = -1;
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (iValue == -1) {
+            iValue = atoi(pszArg);
+            continue;
+         }
+         return 9+perr("unexpected: %s", pszArg);
+      }
+
+      if (strBegins(pszCmd, "get"))
+         sprintf(szBuf, "filter -blocksep _ -uform #col%d", iValue);
+      if (strBegins(pszCmd, "tab"))
+         sprintf(szBuf, "filter -upat -stabform #col%d", iValue);
+
+      char *asubarg[100];
+      char *psz = szBuf;
+      int   isubarg = 0;
+      asubarg[isubarg++] = psz;
+      for (; *psz; psz++) {
+         if (*psz == ' ') {
+            *psz++ = '\0';
+            asubarg[isubarg++] = psz;
+            if (*psz=='_')
+               *psz=' ';
+         }
+      }
+      for (; iDir<argc; iDir++)
+         asubarg[isubarg++] = argv[iDir];
+
+      lRC = submain(isubarg, asubarg, penv, asubarg[0], 1, bFatal); // getcol
+
+      if (iChainNext)
+         { STEP_CHAIN(iChainNext, chain.coldata); }
+
+      bDone = 1;
+   }
+
    ifcmd (   !strcmp(pszCmd, "num")
           || !strcmp(pszCmd, "number")
           || !strcmp(pszCmd, "numbers")
@@ -59207,7 +59753,6 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
    ifcmd (!strcmp(pszCmd, "getvar"))
    {
-      // ifhelp (argc >= 3 && isHelpOpt(argv[2]))
       ifhelp (argc < 3 && iGlblInScript == 0)
       printx("<help>$sfk getvar name\n"
              "\n"
@@ -59236,6 +59781,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "                     which is much faster\n"
              "      -sline p       same as -spat -line\n"
              "      -slinestart p  same as -spat -linestart\n"
+             "      -numline=n     get a line by number, first is 1\n"
              "\n");
       printx("   $see also\n"
              "      #sfk help var<def>  all about sfk variables\n"
@@ -59267,6 +59813,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       char *pszDef=0;
       char *pszPrefix=str("");
       bool  bfull=0;
+      num   iNumLine=-1;
 
       szRefNameBuf[0] = '\0';
       char *pszLinePat = szRefNameBuf;
@@ -59285,6 +59832,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          if (haveParmOption(argx, argc, iDir, "-default", &pszParm)) {
             if (!pszParm) return 9;
             pszDef = pszParm;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-numline", &pszParm)) {
+            if (!pszParm) return 9;
+            iNumLine = atonum(pszParm);
+            if (iNumLine < 1)
+               return 9+perr("use 1 for first line.");
             continue;
          }
          if (!strcmp(pszArg, "-opt")) {
@@ -59365,25 +59919,37 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
             isize = strlen(pszDef);
          }
 
-         if (pszLinePat[0]) 
+         if (iNumLine != -1 || pszLinePat[0] != 0)
          {
             char *phit = 0;
-            if (pszLinePat[0] == '\n') {
-               // searching for line start:
-               // extra text start comparison.
-               if (cs.usecase) {
-                  if (!strncmp(ptext, pszLinePat+1, strlen(pszLinePat+1)))
-                     phit = ptext;
-               } else {
-                  if (!mystrnicmp(ptext, pszLinePat+1, strlen(pszLinePat+1)))
-                     phit = ptext;
+            if (iNumLine > 0) {
+               phit = ptext;
+               iNumLine--;
+               for (; iNumLine > 0; iNumLine--) {
+                  while (*phit!=0 && *phit!='\n')
+                     phit++;
+                  if (!*phit)
+                     { phit=0; break; }
+                  phit++;
                }
-            }
-            if (phit == 0) {
-               if (cs.usecase)
-                  phit = strstr(ptext, pszLinePat);
-               else
-                  phit = mystrstri(ptext, pszLinePat);
+            } else {
+               if (pszLinePat[0] == '\n') {
+                  // searching for line start:
+                  // extra text start comparison.
+                  if (cs.usecase) {
+                     if (!strncmp(ptext, pszLinePat+1, strlen(pszLinePat+1)))
+                        phit = ptext;
+                  } else {
+                     if (!mystrnicmp(ptext, pszLinePat+1, strlen(pszLinePat+1)))
+                        phit = ptext;
+                  }
+               }
+               if (phit == 0) {
+                  if (cs.usecase)
+                     phit = strstr(ptext, pszLinePat);
+                  else
+                     phit = mystrstri(ptext, pszLinePat);
+               }
             }
             if (phit != 0) {
                // extract whole line. consider \n at start.
@@ -60677,6 +61243,10 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk filter words.txt +count -same -digits=10\n"
              "         tell how often each line occurs in words.txt,\n"
              "         and format the occurence counter with 10 digits.\n"
+             "      #sfk -var filter in.txt +setvar a +count +setvar n\n"
+             "       #+for i from 5 to ##(n) +getvar -numline=##(i) a +endfor\n"
+             "         stores in.txt in variable a, the number of lines\n"
+             "         in variable n, then prints line 5 to end.\n"
              );
       ehelp;
 
@@ -61433,6 +62003,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
             // commands in script must start as with no previous chain
             chain.reset();
+            resetStats();     // sfk1914: missing per entry, see STEP_CHAIN
 
             if (bYes)
             {
@@ -61940,6 +62511,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          bDone = 1;
       }
 
+      if (bhelp || !strcmp(pszSub, "offtime"))
+      {
+         printHelpText("offtime", bhelp);
+         if (bhelp) printx("\n");
+         bDone = 1;
+      }
+
       if (bhelp || strBegins(pszSub, "uni") || strBegins(pszSub, "utf"))
       {
       printx("$sfk unicode support%s:\n",
@@ -62213,7 +62791,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
    ifcmd (!strcmp(pszCmd, "for"))
    {
       ifhelp (nparm < 1)
-      printx("<help>$sfk for variable from start to end\n"
+      printx("<help>$sfk for variable from start to end [step n]\n"
              "\n"
              "   repeat sfk commands several times, from a start\n"
              "   value until an end value, setting a variable.\n"
@@ -62230,6 +62808,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "   $examples\n"
              "      #sfk for i from 1 to 10 +echo -var \"##(i)\" +endfor\n"
              "         print numbers 1 to 10.\n"
+             "      #sfk -var for i from 5 to -5 step -3 +echo \"##(i)\" +endfor\n"
+             "         print numbers 5 to -4. the -5 is not reached.\n"
              "      #sfk -var for i from 1 to 20\n"
              "       #+copy -ltarg mydir\\in##(i).jpg mydir2\\out##(02i).jpg +endfor\n"
              "         copy from mydir files in1.jpg, in2.jpg in3.jpg etc.\n"
@@ -62259,7 +62839,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       {
          // todo: check argx persistency
          char *pszArg = argx[iDir];
-         if (!strncmp(pszArg, "-", 1)) {
+         // if it's not: for i from -5 to 5 ...
+         if (pszArg[0]=='-' && isdigit(pszArg[1])==0)
+         {
             if (isDirParm(pszArg))
                break; // fall through
             if (setGeneralOption(argx, argc, iDir))
@@ -62289,6 +62871,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                nval=myatonum(pszArg);
                if (nval==0 && strcmp(pszArg,"0")!=0)
                   return 9+perr("invalid for start value: %s",pszArg);
+               pFor->nVarSrc=nval;
                sfksetvar(pFor->szVar,(uchar*)pszArg,strlen(pszArg));
                istate=3;
                continue;
@@ -62297,9 +62880,28 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
                   { istate=4; continue; }
                break;
             case 4:
-               pFor->nVarMax=myatonum(pszArg);
+               pFor->nVarDst=myatonum(pszArg);
+               if (pFor->nVarDst > pFor->nVarSrc)
+                  pFor->nVarStep=1;
+               else
+                  pFor->nVarStep=-1;
                istate=5;
                continue;
+            case 5:
+               if (!strcmp(pszArg,"step"))
+                  { istate=6; continue; }
+               break;
+            case 6: {
+               num nstep = myatonum(pszArg);
+               if (   (pFor->nVarStep > 0 && nstep > 0)
+                   || (pFor->nVarStep < 0 && nstep < 0))
+                  { }
+               else
+                  return 9+perr("invalid step value.\n");
+               pFor->nVarStep = nstep;
+               istate=7;
+               continue;
+            }
          }
          return 9+perr("unexpected: %s",pszArg);
       }
@@ -62355,13 +62957,21 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (nval == LLONG_MAX)
          return 9+perr("for %s stops with overflow",pFor->szVar);
 
-      if (userInterrupt()==0 && nval<pFor->nVarMax)
+      if (userInterrupt()==0)
       {
-         nval++;
-         pszval=numtoa(nval);
-         sfksetvar(pFor->szVar,(uchar*)pszval,strlen(pszval));
-         STEP_CHAIN(pFor->iDir, 0);
-         // does continue
+         nval += pFor->nVarStep;
+         if (pFor->nVarStep > 0 && nval > pFor->nVarDst)
+            { }
+         else
+         if (pFor->nVarStep < 0 && nval < pFor->nVarDst)
+            { }
+         else
+         {
+            pszval = numtoa(nval);
+            sfksetvar(pFor->szVar,(uchar*)pszval,strlen(pszval));
+            STEP_CHAIN(pFor->iDir, 0);
+            // does continue
+         }
       }
 
       // cleanup
