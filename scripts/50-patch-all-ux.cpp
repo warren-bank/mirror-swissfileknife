@@ -1,6 +1,6 @@
 :patch "modify all-src in automated test"
 
-:root tmp-selftest
+:root tmp-selftest-ux
 
 :file all-src.cpp
 :from 

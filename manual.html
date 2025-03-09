@@ -5,6 +5,8 @@
 <p>
 <b>how to speed up your working process by use of the command shell, a set of batchfiles, and the swiss file knife.</b>
 <p>
+NOTE: this is additional documentation. for the primary syntax help, run "sfk" without parameters.
+<p>
 sfk is not just a tool, but an implementation of <i>working process principles</i>, namely:
 <p>
 <lu>
@@ -152,9 +154,9 @@ we cannot really do this with a huge snapshot containing the contents of thousan
 to create a clusterfile, first think a moment which files you actually need in there for editing. select a file tree with a maximum of 200 files approx., then don't use snapto, but:
 <p>
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-<font face="courier"><b>sfk syncto=100-edit.cpp -dir TheProject/FooLib/CoreDriver -file .hpp .cpp</b></font>
+<font face="courier"><b>sfk synctext=100-edit.cpp -dir TheProject/FooLib/CoreDriver -file .hpp .cpp</b></font>
 <p>
-why is it called syncto? sfk collects all source files from the mentioned directory into 100-edit.cpp, and then it doesn't exit, but continues to run in <i>sync mode</i>. in this mode, sfk does exactly what was mentioned above: check both the cluster (100-edit.cpp) as well as all target files for changes, and sync them either "down" (from cluster to targets) or "up" (from targets into cluster, if targets were changed directly).
+why is it called synctext? sfk collects all source files from the mentioned directory into 100-edit.cpp, and then it doesn't exit, but continues to run in <i>sync mode</i>. in this mode, sfk does exactly what was mentioned above: check both the cluster (100-edit.cpp) as well as all target files for changes, and sync them either "down" (from cluster to targets) or "up" (from targets into cluster, if targets were changed directly).
 <p>
 now load the cluster into your favourite editor, have some really <b>global changes</b>, and select <i>save</i>. you will notice a short information popup listing all targets concerned by your change. the target contents are updated automatically. it's the same as if you were selecting a function like "replace in files" from a text editor, recursively in a file tree.
 <p>
@@ -180,7 +182,7 @@ let's say, you integrated a new, cool feature into 100-edit.cpp, and it's workin
 <lu>
 <li>end sfk syncmode by pressing ESCAPE (or CTRL+C on unix).
 <li>copy 100-edit.cpp 110-next.cpp
-<li>sfk syncto=110-next.cpp
+<li>sfk synctext=110-next.cpp
 </lu>
 <p>
 this way, you create a new revision of your codebase. sfk is synced onto this new revision. drop 100-edit.cpp from your editor, load 110-next.cpp instead, and continue working.
@@ -189,14 +191,14 @@ now, you may jump back and forth between these revisions any time by stopping sf
 <p>
 <lu>
 <li>end sfk syncmode by pressing ESCAPE.
-<li>sfk syncto=100-edit.cpp
+<li>sfk synctext=100-edit.cpp
 </lu>
 <p>
 sfk will automatically do a <i>down-sync</i> by default, which means all content of 100-next.cpp is written out into the target files. after your test of this version, jump forward again through
 <p>
 <lu>
 <li>end sfk syncmode by pressing ESCAPE.
-<li>sfk syncto=110-next.cpp
+<li>sfk synctext=110-next.cpp
 </lu>
 <p>
 and, again, all target file content will be overwritten by the new code.
@@ -214,7 +216,7 @@ unfortunately, the line number 6300 is not the line number in the cluster, but i
 <p>
 <font face="courier">
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;make yoursys.mak &gt;err.txt 2&gt;&amp;1<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sfk mapto=110-next.cpp &lt;err.txt<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sfk maptext=110-next.cpp &lt;err.txt<br>
 </font>
 <p>
 sfk will read the compiler's error messages from err.txt, parse through it, and whatever looks like a filename and line number is mapped into a cluster location, and listed.
@@ -486,7 +488,7 @@ notepad %1
 
 <b>example: filter all file paths containing FooSys but not CoreLib</b>
 
-   sfk list | sfk filter -+FooSys -!CoreLib
+   sfk list . | sfk filter -+FooSys -!CoreLib
 
 <b>examples: run a command on all .cpp files of the dir tree</b>
 

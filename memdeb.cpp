@@ -1,28 +1,30 @@
 /*
-   SFK simple memory tracing.
+   Swiss File Knife simple memory tracing.
    Unlimited Open Source, free for use in any project.
+
+   This memdeb.cpp must be included by every .cpp source file
+   that needs memory tracing. All source files except one
+   must define MEMDEB_JUST_DECLARE.
+
+   1.0.2
+   -  complete rework and cleanup, for better suitability
+      across multiple sources.
+   -  VERBOSE_MEM now using mtklog instead of printf.
+
+   1.0.1
+   -  massive performance improvement by removal of
+      separate memory block list. the control blocks
+      are now stored directly in front of user memory.
 */
+
+#ifdef VERBOSE_MEM
+ #include "mtk/mtktrace.hpp"
+#endif
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
-
-static void *operator new[](size_t size, char *src, int line);
-static void *operator new(size_t size, char *src, int line);
-// static void *operator new(size_t size);
-
-static char *sfkmem_file = 0;
-static long  sfkmem_line = 0;
-static long  sfkmem_news = 0;
-static long  sfkmem_dels = 0;
-static long  sfkmem_errs = 0;
-static size_t sfkmem_bytes = 0;
-
-static void setPreDelete(char *file, long line) {
-   sfkmem_file = file;
-   sfkmem_line = line;
-}
 
 class SFKMemoryListEntry
 {
@@ -55,7 +57,44 @@ private:
    SFKMemoryListEntry *pClLast;
 };
 
-#ifndef MEMDEB_JUST_DECLARE
+struct SFKMemoryBlock
+ : public SFKMemoryListEntry
+{
+long   lSize;
+long   lLine;
+char  *file;
+long   bValid;
+char   abRedZone[4];
+};
+
+// new and delete op's MUST be declared in EVERY .cpp source,
+// otherwise redirection cannot be assured.
+static void *operator new[](size_t size, char *src, int line);
+static void *operator new(size_t size, char *src, int line);
+
+#ifdef MEMDEB_JUST_DECLARE
+
+extern void  sfkmem_hexdump(void *pAddressIn, long  lSize);
+extern void *sfkmem_debnew(size_t size, char *pszSource, int line);
+extern void  sfkmem_debdel(void *pUserMemory);
+extern long  anyMemoryLeaks();
+extern long  listMemoryLeaks(FILE *fout=0);
+extern char *sfkmem_strdup(const char *strSource, char *pszFile, int nLine);
+extern void  sfkmem_setZone(void *p,size_t size);
+extern long  sfkmem_checkZone(void *p,size_t size);
+extern void  sfkmem_setpredel(char *file, long line);
+
+#else
+
+SFKMemoryList glblMem;
+
+char *sfkmem_file = 0;
+long  sfkmem_line = 0;
+long  sfkmem_news = 0;
+long  sfkmem_dels = 0;
+long  sfkmem_errs = 0;
+size_t sfkmem_bytes = 0;
+
 void SFKMemoryList :: add(SFKMemoryListEntry* pNew)
 {
    if (!pClFirst)
@@ -128,34 +167,8 @@ void SFKMemoryList :: remove(SFKMemoryListEntry* pRemove)
          pClLast  = pPrevious;            // else set new listend.
    }
 }
-#endif
 
-struct SFKMemoryBlock
- : public SFKMemoryListEntry
-{
-void  *pAddress;
-long   lSize;
-long   lLine;
-char  *file;
-};
-
-static void sfkmem_setZone(void *p,size_t size)
-{
-   unsigned char *puc = (unsigned char *)p;   
-   for (unsigned long i=0; i<size; i++)
-      puc[i] = 0xEE;
-}
-
-static long sfkmem_checkZone(void *p,size_t size)
-{
-   unsigned char *puc = (unsigned char *)p;   
-   for (unsigned long i=0; i<size; i++)
-      if (puc[i] != (unsigned char)0xEE)
-         return -1;
-   return 0;         
-}
-
-static void sfkmem_hexdump(void *pAddressIn, long  lSize)
+void sfkmem_hexdump(void *pAddressIn, long  lSize)
 {
  char szBuf[100];
  long lIndent = 1;
@@ -208,66 +221,88 @@ static void sfkmem_hexdump(void *pAddressIn, long  lSize)
    }
 }
 
-static SFKMemoryList glblMem;
-
-static void *memDebNew(size_t size, char *pszSource, int line)
+void sfkmem_setZone(void *p,size_t size)
 {
-   // calculate red zone size
-   long lrs = size / 10;
-   if (lrs < 4) lrs = 4;
+   unsigned char *puc = (unsigned char *)p;   
+   for (unsigned long i=0; i<size; i++)
+      puc[i] = 0xEE;
+}
 
-   void *p = malloc(size+2*lrs);
+long sfkmem_checkZone(void *p,size_t size)
+{
+   unsigned char *puc = (unsigned char *)p;   
+   for (unsigned long i=0; i<size; i++)
+      if (puc[i] != (unsigned char)0xEE)
+         return -1;
+   return 0;         
+}
+
+void *sfkmem_debnew(size_t size, char *pszSource, int line)
+{
+   long npre = sizeof(SFKMemoryBlock);
+
+   // calculate red zone sizes
+   long lrs1 = 4;
+   long lrs2 = size / 10;
+   if (lrs2 < 4) lrs2 = 4;
+
+   char *ppre = (char*)malloc(npre + size + lrs2);
+   // prezone size lrs1 is included in npre!
+   
+   if (!ppre) 
+   {
+      #ifdef VERBOSE_MEM
+      mtklog("%p = ALLOC %ld (%s, %ld)", ppre, size, pszSource, line);
+      #endif
+
+      return 0;
+   }
+   
+   char *pUserMemory = ppre + npre;
    
    #ifdef VERBOSE_MEM
-   printf("%lxh = ALLOC %ld (%s, %ld)\n", p, size, pszSource, line);
+   mtklog("%p = ALLOC %ld (%s, %ld) raw %p", pUserMemory, size, pszSource, line, ppre);
    #endif
-   
-   sfkmem_setZone(p,lrs);
-   sfkmem_setZone((char*)p+lrs+size,lrs);
-   
-   SFKMemoryBlock *pBlock = (SFKMemoryBlock *)malloc(sizeof(SFKMemoryBlock));
-   memset(pBlock,0,sizeof(SFKMemoryBlock));
-   pBlock->pAddress = (char*)p+lrs;
+
+   SFKMemoryBlock *pBlock = (SFKMemoryBlock *)ppre;
+   pBlock->bValid   = 0x12345678;
    pBlock->lSize    = size;
    pBlock->lLine    = line;
    pBlock->file     = pszSource;
-   glblMem.add(pBlock);
+
+   sfkmem_setZone(pBlock->abRedZone,lrs1);
+   sfkmem_setZone(pUserMemory+size ,lrs2);
+
+   glblMem.addAsFirst(pBlock);
 
    sfkmem_news++;
    sfkmem_bytes += size;
    
-   return (char*)p+lrs;
+   return (char*)pUserMemory;
 }
 
-static void *operator new(size_t size, char *pszSource, int line)
-{  return memDebNew(size, pszSource, line);  }
-
-static void *operator new[](size_t size, char *pszSource, int line)
-{  return memDebNew(size, pszSource, line);  }
-
-static void operator delete(void *pUserMemory)
+void sfkmem_debdel(void *pUserMemory)
 {   
    if (!pUserMemory)
       return;
-
-   long lrs = 0;
-   
+  
    #ifdef VERBOSE_MEM
-   printf("%lxh   DELETE (%s, %ld)\n", pUserMemory, sfkmem_file, sfkmem_line);
+   mtklog("%p   DELETE (%s, %ld)", pUserMemory, sfkmem_file, sfkmem_line);
    #endif
-   
-   SFKMemoryBlock *p = 0;
-   for (p=(SFKMemoryBlock*)glblMem.first(); p; p=(SFKMemoryBlock*)p->next())
-      if (p->pAddress == pUserMemory)
-         break;
-   
-   if (p)
+
+   long npre  = sizeof(SFKMemoryBlock);
+   char *ppre = (char*)pUserMemory - npre;
+
+   SFKMemoryBlock *p = (SFKMemoryBlock *)ppre;
+
+   if (p->bValid == 0x12345678)
    {
-      // calculate red zone size
-      lrs = p->lSize / 10;
-      if (lrs < 4) lrs = 4;
-   
-      if (sfkmem_checkZone((char*)pUserMemory-lrs,lrs))
+      // calculate red zone sizes
+      long lrs1 = 4;
+      long lrs2 = p->lSize / 10;
+      if (lrs2 < 4) lrs2 = 4;
+ 
+      if (sfkmem_checkZone(p->abRedZone, 4))
       {
          printf("MEMORY OVERWRITE:\n"
             "  before block: %lxh\n"
@@ -278,17 +313,17 @@ static void operator delete(void *pUserMemory)
          printf("hexdump of block start follows.\n"
             "first %ld (%lxh) bytes should be '0xEE',\n"
             "those not being 0xEE got hit by something.\n",
-            lrs, lrs);
+            lrs1, lrs1);
             
          long lMaxDump = p->lSize;
          if (lMaxDump > 100)
              lMaxDump = 100;
-         sfkmem_hexdump((char*)pUserMemory-lrs, lrs+lMaxDump);
+         sfkmem_hexdump(p->abRedZone, lrs1+lMaxDump);
          
          sfkmem_errs++;
       }
       
-      if (sfkmem_checkZone((char*)pUserMemory+p->lSize,lrs))
+      if (sfkmem_checkZone((char*)pUserMemory+p->lSize,lrs2))
       {
          printf("MEMORY OVERWRITE:\n"
             "  after block: %lxh\n"
@@ -299,7 +334,7 @@ static void operator delete(void *pUserMemory)
          printf("hexdump of block end follows.\n"
             "last %ld (%lxh) bytes should be '0xEE',\n"
             "those not being 0xEE got hit by something.\n",
-            lrs, lrs);
+            lrs2, lrs2);
             
          long lMaxDump = p->lSize;
          if (lMaxDump > 100)
@@ -307,15 +342,18 @@ static void operator delete(void *pUserMemory)
          sfkmem_hexdump((char*)pUserMemory
             +p->lSize
             -lMaxDump,
-            lMaxDump+lrs);
+            lMaxDump+lrs2);
             
          sfkmem_errs++;
       }
-   
+
       sfkmem_bytes -= p->lSize;
 
+      p->bValid = 0xEEEEEEEE;
+
       glblMem.remove(p);
-      free(p);
+
+      free(ppre);
    }
    else
    {
@@ -330,32 +368,33 @@ static void operator delete(void *pUserMemory)
       sfkmem_errs++;
    }         
    
-   sfkmem_dels++;
-   
-   free((char*)pUserMemory-lrs);
+   sfkmem_dels++;  
 }
 
-static long anyMemoryLeaks()
+long anyMemoryLeaks()
 {
    return (glblMem.first() != 0) ? 1 : 0;
 }
 
-static long listMemoryLeaks(FILE *fout=0)
+long listMemoryLeaks(FILE *fout=0)
 {
    if (!fout) fout = stdout;
 
    long bAnyLeak = 0;
+
+   // deep mode
    for (SFKMemoryBlock *p=(SFKMemoryBlock*)glblMem.first(); p; p=(SFKMemoryBlock*)p->next())
    {
       bAnyLeak = 1;
+      char *pAddress = (char*)p + sizeof(SFKMemoryBlock);
       fprintf(fout, "MEM LEAK: adr %lxh, size %ld, alloc'ed in %s %ld\n",
-         p->pAddress,
+         pAddress,
          p->lSize,
          p->file,
          p->lLine
          );
    }
-   
+
    if (bAnyLeak)
       fprintf(fout, "[SMEMDEBUG: %ld new's, %ld delete's, %ld errors, %ld leaks]\n",
          sfkmem_news, sfkmem_dels, sfkmem_errs, sfkmem_news-sfkmem_dels);
@@ -363,21 +402,35 @@ static long listMemoryLeaks(FILE *fout=0)
    return bAnyLeak;
 }
 
-#ifdef MEMDEB_JUST_DECLARE
-extern char *memDebStrDup(const char *strSource, char *pszFile, int nLine);
-#else
-char *memDebStrDup(const char *strSource, char *pszFile, int nLine) {
+char *sfkmem_strdup(const char *strSource, char *pszFile, int nLine) 
+{
    long lLen  = strlen(strSource);
    char *pOut = new(pszFile,nLine) char[lLen+2];
    strcpy(pOut, strSource);
    return pOut;
 }
-#endif
+
+void sfkmem_setpredel(char *file, long line)
+{
+   sfkmem_file = file;
+   sfkmem_line = line;
+}
+
+#endif // just_declare
+
+static void *operator new(size_t size, char *pszSource, int line)
+{  return sfkmem_debnew(size, pszSource, line);  }
+
+static void *operator new[](size_t size, char *pszSource, int line)
+{  return sfkmem_debnew(size, pszSource, line);  }
+
+static void operator delete(void *pUserMemory)
+{  sfkmem_debdel(pUserMemory);  }
 
 #define newTmpPreProc50796 new(__FILE__,__LINE__)
 #define new newTmpPreProc50796
 
 #define delTmpPreProc50796 delete
-#define delete setPreDelete(__FILE__,__LINE__),delTmpPreProc50796
+#define delete sfkmem_setpredel(__FILE__,__LINE__),delTmpPreProc50796
 
-#define strdup(x) memDebStrDup(x,__FILE__,__LINE__)
+#define strdup(x) sfkmem_strdup(x,__FILE__,__LINE__)

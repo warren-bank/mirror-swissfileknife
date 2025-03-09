@@ -1,8 +1,14 @@
 /*
    source instrumentation support
 
-   sfk 1.1.2: linux fixes
+	sfk 1.5.4:	support for blocks starting with "   {"
+               instead of just "{".
 */
+
+// enable LFS esp. on linux:
+#define _LARGEFILE_SOURCE
+#define _LARGEFILE64_SOURCE
+#define _FILE_OFFSET_BITS 64
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -38,6 +44,22 @@
 #define ulong unsigned long
 #define bool  unsigned char
 
+#ifdef CALLBACK_TRACING
+ #define mtklog  cbtrace
+ #define mtkerr  cbtrace
+ #define mtkwarn cbtrace
+ #define mtkdump 
+#else
+ #ifdef WITH_TRACING
+  #include "mtk/mtktrace.hpp"
+ #else
+  #define mtklog
+  #define mtkerr
+  #define mtkwarn
+  #define mtkdump
+ #endif
+#endif
+
 #ifdef _MSC_VER
 typedef __int64 mysize_t;
 #else
@@ -56,9 +78,12 @@ static const char *glblAddWildCard = "";
 static const char *glblDotSlash    = "./";
 #endif
 
+// #define SFK_MEMTRACE
 #ifdef _WIN32
- #define  MEMDEB_JUST_DECLARE
- #include "memdeb.cpp"
+ #ifdef SFK_MEMTRACE
+  #define  MEMDEB_JUST_DECLARE
+  #include "memdeb.cpp"
+ #endif
 #endif
 
 static char szLineBuf[4096];
@@ -71,7 +96,6 @@ static char szCopyCmd[4096];
 static char *pszGlblInclude = "";
 static char *pszGlblMacro   = "";
 static bool  bdebug=0;
-static bool  bGlblQuiet=0;
 
 #define TRB_SIZE    200 // token ring buffer
 #define BLINE_SIZE 1024
@@ -156,7 +180,7 @@ ulong SrcParse::processFile(char *pText, bool bSimulate, FILE *fout)
       {
          pszContinue = psz2+1;
          int nLineLen = psz2 - psz1;
-         if (nLineLen > nMaxLineLen) nLineLen = nMaxLineLen;
+         if (nLineLen > (long)nMaxLineLen) nLineLen = nMaxLineLen;
          strncpy(szLineBuf, psz1, nLineLen);
          szLineBuf[nLineLen] = '\0';
          char *pszCR = strchr(szLineBuf, '\r');
@@ -181,11 +205,11 @@ ulong SrcParse::processFile(char *pText, bool bSimulate, FILE *fout)
 }
 
 enum eScanStates {
-   ess_idle = 1,
-   ess_word,
-   ess_num,
-   ess_colon,
-   ess_slash,
+   ess_idle  = 1,
+   ess_word  = 2,
+   ess_num   = 3,
+   ess_colon = 4,
+   ess_slash = 5
 };
 
 bool isatoz(char c) { char c2=tolower(c); return (c2>='a' && c2<='z'); }
@@ -268,7 +292,8 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
    {
       c1 = *psz1; // incl. null at eol
 
-      // printf("%c",c1);
+		mtklog("inst: %c %d",c1,nstate);
+
       if (isatoz(c1)) {
          switch (nstate) {
             case ess_idle:
@@ -353,6 +378,8 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
    {
       char *pszMethodStartLine = abline[ibackscope];
 
+		mtklog("inst:   msline \"%.20s\"", pszMethodStartLine);
+
      if (bdebug)
      {
       printf("FN BODY at %d: %s\n", nline, (char*)atok);
@@ -372,9 +399,13 @@ void SrcParse::processLine(char *pszLine, bool bSimulate)
 
       // the current line contains the relevant "{" somewhere.
       // for now, we instrument only simple lines:
-      if (!strcmp(szLineBuf2, "{")) {
+		mtklog("inst:   lbuf2  \"%s\"", szLineBuf2);
+		// accept "{" but also "[anywhitespace]{"
+		char *pszs = szLineBuf2;
+		while (*pszs && (*pszs==' ' || *pszs=='\t')) pszs++;
+      if (!strcmp(pszs, "{")) {
          reduceSignature(pszMethodStartLine, szLineBuf3);
-         sprintf(szLineBuf2, "{%s(\"%s\");", pszGlblMacro, szLineBuf3);
+         sprintf(pszs, "{%s(\"%s\");", pszGlblMacro, szLineBuf3);
          // printf("=> %s \"%s\"\n", szLineBuf2, pszMethodStartLine);
          nClHits++;
       }
@@ -413,6 +444,8 @@ void SrcParse::addRemark() { addtok('r'); }
 
 void SrcParse::addtok(char c)
 {
+	mtklog("inst:  addtok %c", c);
+
    atok[itok] = c;
    atokline[itok] = ibline;
    if (++itok >= TRB_SIZE)
@@ -452,7 +485,10 @@ bool SrcParse::hasFunctionStart(ulong &rnline)
    ulong ntline = 0;
    char c1 = pretok(itok2, ncnt, ntline);
    if (!c1) return false;
-   if (c1 != '{') return false;
+   if (c1 != '{') {
+		mtklog("inst:   hasfs %c, false", c1);
+		return false;
+	}
 
    // have a curly braket:
 
@@ -490,8 +526,10 @@ bool SrcParse::hasFunctionStart(ulong &rnline)
       }
    }
 
-   if (nrc == 1)
+   if (nrc == 1) {
+		mtklog("inst:   hasfs true");
       return true;
+	}
 
    if (bdebug) {
       printf("MISS.%d: %s %d %d\n", nrc, (char*)atok,nBra,nKet);
@@ -540,7 +578,7 @@ static char *loadFile(char *pszFile, int nLine)
    return pOut;
 }
 
-extern long fileExists(char *pszFileName);
+extern long fileExists(char *pszFileName, bool bOrDir=0);
 
 int sfkInstrument(char *pszFile, char *pszInc, char *pszMac, bool bRevoke, bool bRedo, bool bTouchOnRevoke)
 {

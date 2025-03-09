@@ -1,5 +1,5 @@
 /*
-   Micro Tracing Kernel 0.6.7 by stahlworks technologies.
+   Micro Tracing Kernel 0.7.1 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    the following line protects this file against instrumentation:
@@ -8,6 +8,16 @@
    NOTE: Win32 GUI apps should never use "term:" tracing, but only "file:".
 
    Changes:
+   0.7.1
+   -  add: some marker characters {} around block entries.
+   -  chg: improved error message if filename contains quotes.
+   -  fix: dumpLastSteps produced no output (missing prefix check).
+   -  fix: after dumpStackTrace, dumpLastSteps the log file was closed
+           and therefore no further tracing to file was possible.
+   -  fix: compile warnings (signed/unsigned comparison).
+   0.7.0
+   -  chg: mtkdump: now also dumps an ascii representation of the data.
+   -  add: mtkb: if provided function name is empty, replace by line number.
    -  fix: syntax of instrumented tag, mtktrace.cpp was not excluded.
    -  add: missing includes for standalone compile of mtktrace.cpp.
    -  add: text "error: " and "warning:" on corresponding record types.
@@ -88,6 +98,9 @@ public:
    ulong anline[MTKMAXTHREADS+2][MTKMAXLEVEL+2];
    ulong iclmsg;  // counts endless, modulo past read
    char  amsg[MTKMAXMSG+2][MTKMSGSIZE+2];
+   // record structure per amsg:
+   // - three bytes prefix (thread,level,prefix)
+   // - then the message text (mtklog content)
    char  alinebuf[MTKLBUFSIZE+10];
    char  alinebuf2[MTKLBUFSIZE+10];
    ulong ncurthrsid;
@@ -160,9 +173,11 @@ MTKMain::MTKMain()
          psz1 += strlen("filename:");
          pszFilename = psz1;
          flog = fopen(pszFilename, "w");
-         if (!flog)
-            fprintf(stderr, "# # # MTKTRACE ERROR: UNABLE TO WRITE: %s # # #\n", pszFilename);
-         else {
+         if (!flog) {
+            fprintf(stderr, "# # # MTKTRACE ERROR: UNABLE TO WRITE LOG: =>%s<= # # #\n", pszFilename);
+            if (strchr(pszFilename, '\"') || strchr(pszFilename, '\''))
+               fprintf(stderr, "... make sure that MTK_TRACE contains no \"\" or '' quotes.\n");
+         } else {
             printf("MTKTrace: writing log output into %s\n", pszFilename);
             fflush(stdout);
             setFileTrace("twex,"); // may be overwritten by "file:" below
@@ -283,8 +298,62 @@ void MTKMain::traceMethodEntry(void *pRefInst, const char *pszFile, int nLine, c
    alevel[ithread] = ilevel;
 
    // trace block entry event?
-   if (nringx & 2) {
-      traceMessageRaw(pszFile, nLine, 'B', (char*)pszFunc);
+   if (nringx & 2) 
+   {
+      char szBuf[120];
+      szBuf[0] = '\0';
+
+      // create formatted string: file,line,function
+      //                           50   10    30
+      long noff = 0, nlen = 0;
+      const char *psz = 0;
+
+      // block start marker
+      szBuf[noff++] = '{';
+      szBuf[noff] = '\0';
+
+      // filename, if any
+      psz  = pszFile ? pszFile : "";
+      nlen = strlen(psz);
+      if (nlen) {
+         if (nlen > 50) { psz = psz + nlen - 50; nlen = 50; }
+         if (noff+nlen < (long)sizeof(szBuf)-10) {
+            memcpy(szBuf+noff, psz, nlen);
+            szBuf[noff+nlen] = '\0';
+            noff += nlen;
+         }
+      }
+
+      // line number
+      if (noff+20 < (long)sizeof(szBuf)-10) {
+         szBuf[noff++] = ' ';
+         #ifdef _WIN32
+         _ultoa((unsigned long)nLine, szBuf+noff, 10);
+         #else
+         sprintf(szBuf+noff, "%lu", (unsigned long)nLine);
+         #endif
+         noff += strlen(szBuf+noff);
+      }
+
+      // function
+      psz  = pszFunc ? pszFunc : "";
+      nlen = strlen(psz);
+      if (nlen) {
+         if (nlen > 30) { psz = psz + nlen - 30; nlen = 30; }
+         if (noff+nlen < (long)sizeof(szBuf)-10) {
+            szBuf[noff++] = ' ';
+            memcpy(szBuf+noff, psz, nlen);
+            szBuf[noff+nlen] = '\0';
+            noff += nlen;
+         }
+      }
+
+      // block end marker
+      szBuf[noff++] = '}';
+      szBuf[noff] = '\0';
+
+      // dump formatted string (file info is redundant)
+      traceMessageRaw(pszFile, nLine, 'B', szBuf);
    }
 }
 
@@ -595,9 +664,9 @@ void MTKMain::dumpStackTrace(bool bJustCurrentThread)
          break;
    }
    fprintf(fout, "> ---------------------- stack trace end ---------------------\n");
+   fflush(fout);
 
    if (fout != stdout) {
-      fclose(fout);
       printf("> DUMPING OF STACKTRACE DONE.\n");
       fflush(stdout);
    }
@@ -630,10 +699,14 @@ void MTKMain::dumpLastSteps(bool bJustCurrentThread)
    // read out ringbuffer backwards
    ulong imsg = iclmsg % MTKMAXMSG;
 
-   // first, step FORWARD to oldest line, skipping empty entries
+   // first, step FORWARD to oldest line, skipping empty entries.
+   // NOTE: first three bytes of a record are prefix infos.
    ulong icur = (imsg+1) % MTKMAXMSG;
-   while ((icur != imsg) && (!amsg[icur][0]))
+   while ((icur != imsg) && (!amsg[icur][3]))
       icur = (icur+1) % MTKMAXMSG;
+
+   if (icur == imsg)
+      fprintf(fout, "[ring buffer is empty.]\n");
 
    ulong nrec = 0;
 
@@ -684,9 +757,9 @@ void MTKMain::dumpLastSteps(bool bJustCurrentThread)
    fprintf(fout, "> ------------- last thread steps end, %lu records ---------------\n", nrec);
    else
    fprintf(fout, "> ------------- last system steps end, %lu records ---------------\n", nrec);
+   fflush(fout);
 
    if (fout != stdout) {
-      fclose(fout);
       printf("> DUMPING OF LAST STEPS DONE.\n");
       fflush(stdout);
    }
@@ -790,20 +863,28 @@ void mtkSetTermTrace(char *pszMask) {
 void mtkHexDump(const char *pszLinePrefix, void *pDataIn, long lSize, const char *pszFile, int nLine, char cPrefix)
 {
    char szBuf[128];
-   uchar *pData = (uchar *)pDataIn;
+   char szPrn[32];
+   uchar *pData = (uchar*)pDataIn;
    long iRead = 0;
+   ulong noff = 0;
    for (long nRow=0; iRead<lSize; nRow++)
    {
       szBuf[0] = '\0';
 
-      for (long nCol=0; nCol<16 && iRead<lSize; nCol++)
+      long nCol=0;
+      for (; nCol<16 && iRead<lSize; nCol++)
       {
-         sprintf(&szBuf[nCol*3], "%02X ", pData[iRead++]);
+         uchar uc = pData[iRead++];
+         sprintf(&szBuf[nCol*3], "%02X ", uc);
+         szPrn[nCol] = isprint((char)uc) ? (char)uc : '.';
       }
+      szPrn[nCol] = '\0';
 
       if (strlen(szBuf))
       {
-         mtkTraceForm(pszFile, nLine, cPrefix, "%s%s", pszLinePrefix, szBuf);
+         mtkTraceForm(pszFile, nLine, cPrefix, "%s%-48.48s %-16.16s  %04lX", pszLinePrefix, szBuf, szPrn, noff);
       }
+
+      noff += 16;
    }
 }

@@ -1,3 +1,9 @@
-g++-4.0 sfk.cpp patch.cpp inst.cpp -o sfk-linux.exe
-g++-3.3 sfk.cpp patch.cpp inst.cpp -o sfk-linux-lib5.exe
+g++-4.1 -s sfk.cpp patch.cpp inst.cpp -o sfk-linux.exe
+g++-3.3 -s sfk.cpp patch.cpp inst.cpp -DSFK_LIB5 -o sfk-linux-lib5.exe
 cp sfk-linux.exe sfk
+
+# to compile for Mac, use
+# g++ -DMAC_OS_X sfk.cpp patch.cpp inst.cpp -o sfk
+
+# generic compile, e.g. for 64-bit linux:
+# g++ sfk.cpp patch.cpp inst.cpp -o sfk

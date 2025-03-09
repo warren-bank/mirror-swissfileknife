@@ -2,7 +2,7 @@
 #define _MTKTRACE_DEFINED_
 
 /*
-   Micro Tracing Kernel 0.6.7 by stahlworks technologies.
+   Micro Tracing Kernel 0.7.1 by stahlworks technologies.
    Unlimited Open Source License, free for use in any project.
 
    NOTE: changing this header probably forces recompile of MANY files!
@@ -28,6 +28,35 @@
    Simple tracing to terminal:
 
          export MTK_TRACE=term:twex
+
+   Usage example, using a compile symbol 'WITH_TRACING':
+
+#ifdef WITH_TRACING
+ #include "mtk/mtktrace.hpp"
+ #define _  mtklog("[%d]",__LINE__);
+ #define __ MTKBlock tmp983451(__FILE__,__LINE__,"");tmp983451.dummy();
+#else
+ #define mtklog
+ #define mtkerr
+ #define mtkwarn
+ #define _
+ #define __
+#endif
+
+   With the above code, you may use _ and __ for program flow tracing.
+   example:
+
+   void foo()
+   {__                                    // block entry trace
+      long i=0;
+_     for (i=0; i<100; i++)               // simple line trace
+         printf("%ld and counting\n",i);  // (1)
+_     printf("done\n");                   // simple line trace
+   }
+
+   // NOTE: do NOT write _ at the start of line (1) as the _ macro
+   //       would break the code logic.
+
 */
 
 extern void mtkTraceMethodEntry  (void *p, const char *psz, int n, const char *pszfn);

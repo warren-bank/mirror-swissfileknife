@@ -1,2 +1,2 @@
-../sfk -nocol filter testfiles/Formats/20-tab-data-line.txt -sep "\t" -form "\"#col1\";\"#col2\";\"#col3\";\"#col4\";\"#col5\"" >res-24.txt
-../sfk test $TCMD T11.1.tabform res-24.txt
+$TEXE -nocol filter testfiles/Formats/20-tab-data-line.txt -spat -sep "\t" -form "\"#col1\";\"#col2\";\"#col3\";\"#col4\";\"#col5\"" >res-24.txt
+$TEXE test $TCMD T11.1.tabform res-24.txt

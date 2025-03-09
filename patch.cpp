@@ -5,11 +5,17 @@
    then integrated into sfk with the least possible effort.
 
    changes:
-   fix: -nopid now also avoids backup of patchfile itself.
-   add: MAX_OUT_LINES extended to 50000, apOut no longer stackbased
-   add: -nopid support
-   sfk 1.1.2: linux fixes
+   1.3.2
+   - add: it is now allowed to insert any number of blanks
+          after most commands, e.g.
+          :mkdir   thedir
+   - fix: added error checks
 */
+
+// enable LFS esp. on linux:
+#define _LARGEFILE_SOURCE
+#define _LARGEFILE64_SOURCE
+#define _FILE_OFFSET_BITS 64
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -86,8 +92,11 @@ int  bGlblStats = 0;
 int  nGlblDetabOutput = 0;
 int  bGlblVerify = 0;
 int  bGlblNoPID  = 0;
+int  bGlblIgnoreRoot = 0;
 
 char **apOut = 0; // [MAX_OUT_LINES];
+
+extern long fileExists(char *pszFileName, bool bOrDir=0);
 
 // select-replace table over all targets
 #define MAX_GLOBAL_CHANGES 50
@@ -149,14 +158,12 @@ int processCmdRoot (char *pszIn) {
    if ((psz = strchr(szCmdBuf, '\r')) != 0) *psz = 0;
    if ((psz = strchr(szCmdBuf, '\n')) != 0) *psz = 0;
    pszRoot = strdup(szCmdBuf);
-   if (strcmp(pszRoot, pszGlblRelWorkDir)) {
+   if (!bGlblIgnoreRoot && strcmp(pszRoot, pszGlblRelWorkDir)) {
       log(0, "error  : you are not in the %s directory.\n",pszRoot);
       return 1+4;
    }
    return 0;
 }
-
-extern long fileExists(char *pszFileName);
 
 int processCmdFile(char *psz);
 extern long printx(const char *pszFormat, ...);
@@ -184,54 +191,6 @@ int patchMain(int argc, char *argv[], int offs)
    if (mem.bdead) {
       log(0, "error: out of memory in patchMain\n");
       return 9;
-   }
-
-   if (argc < 2)
-   {
-      printx(
-          "<help>$sfk patch [-revoke|-redo] yourpatchfile.cpp [-sim|-verify]\n"
-          "\n"
-          "   search text blocks in file(s) and replace them by other text blocks,\n"
-          "   including backup creation and optional restore of original files.\n"
-          "\n"
-          "   -revoke: undo all patches, by replacing the modified targets\n"
-          "            by the backup files which sfk stores in save_patch.\n"
-          "            the target files are touched afterwards (date/time update)\n"
-          "            to enforce proper recompile. use -keepdates to avoid this.\n"
-          "   -redo  : undo all patches and then re-apply patches.\n"
-          "            best used whenever you change the patchfile itself,\n"
-          "            to have your changes updated in the target files.\n"
-          "   -exact-match: by default, leading whitespaces are ignored.\n"
-          "                 use this option enforce exact 1:1 line matching.\n"
-          "   -keep-dates: by default, revoked files get touched. use this option\n"
-          "                to enforce original file dates (yet windows only).\n"
-          "   -sim   : simulate what the patch would do, don't change anything.\n"
-          "   -qs    : quick summary, just tell a one-line status.\n"
-          "   -stats : show statistics of select-replace usage.\n"
-          "   -verify: check if an applied patch is still intact.\n"
-          "   -nopid : apply irrevocable patch without [patch-id].\n"
-          "\n"
-         );
-      printx(
-         "   $patchfile rules:\n"
-         "   - patches are executed exactly in the order as given in the patchfile.\n"
-         "   - each :from/:to statement is executed exactly once.\n"
-         "   - if ANY of the :from/:to statements doesn't match the input,\n"
-         "     the whole file is NOT patched.\n"
-         "   - the first :to block for a new target file must contain the word [patch-id],\n"
-         "     by using a comment in the target file's syntax, e.g. in C++: // [patch-id].\n"
-         "     this marks the file as being patched -> sfk will not patch it again.\n"
-         "\n"
-         "   it is recommended that your patchfiles have the ending .cpp (or .java etc.)\n"
-         "   to enable syntax highlighting with your favourite text editor.\n"
-         "\n"
-         );
-      printx("   #sfk patch -example\n"
-             "      shows a detailed patchfile example.\n"
-             "   #sfk patch -template\n"
-             "      gives a simple, empty patchfile template.\n"
-             );
-      return -1;
    }
 
    if (!strcmp(argv[1+offs], "-example"))
@@ -376,6 +335,10 @@ int patchMain(int argc, char *argv[], int offs)
       else
       if (!strcmp(argv[iarg+offs], "-nopid")) {
          bGlblNoPID = 1;
+      }
+      else
+      if (!strcmp(argv[iarg+offs], "-anyroot")) {
+         bGlblIgnoreRoot = 1;
       }
       else
       if (!strncmp(argv[iarg+offs], "-", 1)) {
@@ -527,6 +490,12 @@ int patchMain(int argc, char *argv[], int offs)
    return iRC;
 }
 
+char *skipspace(char *psz) {
+   while (*psz && *psz == ' ')
+      psz++;
+   return psz;
+}
+
 int processPatchFile(char *pszPatchFileName)
 {
    int processCreateFile(char *pszIn);
@@ -579,15 +548,15 @@ int processPatchFile(char *pszPatchFileName)
          continue;
 
       if (!strncmp(szBuf,":patch ",7)) {
-         iRC |= processCmdPatch(szBuf+7);
+         iRC |= processCmdPatch(skipspace(szBuf+7));
          continue;
       }
       if (!strncmp(szBuf,":info ",6)) {
-         iRC |= processCmdInfo(szBuf+6);
+         iRC |= processCmdInfo(skipspace(szBuf+6));
          continue;
       }
       if (!strncmp(szBuf,":root ",6)) {
-         if (processCmdRoot(szBuf+6))
+         if (processCmdRoot(skipspace(szBuf+6)))
             return 1+4;
          continue;
       }
@@ -595,7 +564,7 @@ int processPatchFile(char *pszPatchFileName)
       {
          bGlblAnySelRep = 1;
          if (iGlobalChange < MAX_GLOBAL_CHANGES-2) {               
-            char *psz = szBuf+strlen(":select-replace ");
+            char *psz = skipspace(szBuf+strlen(":select-replace "));
             char  nCC = *psz++;
             char *pszMaskBegin = psz;
             while (*psz && (*psz != nCC)) psz++;
@@ -627,15 +596,15 @@ int processPatchFile(char *pszPatchFileName)
          continue;
       }
       if (!strncmp(szBuf,":create ",8)) {
-         iRC |= processCreateFile(szBuf+8);
+         iRC |= processCreateFile(skipspace(szBuf+8));
          continue;
       }
       if (!strncmp(szBuf,":mkdir ",7)) {
-         iRC |= processCreateDir(szBuf+7);
+         iRC |= processCreateDir(skipspace(szBuf+7));
          continue;
       }
       if (!strncmp(szBuf,":file ",6)) {
-         iRC |= processCmdFile(szBuf+6);
+         iRC |= processCmdFile(skipspace(szBuf+6));
          continue;
       }
       if (!strncmp(szBuf,":set only-lf-output",strlen(":set only-lf-output"))) {
@@ -679,7 +648,7 @@ int processCmdFile(char *pszIn)
 {
    int processFileUntilDone(char *pszName);
 
-   if (!pszRoot) { log(0, "error  : missing :root\n"); return 2; }
+   if (strlen(pszIn) < 1) { log(0, "error  : missing filename after :file\n"); return 2; }
 
    strcpy(szCmdBuf, pszIn);
    char *psz = 0;
@@ -687,9 +656,6 @@ int processCmdFile(char *pszIn)
    if ((psz = strchr(szCmdBuf, '\n')) != 0) *psz = 0;
    char *pszFile = strdup(szCmdBuf);
  
-   // build full absolute filename
-   // strcpy(szCmdBuf, pszRoot);
-   // strcat(szCmdBuf, "\\");
    strcpy(szCmdBuf, pszFile);
 
    // check if file exists
@@ -722,7 +688,7 @@ int processCmdFile(char *pszIn)
 
 int processCreateFile(char *pszIn)
 {
-   if (!pszRoot) { log(0, "error  : missing :root\n"); return 2; }
+   if (strlen(pszIn) < 1) { log(0, "error  : missing filename after :create\n"); return 2; }
 
    strcpy(szCmdBuf, pszIn);
    char *psz = 0;
@@ -730,9 +696,6 @@ int processCreateFile(char *pszIn)
    if ((psz = strchr(szCmdBuf, '\n')) != 0) *psz = 0;
    char *pszFile = strdup(szCmdBuf);
  
-   // build full absolute filename
-   // strcpy(szCmdBuf, pszRoot);
-   // strcat(szCmdBuf, "\\");
    strcpy(szCmdBuf, pszFile);
 
    // any existing file?
@@ -805,7 +768,7 @@ int processCreateFile(char *pszIn)
 
 int processCreateDir(char *pszIn)
 {
-   if (!pszRoot) { log(0, "error  : missing :root\n"); return 2; }
+   if (strlen(pszIn) < 1) { log(0, "error  : missing filename after :mkdir\n"); return 2; }
 
    strcpy(szCmdBuf, pszIn);
    char *psz = 0;
@@ -813,9 +776,6 @@ int processCreateDir(char *pszIn)
    if ((psz = strchr(szCmdBuf, '\n')) != 0) *psz = 0;
    char *pszFile = strdup(szCmdBuf);
  
-   // build full absolute filename
-   // strcpy(szCmdBuf, pszRoot);
-   // strcat(szCmdBuf, "\\");
    strcpy(szCmdBuf, pszFile);
 
    if (!bGlblSimulate && bGlblRevoke) {

@@ -1,6 +1,7 @@
 
 #include "poprawpic.cpp"
 
+/*
 const char *msgAsString(long nMsg) {
    switch (nMsg) {
    case WM_NULL: return "WM_NULL";
@@ -201,6 +202,7 @@ const char *msgAsString(long nMsg) {
    }
    return "?";
 }
+*/
 
 char *pszGlblInfo = "";
 
@@ -209,7 +211,6 @@ uchar abPopupPic[pop_BLOCK_SIZE];
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-   int wmId, wmEvent;
    PAINTSTRUCT ps;
    HDC hdc;
 
