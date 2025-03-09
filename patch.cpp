@@ -4,12 +4,6 @@
 
 #include "sfkbase.hpp"
 
-#ifndef USE_SFK_BASE
- #if defined(WINFULL) && defined(_MSC_VER)
-  #define SFK_MEMTRACE
- #endif
-#endif
-
 #define MAX_CMD_LINES    10000 // max lines per :file ... :done block
 #define MAX_CACHE_LINES  10000 // max lines per :from ... :to pattern
 #define MAX_CMD            500 // max number of :from commands per patchfile

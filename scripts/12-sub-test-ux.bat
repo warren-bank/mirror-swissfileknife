@@ -96,7 +96,7 @@ $TEXE -nocol -spat filter -bin testfiles/Formats/14-all-codes.txt -rep "_\x01_Ch
 $TEXE -nocol -spat filter -bin testfiles/Formats/14-all-codes.txt -sep "\x20" -form "#col6" >>res-25.txt
 $TEXE -nocol test $TCMD T12.1.replacex res-25.txt
 
-$TEXE -nocol split 2000b testfiles/Formats/18-ziptest.zip >res-26.txt
+$TEXE -nocol split -quiet 2000b testfiles/Formats/18-ziptest.zip >res-26.txt
 $TEXE -nocol join testfiles/Formats/18-ziptest.zip.part1 testfiles/Formats/18-ziptest2.zip >>res-26.txt
 $TEXE -nocol test $TCMD T13.1.split res-26.txt
 
@@ -220,10 +220,6 @@ $TEXE -nocol filter -write testfiles5/textfile3.txt -rep "/class/The quick brown
 $TEXE -nocol addcr testfiles5/textfile3.txt >/dev/null
 $TEXE -nocol md5 testfiles5/textfile2.txt testfiles5/textfile3.txt >res-72-2.txt
 $TEXE -nocol test $TCMD T24.2.replace res-72-2.txt
-
-$TEXE -nocol replace -case -yes testfiles5/textfile4.txt "/test/nested text expansion test/" "/test/nested text expansion test/" >/dev/null
-$TEXE -nocol replace -case -yes testfiles5/textfile4.txt "/a//" "/b//" "/c//" "/d//" "/e//" >/dev/null
-$TEXE -nocol test $TCMD T24.3.replace testfiles5/textfile4.txt
 
 $TEXE -nocol echo "the quickest brown fox" >tmp1.txt
 $TEXE -nocol copy -yes     testfiles/Formats/18-ziptest.zip tmp1.zip >/dev/null

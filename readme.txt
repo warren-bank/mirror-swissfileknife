@@ -1,6 +1,6 @@
 
-This is the Swiss File Knife (SFK), a command line multi function tool,
-made by Vincent Stahl, StahlWorks Technologies, http://stahlworks.com/
+This is the Swiss File Knife (SFK), a command line multi function tool
+created by StahlWorks Technologies, http://stahlworks.com/
 
 SFK was made to make things easy.
 
@@ -241,7 +241,8 @@ See also:
 
    -  Swiss File Knife Extended Edition (XE) is the commercial version
       of SFK, allowing direct reading of (nested) .zip, .tar.gz and
-      .tar.bz2 file contents. Binaries are available for Windows
+      .tar.bz2 file contents, and high performance replace of patterns
+      in text and binary files. Executables are available for Windows
       and 32-Bit Linux (newer and lib5 systems), but not for Mac.
 
          http://stahlworks.com/sfkxe.html

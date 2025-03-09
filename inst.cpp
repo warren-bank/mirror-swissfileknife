@@ -4,12 +4,6 @@
 
 #include "sfkbase.hpp"
 
-#ifndef USE_SFK_BASE
- #if defined(WINFULL) && defined(_MSC_VER)
-  #define SFK_MEMTRACE
- #endif
-#endif
-
 #ifdef _WIN32
  #ifdef SFK_MEMTRACE
   #define  MEMDEB_JUST_DECLARE

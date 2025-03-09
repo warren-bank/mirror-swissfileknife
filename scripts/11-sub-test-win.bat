@@ -97,7 +97,7 @@
 %TEXE% -spat filter -bin testfiles\Formats\14-all-codes.txt -sep "\x20" -form "$col6" >>res-25.txt
 %TEXE% test %TCMD% T12.1.replacex res-25.txt
 
-%TEXE% split 2000b testfiles\Formats\18-ziptest.zip >res-26.txt
+%TEXE% split -quiet 2000b testfiles\Formats\18-ziptest.zip >res-26.txt
 %TEXE% join testfiles\Formats\18-ziptest.zip.part1 testfiles\Formats\18-ziptest2.zip >>res-26.txt
 %TEXE% test %TCMD% T13.1.split res-26.txt
 
@@ -221,10 +221,6 @@
 %TEXE% addcr testfiles5\textfile3.txt >nul
 %TEXE% md5 testfiles5\textfile2.txt testfiles5\textfile3.txt >res-72-2.txt
 %TEXE% test %TCMD% T24.2.replace res-72-2.txt
-
-%TEXE% replace -case -yes testfiles5\textfile4.txt "/test/nested text expansion test/" "/test/nested text expansion test/" >nul
-%TEXE% replace -case -yes testfiles5\textfile4.txt "/a//" "/b//" "/c//" "/d//" "/e//" >nul
-%TEXE% test %TCMD% T24.3.replace testfiles5\textfile4.txt
 
 %TEXE% echo "the quickest brown fox" >tmp1.txt
 %TEXE% copy -yes     testfiles\Formats\18-ziptest.zip tmp1.zip >nul

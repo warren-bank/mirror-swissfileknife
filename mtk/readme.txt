@@ -3,7 +3,7 @@ The SFK Micro Tracing Kernel (MTK)
 ==================================
 
 LICENSE
-   The Micro Tracing Kernel by stahlworks art & technology
+   The Micro Tracing Kernel by StahlWorks Technologies
    is provided as unlimited open source, and free for use
    in any project, no matter if commercial or non-commercial.
    LIKE ANYTHING ELSE THAT'S FREE, MTK IS PROVIDED AS IS AND COMES

@@ -22,7 +22,6 @@
 #include <ctype.h>
 #include <assert.h>
 #include <time.h>
-#include <string.h>
 #include <sys/timeb.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -240,10 +239,11 @@ cchar *sfkLastError();
 #define MAX_ABBUF_SIZE 100000
 #define MAX_LINE_LEN     4096
 
+class Coi;
 extern int (*pGlblJamCheckCallBack)(char *pszFilename);
 extern int (*pGlblJamFileCallBack)(char *pszFilename, num &rLines, num &rBytes);
 extern int (*pGlblJamLineCallBack)(char *pszLine, int nLineLen, bool bAddLF);
-extern int (*pGlblJamStatCallBack)(char *pszInfo, uint nFiles, uint nLines, uint nMBytes, uint nSkipped, char *pszSkipInfo);
+extern int (*pGlblJamStatCallBack)(Coi *pCoiOrNull, uint nFiles, uint nLines, uint nMBytes, uint nSkipped, char *pszSkipInfo);
 extern int bGlblPassThroughSnap;
 
 char *findPathLocation(cchar *pszCmd, bool bExcludeWorkDir=0);
@@ -298,6 +298,15 @@ public:
      ~CharAutoDel ( )       { if (pClPtr) delete [] pClPtr; }
 private:
       char *pClPtr;
+};
+
+class UCharAutoDel {
+public:
+      UCharAutoDel (uchar *p) { pClPtr = p; }
+     ~UCharAutoDel ( )        { if (pClPtr) delete [] pClPtr; }
+      void deleteNow ( )      { if (pClPtr) delete [] pClPtr; pClPtr = 0; }
+private:
+      uchar *pClPtr;
 };
 
 // max length of sfk (internal) filenames and URL's
@@ -585,6 +594,7 @@ public:
    void  info           (void (*pout)(int nrectype, char *pline));
    int  getDirCommand  ( );  // of current root
    int  checkConsistency  ( );
+   char *currentInfoLine(int iLine);
 private:
    int  ensureBase     (int nTraceLine);
    void  resetAddFlags  ( ); // per layer
@@ -803,7 +813,12 @@ public:
    #endif
 
    // if status()==0, can call this:
-   int  readStat       ( );
+   int  readStat        ( );
+   
+   int  getOpenElapsedTime  ( );  // elapsed msec since open(), or 0
+
+   // how much bytes of a file should be read to detect binary
+   static int iBinaryCheckSize;
 
 private:
    // nextEntry() does additional checks, this does none:
@@ -852,7 +867,7 @@ private:
    char  *pszClExtStr;
 
    uchar nClStatus;
-   uint nClHave;
+   uint  nClHave;
    num   nClSize;
    num   nClMTime;   // modification time
    num   nClCTime;   // creation time, or <= 0
@@ -867,7 +882,8 @@ private:
    uchar nClUCS;     // 0:none 0xFE:LE 0xEF:BE
    bool	bClSnap;		// sfk snapfile
 
-   // ON EXTENSIONS ABOVE, ADAPT COI::COPY!
+   // ON EXTENSIONS ABOVE, ADAPT COI::COPY, Coi::fillFrom!
+   // also check FileStat::readFrom, writeTo
 
    int  nClRefs;    // not to be coi::copied
 
@@ -964,6 +980,7 @@ public:
    bool   bstopread;
    #endif // VFILEBASE
    bool   banyread;      // anything yet read after open()?
+   num    nopentime;     // time point of open, or 0
 
    // this buffer is for high-level Coi read functions:
    // -  readLine()
@@ -1220,6 +1237,34 @@ inline num getPerfFreq()
 extern void logProfile();
 
 #endif
+
+int getFileSystemInfo(
+   char  *pszPath,         // e.g. "D:\\", "/home/user/"
+   num   &nOutTotalBytes,  // total volume size
+   num   &nOutFreeBytes,   // free bytes usable for normal users
+   char  *pszOutFSName,    // file system name buffer
+   int   nOutFSNMaxSize,   // size of this buffer
+   char  *pszOutVolID,     // volume name and serial, if any
+   int   nOutVolIDMaxSize, // size of this buffer
+   uint &rOutVolID
+   );
+   
+int createOutDirTree(char *pszOutFile);
+
+#ifdef _WIN32
+void timetToFileTime(num ntimet, FILETIME *pft);
+num fileTimeToTimeT(num nwft);
+num fileTimeToTimeT(FILETIME *pft);
+#endif
+
+extern int (*pGlblSFKStatusCallBack)(int nMsgType, char *pmsg);
+
+#ifndef USE_SFK_BASE
+ #if defined(WINFULL) && defined(_MSC_VER)
+  #define SFK_MEMTRACE
+ #endif
+#endif
+extern void sfkmem_checklist(const char *pszCheckPoint);
 
 #endif // _SFKBASE_HPP_
 

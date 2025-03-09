@@ -305,7 +305,7 @@ void sfkmem_debdel(void *pUserMemory)
       if (sfkmem_checkZone(p->abRedZone, 4))
       {
          printf("MEMORY OVERWRITE:\n"
-            "  before block: %lxh\n"
+            "  before block: %p\n"
             "  alloc'ed in : %s line %ld\n",
             pUserMemory,
             p->file, p->lLine);
@@ -326,7 +326,7 @@ void sfkmem_debdel(void *pUserMemory)
       if (sfkmem_checkZone((char*)pUserMemory+p->lSize,lrs2))
       {
          printf("MEMORY OVERWRITE:\n"
-            "  after block: %lxh\n"
+            "  after block: %p\n"
             "  alloc'ed in: %s line %ld\n",
             pUserMemory,
             p->file, p->lLine);
@@ -358,7 +358,7 @@ void sfkmem_debdel(void *pUserMemory)
    else
    {
       printf("DELETE TWICE:\n"
-         "  of block: %lxh\n"
+         "  of block: %p\n"
          "  done in : %s line %ld\n",
          pUserMemory,
          sfkmem_file,
@@ -387,7 +387,7 @@ long listMemoryLeaks(FILE *fout=0)
    {
       bAnyLeak = 1;
       char *pAddress = (char*)p + sizeof(SFKMemoryBlock);
-      fprintf(fout, "MEM LEAK: adr %lxh, size %ld, alloc'ed in %s %ld\n",
+      fprintf(fout, "MEM LEAK: adr %p, size %ld, alloc'ed in %s %ld\n",
          pAddress,
          p->lSize,
          p->file,
@@ -400,6 +400,94 @@ long listMemoryLeaks(FILE *fout=0)
          sfkmem_news, sfkmem_dels, sfkmem_errs, sfkmem_news-sfkmem_dels);
 
    return bAnyLeak;
+}
+
+// exits with code 10 on any error
+void sfkmem_checklist(const char *pszCheckPoint)
+{
+   int iBlock = 0;
+   int iErrors = 0;
+
+   for (SFKMemoryBlock *p=(SFKMemoryBlock*)glblMem.first(); p; p=(SFKMemoryBlock*)p->next())
+   {
+      iBlock++;   
+
+      char *pUserMemory = ((char*)p) + sizeof(SFKMemoryBlock);
+
+      if (p->bValid == 0x12345678)
+      {
+         // calculate red zone sizes
+         long lrs1 = 4;
+         long lrs2 = p->lSize / 10;
+         if (lrs2 < 4) lrs2 = 4;
+   
+         if (sfkmem_checkZone(p->abRedZone, 4))
+         {
+            printf("MEMORY OVERWRITE after %s\n"
+               "  before block: %p\n"
+               "  alloc'ed in : %s line %ld\n",
+               pszCheckPoint,
+               pUserMemory,
+               p->file, p->lLine);
+   
+            printf("hexdump of block start follows.\n"
+               "first %ld (%lxh) bytes should be '0xEE',\n"
+               "those not being 0xEE got hit by something.\n",
+               lrs1, lrs1);
+   
+            long lMaxDump = p->lSize;
+            if (lMaxDump > 100)
+                lMaxDump = 100;
+            sfkmem_hexdump(p->abRedZone, lrs1+lMaxDump);
+   
+            iErrors++;
+         }
+   
+         if (sfkmem_checkZone((char*)pUserMemory+p->lSize,lrs2))
+         {
+            printf("MEMORY OVERWRITE after %s\n"
+               "  after block: %p\n"
+               "  alloc'ed in: %s line %ld\n",
+               pszCheckPoint,
+               pUserMemory,
+               p->file, p->lLine);
+   
+            printf("hexdump of block end follows.\n"
+               "last %ld (%lxh) bytes should be '0xEE',\n"
+               "those not being 0xEE got hit by something.\n",
+               lrs2, lrs2);
+   
+            long lMaxDump = p->lSize;
+            if (lMaxDump > 100)
+                lMaxDump = 100;
+            sfkmem_hexdump((char*)pUserMemory
+               +p->lSize
+               -lMaxDump,
+               lMaxDump+lrs2);
+   
+            iErrors++;
+         }
+      }
+      else
+      {
+         printf("error: MEMORY LIST CORRUPTED after %s\n"
+            "  in block: %p\n"
+            "  number  : %d\n",
+            pszCheckPoint,
+            pUserMemory,
+            iBlock
+            );
+
+         iErrors++;
+         break; // MUST stop then
+      }
+   }
+
+   if (iErrors > 0) 
+   {
+      printf("sfk exits with code 10 due to %d memory errors.\n", iErrors);
+      exit(10);
+   }
 }
 
 char *sfkmem_strdup(const char *strSource, char *pszFile, int nLine) 

@@ -17,7 +17,10 @@ cd tmp-selftest-win
 
 set TCMD=%1 ..\scripts\10-sfk-selftest-db.txt
 
+set TEXE2=%TEXE%
+set TEXE=%TEXE2% -memcheck
 call ..\scripts\11-sub-test-win.bat
+set TEXE=%TEXE2%
 %TEXE% syntest
 
 cd ..\scripts
