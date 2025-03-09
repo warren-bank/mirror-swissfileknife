@@ -48,6 +48,8 @@ extern int nGlblFunc;
 
 extern unsigned char abBuf[MAX_ABBUF_SIZE+100];
 
+extern Array glblGrepPat;
+
 const char *getSFKVersion();
 int parseVersion(char *psz, int nmaxlen, StringMap &rmap);
 int perr(const char *pszFormat, ...);
@@ -107,6 +109,8 @@ int cbSFKMatchOutFN(int iFunction, char *pMask, int *pIOMaskLen, uchar **ppOut, 
 void copySFKMatchOptions();
 int mySetFileTime(char *pszFile, num nTime);
 int createOutDirTreeW(char *pszOutFile, KeyMap *pOptMap);
+int renderOutMask(char *pDstBuf, Coi *pcoi, char *pszMask, cchar *pszCmd);
+bool matchstr(char *pszHay, char *pszPat, int nFlags, int &rfirsthit, int &rhitlen);
 
 extern bool bGlblEnableOPrintf;
 extern bool bGlblEscape;
@@ -143,8 +147,6 @@ extern bool  bGlblNoMemCheck     ;
 extern bool  bGlblSFKCreateFiles ;
 extern char  *pGlblCurrentScript ;
 
-extern bool bGlblUseColor      ;
-extern bool bGlblUseHelpColor  ;
 extern int nGlblHeadColor      ;
 extern int nGlblExampColor     ;
 extern int nGlblFileColor      ;
@@ -9460,7 +9462,7 @@ int execRename(Coi *pcoi)
    snprintf(abSrcPrint, sizeof(abSrcPrint)-10, "FROM: %s", pcoi->name());
    abSrcPrint[sizeof(abSrcPrint)-10] = '\0';
    memset(abSrcAbsAtt, 'f', 6);
-   printColorText(abSrcPrint, abSrcAbsAtt);
+   if (!cs.quiet) printColorText(abSrcPrint, abSrcAbsAtt);
 
    if (cs.sim < 2)
    {
@@ -9520,14 +9522,15 @@ int execRename(Coi *pcoi)
          snprintf(abDstPrint, sizeof(abDstPrint)-10, "ERR : %s - %s", abDstAbs, szinfo);
          abDstPrint[sizeof(abDstPrint)-10] = '\0';
          memset(abDstAbsAtt, 'e', 6);
-         printColorText(abDstPrint, abDstAbsAtt);
+         if (!cs.quiet) printColorText(abDstPrint, abDstAbsAtt);
       }
       else
       {
          snprintf(abDstPrint, sizeof(abDstPrint)-10, "TO  : %s", abDstAbs);
          abDstPrint[sizeof(abDstPrint)-10] = '\0';
          memset(abDstAbsAtt, 'f', 6);
-         printColorText(abDstPrint, abDstAbsAtt);
+         if (!cs.quiet) printColorText(abDstPrint, abDstAbsAtt);
+         cs.filesChg++;
       }
    }
 
@@ -9800,7 +9803,7 @@ int execXRename(Coi *pcoi) // file OR folder
    snprintf(abSrcPrint, sizeof(abSrcPrint)-10, "FROM: %s", pcoi->name());
    abSrcPrint[sizeof(abSrcPrint)-10] = '\0';
    memset(abSrcAbsAtt, 'f', 6);
-   printColorText(abSrcPrint, abSrcAbsAtt);
+   if (!cs.quiet) printColorText(abSrcPrint, abSrcAbsAtt);
 
    if (cs.sim < 2)
    {
@@ -9860,14 +9863,15 @@ int execXRename(Coi *pcoi) // file OR folder
          snprintf(abDstPrint, sizeof(abDstPrint)-10, "ERR : %s - %s", abDstAbs, szinfo);
          abDstPrint[sizeof(abDstPrint)-10] = '\0';
          memset(abDstAbsAtt, 'e', 6);
-         printColorText(abDstPrint, abDstAbsAtt);
+         if (!cs.quiet) printColorText(abDstPrint, abDstAbsAtt);
       }
       else
       {
          snprintf(abDstPrint, sizeof(abDstPrint)-10, "TO  : %s", abDstAbs);
          abDstPrint[sizeof(abDstPrint)-10] = '\0';
          memset(abDstAbsAtt, 'f', 6);
-         printColorText(abDstPrint, abDstAbsAtt);
+         if (!cs.quiet) printColorText(abDstPrint, abDstAbsAtt);
+         cs.filesChg++;
       }
    }
 
@@ -17895,6 +17899,8 @@ void printHelpText(cchar *pszSub, bool bhelp, bool bext)
              "      -tail=n               read only last n lines of text files\n"
              "                            (up to a limit of %d bytes from file end)\n"
              "      -line=n               read only nth line from input\n"
+             "      -skipfirst=n          skip first n lines. warns on hard wrap.\n"
+             "      -force                accept hard wrapped lines with -skipfirst\n"
              "      -nocheck              with inc, cut: ignore endings without a start\n"
              "      -addmark txt          with inc, cut: insert txt after every block\n"
              "      -context=n            select n lines of context around hit lines\n"
@@ -27269,6 +27275,78 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   ifcmd (   !strcmp(pszCmd, "renfile") || !strcmp(pszCmd, "rendir")
+          || !strcmp(pszCmd, "renfile.") || !strcmp(pszCmd, "rendir.")
+         )
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk renfile from to\n"
+             "$sfk rendir from to\n"
+             "\n"
+             "   rename a single file, or folder.\n"
+             "\n"
+             "   by default, the command $simulates<def>, printing\n"
+             "   just from and to name. add -yes to really rename,\n"
+             "   or use \"renfile.\" (with a dot).\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk renfile proj1.bak proj2.bak\n"
+             "         rename proj1.bak to proj2.bak\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      if (strchr(pszCmd, '.'))
+         cs.yes = 1;
+
+      char *pszFrom = 0;
+      char *pszTo   = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pszFrom)
+            { pszFrom=pszArg; continue; }
+         if (!pszTo)
+            { pszTo=pszArg; continue; }
+         return 9+perr("unexpected: %s",pszArg);
+      }
+      if (!pszFrom || !pszTo)
+         return 9+perr("missing parameters\n");
+
+      cs.sim = !cs.yes;
+
+      if (cs.sim && !cs.nohead)
+         printx("$[simulating:]\n");
+
+      if (cs.sim) {
+         printx("<file>FROM:<def> %s\n", pszFrom);
+         printx("<file>TO  :<def> %s\n", pszTo);
+      } else {
+         Coi ocoi(pszFrom, 0);
+         ocoi.renameto(pszTo);
+      }
+
+      if (cs.sim && !cs.nohead)
+         printx("$[add -yes to execute.]\n");
+
+      STEP_CHAIN(iChainNext, 0);
+
+      bDone = 1;
+   }
+
    ifcmd (   !strcmp(pszCmd, "ren") || !strcmp(pszCmd, "rename") // +wref +var
           || !strcmp(pszCmd, "rensub")
          )
@@ -27334,6 +27412,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      -exact       fromtext must match whole filename,\n"
              "                   not just a part of it.\n"
              "      -verbose     show part numbers within /from/ text\n"
+             "      -quiet       do not show changed names\n"
+             "      -[no]stat    show statistics or not\n"
              "\n");
       printx("   $accent or umlaut characters in the search pattern\n"
              "      may have to be rewritten by wildcard \"?\" to match.\n"
@@ -27355,6 +27435,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   $see also\n"
              "      #sfk xrename<def>  rename files and folder names using\n"
              "                   full SFK Expressions and many patterns.\n"
+             "      #sfk renfile<def>  rename just a single file\n"
+             "      #sfk rendir<def>   rename just a single folder\n"
              "\n"
              );
       printx("   $examples: short syntax step by step\n"
@@ -27594,6 +27676,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (cs.badOutDir)
          perr("%d bad output directories are files.", cs.badOutDir);
 
+      if (cs.sim < 2 && cs.showstat() == 1)
+         printf("%d files%s renamed.\n",cs.filesChg,cs.sim?" would be":"");
+
       if (cs.listfiles)
          printx("$[add %s\"/from/\" or \"/from/to/\" to continue.]\n",
             bGotFileDir ? "":"-pat ");
@@ -27640,6 +27725,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      -justdirs    rename just folders, but not files\n"
              "      -to outdir   move processed files to output folder outdir\n"
              "                   which must exist on the same partition.\n"
+             "      -quiet       do not show changed names\n"
+             "      -[no]stat    show statistics or not\n"
              "\n"
              "   $pattern support\n"
              "      - for Simple Expression pattern syntax see: #sfk xed\n"
@@ -27649,6 +27736,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "   $see also\n"
              "      #sfk rename<def>   simple rename, for files only,\n"
              "                   supporting only one pattern.\n"
+             "      #sfk renfile<def>  rename just a single file\n"
+             "      #sfk rendir<def>   rename just a single folder\n"
              "\n"
              "   $examples\n"
              "      #sfk xrename mydir /foo/bar/\n"
@@ -27923,6 +28012,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       if (cs.badOutDir)
          perr("%d bad output directories are files.", cs.badOutDir);
 
+      if (cs.showstat())
+         printf("%d files%s renamed.\n",cs.filesChg,cs.sim?" would be":"");
+
       if (cs.listfiles)
          printx("$[add %s\"/from/\" or \"/from/to/\" to continue.]\n",
             bGotFileDir ? "":"-pat ");
@@ -28158,6 +28250,373 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
    #endif // SFKPIC
 
 
+   // . internal
+   if (!strcmp(pszCmd, "fromucs"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk fromucs [in.txt]\n"
+             "\n"
+             "   convert UCS-2 encoded binary data to UTF-8 text data.\n"
+             "\n"
+             "   $options\n"
+             "     -codes   print character codes\n"
+             "     -be      big endian input\n"
+             "     -le      little endian input\n"
+             "\n"
+             "   $examples\n"
+             "     #sfk fromucs in.txt\n"
+             "       if in.txt contains wide character data\n"
+             "       print this as UTF-8 to terminal.\n"
+             "       only latin characters will look normal,\n"
+             "       special and foreign chars will look garbled.\n"
+             "     #sfk fromucs in.txt >out.txt\n"
+             "       write output to out.txt, to allow loading\n"
+             "       by editors like Notepad++ which can display\n"
+             "       UTF-8 unicode text directly.\n"
+             "     #sfk fromucs in.txt +filter -+foo\n"
+             "       get all lines containing \"foo\".\n"
+             "\n");
+      ehelp;
+
+      sfkarg;
+
+      char *pszFile = 0;
+      bool   bstdin = 0;
+      bool   bcodes = 0;
+      int   nshift1 = 0; // le default
+      int   nshift2 = 8; // le default
+      bool bnoguess = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strcmp(argx[iDir], "-i")) {
+            bstdin = 1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-be")) {
+            nshift1=8; nshift2=0; bnoguess=1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-le")) {
+            nshift1=0; nshift2=8; bnoguess=1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-codes")) {
+            bcodes = 1;
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pszFile) {
+            pszFile = pszArg;
+            continue;
+         }
+         return 9+perr("unexpected: %s\n", pszArg);
+      }
+ 
+      uchar *pData = 0;
+      num    nSize = 0;
+
+      if (loadInput(&pData, 0, &nSize, bstdin, pszFile, 0))
+         return 9;
+
+      ushort nchar = 0;
+
+      uchar *psrc    = (uchar*)pData;
+      uchar *psrcmax = (uchar*)pData+nSize;
+
+      uchar *pdst    = (uchar*)szLineBuf;
+      uchar *pdstmax = (uchar*)szLineBuf+MAX_LINE_LEN;
+
+      if (psrc[0]==0xfe && psrc[1]==0xff) { // BE bom
+         nshift1=8; nshift2=0; psrc+=2;
+         if (bcodes) printf("U+FEFF BE-BOM\n");
+      } else
+      if (psrc[0]==0xff && psrc[1]==0xfe) { // LE bom
+         nshift1=0; nshift2=8; psrc+=2;
+         if (bcodes) printf("U+FFFE LE-BOM\n");
+      } else
+      if (bnoguess==0 && psrc[0]==0 && psrc[1]!=0) { // BE guess
+         nshift1=8; nshift2=0;
+         if (bcodes) printf("BE guessed\n");
+      } else
+      if (bnoguess==0 && psrc[0]!=0 && psrc[1]==0) { // LE guess
+         nshift1=0; nshift2=8;
+         if (bcodes) printf("LE guessed\n");
+      }
+
+      int ioutmode = 0; // terminal
+      if (chain.coldata && chain.colbinary)
+         ioutmode = 2;  // binary stream
+      else if (chain.colany())
+         ioutmode = 1;  // text lines
+
+      // write utf8 bom
+      *pdst++ = 0xEF;
+      *pdst++ = 0xBB;
+      *pdst++ = 0xBF;
+
+      while (psrc < psrcmax)
+      {
+         nchar = ((ushort)*psrc) << nshift1;
+         psrc++;
+         if (psrc < psrcmax) {
+            nchar |= (((ushort)*psrc) << nshift2);
+            psrc++;
+         }
+
+         if (bcodes)
+            printf("U+%04X\n", nchar);
+         else
+         {
+            int iwrite = UTF8Codec::toutf8((char*)pdst, 10, nchar);
+            if (iwrite > 0)
+               pdst += iwrite;
+            *pdst = '\0';
+
+            // flush on line end:
+            bool bflush=0;
+            if (   pdst > (uchar*)szLineBuf
+                && pdst[-1] == '\n')
+            {
+               bflush=1;
+               if (ioutmode == 1) {
+                  // strip cr on crlf:
+                  pdst--;
+                  if (   pdst > (uchar*)szLineBuf
+                      && pdst[-1] == '\r')
+                     pdst--;
+                  *pdst = '\0';
+               }
+            }
+
+            if (bflush==1 || pdst+10 >= pdstmax)
+            {
+               // force flush
+               int nlen = (char*)pdst - (char*)szLineBuf;
+               if (chain.coldata && chain.colbinary)
+                  chain.addBinary((uchar*)szLineBuf, nlen);
+               else if (chain.colany())
+                  chain.addLine(szLineBuf, str(""));
+               else
+                  fwrite(szLineBuf, 1, nlen, stdout);
+               pdst = (uchar*)szLineBuf;
+            }
+         }
+      }
+
+      if (bcodes==0 && pdst > (uchar*)szLineBuf)
+      {
+         if (ioutmode == 1) {
+            // eod flush: strip eol
+            if (   pdst > (uchar*)szLineBuf
+                && pdst[-1] == '\n')
+            {
+               pdst--;
+               if (   pdst > (uchar*)szLineBuf
+                   && pdst[-1] == '\r')
+                  pdst--;
+               *pdst = '\0';
+            }
+         }
+
+         int nlen = (char*)pdst - (char*)szLineBuf;
+         if (chain.coldata && chain.colbinary)
+            chain.addBinary((uchar*)szLineBuf, nlen);
+         else if (chain.colany())
+            chain.addLine(szLineBuf, str(""));
+         else
+            fwrite(szLineBuf, 1, nlen, stdout);
+      }
+
+      delete [] pData;
+
+      if (iChainNext) {
+         if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+
+   // internal
+   if (!strcmp(pszCmd, "toucs"))
+   {
+      ifhelp (nparm < 1)
+      printx("<help>$sfk toucs [out.txt]\n"
+             "\n"
+             "   convert utf-8 text to UCS-2 wide character\n"
+             "   binary data.\n"
+             "\n"
+             "   $options\n"
+             "     -codes   print character codes\n"
+             "     -be      big endian output\n"
+             "\n"
+             "   $examples\n"
+             "     #sfk load in.txt +toucs out.txt\n"
+             "       load utf-8 encoded text from in.txt\n"
+             "       and write wide char data to out.txt\n"
+             "     #sfk load in.txt +toucs +hexdump\n"
+             "       show a hexdump of ucs output.\n"
+             "\n");
+      ehelp;
+
+      sfkarg;
+
+      char *pszFile = 0;
+      bool   bstdin = 0;
+      bool   bcodes = 0;
+      int   nshift1 = 0; // le default
+      int   nshift2 = 8; // le default
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         if (!strcmp(argx[iDir], "-i")) {
+            bstdin = 1;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-be")) {
+            nshift1=8; nshift2=0;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-le")) {
+            nshift1=0; nshift2=8;
+            continue;
+         }
+         if (!strcmp(argx[iDir], "-codes")) {
+            bcodes = 1;
+            continue;
+         }
+         if (!strncmp(pszArg, "-", 1)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         if (!pszFile) {
+            pszFile = pszArg;
+            continue;
+         }
+         return 9+perr("unexpected: %s\n", pszArg);
+      }
+
+      if (!bstdin && !chain.useany())
+         return 9+perr("missing input data");
+
+      FILE *fout = 0;
+
+      if (chain.coldata && chain.colbinary)
+         { }
+      else if (!bcodes)
+      {
+         if (pszFile == 0)
+            return 9+perr("supply output filename, or add another command.");
+         fout = fopen(pszFile, "wb");
+         if (!fout)
+            return 9+perr("cannot write: %s", pszFile);
+      }
+
+      uchar *pData = 0;
+      num    nSize = 0;
+
+      if (loadInput(&pData, 0, &nSize, bstdin, 0, 0))
+         return 9;
+
+      ushort nchar = 0;
+
+      uchar *psrc    = (uchar*)pData;
+      uchar *psrcmax = (uchar*)pData+nSize;
+
+      uchar *pdst    = (uchar*)szLineBuf;
+      uchar *pdstmax = (uchar*)szLineBuf+MAX_LINE_LEN;
+
+      if (   nSize >= 3
+          && psrc[0]==0xEF
+          && psrc[1]==0xBB
+          && psrc[2]==0xBF
+         )
+      {
+         // skip utf8 bom
+         psrc += 3; // skip BOM
+         nSize -= 3;
+      }
+
+      UTF8Codec utf((char*)psrc, nSize);
+
+      // write UCS BE Bom
+      nchar = 0xFEFF;
+
+      *pdst++ = (uchar)(nchar >> nshift1);
+      *pdst++ = (uchar)(nchar >> nshift2);
+
+      while (utf.hasChar())
+      {
+         nchar = utf.nextChar();
+
+         if (bcodes)
+            printf("U+%04X\n", nchar);
+         else
+         {
+            *pdst++ = (uchar)(nchar >> nshift1);
+            *pdst++ = (uchar)(nchar >> nshift2);
+   
+            if (pdst+10 >= pdstmax)
+            {
+               // force flush
+               int nlen = (char*)pdst - (char*)szLineBuf;
+               if (chain.coldata && chain.colbinary)
+                  chain.addBinary((uchar*)szLineBuf, nlen);
+               else
+                  fwrite(szLineBuf, 1, nlen, fout);
+               pdst = (uchar*)szLineBuf;
+            }
+         }
+      }
+
+      if (bcodes==0 && pdst > (uchar*)szLineBuf)
+      {
+         // eod flush
+         int nlen = (char*)pdst - (char*)szLineBuf;
+         if (chain.coldata && chain.colbinary)
+            chain.addBinary((uchar*)szLineBuf, nlen);
+         else
+            fwrite(szLineBuf, 1, nlen, fout);
+      }
+
+      if (fout)
+         fclose(fout);
+
+      delete [] pData;
+
+      if (iChainNext) {
+         if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
 
    return 0;
 }
@@ -28166,46 +28625,6 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 #endif // USE_SFK_BASE
 
 #endif // SFK_JUST_OSE
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

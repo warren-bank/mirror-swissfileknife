@@ -208,6 +208,7 @@ extern       char  glblWildChar    ;
 
 #ifdef _WIN32
  typedef __int64 num;
+ typedef unsigned __int64 unum;
  #ifdef SFK_W64
   typedef __time64_t mytime_t;
   #define mymktime _mktime64
@@ -219,6 +220,7 @@ extern       char  glblWildChar    ;
  #endif
 #else
  typedef long long num;
+ typedef unsigned long long unum;
  typedef time_t mytime_t;
  #define mymktime mktime
  #define mytime time
@@ -287,6 +289,10 @@ extern int shrinkFormTextBlock(char *psz, int &rLen, bool bstrict, bool xchars=0
 #define WITH_CASE_XNN
 
 #define SFKDEEPZIP   // since sfk 175
+
+#ifdef _WIN32
+ #define SFK_UNAME   // sfk190
+#endif
 
 int isDir(char *pszName);
 cchar *sfkLastError();
@@ -1468,6 +1474,7 @@ struct CommandStats
 public:
    CommandStats   ( );
    void reset     ( );
+   bool showstat  ( );
 
    int debug     ;
    int memcheck  ;
@@ -1601,6 +1608,7 @@ public:
    bool withdirs;          // include directories in command
    bool withrootdirs;      // if withdirs is used, include root dirs?
    bool justdirs;          // process only directories
+   bool predir;
    bool usesnap;           // interpret snapfile format and list titles
    bool usesnapfiltname;   // filter filenames as well
    int addsnapraw;        // snapto raw mode 1 or 2
@@ -1791,6 +1799,8 @@ public:
    bool fastcomp;
    int  numBadFiles;
    int  numFilesOK;
+   bool usecolor;          // sfk189
+   bool usehelpcolor;      // sfk189
 };
 
 // extern struct CommandStats gs;
@@ -1837,8 +1847,7 @@ enum eWalkTreeFuncs {
    eFunc_XRename     ,
    eFunc_GetPic      ,
    eFunc_XFind       ,
-   eFunc_SumFiles    ,
-   eFunc_PackTo
+   eFunc_SumFiles
 };
 
 // temporary file class, REMOVING THE FILE IN DESTRUCTOR.
@@ -2468,6 +2477,25 @@ public:
 
    char aClLowerTab[256+10];
    char aClUpperTab[256+10];
+};
+
+#define sfkmaxname 1000
+
+class sfkname
+{
+public:
+   sfkname  (const char *psz, bool bpure=0);
+   sfkname  (ushort *pwsz);
+
+   char   *vname  ( );
+   ushort *wname  ( );
+
+char
+   szname   [sfkmaxname+20];
+ushort
+   awname   [sfkmaxname+20];
+ushort
+   nstate;
 };
 
 #ifdef SFKPIC

@@ -8,9 +8,34 @@
    the world's fastest source code browser and editor.
 
    1.8.9
-   -  rel: 04.12.2017, Major Update
-   -  sum: improved scripting with if begin ... endif.
-           sfk rand to create random numbers.
+   Revision 2:
+   -  rel: 10.01.2018, Minor Update
+   -  sum: improved scripting error messages.
+           better rename support in scripts.
+           added filter option to skip first lines.
+   -  add: sfk renfile, rename just a single file,
+           for use in sfk scripts.
+   -  add: filter -skipfirst=n to skip first n lines.
+   -  chg: -nocol given locally at a command no longer
+           changes the global color mode.
+   -  chg: scripts: every command given like +cmdname
+           can now be used in a script, no longer producing
+           the error "does not support input chaining".
+   -  add: sfk ren, xren: option -quiet to print nothing.
+   -  add: sfk ren, xren: now tells number of changed files.
+           option -[no]stat to show or hide statistics.
+   -  add: sfk rmtree: option -quiet to print nothing,
+           option -stat to show statistics with -quiet.
+   -  fix: scripts: unknown commands were ignored silently,
+           they now produce an error "unknown command".
+   -  fix: -memlimit=3000 did not work.
+   -  fix: sfk prompt help text.
+   -  doc: improved prompt example.
+   Initial Release:
+   -  rel: 06.12.2017, Major Update
+   -  sum: improved scripting with if begin endif blocks.
+           better display of windows filenames on more codepages.
+           added sfk rand to create random numbers,
            sfk prompt to allow user input.
            fixed xex return code handling
            and stop of script after sfk status.
@@ -42,7 +67,8 @@
            by -debug like +tell -debug "#(strlen(a))"
    -  doc: xex: how to check if a variable contains a word.
    -  doc: help var: how to search a variable in a variable.
-   internal:
+   Revision 2:
+   -  add: fromucs, toucs
    -  fix: fixfile: possible crash with some runtimes
            due to negative time given to strftime
 
@@ -788,7 +814,7 @@
 // fill in the following infos before releasing your version of sfk.
 #define SFK_BRANCH   ""
 #define SFK_VERSION  "1.8.9" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  ""
+#define SFK_FIXPACK  "2"
 #ifndef SFK_PROVIDER
 #define SFK_PROVIDER "unknown"
 #endif
@@ -2351,25 +2377,6 @@ struct CommandStats dummyCommandStats;
 
 bool vname() { return cs.uname || cs.tname; }
 
-#define sfkmaxname 1000
-
-class sfkname
-{
-public:
-   sfkname  (const char *psz, bool bpure=0);
-   sfkname  (ushort *pwsz);
-
-   char   *vname  ( );
-   ushort *wname  ( );
-
-char
-   szname   [sfkmaxname+20];
-ushort
-   awname   [sfkmaxname+20];
-ushort
-   nstate;
-};
-
 sfkname::sfkname(const char *psz, bool bpure)
 {
    memset(this, 0, sizeof(*this));
@@ -2394,7 +2401,7 @@ ushort *sfkname::wname( )
    awname[0] = 0;
 
    // convert from szname
-   #ifdef WC2UTF
+   #ifdef SFK_UNAME
    if (cs.uname)
    {
       mclear(awname);
@@ -2405,21 +2412,21 @@ ushort *sfkname::wname( )
          (wchar_t*)awname, sfkmaxname
          );
    }
-   #endif
+   #endif // SFK_UNAME
 
-   if (cs.tname)
+   if (cs.tname) // tname.decode
    {
       ushort *pdstcur = awname;
       ushort *pdstmax = pdstcur+sfkmaxname;
       int i=0;
       for (; pdstcur<pdstmax && szname[i]!=0; i++)
       {
-         if (   szname[i+0]=='{'
+         if (   szname[i+0]=='<'
              && isxdigit(szname[i+1])
              && isxdigit(szname[i+2])
              && isxdigit(szname[i+3])
              && isxdigit(szname[i+4])
-             && szname[i+5]=='}'
+             && szname[i+5]=='>'
             )
          {
             ushort c = (ushort)strtoul(szname+i+1,0,0x10);
@@ -2445,7 +2452,7 @@ char *sfkname::vname( )
    szname[0] = '\0';
 
    // convert from wname
-   #ifdef WC2UTF
+   #ifdef SFK_UNAME
    if (cs.uname)
    {
       // result is NOT zero terminated!
@@ -2457,9 +2464,9 @@ char *sfkname::vname( )
          szname, sfkmaxname,
          0, 0);
    }
-   #endif
+   #endif // SFK_UNAME
 
-   if (cs.tname)
+   if (cs.tname) // tname.encode
    {
       char *pdstcur = szname;
       char *pdstmax = szname+sfkmaxname;
@@ -2471,7 +2478,7 @@ char *sfkname::vname( )
             *pdstcur++ = (char)c;
             continue;
          }
-         sprintf(pdstcur, "{%04X}", c);
+         sprintf(pdstcur, "<%04X>", c);
          pdstcur += 6;
       }
       *pdstcur = '\0';
@@ -2741,6 +2748,14 @@ void CommandStats::reset()
    cs.curcmd[0] = '\0';
 
    cs.cweb     = 1;
+
+   #ifdef _WIN32
+   usecolor       =  1;
+   usehelpcolor   =  1;
+   #else
+   usecolor       =  0;
+   usehelpcolor   =  0;
+   #endif
 }
 
 bool CommandStats::stopTree(int nrc, bool *psilent)
@@ -2776,6 +2791,14 @@ bool CommandStats::stopTree(int nrc, bool *psilent)
       nGlblShellRC = nShellRC;
    // continue or stop tree processing
    return lRC ? 1 : 0;
+}
+
+bool CommandStats::showstat( )
+{
+   if (cs.nostat) return 0;
+   if (cs.dostat) return 1;
+   if (cs.quiet)  return 0;
+   return 1;
 }
 
 struct CommandPermamentStorage
@@ -3284,8 +3307,6 @@ bool bGlblSysErrDetail   = 0;
 
 // highlight=1 red=2 green=4 blue=8
 #ifdef _WIN32
-bool bGlblUseColor       =  1;
-bool bGlblUseHelpColor   =  1;
 // windows default safety colors for ANY background.
 // will be changed automatically if black background is detected.
 // help part
@@ -3303,8 +3324,6 @@ int nGlblTimeColor      = 12; // cyan
 int nGlblTraceIncColor  = 12; // cyan
 int nGlblTraceExcColor  = 11; // purple
 #else
-bool bGlblUseColor       =  0;
-bool bGlblUseHelpColor   =  0;
 // unix default colors for white background
 int nGlblDefColor       =  0; // default
 int nGlblHeadColor      =  4; // green
@@ -4028,11 +4047,15 @@ void setColorScheme(cchar *psz1)
    char *psz2 = 0;
    bool bany = 0;
 
-   if (!strncmp(psz1, "off", 3))
-   {  bGlblUseColor = bGlblUseHelpColor = 0; }
+   if (!strncmp(psz1, "off", 3)) {
+      gs.usecolor = gs.usehelpcolor = 0;
+      cs.usecolor = cs.usehelpcolor = 0; 
+   }
    else
-   if (!strncmp(psz1, "on", 2))
-      bGlblUseColor = 1;
+   if (!strncmp(psz1, "on", 2)) {
+      gs.usecolor = 1;
+      cs.usecolor = 1;
+   }
 
    if (strstr(psz1, "bright"))
       { nGlblDarkColBase = 1; bany=1; }
@@ -4130,8 +4153,10 @@ void setColorScheme(cchar *psz1)
    psz2 = (char*)strstr(psz1, "traceinc:"); if (psz2) { nGlblTraceIncColor = atol(psz2+9); bany=1; }
    psz2 = (char*)strstr(psz1, "traceexc:"); if (psz2) { nGlblTraceExcColor = atol(psz2+9); bany=1; }
  
-   if (bany)
-      bGlblUseColor = 1;
+   if (bany) {
+      gs.usecolor = 1;
+      cs.usecolor = 1;
+   }
 }
 
 int nGlblCurColor = -1; // currently active color
@@ -4165,7 +4190,7 @@ void setTextColor(int nIn, bool bStdErr, bool bVerbose)
       return;
    }
 
-   if (!bGlblUseColor) {
+   if (!cs.usecolor) {
       mtklog(("color: ignore %d, no colors used", n));
       return;
    }
@@ -4688,7 +4713,7 @@ int printx(const char *pszFormat, ...)
          iDst++;
       }
       else
-      if (!strncmp(pszSrc, "<help>", 6))  { pszSrc += 6; if (bGlblUseHelpColor) bGlblUseColor = 1; } else
+      if (!strncmp(pszSrc, "<help>", 6))  { pszSrc += 6; if (cs.usehelpcolor) cs.usecolor = 1; } else
       if (!strncmp(pszSrc, "<file>", 6))  { pszSrc += 6; nAttr = 'f'; } else
       if (!strncmp(pszSrc, "<head>", 6))  { pszSrc += 6; nAttr = 'h'; } else
       if (!strncmp(pszSrc, "<prefix>", 8)){ pszSrc += 8; nAttr = 'p'; } else
@@ -6770,6 +6795,7 @@ int Coi::setName(char *psz, char *pszOptRoot)
 char  *Coi::name( ) { return pszClName ? pszClName : str(""); }
 
 /*
+// use sfkname instead
 ushort *Coi::wname( )
 {
    static ushort aempty[2] = { 0, 0 };
@@ -8461,7 +8487,8 @@ void initConsole()
    CONSOLE_SCREEN_BUFFER_INFO oConInf;
    if (!GetConsoleScreenBufferInfo(hGlblConsole, &oConInf)) {
       // not in interactive mode, e.g. output redirected to file:
-      bGlblUseColor = bGlblUseHelpColor = 0;
+      gs.usecolor = gs.usehelpcolor = 0;
+      cs.usecolor = cs.usehelpcolor = 0;
       return;
    }
    bGlblHaveInteractiveConsole = 1;
@@ -8500,7 +8527,7 @@ void initConsole()
    #ifdef _WIN32
 
    #ifdef WINFULL
-   if (bGlblUseColor)
+   if (gs.usecolor || cs.usecolor)
       SetConsoleCtrlHandler(ctrlcHandler, 1);
    #endif
 
@@ -13955,9 +13982,9 @@ extern "C" void setUzpMemLimit(num nlimit);
 
 void setMemoryLimit(int nMBytes)
 {
-   num nbytes = nMBytes * 1048576;
+   num nbytes = (num)nMBytes * 1048576; // fix sfk1892 64 bits
    // no not accept limits below 10 MB:
-   if (nbytes < 10 * 1000000) {
+   if (nbytes < (num)10 * 1000000) {
       perr("ignoring memlimit, illegal value: %d", nMBytes);
    } else {
       nGlblMemLimit = nbytes;
@@ -13984,6 +14011,8 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (!strcmp(psz1, "-noop"))      { return true; }
    if (!strcmp(psz1, "-quiet"))     { pcs->quiet = 1; return true; }
    if (!strcmp(psz1, "-quiet=2"))   { pcs->quiet = 2; return true; }
+   if (!strcmp(psz1, "-stat"))      { pcs->dostat = 1; return true; } // sfk1892
+   if (!strcmp(psz1, "-nostat"))    { pcs->dostat = 0; pcs->nostat=1; return true; } // sfk1892
    if (!strcmp(psz1, "-nohead"))    { pcs->nohead = 1; return true; }
    if (!strcmp(psz1, "-nocheck"))   { pcs->nocheck = 1; return true; }
    if (!strncmp(psz1, "-noinf", 6)) { pcs->noinfo = 1; return true; }
@@ -14018,8 +14047,8 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (strBegins(psz1, "-noutf"))   { pcs->wchardec = 0; return true; } // deprecated
    if (strBegins(psz1, "-wchar"))   { pcs->wchardec = 1; return true; }
    if (strBegins(psz1, "-nowchar")) { pcs->wchardec = 0; return true; }
-   if (!strcmp(psz1, "-nocol"))     { bGlblUseColor = bGlblUseHelpColor = 0; return true; }
-   if (!strcmp(psz1, "-col"))       { bGlblUseColor = 1; return true; }
+   if (!strcmp(psz1, "-nocol"))     { pcs->usecolor = pcs->usehelpcolor = 0; return true; }
+   if (!strcmp(psz1, "-col"))       { pcs->usecolor = 1; return true; }
    if (!strcmp(psz1, "-case"))      { pcs->usecase = 1; return true; }
    if (!strcmp(psz1, "-nocase"))    { pcs->usecase = 0; pcs->nocase = 1; return true; }
    if (!strcmp(psz1, "-withdirs"))  { pcs->withdirs = 1; return true; }
@@ -14465,10 +14494,17 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
    if (!strcmp(psz1,"-iso"))        {  pcs->toiso = 1; return true; }
    if (!strcmp(psz1,"-toutf"))      {  pcs->toutf = 1; return true; }
    if (!strcmp(psz1,"-toutfsafe"))  {  pcs->toutf = 2; return true; }
-   #ifdef SFKINT
-   if (!strcmp(psz1,"-uname"))      {  pcs->uname = 1; bGlblEnableOPrintf = 0; return true; }
-   if (!strcmp(psz1,"-tname"))      {  pcs->tname = 1; bGlblEnableOPrintf = 0; return true; }
-   #endif
+   #ifdef SFK_UNAME
+   if (!strcmp(psz1,"-uname"))      {
+      pcs->uname = 1; bGlblEnableOPrintf = 0;
+      // _setmode(_fileno(stdout), 0x40000); // _O_U8TEXT
+      return true; 
+   }
+   if (!strcmp(psz1,"-tname"))      {  
+      pcs->tname = 1; bGlblEnableOPrintf = 0; 
+      return true; 
+   }
+   #endif // SFK_UNAME
    // TODO: -utf name conflict with experimental utf16 decode
    #ifdef VFILEBASE
    if (strBegins(psz1,"-useragent="))
@@ -14791,7 +14827,8 @@ cchar *aGlblChainCmds[] =
    "0rand",         // sfk189
    "2addhead",      // sfk187
    "2addtail",      // sfk187
-   "1packto",       // internal
+   "6fromucs",      // internal
+   "6toucs",        // internal
    // sfk1833:
    "8fromnet", "8color", "8make-random-file",
    "8time", "8data", "8home", "8ruler",
@@ -15130,11 +15167,18 @@ bool isChainStartInt(char *pszCmd, char *argv[], int argc, int iDir, int *iDirNe
       // check also filter parms
       if (!strncmp(argv[iDir], "++", 2) || !strncmp(argv[iDir], "+ls", 3))
          return false; // accept non-chain start
+      // sfk1892: consider +anycommand as chaining without data
+      chain.coldata    = 0;
+      chain.colfiles   = 0;
+      if (iDirNext) *iDirNext = iDir;
+      return true;
+      /*
       char *psz = argv[iDir];
       perr("command does not support input chaining: %s\n", psz);
       if (*psz=='+') psz++;
       pinf("try \"+then %s\" if \"%s\" requires no input data\n", psz, psz);
       exit(9);
+      */
    }
  
    return false;
@@ -16201,6 +16245,12 @@ int walkAllTreesInt(int nFunc, int &rlFiles, int &rlDirs, num &rlBytes)
       }
       CoiAutoDelete odel(pcoi, 1); // with decref
 
+      if (cs.predir==1)
+      {
+         if (cs.debug) printf("] wat: edir %s\n", pszTree);
+         lRC = execSingleDir(pcoi, 0, nLocalFiles, oDirFiles, nLocalDirs, nLocalBytes, nLocalMaxTime, nTreeMaxTime);
+      }
+
       lRC = walkFiles(pcoi, 0, nLocalFiles, oDirFiles, nLocalDirs, nLocalBytes, nLocalMaxTime, nTreeMaxTime);
 
       if (cs.stopTree(lRC, &bsilent)) {
@@ -16211,7 +16261,7 @@ int walkAllTreesInt(int nFunc, int &rlFiles, int &rlDirs, num &rlBytes)
       }
       lRC = 0;
 
-      if (cs.withrootdirs)
+      if (cs.predir==0 && cs.withrootdirs==1)
       {
          if (cs.debug) printf("] wat: edir %s\n", pszTree);
          lRC = execSingleDir(pcoi, 0, nLocalFiles, oDirFiles, nLocalDirs, nLocalBytes, nLocalMaxTime, nTreeMaxTime);
@@ -21013,6 +21063,18 @@ int walkFiles(
          // general processing: recursion and the like
          if (bMatch)
          {
+            if (cs.predir==1)
+            {
+               if (cs.debug) printf("] esd: %d %s files=%d ts=%d sd=%d\n", lLevel, psub->name(), nTreeFileCnt, bTravelSub, cs.subdirs);
+               lRC = execSingleDir(psub, lLevel+1, nTreeFileCnt, oLocDirFiles, nDirDirs, nDirBytes,
+                                   nDirLocalMaxTime, nDirTreeMaxTime);
+               if (cs.stopTree(lRC))
+               {
+                  nDirLocalMaxTime = 0;
+                  break; // while
+               }
+               lRC = 0;
+            }
 
             if (bTravelSub && cs.subdirs && !(psub->isLink() && cs.skipLinks))
             {
@@ -21025,7 +21087,7 @@ int walkFiles(
 
             lDirs++; // count directory as processed
 
-            if (!cs.stopTree(lRC))
+            if (cs.predir==0 && cs.stopTree(lRC)==0)
             {
                if (cs.debug) printf("] esd: %d %s files=%d ts=%d sd=%d\n", lLevel, psub->name(), nTreeFileCnt, bTravelSub, cs.subdirs);
                lRC = execSingleDir(psub, lLevel+1, nTreeFileCnt, oLocDirFiles, nDirDirs, nDirBytes,
@@ -21271,11 +21333,11 @@ uint getShort(uchar ab[], uint noffs) {
           |(((uint)ab[noffs+0])<< 0);
 }
 
-time_t zipTimeToMainTime(num nZipTime)
+mytime_t zipTimeToMainTime(num nZipTime)
 {
-   time_t now = time(NULL);
+   mytime_t now = time(NULL);
    struct tm *tm = 0;
-   tm = localtime(&now);   // todo
+   tm = mylocaltime(&now);   // todo
    tm->tm_isdst = -1;
 
    tm->tm_year = ((int)(nZipTime >> 25) & 0x7f) + (1980 - 1900);
@@ -21287,19 +21349,19 @@ time_t zipTimeToMainTime(num nZipTime)
    tm->tm_sec  = (int)((unsigned)nZipTime <<  1) & 0x3e;
 
    // rebuild main time
-   time_t nTime = mktime(tm); // todo
+   mytime_t nTime = mktime(tm); // todo
 
    // check for overflows
    #ifndef S_TIME_T_MAX
-    #define S_TIME_T_MAX ((time_t)0x7fffffffUL)
+    #define S_TIME_T_MAX ((mytime_t)0x7fffffffUL)
    #endif
 
    #ifndef U_TIME_T_MAX
-    #define U_TIME_T_MAX ((time_t)0xffffffffUL)
+    #define U_TIME_T_MAX ((mytime_t)0xffffffffUL)
    #endif
 
    #define DOSTIME_2038_01_18 ((uint)0x74320000L)
-   if ((nZipTime >= DOSTIME_2038_01_18) && (nTime < (time_t)0x70000000L))
+   if ((nZipTime >= DOSTIME_2038_01_18) && (nTime < (mytime_t)0x70000000L))
       nTime = U_TIME_T_MAX;
 
    if (nTime < (time_t)0L)
@@ -34129,14 +34191,13 @@ int setFilterParms(
          cs.sellines  = 1;
          continue;
       }
-      /*
-      if (strBegins(pszOpt, "-skipfirst=")) { // internal
+      // internal due to unsolved silent hard wrap of input.
+      if (strBegins(pszOpt, "-skipfirst=")) {
          cs.linesfrom = atoi(pszOpt+11)+1;
          cs.linesto   = -1;
          cs.sellines  = 1;
          continue;
       }
-      */
 
       int i=0;
 
@@ -35212,7 +35273,7 @@ int dumpFilterLine
    bool  bCnt       = gfilter.bCnt;
    bool  bDumpLF    = gfilter.bDumpLF;
    bool  bFilenames = gfilter.bFilenames;
-   bool  bUseColor  = bGlblUseColor;
+   bool  bUseColor  = cs.usecolor;
 
    char  *pszLine   = szLineBuf;
    char  *pszAttr   = szAttrBuf;
@@ -35481,7 +35542,7 @@ int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *p
    int nLine = 0, nCnt = 1;
    int nMatchingLines = 0;
    int nReplaced = 0;
-   bool bUseColor = bGlblUseColor;
+   bool bUseColor = cs.usecolor;
    bool bDumpedFileName = 0;
    bool bCollectedFileName = 0;
    bool bSave = 0;
@@ -35496,6 +35557,7 @@ int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *p
    int nexcnt   = 0;  // block exclude counter
    int nexstate = 0;  // block exclude state flags
    int nPostConCnt = 0; // post context down counter
+   int nHardWrap = 0; // no. of hard wrapped lines
 
    char abLFBuf[5];
    abLFBuf[0] = '\n';
@@ -35549,6 +35611,12 @@ int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *p
       if (!nRead) {
          mtklog(("filt: nread=0 EOD"));
          break; // EOD
+      }
+      if (nRead+10 >= nMaxLineLen) {
+         // printf("### HARDWRAP\n");
+         nHardWrap++;
+      } else {
+         // printf("### NOWRAP %d %d\n",nRead,nMaxLineLen);
       }
 
       // allow interrupt while processing very large files:
@@ -35827,6 +35895,18 @@ int execFilter(Coi *pcoi, FILE *fin, StringPipe *pInData, int nMaxLines, char *p
          pinf("add -nocheck to continue with empty text.\n");
          return 99; // stop all processing
       }
+   }
+
+   // detect hard wrap with -skipfirst=n
+   if (   cs.force == 0 
+       && nHardWrap != 0 && cs.sellines == 1
+       && cs.linesfrom > 0 && cs.linesto == -1)
+   {
+      pwarn("%d long lines got hard wrapped, output is broken.\n", nHardWrap);
+      if (bSave)
+         pwarn("hard wrapped output will not be written.\n");
+      pinf("add option -force to accept hard wrapped lines.\n");
+      return 9;
    }
 
    if (bReWrite && bSave)
@@ -39484,6 +39564,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
  bool bChainCycle = 0;
  do
  {
+   bDone = 0; // sfk1892: missing init
+
    strcopy(cs.curcmd, pszCmd);
    cs.argc   = argc;
    cs.argv   = argv;
@@ -40925,7 +41007,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       ifhelp (nparm < 1)
       #ifndef SFKPRO
       printx(
-         "Copyright (c) 2017 by Stahlworks Technologies, www.stahlworks.com.\n"
+         "Copyright (c) 2018 by Stahlworks Technologies, www.stahlworks.com.\n"
          "All rights reserved.\n"
          "\n"
          "Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n"
@@ -40946,6 +41028,27 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
  
       bDone = 1;
    }
+
+   #ifdef _WIN32
+   if (!strcmp(pszCmd, "wtest"))
+   {
+      // so far wprintf does not print unicode at all.
+      wchar_t szwsize[100];
+      // with VC14 and setmode the german umlaut shows correctly 
+      // on a german windows, but not the han character.
+      // with VC7 nothing works.
+      // #define _O_U16TEXT     0x20000
+      // #define _O_U8TEXT      0x40000
+      printf("test of 16-bit unicode character output.\n");
+      _setmode(_fileno(stdout), 0x20000);
+      szwsize[0] = 0x00E4;
+      szwsize[1] = 0;
+      wprintf(L">>> a with diaresis : %s <<<\n", szwsize);
+      szwsize[0] = 0x7a7a;
+      wprintf(L">>> han char 'empty': %s <<<\n", szwsize);
+      bDone = 1;
+   }
+   #endif
 
    if (!strcmp(pszCmd, "testerr"))
    {
@@ -41872,6 +41975,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      -hidden      include hidden and system files.\n"
              "                   this option is default when using deltree.\n"
              #endif
+             "      -quiet       print nothing\n"
+             "      -stat        show statistics even with -quiet\n"
              "\n"
              "   $lazy confirmation on command chaining\n"
              "      if you selected files in a command chain, then want to add +del\n"
@@ -41953,7 +42058,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       lRC = walkAllTrees(eFunc_Delete, lFiles, lDirs, nBytes);
 
       info.clear();
-      if (cs.quiet < 2) {
+      if (cs.showstat()) {
          const char *sxinfo = cs.sim ? "would be ":"";
          if (cs.withdirs)
             printf("%d files, %d dirs %sdeleted. ", cs.filesDeleted, cs.dirsDeleted, sxinfo);
@@ -46843,7 +46948,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          }
          if (!pDstName)
             { pDstName = pszArg; continue; }
-         return 9+pbad(pszCmd, pszArg);
+         pbad(pszCmd, pszArg);
+         pinf("use \"+then wget\" to use multiple wget in one command chain.\n");
+         return 9;
       }
 
       if (bGetDV)
@@ -52121,7 +52228,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          }  // endfor RepList
       }
 
-      bool bColor = bGlblUseColor;
+      bool bColor = cs.usecolor;
 
       if (cs.tomask && cs.tomaskfile && !chain.colany())
          bColor = 0;
@@ -53735,13 +53842,14 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "\n"
              "   get user input and pass it to the next command\n"
              "   in the command chain. text formatting is possible\n"
-             "   using [Red] or [def], for details see sfk echo.\n"
+             "   using [[Red]] or [[def]], for details see sfk echo.\n"
              "\n");
       webref(pszCmd);
       printx("   $examples\n"
-             "      #sfk prompt \"enter your name\" +setvar name\n"
+             "      #sfk -var prompt \"enter your name\" +setvar name\n"
+             "       #+tell \"hello ##(name)\"\n"
              "         ask the user to enter his name, then store\n"
-             "         it in variable name for further processing.\n"
+             "         it in variable name, and say hello.\n"
             );
       ehelp;
 
@@ -60892,6 +61000,9 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
 
       bDone = 1;
    }
+
+   if (!bDone) // sfk1892: missing stop
+      break;
  }
  while (bChainCycle);
 
