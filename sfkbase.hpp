@@ -495,6 +495,7 @@ public:
    // the key is copied. pvalue is not copied.
    // if the key exists already, old pvalue is replaced.
    // rc 0:done >0:error.
+   int  putnum(char *pkey, num nvalue);
 
    void  *get  (char *pkey, int *poutidx=0);
    // if a value was stored then it is returned.
@@ -502,6 +503,7 @@ public:
    // if poutidx is given, it returns the nearest comparison index,
    // even if no direct hit for the key was found. this index
    // however must be used with care, as it can be < 0 or >= size.
+   num getnum  (char *pkey, int *poutidx=0);
 
    bool  isset (char *pkey);
    // tell if the key was ever put (with or without value).
@@ -1553,6 +1555,7 @@ public:
    CommandStats   ( );
    void reset     ( );
    bool showstat  ( );
+   bool withsub   (int iLevel);
 
    int debug     ;
    int memcheck  ;
@@ -1618,6 +1621,8 @@ public:
    bool tailFollow;  // head, tail
    char *tomask;     // output filename mask
    char *todir;      // output dir
+   bool  changetld;  // with unzip
+   uint  tldhash;    // with unzip
    bool  tomaskfile; // -to mask is a single filename
    char *overallOutFilename; // name for info
    char tomake[200]; // option -tomake
@@ -1686,9 +1691,10 @@ public:
    bool verifyLate;        // copy: verify in a separate pass
    FILE *outfile;          // can be used by chain.print
    bool listTargets;       // force target name listing i/o src
+   int postFileDelay;     // sfk1982
+   int preFileDelay;      // sfk1982 official
    int idleMode;          // low prio processing, 0 (off) to 2
    int walkDirDelay;      // low prio file processing with delays
-   int walkFileDelay;     // low prio file processing with delays
    int treeStopRC;        // stop tree processing on internal RC >= this
    bool stopTree(int nrc, bool *psilent=0); // tells if to stop on the supplied rc
    bool toldTreeStop;
@@ -1728,6 +1734,7 @@ public:
    bool  recurl;
    bool subdirs;           // recurse into subdirs
    bool hidesubdirs;       // do not process subdir names at all
+   int  maxsub;            // max subdir level (0 = not set)
    bool utf8dec;           // utf-8  detect and decode (not yet impl.)
    bool wchardec;          // utf-16 detect and decode
    int utf16found;         // statistic for post-command info
@@ -2691,9 +2698,17 @@ ushort nstate;
 bool   bbadconv;
 };
 
+#ifndef SFKPIC
+uint sfkPackSum(uchar *buf, uint len, uint crc);
+#endif
+
 #ifdef SFKPIC
 
-#include "sfkpicio.hpp"
+#ifdef USE_SFKLIB3
+ #include "sfkpicio.h"
+#else
+ #include "sfkpicio.hpp"
+#endif
 
 class SFKPic
 {
@@ -2705,6 +2720,7 @@ public:
    int   load     (uchar *pPacked, int nPacked);
    int   save     (char *pszFile);
    int   allocpix (uint w, uint h);
+   int   rotate   (int idir);
    void  freepix  ( );
 
    uint  width    ( )   { return octl.width;  }
@@ -2725,6 +2741,9 @@ public:
    char *getErrStr   ( );
 
    int   getObjectSize  ( );  // for internal checks
+
+   uint  getnumpix( ) { return octl.npix; }
+   uint *getpixptr( ) { return octl.ppix; }
 
 struct SFKPicData
    octl;
