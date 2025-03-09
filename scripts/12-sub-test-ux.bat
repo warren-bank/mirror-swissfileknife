@@ -65,10 +65,6 @@ $TEXE -nocol test $TCMD T03.2.snapto all-src-2.cpp
 $TEXE -nocol snapto=all-src-3.cpp -nometa -wrap=80 -prefix=#file# -stat -dir testfiles :testfiles/Formats :testfiles/BaseLib -file .hpp .cpp .txt >/dev/null
 $TEXE -nocol test $TCMD T03.3.snapto all-src-3.cpp
 
-$TEXE -nocol synctext=work.cpp -stop -dir testfiles :testfiles/Formats :testfiles/BaseLib -file .hpp .cpp >/dev/null
-$TEXE -nocol filter -write -yes work.cpp -rep "_tmp-selftest-*_tmp-selftest_" >/dev/null
-$TEXE -nocol test $TCMD T03.4.syncto work.cpp
-
 $TEXE -nocol filter testfiles/Formats/10-dir-list.txt >res-14.txt -rep _/_/_ -rep xC:xx
 $TEXE -nocol test $TCMD T05.1.filtrep res-14.txt
 

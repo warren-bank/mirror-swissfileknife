@@ -36,8 +36,8 @@ How to get SFK up and running anywhere
 
       Instant binaries:
 
-      -  wget http://stahlworks.com/dev/sfk/sfk       (Linux lib6)
-      -  wget http://stahlworks.com/dev/sfk/sfk-lib5  (Linux lib5)
+      -  wget http://stahlworks.com/sfkux             (Linux lib6)
+      -  wget http://stahlworks.com/sfkuxold          (Linux lib5)
 
       Whole distribution package in a .zip (insert version for nnn):
 
@@ -47,8 +47,8 @@ How to get SFK up and running anywhere
       in version 5.50 or higher (just type "unzip" to find out).
       If nothing is available, get one of these:
 
-      -  wget http://stahlworks.com/dev/unzip-linux-lib6.exe
-      -  wget http://stahlworks.com/dev/unzip-linux-lib5.exe
+      -  wget http://stahlworks.com/unzipux           (Linux lib6)
+      -  wget http://stahlworks.com/unzipuxold        (Linux lib5)
 
    OR
 
@@ -57,8 +57,8 @@ How to get SFK up and running anywhere
       The Mac binaries are experimental and unsupported,
       available from:
 
-      -  wget http://stahlworks.com/dev/sfk/sfk-mac-i686.exe   (Intel)
-      -  wget http://stahlworks.com/dev/sfk/sfk-mac-ppc.exe    (PowerPC)
+      -  wget http://stahlworks.com/sfkmac            (Intel i686)
+      -  wget http://stahlworks.com/sfkmacold         (PowerPC)
 
       Alternatively, a self compile under Mac is done by
       getting the sources as described below, then type
@@ -134,8 +134,10 @@ How to get SFK up and running anywhere
             located in the directory where you typed "sfk ftpserv".
             Of course you may also try
 
-               get sfk-linux.exe
-               get sfk-linux-lib5.exe
+               get sfkux
+               get sfkuxold
+               get sfk-linux.exe       (sfkux in the zip package)
+               get sfk-linux-lib5.exe  (sfkuxold in the zip package)
 
             if your target machine is a linux system.
 
@@ -154,12 +156,13 @@ How to prepare the SFK binary under Linux:
 
    -  after download, you have to type
 
-         chmod +x sfk-linux.exe
+         mv sfkux sfk
+         chmod +x sfk
 
       to enable execution (the 'x' flag) of sfk.
       Then simply type
 
-         ./sfk-linux.exe
+         ./sfk
 
       to get it running (the "./" is often needed as
       the PATH may not contain the current directory ".").               
@@ -243,21 +246,24 @@ See also:
 
          http://stahlworks.com/dev/sfkxe.html
 
-   -  Depeche View for Windows is a text editor and realtime 
-      text viewer that allows instant repeated searches 
-      across thousands of text files, especially source code.
+   -  Depeche View for Windows is a realtime source code viewer 
+      that allows instant repeated searches across thousands of files.
 
-      The Base edition is free for private, non-commercial use.
+      The Lite edition is free for private, non-commercial use.
+      It is portable, requiring no installation.
 
          http://stahlworks.com/dview/
+         sfk wget http://stahlworks.com/dview.exe
 
-      Depeche View Extended Edition (XE) allows to search and edit
-      any number of files. Furthermore, it can view .zip, .tar.gz 
-      and .tar.bz2 contents directly, without the need for extraction,
-      allowing to research downloaded open source packages instantly 
-      with the least possible effort.
+      Depeche View Pro allows to search and edit any number of files,
+      edit text on the fly, and to load and view .zip, .tar.gz and 
+      .tar.bz2 contents without the need for extraction, allowing to 
+      research downloaded open source packages instantly.
+      
+      A 30 days trial version is available (Installer for Windows).
 
-         http://stahlworks.com/dev/dvxe.html
+         http://stahlworks.com/dev/dvpro.html
+         sfk wget http://stahlworks.com/dvdemo.exe
 
    -  Vincent Stahl: Computer Art of the 21st century is provided as
       posters, mousepads, suitcase stickers, coffee mugs, CGI movies,

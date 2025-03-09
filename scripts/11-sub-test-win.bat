@@ -65,10 +65,6 @@
 %TEXE% snapto=all-src-3.cpp -nometa -wrap=80 -prefix=#file# -stat -dir testfiles !testfiles\Formats !testfiles\BaseLib -file .hpp .cpp .txt >nul
 %TEXE% test %TCMD% T03.3.snapto all-src-3.cpp
 
-%TEXE% synctext=work.cpp -stop -dir testfiles !testfiles\Formats !testfiles\BaseLib -file .hpp .cpp >nul
-%TEXE% filter -write -yes work.cpp -rep "_tmp-selftest-*_tmp-selftest_" >nul
-%TEXE% test %TCMD% T03.4.syncto work.cpp
-
 %TEXE% filter testfiles\Formats\10-dir-list.txt >res-14.txt -rep _\_/_ -rep xC:xx
 %TEXE% test %TCMD% T05.1.filtrep res-14.txt
 
