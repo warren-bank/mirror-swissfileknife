@@ -3,7 +3,18 @@
 #define USE_SFT
 #define REDUCE_CACHE_FILE_NAMES
 
+#if !defined(VER_STR_OS) && defined(_WIN32)
+ #define _WIN32_WINNT 0x0400 // for copyFileEx
+#endif
+
 #include "sfkbase.hpp"
+
+// in case of linking problems concerning libsocket etc.,
+// you may out-comment this to compile without tcp support:
+#ifndef USE_SFK_BASE
+ #define WITH_TCP
+ #define SFK_FTP_TIMEOUT "30" // seconds, as string
+#endif // USE_SFK_BASE
 
 // just close on a socket is not enough.
 // myclosesocket also does the shutdown().
@@ -22,6 +33,11 @@
  #define SO_REUSEPORT 15
 #endif
 
+extern struct CommandStats gs;
+extern struct CommandStats cs;
+
+extern int nGlblFunc;
+
 extern unsigned char abBuf[MAX_ABBUF_SIZE+100];
 
 int perr(const char *pszFormat, ...);
@@ -31,7 +47,7 @@ int printx(const char *pszFormat, ...);
 int esys(const char *pszContext, const char *pszFormat, ...);
 int myfseek(FILE *f, num nOffset, int nOrigin);
 bool endsWithExt(char *pname, char *pszextin);
-
+int copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, uint nflags);
 bool endsWithArcExt(char *pname, int iTraceFrom);
 extern cchar *arcExtList[];
 void tellMemLimitInfo();
@@ -44,9 +60,77 @@ int sfkmemcmp2(uchar *psrc1, uchar *psrc2, num nlen, bool bGlobalCase, uchar *pF
 void myfgets_init    ( );
 int myfgets         (char *pszOutBuf, int nOutBufLen, FILE *fin, bool *rpBinary=0, char *pAttrBuf=0);
 extern char *ipAsString(struct sockaddr_in *pAddr, char *pszBuffer, int iBufferSize, uint uiFlags=0);
+int encode64(uchar *psrc, int nsrc, uchar *pdst, int nmaxdst, int nlinechars);
+void printCopyCompleted(char *pszName, uint nflags);
+FILE *myfopen(char *pszName, cchar *pszMode);
+void myfclose(FILE *f);
+void setTextColor(int n, bool bStdErr=0, bool bVerbose=0);
+bool endsWithColon(char *pszPath);
+int getFileMD5NoCache(char *pszFile, uchar *abOut16, bool bSilent);
+char *relName(char *pszRoot, char *pszAbs);
+int cloneAttributes(char *pszSrc, char *pszDst, int nTraceLine);
+bool isAbsolutePath(char *psz1);
+bool equalFileContent(char *pszFile1, char *pszFile2, uchar *psrcmd5=0, uchar *pdstmd5=0);
+bool canWriteFile(char *pszName, bool bTryCreate);
+int setWriteEnabled(char *pszFile);
+num getFileAge(char *pszName);
+int getFileMD5(char *pszFile, SFKMD5 &md5, bool bSilent=0, bool bInfoCycle=0);
+int getFileMD5(char *pszFile, uchar *abOut16);
+void oprintf(cchar *pszFormat, ...);
+void oprintf(StringPipe *pOutData, cchar *pszFormat, ...);
+bool iseol(char c);
 
 extern bool bGlblEscape;
 extern num  nGlblMemLimit;
+extern num  nGlblBytes;
+extern int nGlblActiveFileAgeLimit;
+
+extern bool bGlblGrepLineNum    ;
+extern bool bGlblHtml           ;
+extern bool bGlblShortSyntax    ;
+extern bool bGlblAnyUsed        ;
+extern bool bGlblAllowAllPlusPosFile;
+extern char *pszGlblSinceDir    ;
+extern bool bGlblSinceDirIncRef ;
+extern int nGlblMissingRefDirs  ;
+extern int nGlblMatchingRefDirs ;
+extern int nGlblSinceMode       ;
+extern bool bGlblIgnoreTime     ;
+extern bool bGlblIgnore3600     ;
+extern bool bGlblHexDumpWide    ;
+extern int nGlblHexDumpForm     ;
+extern num  nGlblHexDumpOff     ;
+extern num  nGlblHexDumpLen     ;
+extern char  *pszGlblCopySrc    ;
+extern char  *pszGlblCopyDst    ;
+extern uchar *pGlblWorkBuf      ;
+extern num    nGlblWorkBufSize  ;
+extern int   nGlblCopyStyle     ;
+extern int   nGlblCopyShadows   ;
+extern num   nGlblShadowSizeLimit;
+extern bool  bGlblUseCopyCache  ;
+extern bool  bGlblShowSyncDiff  ;
+extern bool  bGlblHavePlusDirMasks;
+extern num   nGlblMemLimit      ;
+extern bool  bGlblMemLimitWasSet ;
+extern bool  bGlblNoMemCheck     ;
+extern bool  bGlblSFKCreateFiles ;
+extern char  *pGlblCurrentScript ;
+
+extern bool bGlblUseColor      ;
+extern bool bGlblUseHelpColor  ;
+extern int nGlblHeadColor      ;
+extern int nGlblExampColor     ;
+extern int nGlblFileColor      ;
+extern int nGlblLinkColor      ;
+extern int nGlblHitColor       ;
+extern int nGlblRepColor       ;
+extern int nGlblErrColor       ;
+extern int nGlblWarnColor      ;
+extern int nGlblPreColor       ;
+extern int nGlblTimeColor      ;
+extern int nGlblTraceIncColor  ;
+extern int nGlblTraceExcColor  ;
 
 extern char szLineBuf[MAX_LINE_LEN+10];
 extern char szLineBuf2[MAX_LINE_LEN+10];
@@ -54,11 +138,117 @@ extern char szLineBuf3[MAX_LINE_LEN+10];
 extern char szAttrBuf[MAX_LINE_LEN+10];
 extern char szAttrBuf2[MAX_LINE_LEN+10];
 extern char szAttrBuf3[MAX_LINE_LEN+10];
+extern char szRefNameBuf[MAX_LINE_LEN+10];
+extern char szRefNameBuf2[MAX_LINE_LEN+10];
+
+// internal
+int iGlblWebCnt=0;
+FILE *fGlblWebDump=0;
+
+KeyMap glblSFKVar;
+
+struct SFKVarHead {
+   int iDataLen;
+};
+
+int sfksetvar(char *pname, uchar *pdata, int idata)
+{
+   struct SFKVarHead ohead;
+   int iHeadSize = sizeof(struct SFKVarHead);
+
+   uchar *pcopy = new uchar[iHeadSize+idata+1];
+   if (!pcopy)
+      return 9+perr("outofmem");
+
+   ohead.iDataLen = idata;
+   memcpy(pcopy, &ohead, iHeadSize);
+
+   memcpy(pcopy+iHeadSize, pdata, idata);
+   pcopy[iHeadSize+idata] = '\0'; // safety
+
+   uchar *pold = (uchar*)glblSFKVar.get(pname);
+   if (pold)
+      delete [] pold;
+
+   glblSFKVar.put(pname, pcopy);
+
+   return 0;
+}
+
+uchar *sfkgetvar(char *pname, int *plen)
+{
+   struct SFKVarHead ohead;
+   int iHeadSize = sizeof(struct SFKVarHead);
+
+   uchar *pres = (uchar*)glblSFKVar.get(pname);
+   if (!pres)
+      return 0;
+
+   memcpy(&ohead, pres, iHeadSize);
+
+   pres += iHeadSize;
+
+   if (plen)
+      *plen = ohead.iDataLen;
+
+   return pres;
+}
+
+uchar *sfkgetvar(int i, char **ppname, int *plen)
+{
+   struct SFKVarHead ohead;
+   int iHeadSize = sizeof(struct SFKVarHead);
+
+   uchar *pres = (uchar*)glblSFKVar.iget(i, ppname);
+   if (!pres)
+      return 0;
+
+   memcpy(&ohead, pres, iHeadSize);
+
+   pres += iHeadSize;
+
+   if (plen)
+      *plen = ohead.iDataLen;
+
+   return pres;
+}
+
+void sfkfreevars()
+{
+   for (int i=0; i<glblSFKVar.size(); i++)
+   {
+      uchar *pold = (uchar*)glblSFKVar.iget(i);
+      if (pold)
+         delete [] pold;
+   }
+   glblSFKVar.reset();
+}
 
 #ifndef USE_SFK_BASE
 UDPIO sfkNetIO;
 UDPIO sfkNetSrc;
 #endif // USE_SFK_BASE
+
+#ifdef _WIN32
+char *winSysError()
+{
+   static CHAR szPrintBuffer[512];
+
+   LPVOID lpvMessageBuffer;
+ 
+   FormatMessage(
+          FORMAT_MESSAGE_ALLOCATE_BUFFER|FORMAT_MESSAGE_FROM_SYSTEM,
+          NULL, GetLastError(),
+          MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+          (LPTSTR)&lpvMessageBuffer, 0, NULL);
+ 
+   wsprintf(szPrintBuffer, " (%d, %s)", GetLastError(), (char *)lpvMessageBuffer);
+ 
+   LocalFree(lpvMessageBuffer);
+
+   return szPrintBuffer;
+}
+#endif
 
 #ifdef VFILEBASE
 
@@ -180,22 +370,24 @@ CoiMap::CoiMap( )
    nClBytesMax = 0;
    nClDropped  = 0;
 
-   reset();
+   reset(0, "ct");
 }
 
 CoiMap::~CoiMap( ) {
-   reset();
+   reset(0, "dt");
 }
 
-void CoiMap::reset(bool bWithDiskCache)
-{
+void CoiMap::reset(bool bWithDiskCache, const char *pszFromInfo)
+{__
+   mtklog(("CoiMap-reset diskcache=%d from %s", bWithDiskCache, pszFromInfo));
+
    // delete all clFifo entries
    ListEntry *pcur  = clFifo.first();
    ListEntry *pnext = 0;
    for (;pcur; pcur=pnext)
    {
       Coi *pcoi = (Coi *)pcur->data;
-      if (pcoi->refcnt() > 1) {
+      if (pcoi->refcnt() > 1) { // 1: managed only by us
          if (!bGlblEscape) {
             pinf("cannot drop cache entry with %d refs: %s (%p)\n", pcoi->refcnt(), pcoi->name(), pcoi);
          }
@@ -405,6 +597,9 @@ char *Coi::cacheName(char *pnamein, char *pbuf, int nmaxbuf, int *pDirPartLen)
    cchar *pprot = "";
    if (strBegins(prel, "http://"))
       { pprot="http"; prel += strlen("http://"); }
+   else
+   if (strBegins(prel, "https://"))
+      { pprot="https"; prel += strlen("https://"); }
    else
    if (strBegins(prel, "ftp://"))
       { pprot="ftp"; prel += strlen("ftp://"); }
@@ -727,7 +922,9 @@ Coi *CoiMap::get(char *pkey)
    #ifdef USE_DCACHE
 
    // disk cache is yet used only for net files
-   if (!strBegins(pkey, "http://") && !strBegins(pkey, "ftp://"))
+   if (   !strBegins(pkey, "http://")
+       && !strBegins(pkey, "https://") 
+       && !strBegins(pkey, "ftp://"))
       return 0;
 
    // not yet in mem cache, but maybe in disk cache?
@@ -853,7 +1050,7 @@ int CoiMap::remove(char *pkey)
    }
 
    // finally, delete the managed coi
-   if (pcoi->refcnt() > 1) {
+   if (pcoi->refcnt() > 1) { // 1: managed only by us
       if (!bGlblEscape) {
          pinf("cannot drop cache entry with %d refs: %s", pcoi->refcnt(), pcoi->name());
       }
@@ -870,6 +1067,39 @@ int CoiMap::remove(char *pkey)
    }
 
    return nrc;
+}
+
+void setWebConfig(int iWhat, char *pszValue) // °°
+{
+   int iValue = atoi(pszValue);
+
+   switch (iWhat) 
+   {
+      case 1: 
+         if (iValue < 200)
+            return;
+         gs.maxwebwait = cs.maxwebwait = atoi(pszValue);
+         mtklog(("setWebConfig: timeout=%d", gs.maxwebwait));
+         break;
+      case 2: 
+         if (iValue < 1)
+            return;
+         gs.maxwebsize = cs.maxwebsize = atoi(pszValue) * 1000000; 
+         mtklog(("setWebConfig: limit=%d", (int)(gs.maxwebsize/1000000)));
+         break;
+      case 3: {
+         char szBuf[200];
+         char *pproxy = pszValue;
+         strcopy(szBuf, pproxy);
+         char *psz1 = szBuf;
+         while (*psz1 && *psz1 != ':') psz1++;
+         if (*psz1) *psz1++ = '\0';
+         int nport = atol(psz1);
+         if (!nport) nport = 80;
+         TCPCore::setProxy(szBuf, nport);
+         mtklog(("setWebConfig: proxy %s port %u",szBuf,nport));
+      }
+   }
 }
 
 bool TCPCore::bSysInitDone = 0;
@@ -895,8 +1125,10 @@ ConAutoClose::~ConAutoClose( ) {
 ConCache::ConCache( ) {
 }
 
-ConCache::~ConCache( ) {
-   reset();
+ConCache::~ConCache( ) 
+{
+   // no uncontrolled cleanup on exit
+   //    reset("cc");
 }
 
 void ConCache::closeConnections( ) 
@@ -912,34 +1144,71 @@ void ConCache::closeConnections( )
    }
 }
 
-void ConCache::reset( ) 
+// NOTE: so far to be called only at program end
+//       as it can NOT close individual objects
+//       while leaving others usable.
+// NOTE: glblSFL (and others?) must be shutdown BEFORE this.
+//       ~coi > ~coidata > releaseHttp > refcnt 0.
+void ConCache::reset(bool bfinal, const char *pszFromInfo) 
 {__
-   mtklog(("concache-reset %d", size()));
+   mtklog(("ConCache-Reset size=%d from %s", size(), pszFromInfo));
+
+   if (bfinal == 0) 
+   {
+      // not allowed as reset can only drop ALL objects
+      perr("int. #216718\n");
+      return;
+   }
+
+   int itry = 0;
+   int isuc = 0;
 
    // does also closeConnections
    void *praw=0;
-   for (int i=0; i<size(); i++) 
-      if ((praw = iget(i)))
-         closeAndDelete(praw);
+   for (int i=0; i<size(); i++)
+   {
+      if ((praw = iget(i))) 
+      {
+         TCPCore *pcore = (TCPCore *)praw;
+
+         if (pcore->refcnt() > 0)
+         {
+            if (bfinal) {
+               perr("found used tcpcon on exit: %d %p\n", pcore->refcnt(), pcore);
+            } else {
+               mtklog(("ConCache-Reset skips used=%d %p", pcore->refcnt(), pcore));
+            }
+            continue;
+         }
+
+         itry++;
+         if (!closeAndDelete(praw))
+            isuc++;
+      }
+   }
 
    // remove all invalid entries from keymap:
    KeyMap::reset();
    clFifo.reset();
+
+   mtklog(("ConCache-Reset closed %d (tried %d)", isuc, itry));
 }
 
-void ConCache::closeAndDelete(void *praw)
+int ConCache::closeAndDelete(void *praw)
 {__
    // identify type of praw:
    TCPCore *pcore = (TCPCore *)praw;
 
    char *pszID = pcore->getID();
 
-   if (pcore->refcnt() > 1) {
+   if (pcore->refcnt() > 1) // 1: managed only by us
+   {
       perr("connection in use, cannot close: %s %p %d", pszID, pcore, pcore->refcnt());
-      return;
+      return 9;
    }
 
-   if (strBegins(pszID, "http://")) {
+   #ifdef USE_WEBCONCACHE
+   if (strBegins(pszID, "http://") || strBegins(pszID, "https://")) {
       mtklog(("close-and-delete %p %s", praw, pszID));
       HTTPClient *pcl = (HTTPClient*)praw;
       pcl->close();  // in case curcon is active
@@ -947,6 +1216,7 @@ void ConCache::closeAndDelete(void *praw)
       delete pcl;
    }
    else
+   #endif
    if (strBegins(pszID, "ftp://")) {
       mtklog(("close-and-delete %p %s", praw, pszID));
       FTPClient *pcl = (FTPClient*)praw;
@@ -956,13 +1226,20 @@ void ConCache::closeAndDelete(void *praw)
    }
    else
       perr("wrong cache entry type: %s %p", pcore->getID(), pcore);
+
    // stored value pointer is now INVALID,
    // but we're cleanup up all below
+
+   return 0;
 }
 
+#ifdef USE_WEBCONCACHE
 HTTPClient *ConCache::allocHttpClient(char *pBaseURL) 
 {__
-   if (!strBegins(pBaseURL, "http://")) return 0;
+   if (   !strBegins(pBaseURL, "http://")
+       && !strBegins(pBaseURL, "https://")
+      )
+      return 0;
 
    void *praw = get(pBaseURL);
 
@@ -970,15 +1247,11 @@ HTTPClient *ConCache::allocHttpClient(char *pBaseURL)
    if (praw) {
       mtklog(("concache-reuse %s %p", pBaseURL, praw));
       HTTPClient *pres = (HTTPClient *)praw;
-      if (pres->refcnt() > 1) {
-         perr("too many locks on connection: %s (%d)", pBaseURL, pres->refcnt());
-         return 0;
-      }
-      pres->incref();
+      pres->incref("aht");
       return pres;
    }
 
-   mtklog(("concache-alloc %s", pBaseURL));
+   mtklog(("ConCache-alloc %s", pBaseURL));
 
    // create new, on demand:
    forceCacheLimit();
@@ -990,7 +1263,7 @@ HTTPClient *ConCache::allocHttpClient(char *pBaseURL)
    clFifo.put(nAddCnt++, pBaseURL);
 
    // as it is managed by concache, ref is always >= 1
-   pres->incref();
+   pres->incref("aht");
 
    return pres;
 }
@@ -998,31 +1271,27 @@ HTTPClient *ConCache::allocHttpClient(char *pBaseURL)
 int ConCache::releaseClient(HTTPClient *pcln)
 {__
    mtklog(("concache-release %p http", pcln));
-   if (pcln->refcnt() != 2) { // should NOT happen
-      perr("unexpected refcnt on client: %s %d", pcln->getID(), pcln->refcnt());
-      pcln->decref();
-      return 9;
-   }
-   pcln->decref();
+   pcln->decref("crh");
    return 0;
 }
+#endif
 
 FTPClient *ConCache::allocFtpClient(char *pBaseURL) 
 {
    if (!strBegins(pBaseURL, "ftp://")) return 0;
 
-   mtklog(("concache-alloc %s", pBaseURL));
+   mtklog(("ConCache-alloc %s", pBaseURL));
 
    void *praw = get(pBaseURL);
 
    // use existing client?
    if (praw) {
       FTPClient *pres = (FTPClient *)praw;
-      if (pres->refcnt() > 1) {
+      if (pres->refcnt() > 1) { // 1: managed only by us
          perr("too many locks on connection: %s (%d)", pBaseURL, pres->refcnt());
          return 0;
       }
-      pres->incref();
+      pres->incref("aft");
       return pres;
    }
 
@@ -1037,7 +1306,7 @@ FTPClient *ConCache::allocFtpClient(char *pBaseURL)
    clFifo.put(nAddCnt++, pBaseURL);
 
    // as it is managed by concache, ref is always >= 1
-   pres->incref();
+   pres->incref("aft");
 
    return pres;
 }
@@ -1045,12 +1314,7 @@ FTPClient *ConCache::allocFtpClient(char *pBaseURL)
 int ConCache::releaseClient(FTPClient *pcln)
 {__
    mtklog(("concache-release %p ftp", pcln));
-   if (pcln->refcnt() != 2) { // should NOT happen
-      perr("unexpected refcnt on client: %s %d", pcln->getID(), pcln->refcnt());
-      pcln->decref();
-      return 9;
-   }
-   pcln->decref();
+   pcln->decref("crf");
    return 0;
 }
 
@@ -1083,7 +1347,8 @@ int ConCache::forceCacheLimit()
    }
 
    // for now, assume the oldest one is unlocked
-   if (pcon->refcnt() > 1) {
+   if (pcon->refcnt() > 1) // 1: managed only by us
+   {
       perr("connection cache overflow, %d %d", size(), pcon->refcnt());
       return 9;
    }
@@ -1117,6 +1382,7 @@ TCPCon::TCPCon(SOCKET hsock, TCPCore *pcorein, int nTraceIn)
    clSock  = hsock;
    nClTraceLine = nTraceIn;
    nClStartTime = getCurrentTime();
+   iClMaxWait   = pClCore->iClMaxWait;
 }
 
 TCPCon::~TCPCon( ) 
@@ -1140,7 +1406,7 @@ TCPCon::~TCPCon( )
 void TCPCon::rawClose() 
 {__
    if (clSock != INVALID_SOCKET) {
-      mtklog(("con %p close socket %xh",this,(uint)clSock));
+      mtklog(("con %p close socket %u",this,(uint)clSock));
       myclosesocket(clSock);
    }
    clSock = INVALID_SOCKET;
@@ -1166,25 +1432,73 @@ void  TCPCon::setBlocking (bool bYesNo)
    localSetBlocking(clSock, bYesNo); // 169
 }
 
-int  TCPCon::read(uchar *pBlock, uint nLen) 
-{__
+int TCPCon::read(uchar *pBlock, uint nLen) 
+{
 	// if a foreground thread detects the escape key:
 	if (bGlblEscape)
 		return 0; // NOT -1, size_t problem
 
 	IOStatusPhase ophase("read tcp");
 
-   int nRemain = nLen;
-   int nCursor = 0;
-   while (nRemain > 0) {
-      int nRead = recv(clSock, (char*)pBlock+nCursor, nRemain, 0);
-      // mtklog(("< %d = recv() max %d", nRead, nRemain));
-      // mtklog(("    recv'd %d", nRead));
+   num tstart  = getCurrentTime();
+
+   int nTotal   = 0;
+   int nRemain  = nLen;
+   int nCursor  = 0;
+   int nMaxWait = iClMaxWait;
+   int nDelays  = 0;
+   int nRead    = 0;
+   while (nRemain > 0)
+   {
+      // avoid using doSleep by select
+      struct timeval tv;
+      fd_set fdvar;
+      tv.tv_sec  = 0;
+      tv.tv_usec = 20 * 1000; // 20 msec
+      FD_ZERO(&fdvar);
+      FD_SET(clSock, &fdvar);
+      if (nMaxWait > 0 && select(clSock+1, &fdvar, 0, 0, &tv) <= 0) 
+      {
+         if (getCurrentTime() - tstart > nMaxWait) {
+            pinf("read timeout (%d ms).   \n", (int)(getCurrentTime() - tstart));
+            nCursor=0;
+            break;
+         }
+         continue;
+      }
+
+      nRead = recv(clSock, (char*)pBlock+nCursor, nRemain, 0);
+
+      // mtklog(("%d = tcp.recv(%d,%d) err %d",nRead,clSock,nRemain,netErrno()));
+
       if (nRead <= 0)
+      {
+         if (nRead == -1 && netErrno() == WSAEWOULDBLOCK) 
+         {
+            if (getCurrentTime() - tstart > nMaxWait) 
+            {
+               pinf("read timeout (%d ms).   \n", (int)(getCurrentTime() - tstart));
+               nCursor=0;
+               break;
+            }
+            doSleep(20);
+            nDelays++;
+            continue;
+         }
          break;
+      }
+
 		countIOBytes(nRead);
+
+      nTotal  += nRead;
       nRemain -= nRead;
       nCursor += nRead;
+   }
+   if (nDelays > 0) {
+      mtklog(("read using %d delays",nDelays));
+   }
+   if (nCursor < 1) {
+      mtklog(("tcp.read: no data (%d,%d)\n",nRead,netErrno()));
    }
 
    return nCursor;
@@ -1205,7 +1519,7 @@ char *TCPCon::buffer(int &rbufsize)
    return pClIOBuf;
 }
 
-char *TCPCon::readLine(char *poptbuf, uint noptmaxbuf) 
+char *TCPCon::readLine(char *poptbuf, uint noptmaxbuf, bool braw) 
 {__
    // use which buffer?
    char *pBuf    = poptbuf;
@@ -1225,12 +1539,12 @@ char *TCPCon::readLine(char *poptbuf, uint noptmaxbuf)
    // of CRLF, from which on we may switch to binary.
    while (nRemain > 10) 
    {
-      // recv blocks until at least 1 byte is available.
-      // mtklog(("   rline.recv begin sock=%xh",(uint)clSock));
-      int nRead = recv(clSock, pBuf+nCursor, 1, 0);
-      // mtklog(("   recv'd %d \"%c\"", nRead, pBuf[nCursor]));
-      if (nRead <= 0)
+      // int nRead = recv(clSock, pBuf+nCursor, 1, 0);
+      int nRead = read((uchar*)pBuf+nCursor, 1);
+      if (nRead <= 0) {
+         mtklog(("< readline: EOD"));
          return 0;
+      }
 		countIOBytes(nRead);
       nCursor += nRead;
       nRemain -= nRead;
@@ -1240,7 +1554,8 @@ char *TCPCon::readLine(char *poptbuf, uint noptmaxbuf)
    }
 
    // always return lines without CRLF.
-   removeCRLF(pBuf);
+   if (!braw)
+      removeCRLF(pBuf);
    if (core().verbose())
       printf("< %s\n", pBuf);
    else {
@@ -1329,21 +1644,33 @@ void TCPCore::wipe()
    // safe replacement for memset(this)
    // in case that virtualization is used.
    // does NOT free any memory objects!
-   pClID    = 0;
-   nClCon   = 0;
+   pClID       = 0;
+   nClCon      = 0;
    mclear(aClCon);
    mclear(clReadSet);
    mclear(clSetCopy);
-   bClVerbose = 0;
-   nClRefs  = 0;
+   bClVerbose  = 0;
+   nClRefs     = 0;
 }
 
-TCPCore::TCPCore(char *pszID) 
+TCPCore::TCPCore(char *pszID, char cProtocol) 
 {__
    mtklog(("tcpcore ctr %p",this));
+
    if (sizeof(*this) > 10000)
       perr("tcpcore stack sizing problem");
+
+   // sfk wide tcp default: 10 seconds
+   iClMaxWait = 10000;
+
+   if (cProtocol == 'h')
+      iClMaxWait  = cs.maxwebwait;
+
+   if (cProtocol == 'f')
+      iClMaxWait  = cs.maxftpwait;
+
    wipe();
+
    pClID = strdup(pszID);
 }
 
@@ -1374,8 +1701,18 @@ int TCPCore::setProxy(char *phost, int nport)
    return 0;
 }
 
-int TCPCore::incref( )  { return ++nClRefs; }
-int TCPCore::decref( )  { return --nClRefs; }
+int TCPCore::incref(cchar *pTraceFrom)
+{
+   mtklog(("tcp-ref-inc %p %d from %s", this, nClRefs+1, pTraceFrom));
+   return ++nClRefs; 
+}
+
+int TCPCore::decref(cchar *pTraceFrom)
+{
+   mtklog(("tcp-ref-dec %p %d from %s", this, nClRefs-1, pTraceFrom));
+   return --nClRefs; 
+}
+
 int TCPCore::refcnt( )  { return nClRefs;   }
 
 int TCPCore::lastError( ) 
@@ -1413,10 +1750,11 @@ int TCPCore::sysInit( )
          while (*psz1 && *psz1 != ':') psz1++;
          if (*psz1) *psz1++ = '\0';
          int nport = atol(psz1);
-         setProxy(szBuf, nport);
-         if (bFirst) {
+         if (!nport) nport = 80;
+         setProxy(szBuf, nport); // env var
+         if (cs.verbose && bFirst) {
             bFirst = 0;
-            printf("using proxy %s port %d\n", szBuf, nport);
+            printf("[using proxy %s port %d]\n", szBuf, nport);
          }
       }
    }
@@ -1574,35 +1912,129 @@ int TCPCore::checksys( ) {
    return 9+perr("internal: missing tcp sysinit");
 }
 
+void setBlocking(SOCKET hSock, bool bYesNo)
+{
+   #ifdef _WIN32
+   unsigned long ulParm = bYesNo ? 0 : 1;
+   ioctlsocket(hSock, FIONBIO, &ulParm);
+   #else
+   if (bYesNo)
+      fcntl(hSock, F_SETFL, (fcntl(hSock,F_GETFL) & ~O_NONBLOCK));
+   else
+      fcntl(hSock, F_SETFL, (fcntl(hSock,F_GETFL) | O_NONBLOCK));
+   #endif
+}
+
+bool hasData(SOCKET &hSock, int lTimeoutMS, bool bOnConnect)
+{
+   struct timeval tv;
+   tv.tv_sec  = 0;
+   tv.tv_usec = lTimeoutMS * 1000;
+
+   fd_set fds1, fds2, fds3;
+
+   FD_ZERO(&fds1); // read
+   FD_ZERO(&fds2); // write
+   FD_ZERO(&fds3); // except
+
+   FD_SET(hSock, &fds1);
+
+   if (bOnConnect)
+   {
+      FD_SET(hSock, &fds2);
+      FD_SET(hSock, &fds3);
+   }
+
+   return select(hSock+1, &fds1, &fds2, &fds3, &tv) > 0;
+}
+
+int myconnect(SOCKET hSock, struct sockaddr *paddr, int naddr, int iMaxWait,
+   char *pszVerboseHostInfo, int iPortInfo)
+{
+   if (iMaxWait == 0)
+   {
+      mtklog(("myconnect: blocking connect"));
+      int isubrc = connect(hSock, paddr, naddr);
+      if (isubrc !=0 && pszVerboseHostInfo != 0)
+         perr("cannot connect to %s:%u (%s)\n", pszVerboseHostInfo, iPortInfo, netErrStr());
+      return isubrc;
+   }
+
+   setBlocking(hSock, 0);
+
+   int isubrc = connect(hSock, paddr, naddr);
+
+   num nstart = getCurrentTime();
+ 
+   while (1)
+   {
+      if (getCurrentTime() - nstart > iMaxWait)
+      {
+         if (pszVerboseHostInfo)
+            perr("cannot connect to %s:%u, timeout (%d ms)\n", 
+               pszVerboseHostInfo, iPortInfo, iMaxWait);
+         return -1;
+      }
+
+      if (hasData(hSock, iMaxWait, 1))
+      {
+         mtklog(("myconnect: hasdata"));
+         break;
+      }
+
+      doSleep(50);
+   }
+
+   setBlocking(hSock, 1);
+
+   return 0;
+}
+
 int TCPCore::connect(char *pszHost, int nportin, TCPCon **ppout)
 {__
-   if (checksys()) return 9;
+   mtklog(("tcp.connect: %s %d timeout=%d",pszHost,nportin,iClMaxWait));
+
+   if (checksys())
+      return 9;
 
    if (nClCon >= FD_SETSIZE-2)
       return 9+perr("too many sockets, cannot connect more");
 
 	IOStatusPhase ophase("connect tcp");
 
-   uint nPort = nportin;
-
    SOCKET hSock = socket(AF_INET, SOCK_STREAM, 0);
    if (hSock == INVALID_SOCKET)
       return 9+perr("cannot create socket");
 
+   mtklog(("tcp.connect: new socket %u",hSock));
+
    struct sockaddr_in oaddr;
    oaddr.sin_family = AF_INET;
-   oaddr.sin_port = htons((unsigned short)nPort);
-   if (setaddr(&oaddr,pszHost))
+   oaddr.sin_port = htons((unsigned short)nportin);
+   if (setaddr(&oaddr,pszHost)) {
+      mtklog(("setaddr failed: %s",pszHost));
       return 9;
-
-   if ((::connect(hSock, (struct sockaddr *)&oaddr, sizeof(oaddr))) == -1) {
-      int nerr = lastError();
-      // TODO: myclosesocket(hSock) required?
-      return 9+perr("cannot connect to %s:%u, rc %d\n", pszHost, nPort, nerr);
    }
 
+   int isubrc = myconnect(hSock, (struct sockaddr *)&oaddr, sizeof(oaddr), iClMaxWait, pszHost, nportin);
+
+   mtklog(("tcp.connect: %d = connect(%u) %d",isubrc,hSock,netErrno()));
+
+   if (isubrc == -1)
+      return 9;
+
    TCPCon *pcon = new TCPCon(hSock, this, __LINE__);
-   // TODO: pcon->setBlocking(0) required?
+
+   if (iClMaxWait > 0 && nportin != 443)
+   {
+      mtklog(("tcp.connect: set socket %u non blocking with maxwait=%d", hSock, iClMaxWait));
+      pcon->setBlocking(0);
+   }
+   else
+   {
+      mtklog(("tcp.connect: use socket %u in blocking mode", hSock));
+   }
+
    addCon(pcon);
    *ppout = pcon;
 
@@ -1612,7 +2044,7 @@ int TCPCore::connect(char *pszHost, int nportin, TCPCon **ppout)
 int TCPCore::close(TCPCon *pcon) 
 {__
    remCon(pcon);
-   mtklog(("tcpcore %p close socket %xh",this,(uint)pcon->clSock));
+   mtklog(("tcpcore %p close socket %u",this,(uint)pcon->clSock));
    myclosesocket(pcon->clSock);
    pcon->clSock = INVALID_SOCKET;
    delete pcon;
@@ -1665,7 +2097,7 @@ void  TCPCore::setVerbose  (bool bYesNo) {
 // - - - http client - - -
 
 HTTPClient::HTTPClient(char *pszID)
- : TCPCore(pszID)
+ : TCPCore(pszID, 'h')
 {__
    wipe();
 }
@@ -1702,7 +2134,10 @@ void HTTPClient::wipe( )
 
    mclear(aClJoinBuf);
 
+   mclear(aClIOBuf);
+
    nClPort    = 80;
+   iClWebRC   =  0;
 
    bClChunked   = 0;
    pClCache     = 0;
@@ -1714,6 +2149,13 @@ void HTTPClient::wipe( )
    bClNoCon     = 0;
 
    pszClLineCache = 0;
+
+   bClSSL = 0;
+
+   #ifdef WITH_SSL
+   pClSSLContext = 0;
+   pClSSLSocket = 0;
+   #endif // WITH_SSL
 }
 
 char *HTTPClient::curname( ) {
@@ -1722,6 +2164,12 @@ char *HTTPClient::curname( ) {
 
 char *HTTPClient::curval( ) {
    return pClCurVal ? pClCurVal : (char*)"";
+}
+
+bool isAbsoluteURL(char *psz) {
+   if (strBegins(psz, "http://")) return 1;
+   if (strBegins(psz, "https://")) return 1;
+   return 0;
 }
 
 // "http://thehost.com/dir1/" + "../rel.txt"
@@ -1763,8 +2211,13 @@ int HTTPClient::joinURL(char *pabs, char *pref)
          pref++;
       // set dst to host root
       psla  = aClJoinBuf;
-      if (strncmp(psla, "http://", 7)) return 9;
-      psla += 7;
+      if (!strncmp(psla, "http://", 7))
+         psla += 7;
+      else
+      if (!strncmp(psla, "https://", 8))
+         psla += 8;
+      else
+         return 9;
       while (*psla && *psla != '/') psla++;
       if (!*psla) return 9;
       psla++; // behind http://thehost.com/
@@ -1789,6 +2242,12 @@ int HTTPClient::joinURL(char *pabs, char *pref)
 
    mtklog(("join: %s + %s -> %s",pabs,pref,aClJoinBuf));
 
+   if (fGlblWebDump) {
+      fprintf(fGlblWebDump, "join.1: %s\n", pabs);
+      fprintf(fGlblWebDump, "join.2: %s\n", pref);
+      fprintf(fGlblWebDump, "join  > %s\n", aClJoinBuf);
+   }
+
    return 0;
 }
 
@@ -1798,12 +2257,29 @@ char *HTTPClient::curjoin( ) {
 
 int HTTPClient::splitURL(char *purl)
 {__
+   mtklog(("spliturl %s",purl));
+
    // isolate hostname from url
    aClURLBuf[0] = '\0';
 
-   // http://thehost.com/thedir/thefile.txt
-   if (strncmp(purl, "http://", 7)) return 9;
-   char *psz1 = purl + 7;
+   char *psz1 = purl;
+
+   bClSSL  = 0;
+   nClPort = 80;
+
+   #ifdef WITH_SSL
+   if (!strncmp(purl, "https://", 8)) {
+      psz1 = purl + 8;
+      bClSSL = 1;
+      nClPort = 443;
+   }
+   else
+   #endif
+   if (!strncmp(purl, "http://", 7)) {
+      psz1 = purl + 7;
+   }
+   else
+      return 9;
 
    // copy from thehost.com
    strcopy(aClURLBuf, psz1);
@@ -1811,7 +2287,8 @@ int HTTPClient::splitURL(char *purl)
 
    // then null the first "/" or ":"
    char *psla = pdst;
-   while (*psla && (*psla != '/' && *psla != ':')) psla++;
+   while (*psla != 0 && *psla != '/' && *psla != ':')
+      psla++;
    if (*psla == ':') {
       // isolate embedded port number
       *psla++ = '\0';
@@ -1821,13 +2298,14 @@ int HTTPClient::splitURL(char *purl)
       nClPort = atol(pport);
    } else {
       // no embedded port number
-      if (*psla) *psla++ = '\0';
+      if (*psla)
+         *psla++ = '\0';
    }
-
-   // printf("host \"%s\" port %d path \"%s\"\n",aClURLBuf,nClPort,psla);
 
    // anything after "/" is the relative path
    pClCurPath = psla;
+
+   mtklog(("host=\"%s\" port=%d path=\"%s\"\n",aClURLBuf,nClPort,psla));
 
    return 0;
 }
@@ -1864,17 +2342,120 @@ int HTTPClient::splitHeader(char *phead)
    return 0;
 }
 
-char *HTTPClient::readLine( ) {
-   if (!pClCurCon)
+char *HTTPClient::readLine(bool braw)
+{
+   if (!haveConnection())
       { perr("int. #175291 missing connection"); return 0; }
-   return pClCurCon->readLine();
+
+   #ifdef WITH_SSL
+
+   if (bClSSL && pClSSLSocket)
+   {
+      SOCKET osock = pClCurCon->clSock;
+
+      char *pBuf   = aClIOBuf;
+      int  nBufMax = sizeof(aClIOBuf)-10;
+   
+      int nCursor = 0;
+      int nRemain = nBufMax;
+      pBuf[0] = '\0';
+   
+      int iTimeout = 5000;
+    
+      num tStart = getCurrentTime();
+   
+      while (nRemain > 10)
+      {
+         if (bGlblEscape)
+         {
+            printf("!HttpClient: Canceling http connect due to stop request (2)\n");
+            return 0;
+         }
+
+         #if 1
+         struct timeval tv;
+         fd_set fdvar;
+         tv.tv_sec  = 0;
+         tv.tv_usec = 20 * 1000; // 200 msec
+         FD_ZERO(&fdvar);
+         FD_SET(osock, &fdvar);
+         if (select(osock+1, &fdvar, 0, 0, &tv) <= 0) {
+            if (getCurrentTime() - tStart > iTimeout) {
+               printf("!HttpClient: timeout while reading web reply (%s)\n", curhost());
+               return 0;
+            }
+            continue;
+         }
+         mtklog(("before read on sock %d",osock));
+         mtklog(("SSL %p has fd %d",pClSSLSocket,SSL_get_fd(pClSSLSocket)));
+         #else
+         if (getCurrentTime() > tStart + iTimeout)
+         {
+            printf("!HttpClient: timeout while reading web reply (%s)\n", curhost());
+            return 0;
+         }
+         #endif
+   
+         int nRead = SSL_read(pClSSLSocket, pBuf+nCursor, 1);
+
+         if (nRead == 0) // no input yet available
+            { doSleep(50); continue; }
+   
+         if (nRead < 0) { // end of stream, or error
+            int ierr = SSL_get_error(pClSSLSocket, nRead);
+            mtklog(("ssl.readline error: %d %d %d at %d",nRead,ierr,errno,nCursor));
+            return 0;
+         }
+
+         nCursor += nRead;
+         nRemain -= nRead;
+         pBuf[nCursor] = '\0';
+         if (nCursor >= 2 && !strncmp(pBuf+nCursor-2, "\r\n", 2))
+            break;
+         if (nCursor >= 1 && !strncmp(pBuf+nCursor-1, "\n", 1))
+            break;
+      }
+   
+      if (!braw)
+      {
+         char *pcr = strchr(pBuf, '\r'); if (pcr) *pcr = '\0';
+               pcr = strchr(pBuf, '\n'); if (pcr) *pcr = '\0';
+      }
+   
+      return pBuf;
+   }
+   else
+   {
+      return pClCurCon->readLine(0, 0, braw);
+   }
+
+   #else
+
+   return pClCurCon->readLine(0, 0, braw);
+
+   #endif
 }
 
 // returns RC
-int HTTPClient::sendLine(char *pline) {
+int HTTPClient::sendLine(char *pline)
+{
    if (!pClCurCon)
       { perr("int. #175292 missing connection"); return 9; }
-   return pClCurCon->puts(pline);
+
+   int ires = 0;
+
+   #ifdef WITH_SSL
+   if (bClSSL)
+   {
+      ires = SSL_write(pClSSLSocket, pline, strlen(pline));
+   }
+   else
+   #endif
+   {
+      ires = pClCurCon->puts(pline);
+   }
+
+   return ires;
 }
 
 int HTTPClient::list(char *purl, CoiTable **pptable)
@@ -1971,6 +2552,10 @@ int HTTPClient::getFileHead(char *purl, Coi *pcoi, cchar *pinfo)
       if (strBegins(ptarg, "http:")) {
          // absolute url supplied: use directly
          pabsnew = ptarg; // will be copied
+      }
+      else
+      if (strBegins(ptarg, "https:")) {
+         pabsnew = ptarg; // will be copied
       } else {
          // relative url supplied: join with old url
          if (joinURL(purl, ptarg))
@@ -2020,34 +2605,59 @@ char *nextNonBlank(char *psz) {
    return *psz ? psz : 0;
 }
 
+bool HTTPClient::haveConnection( )
+{
+
+   if (pClCurCon)
+      return 1;
+
+   return 0;
+}
+
+// .
 int HTTPClient::rawReadHeaders
  (
    int  &rwebrc,
-   char    *purl,    // only informal
-   Coi     *pcoi     // optional
+   char    *purl, // for info
+   Coi     *pcoi 
  )
 {__
-   if (!pClCurCon)
+   if (!haveConnection())
       { perr("int. #175293 missing connection"); return 9; }
+
+   if (!pcoi) return 9+perr("int. #2167251");
 
    StringMap *pheads = &pcoi->headers();
    if (!pheads) return 9+perr("out of memory, cannot read headers");
 
    char *pline  = 0;
    bool  bfirst = 1;
-   int  nwebrc = 0;
    bool  btext  = 0;
+
+   iClWebRC = 0;
 
    // always reset chunked flag until we know better
    bClChunked = 0;
 
    mtklog(("http: begin reading of headers"));
 
-   while ((pline = readLine()))
+   if (fGlblWebDump)
+      fprintf(fGlblWebDump, "-----head.begin-----\n");
+
+   // Note: first line uses RAW reading, keeping CRLF ending
+   while ((pline = readLine(bfirst)))
    {
-      if (!strlen(pline)) break; // end of header
+      if (!strlen(pline))
+         break; // end of header
 
       mtklog(("< %s (from %s)", pline, purl));
+
+      if (fGlblWebDump) {
+         if (bfirst)
+            fprintf(fGlblWebDump, "%s", pline);
+         else
+            fprintf(fGlblWebDump, "%s\n", pline);
+      }
 
       if (bfirst) 
       {
@@ -2058,23 +2668,34 @@ int HTTPClient::rawReadHeaders
          while (*pprobe==' ' || *pprobe=='\t') pprobe++;
          if (*pprobe == '<') 
          {
-            // cache first line of content
+            mtklog(("http: headless reply"));
+            // cache first line of content WITH EOL
             if (pszClLineCache) delete [] pszClLineCache;
             pszClLineCache = new char[strlen(pline)+10];
             memcpy(pszClLineCache, pline, strlen(pline)+1);
+            // assume this is text/html
+            pcoi->setTypeFromContentType(str("text/html"));
             return 0; // "done headers"
+         }
+
+         // normal server: strip CRLF
+         removeCRLF(pline);
+
+         if (cs.headers & 4) {
+            // chain.print('h', 1, "> %s", pline);
+            printx("<head>> %s\n", pline);
          }
 
          // HTTP/1.1 200 OK
          char *psz1 = pline;
          while (*psz1 && *psz1 != ' ') psz1++;
          while (*psz1 && *psz1 == ' ') psz1++;
-         nwebrc = atol(psz1);
-         rwebrc = nwebrc;
+         iClWebRC = atol(psz1);
+         rwebrc = iClWebRC;
 
 			#ifdef USE_404
 			// recoverable rc?
-			if (nwebrc == 404) {
+			if (iClWebRC == 404) {
 				// continue to load the error page,
 				// but remember rc for additional info.
             pheads->put("webrc", "404");
@@ -2083,12 +2704,20 @@ int HTTPClient::rawReadHeaders
 			#endif // USE_404
 
          // fatal error?
-         if (nwebrc >= 400) {
+         if (iClWebRC >= 400) {
             perr("%.40s: %s",pline,purl);
             return 9;
          }
 
          continue;
+      }
+      else
+      {
+         // non first: crlf was stripped
+         if (cs.headers & 4) {
+            // chain.print('h', 1, "> %s", pline);
+            printx("<head>> %s\n", pline);
+         }
       }
 
       if (splitHeader(pline)) {
@@ -2101,7 +2730,6 @@ int HTTPClient::rawReadHeaders
 
       // if map is supplied, store some headers there
       if (pheads) {
-         // if (nwebrc >= 300 && nwebrc < 400 && !strcmp(curname(), "location"))
          if (   !strcmp(curname(), "location")
              || !strcmp(curname(), "content-type")
             )
@@ -2130,32 +2758,16 @@ int HTTPClient::rawReadHeaders
 		// must be evaluated.
 
       // content-type: text/html, application/zip etc.
-      if (!mystricmp(curname(), "content-type")) {
-         if (   strBegins(curval(), "text/html")
-             || strBegins(curval(), "application/xhtml")
-            )
-         {
-            pcoi->setBinaryFile(0); // NOT binary
-            btext = 1;
-         } 
-         else
-         if (  (strBegins(curval(), "application/") && strstr(curval(), "zip"))
-             || strBegins(curval(), "application/x-tar")
-             || strBegins(curval(), "application/x-compressed")
-            )
-         {
-            pcoi->setBinaryFile(1); // is binary
-            pcoi->setArc(1);        // but also an archive
-         } 
-         else {
-            pcoi->setBinaryFile(1); // is any binary
-         }
+      if (!mystricmp(curname(), "content-type"))
+      {
+         pheads->put(str("content-type"), curval());
+         pcoi->setTypeFromContentType(curval());
          continue;
       }
 
       // content-length: 20000
       if (!mystricmp(curname(), "content-length")) {
-         pheads->put(curname(), curval());
+         pheads->put(str("content-length"), curval());
          pcoi->setSize(atonum(curval()));
          // for live stat display, if any
          void setIOStatMaxBytes(num n);
@@ -2165,11 +2777,11 @@ int HTTPClient::rawReadHeaders
 
       // "Date" or
       // "Last-Modified" val "Tue, 01 Jan 2008 01:01:25 GMT"
-      if (   !mystricmp(curname(), "date")
+      if (   !mystricmp(curname(), "date") 
           || !mystricmp(curname(), "last-modified")
          ) 
       {
-         pheads->put(curname(), curval());
+         pheads->put(str("last-modified"), curval());
          char *pstr = nextNonBlank(curval()); // skip "Tue, "
          num ntime  = 0;
          // force format "01 Jan 2008 01:01:25 GMT"
@@ -2177,13 +2789,38 @@ int HTTPClient::rawReadHeaders
          int nlen  = strlen(pstr);
          if (nlen < 20) continue;
          if (pstr[14] != ':' || pstr[17] != ':') continue;
-         if (!timeFromString(pstr, ntime))
-            pcoi->setTime(ntime);
+         if (!timeFromString(pstr, ntime)) {
+            // mtklog(("coi.mtime: set %u from http header",(uint)ntime));
+            pcoi->setTime(ntime); // http header
+            if (fGlblWebDump)
+               fprintf(fGlblWebDump, "set time: %s %p\n", numtoa(pcoi->nClMTime), pcoi);
+         }
          continue;
       }
 
-      // TODO: process further headers
+      #ifndef DVIEW
+      // servers that strictly want no console web access may set
+      if (!mystricmp(curname(), "console-browse")) {
+         if (!mystricmp(curval(), "disable"))
+            return 9+pwarn("console web access is disabled by server.\n");
+      }
+      #endif
    }
+
+   if (bfirst)
+   {
+      mtklog(("no headers, no data received"));
+      if (fGlblWebDump)
+         fprintf(fGlblWebDump, "-----head.end----- (no reply)\n");
+      #ifdef WITH_SSL
+      if (bClSSL && pClSSLSocket && cs.recurl)
+         return 9;
+      #endif
+      return 9+perr("no data: %s", purl);
+   }
+
+   if (fGlblWebDump)
+      fprintf(fGlblWebDump, "-----head.end-----\n");
 
    // connection is auto closed.
    return 0;
@@ -2191,53 +2828,130 @@ int HTTPClient::rawReadHeaders
 
 int HTTPClient::connectHttp(char *phostorip, int nport, TCPCon **ppout)
 {__
+   mtklog(("connect: %s port=%d ssl=%d", phostorip, nport, bClSSL));
+
    if (nClProxyPort < 0)
       return 9+perr("internal, wrong http initial state\n");
 
+   int isubrc = 0;
+
    if (szClProxyHost[0])
-      return connect(szClProxyHost, nClProxyPort, ppout);
+      isubrc = connect(szClProxyHost, nClProxyPort, ppout);
    else
-      return connect(phostorip, nport, ppout);
+      isubrc = connect(phostorip, nport, ppout);
+
+   if (isubrc) {
+      mtklog(("connect rc %d",isubrc));
+      return isubrc;
+   }
+
+   #ifdef WITH_SSL
+   if (bClSSL && pClCurCon)
+   {
+      static bool bLocalInit = false;
+      if (!bLocalInit)
+      {
+         bLocalInit = true;
+         SSL_load_error_strings();
+         SSLeay_add_ssl_algorithms();
+      }
+
+      #if 1
+      if (!(pClSSLContext = SSL_CTX_new(SSLv23_client_method())))
+      #else
+      if (!(pClSSLContext = SSL_CTX_new(TLSv1_client_method())))
+      #endif
+      {
+         perr("SSLContext init failed\n");
+         close();
+         return 9;
+      }
+
+      if (!(pClSSLSocket = SSL_new(pClSSLContext)))
+      {
+         perr("SSLSocket creation failed\n");
+         close();
+         return 9;
+      }
+ 
+      SSL_set_fd(pClSSLSocket, pClCurCon->clSock);
+
+      int iErrCode = SSL_connect(pClSSLSocket);
+
+      if (iErrCode < 0)
+      {
+         mtklog(("SSLConnect failed (%d)",iErrCode));
+         printf("SSLConnect failed (%d)\n",iErrCode);
+         close();
+         return 9;
+      }
+
+      mtklog(("SSL connect done to %s:%d with rc=%d", phostorip, nport, iErrCode));
+
+      if (cs.debug)
+         printf("SSL connect done to %s:%d\n", phostorip, nport);
+   }
+   #endif
+
+   return 0;
 }
 
 int HTTPClient::open(char *purl, cchar *pmode, Coi *pcoi)
 {__
+   if (splitURL(purl))
+      return 9+perr("http: wrong url format: %s",purl);
+
    if (bClNoCon) {
       mtklog(("http::open: nocon set, blocked: %s", purl));
       return 9; // error issued before
    }
 
-   if (splitURL(purl))
-      return 9+perr("http: wrong url format: %s",purl);
-
    char *phost = curhost();
    char *pfile = curpath();
 
-   int nport = nClPort;
-   if (connectHttp(phost, nport, &pClCurCon)) {
+   if (fGlblWebDump) {
+      fprintf(fGlblWebDump, "-----open.url:-----\n");
+      fprintf(fGlblWebDump, "%s\n",purl);
+      fprintf(fGlblWebDump, "host=%s port=%d\n",phost,nClPort);
+      fflush(fGlblWebDump);
+   }
+
+   if (connectHttp(phost, nClPort, &pClCurCon)) {
+      close();
       bClNoCon = 1;
-      return 9+perr("http connect failed: %s:%d",phost,nport);
+      if (cs.verbose)
+         perr("http connect failed: %s:%d",phost,nClPort);
+      return 9;
    }
 
    // header field container
    StringMap *pheads = &pcoi->headers();
-   if (!pheads) return 9+perr("out of memory, cannot read meta data");
+   if (!pheads) {
+      close();
+      return 9+perr("out of memory, cannot read meta data");
+   }
 
    int nbail = 0;
 
    do
    {
-_     // send request to return headers.
-      int nrc = sendReq("GET",pfile,phost,nport);
-      if (nrc) return nrc;
-_
+      // send request to return headers.
+      int nrc = sendReq("GET",pfile,phost,nClPort);
+      if (nrc) {
+         close();
+         return 9;
+      }
+
       // read headers on reply stream.
       int nwebrc = 0;
       pheads->reset();
       if (rawReadHeaders(nwebrc, purl, pcoi))
-         return 9;
+      {
+         close();
+         return 10;
+      }
       // this also (re)sets the chunked mode
-_
+
       // http redirect?
       if (nwebrc < 300 || nwebrc >= 400)
          break; // hopefully got the target
@@ -2245,19 +2959,28 @@ _
       // "HTTP/1.1 3xx" redirection
       // "Location: main.html"
       char *ptarg = pheads->get(str("location"));
-      if (!ptarg) return 9+perr("rc %d but no Location on %s", nwebrc, curpath());
+      if (!ptarg) {
+         close();
+         return 9+perr("rc %d but no Location on %s", nwebrc, curpath());
+      }
       mtklog(("redir to %s", ptarg));
 
       // CHANGE FILENAME OF COI according to redirection:
       char *pabsnew = 0;
-_
+
       if (strBegins(ptarg, "http:")) {
          // absolute url supplied: use directly
          pabsnew = ptarg; // will be copied
+      }
+      else
+      if (strBegins(ptarg, "https:")) {
+         pabsnew = ptarg; // will be copied
       } else {
          // relative url supplied: join with old url
-         if (joinURL(purl, ptarg))
+         if (joinURL(purl, ptarg)) {
+            close();
             return 9+perr("redirect failed: %s / %s",purl,ptarg);
+         }
          pabsnew = curjoin();
       }
 
@@ -2275,18 +2998,27 @@ _
       // block dup reads
       glblCircleMap.put(purl, 0); // if already set, does nothing
 
+      // close now as splitURL inits stuff
+      close();
+
+      // fix: 1770: reset coi stats on redirect
+      pheads->reset();
+      pcoi->nClHave = 0;
+      pcoi->nClSize = 0;
+
       // have to split this again
-      if (splitURL(purl))
+      if (splitURL(purl)) {
          return 9+perr("http: wrong url format: %s",purl);
+      }
 
       // take redirected target
       phost = curhost();
       pfile = curpath();
 
       // repeat the request with the new target.
-      close();
-      if (connectHttp(phost, nport, &pClCurCon))
-        return 9+perr("http reconnect failed: %s:%d",phost,nport);
+      if (connectHttp(phost, nClPort, &pClCurCon)) {
+         return 9+perr("http reconnect failed: %s:%d",phost,nClPort);
+      }
    }
    while (nbail++ < 5); // until no longer redirected, or bail out
 
@@ -2299,49 +3031,153 @@ int HTTPClient::readraw(uchar *pbuf, int nbufsize)
 {__
    if (!pClCurCon)
       { perr("int. #175294 missing connection"); return 0; }
-   return pClCurCon->read(pbuf, nbufsize);
+
+   int ires = 0;
+
+   #ifdef WITH_SSL
+   if (bClSSL)
+   {
+      ires = SSL_read(pClSSLSocket, pbuf, nbufsize);
+      mtklog(("%d = ssl_read maxbuf %d",ires,nbufsize));
+   }
+   else
+   #endif
+   {
+      ires = pClCurCon->read(pbuf, nbufsize);
+      mtklog(("%d = readraw maxbuf %d",ires,nbufsize));
+   }
+
+   return ires;
 }
 
+int HTTPClient::readrawfull(uchar *pBlock, uint nLen)
+{
+	// if a foreground thread detects the escape key:
+	if (bGlblEscape)
+		return 0; // NOT -1, size_t problem
+
+   if (!pClCurCon)
+      { perr("int. #175294 missing connection"); return 0; }
+
+   SOCKET osock = pClCurCon->clSock;
+
+	IOStatusPhase ophase("read tcp");
+
+   num tstart  = getCurrentTime();
+
+   int nTotal   = 0;
+   int nRemain  = nLen;
+   int nCursor  = 0;
+   int nMaxWait = iClMaxWait;
+   while (nRemain > 0)
+   {
+      struct timeval tv;
+      fd_set fdvar;
+      tv.tv_sec  = 0;
+      tv.tv_usec = 20 * 1000; // 20 msec
+      FD_ZERO(&fdvar);
+      FD_SET(osock, &fdvar);
+      if (nMaxWait > 0 && select(osock+1, &fdvar, 0, 0, &tv) <= 0) 
+      {
+         if (getCurrentTime() - tstart > nMaxWait) {
+            pinf("read timeout (%d ms).   \n", (int)(getCurrentTime() - tstart));
+            nCursor=0;
+            break;
+         }
+         continue;
+      }
+
+      int nRead = readraw(pBlock+nCursor, nRemain);
+
+      if (nRead <= 0)
+         break;
+
+		countIOBytes(nRead);
+
+      nTotal  += nRead;
+      nRemain -= nRead;
+      nCursor += nRead;
+   }
+
+   return nCursor;
+}
+
+// .
 // TODO: reorg error rc handling
 int HTTPClient::read(uchar *pbuf, int nbufmax) 
 {__
-   mtklog(("http::read max=%d chunked=%d incache=%d", nbufmax, bClChunked, nClCacheUsed));
+   mtklog(("http::read max=%d chunked=%d incache=%d lcache=%p", nbufmax, bClChunked, nClCacheUsed, pszClLineCache));
 
    if (!pClCurCon)
       { perr("int. #175295 missing connection"); return 0; }
+
+   int iprefix = 0;
+
+   // pinf("read upto %d with lcache=%p   \r",nbufmax,pszClLineCache);
 
    if (pszClLineCache) 
    {
       int nlen = strlen(pszClLineCache);
       int nrem = 0;
-      if (nlen > nbufmax)
-         { nrem=nlen-nbufmax; nlen=nbufmax; }
-      mtklog(("http::read use cacheline len=%d remain=%d",nlen,nrem));
-      memcpy(pbuf, pszClLineCache, nlen);
-      if (nrem) {
-         memmove(pszClLineCache, pszClLineCache+nlen, nrem+1); // WITH term
+      if (nlen > nbufmax) {
+         // huge line data was cached
+         nrem=nlen-nbufmax;
+         nlen=nbufmax;
+         mtklog(("http::read use cacheline part len=%d remain=%d",nlen,nrem));
+         memcpy(pbuf, pszClLineCache, nlen);
+         if (nrem) {
+            memmove(pszClLineCache, pszClLineCache+nlen, nrem+1); // WITH term
+         } else {
+            delete [] pszClLineCache;
+            pszClLineCache = 0;
+         }
+         mtklog((" return linecache %d", nlen));
+         return nlen;
       } else {
+         // 1770: first line of content was cached, use as data start
+         memcpy(pbuf, pszClLineCache, nlen);
+
          delete [] pszClLineCache;
          pszClLineCache = 0;
+
+         pbuf += nlen;
+         nbufmax -= nlen;
+         mtklog(("http::read use cacheline prefix len=%d remain=%d",nlen,nbufmax));
+         if (nbufmax <= 0)
+            return nlen;
+         // fall through and fill up
+         iprefix = nlen;
       }
-      return nlen;
    }
 
+   // FROM HERE, MIND PREFIX LEN FOR RC!
+
    if (!bClChunked)
-      return readraw(pbuf, nbufmax);
+   {
+      int irawlen = readraw(pbuf, nbufmax);
+
+      if (irawlen >= 0)
+          irawlen += iprefix;
+
+      return irawlen;
+   }
 
    if (nClCacheUsed <= 0)
    {
       // cache is empty, read next chunk:
    
       // 1. read control line with size of next chunk
-      char *pline = pClCurCon->readLine();
-      // mtklog(("http next chunk: control line \"%s\"", pline ? pline : "<null>"));
+      char *pline = readLine(); // 1770, i/o raw readline
+
+      // mtklog(("http next chunk control line \"%.30s\"", pline ? pline : "<null>"));
+
       if (!pline)
          return 0+perr("http read error, no chunk header");
 
       int nchunksize = strtol(pline, 0, 0x10);
-      mtklog(("http next chunk %d bytes \"%s\"", nchunksize, pline));
+
+      // mtklog(("http next chunk %d bytes \"%s\"", nchunksize, pline));
+
       if (!nchunksize)
          return 0; // EOD flagged by "0" chunk size
    
@@ -2369,13 +3205,13 @@ int HTTPClient::read(uchar *pbuf, int nbufmax)
    
       // 3. read exactly the chunk, adding it to cache
       uchar *pdst = pClCache + nClCacheUsed;
-      int nread  = pClCurCon->read(pdst, nchunksize);
-      mtklog(("http read %d bytes", nread));
+      int nread  = readrawfull(pdst, nchunksize); // 1770
+      mtklog(("http read chunk with %d bytes", nread));
       if (nread < nchunksize)
          return 0+perr("http: incomplete chunk read, %d %d",nread,nchunksize);
 
       // every chunk is followed by CRLF
-      pClCurCon->readLine();
+      readLine(); // 1770
 
       // fall through to copy from cache
       nClCacheUsed += nread;
@@ -2400,17 +3236,34 @@ int HTTPClient::read(uchar *pbuf, int nbufmax)
 
    mtklog(("http cache remain %d alloc %d", nClCacheUsed, nClCacheAlloc));
 
-   return ntocopy;
+   return iprefix+ntocopy;
 }
 
 void HTTPClient::close( ) 
 {__
    mtklog(("http::close: pcon=%p cacheAlloc=%d cacheUsed=%d", pClCurCon, nClCacheAlloc, nClCacheUsed));
 
-   if (pClCurCon) {
+   if (pClCurCon)
+   {
       TCPCore::close(pClCurCon);
       pClCurCon = 0;
    }
+
+   #ifdef WITH_SSL
+   if (pClSSLSocket)
+   {
+      SSL_free(pClSSLSocket);
+      pClSSLSocket = 0;
+   }
+
+   if (pClSSLContext)
+   {
+      SSL_CTX_free(pClSSLContext);
+      pClSSLContext = 0;
+   }
+   #endif
+
+   bClSSL = false;
 
    nClCacheUsed = 0;
 }
@@ -2418,7 +3271,7 @@ void HTTPClient::close( )
 // - - - ftp client - - -
 
 FTPClient::FTPClient(char *pszID)
- : TCPCore(pszID)
+ : TCPCore(pszID, 'f')
 {__
    mtklog(("ftpclient ctr %p", this));
    wipe();
@@ -2548,7 +3401,8 @@ _
       int nSFTVer = atol(psz1+6);
       if (nSFTVer >= 100) {
          bClSFT = 1;
-         printf("> server speaks sft %d. mget, mput enabled.\n", nSFTVer);
+         if (cs.verbose)
+            printf("> server speaks sft %d. mget, mput enabled.\n", nSFTVer);
          nClSFTVer = nSFTVer;
       } else {
          printf("> unexpected sft info \"%s\"\n", psz1);
@@ -3200,6 +4054,9 @@ void FTPClient::closeFile( )
    #ifdef USE_SFT
    if (bClSFT)
    {
+      if (!pClCtlCon)
+         return;
+
       // sender will wait now until we confirm successful transfer.
       TCPCon *pcon = pClCtlCon;
 
@@ -3262,10 +4119,9 @@ void FTPClient::closeFile( )
    else
    #endif // USE_SFT
    {
-      if (!pClDatCon) {
-         perr("ftp: cannot close, no download open");
+      if (!pClDatCon)
          return;
-      }
+
       close(pClDatCon);
       pClDatCon = 0;
 
@@ -3293,10 +4149,22 @@ int HTTPClient::sendReq
    if (nport != 80)
       sprintf(szPort, ":%u", nport);
 
+   char szAuth1[200];
+   char szAuth2[200];
+   szAuth1[0] = '\0';
+   szAuth2[0] = '\0';
+   if (cs.puser && cs.ppass) {
+      snprintf(szAuth1,sizeof(szAuth1)-10, "%s:%s", cs.puser, cs.ppass);
+      encode64((uchar*)szAuth1,strlen(szAuth1),(uchar*)szAuth2,sizeof(szAuth2)-10,10000);
+      // encode64 adds CRLF already!
+      snprintf(szAuth1,sizeof(szAuth1)-10, "Authorization: Basic %s", szAuth2);
+   }
+
    if (szClProxyHost[0])
-   return pClCurCon->putf(
+   snprintf(aClIOBuf, sizeof(aClIOBuf)-10,
       "%s http://%s%s/%s HTTP/1.1\r\n"
       "Host: %s%s\r\n"
+      "%s"
       "User-Agent: %s\r\n"
       "Accept: text/html;q=0.9,*/*;q=0.8\r\n"
       "Accept-Language: en-us,en;q=0.8\r\n"
@@ -3305,12 +4173,14 @@ int HTTPClient::sendReq
       "\r\n"
       , pcmd, phost, szPort, pfile
       , phost, szPort
+      , szAuth1
       , getHTTPUserAgent()
       );
    else
-   return pClCurCon->putf(
+   snprintf(aClIOBuf, sizeof(aClIOBuf)-10,
       "%s /%s HTTP/1.1\r\n"
       "Host: %s%s\r\n"
+      "%s"
       "User-Agent: %s\r\n"
       "Accept: text/html;q=0.9,*/*;q=0.8\r\n"
       "Accept-Language: en-us,en;q=0.8\r\n"
@@ -3318,151 +4188,57 @@ int HTTPClient::sendReq
       "Connection: close\r\n"
       "\r\n"
       , pcmd, pfile, phost, szPort
+      , szAuth1
       , getHTTPUserAgent()
       );
-}
 
-int HTTPClient::loadFile(char *purl, num nMaxSize, uchar **ppout, num &routlen)
-{__
-   // load the whole http text document
-   if (splitURL(purl))
-      return 9+perr("http: wrong url format: %s",purl);
+   if (cs.headers & 2) {
+      char *psz = (char*)aClIOBuf;
+      char ccol = 'f';
+      while (*psz!=0) {
+         char *peol=psz;
+         while (*peol && !iseol(*peol)) peol++;
+         int ilen=peol-psz;
+         // chain.print(ccol, 1, "< %.*s",ilen,psz);
+         if (ccol=='f')
+            printx("<file>< %.*s\n",ilen,psz);
+         else
+            printf("< %.*s\n",ilen,psz);
+         while (*peol && iseol(*peol)) peol++;
+         psz=peol;
+         ccol = ' ';
+      }
+   }
 
-   num nStart = getCurrentTime(); (void)nStart;
+   mtklog(("send.request: %s",(char*)aClIOBuf));
 
-   char *phost = curhost();
-   char *pfile = curpath();
+   size_t nlen = (int)strlen(aClIOBuf);
 
-   int nport = nClPort;
-   if (connectHttp(phost, nport, &pClCurCon))
-      return 9+perr("http connect failed: %s:%d",phost,nport);
-
-   ConAutoClose ocls(this, &pClCurCon, __LINE__);
-
-   if (sendReq("GET",pfile,phost,nport))
+   if (nlen >= sizeof(aClIOBuf)-20)
+   {
+      perr("HttpClient: request too long, cannot send: \"%.100s\"\n", aClIOBuf);
       return 9;
+   }
 
-   // read headers, hoping(!) for a size info
-   Coi ocoi(purl, 0); // tmp
-   int nwebrc = 0;
-   if (rawReadHeaders(nwebrc, purl, &ocoi)) return 9;
-   // this also (re)sets the chunked mode
+   if (fGlblWebDump) {
+      fprintf(fGlblWebDump, "-----req.begin-----\n");
+      fwrite(aClIOBuf,1,nlen,fGlblWebDump);
+      fprintf(fGlblWebDump, "-----req.done-----\n");
+      fflush(fGlblWebDump);
+   }
 
-   num nAllocSize = 50000; // initial
+   size_t nsent = 0;
 
-   // http may or may not return a content-length
-   num nTargetSize = 0;
-   if (ocoi.hasSize() && ocoi.getSize()) 
+   #ifdef WITH_SSL
+   if (bClSSL)
    {
-      nTargetSize = ocoi.getSize();
-      if (nTargetSize > nMaxSize)
-         return 9+perr("too large, cannot load: %s", purl);
-      nAllocSize = nTargetSize + 10; // safety
-      mtklog(("read target size %d",(int)nTargetSize));
+      nsent = SSL_write(pClSSLSocket, aClIOBuf, nlen);
    }
-
-   // alloc (initial) memory
-   uchar *pdata = new uchar[nAllocSize+10];
-   num nUsed = 0;
-
-   mtklog(("read-start alloc %d used %d",(int)nAllocSize,(int)nUsed));
-
-   // load content blockwise.
-   // if the size was unknown, have to read til eod.
-   while (1) 
+   else
+   #endif
    {
-      num nRemain = (nTargetSize ? nTargetSize : nAllocSize) - nUsed;
-
-      if (bClChunked) 
-      {
-         // read next chunk size first
-         char *pline = pClCurCon->readLine();
-         if (!pline) { delete [] pdata; return 9; }
-         // conflict: bufsize might be smaller than this
-         int nchunksize = strtol(pline, 0, 0x10);
-         mtklog(("read-chunk clen %d \"%s\"", nchunksize, pline));
-         if (!nchunksize) {
-            if (strcmp(pline, "0"))
-               perr("unexpected last-chunk end: \"%s\"", pline);
-            break; // EOD flagged by "0" chunk size
-         }
-         if (nchunksize > nRemain) 
-         {
-            // resize buffer to fit whole chunk into
-            num nAllocNew = nAllocSize * 2 + nchunksize + 10;
-            uchar *pnew = new uchar[nAllocNew+10];
-            memcpy(pnew, pdata, nUsed);
-            delete [] pdata;
-            // swap new and old
-            pdata = pnew;
-            nAllocSize = nAllocNew;
-            mtklog(("read-chunk alloc %d used %d",(int)nAllocSize,(int)nUsed));
-         }
-         // make sure exactly the chunk is read
-         nRemain = nchunksize;
-      }
-      else 
-      if (nRemain < 20000)
-      {
-         // read stream of unknown size
-         num nAllocNew = nAllocSize * 2;
-         uchar *pnew = new uchar[nAllocNew+10];
-         memcpy(pnew, pdata, nUsed);
-         delete [] pdata;
-   
-         // swap new and old
-         pdata = pnew;
-         nAllocSize = nAllocNew;
-         mtklog(("read-cont  alloc %d used %d",(int)nAllocSize,(int)nUsed));
-      }
-
-      num nRead = readraw(pdata+nUsed, nRemain);
-      if (nRead <= 0)
-         break; // EOD
-
-      if (bClChunked)
-         // every chunk is followed by CRLF
-         pClCurCon->readLine();
-
-      mtklog(("%d (%x) = readraw(max %d)",(int)nRead,(int)nRead,(int)nRemain));
-      // mtkdump("raw ",pdata+nUsed,nRead);
-
-      nUsed += nRead;
-      if (nTargetSize > 0 && nUsed >= nTargetSize) {
-         if (nUsed > nTargetSize) {
-            delete [] pdata;
-            return 9+perr("download has unexpected size: %s %d/%d", purl, (int)nUsed, (int)nTargetSize);
-         }
-         // all bytes read, stop immediately
-         break;
-      }
+      nsent = pClCurCon->send((uchar*)aClIOBuf, strlen(aClIOBuf));
    }
-
-   if (nTargetSize > 0 && nUsed < nTargetSize) {
-      delete [] pdata;
-      return 9+perr("download incomplete: %s %d/%d", purl, (int)nUsed, (int)nTargetSize);
-   }
-
-   // how much is left empty in read cache?
-   num nRemain = nAllocSize - nUsed;
-   if (nRemain > 1000) 
-   {
-      // adapt to the size really used
-      num nAllocNew = nUsed + 10;
-      uchar *pnew = new uchar[nAllocNew];
-      memcpy(pnew, pdata, nUsed);
-      delete [] pdata;
-      // swap new and old
-      pdata = pnew;
-      nAllocSize = nAllocNew;
-   }
-
-   // result is managed by caller.
-   pdata[nUsed] = '\0'; // is guaranteed
-   *ppout  = pdata;
-   routlen = (size_t)nUsed;
-
-   mtklog(("%s downloaded in %d msec", purl, (int)(getCurrentTime() - nStart)));
 
    return 0;
 }
@@ -3499,8 +4275,13 @@ int CoiData::getHttp(char *purl)
 
    if (pClHttp) return 0; // reuse
 
-   int nprelen = strlen("http://");
-   if ((int)strlen(purl) <= nprelen) return 9;
+   int nprelen = 0;
+
+   if (strBegins(purl, "http://")) nprelen = 7;
+   else
+   if (strBegins(purl, "https://")) nprelen = 8;
+   else
+      return 0;
 
    // isolate base url with the hostname
    char szBase[200];
@@ -3513,10 +4294,17 @@ int CoiData::getHttp(char *purl)
    // else it is http://justhost
 
    // now try to alloc the relevant client
+   #ifdef USE_WEBCONCACHE
    if (!(pClHttp = glblConCache.allocHttpClient(szBase))) {
       perr("unable to http to: %s", szBase);
       return 9;
    }
+   #else
+   if (!(pClHttp = new HTTPClient(szBase))) {
+      perr("unable to http to: %s", szBase);
+      return 9;
+   }
+   #endif
 
    mtklog(("coidata.http.alloc done %p", pClHttp));
 
@@ -3527,7 +4315,7 @@ int CoiData::releaseFtp( )
 {__
    if (!pClFtp)
       return 9+perr("releaseFtp without ptr, %p", this);
-   pClFtp->decref();
+   pClFtp->decref("rft");
    pClFtp = 0;
    return 0;
 }
@@ -3536,9 +4324,17 @@ int CoiData::releaseHttp( )
 {__
    if (!pClHttp)
       return 9+perr("releasehttp without ptr, %p", this);
+
    pClHttp->resetCache();
-   pClHttp->decref();
+
+   #ifdef USE_WEBCONCACHE
+   pClHttp->decref("rht");
+   #else
+   delete pClHttp;
+   #endif
+
    pClHttp = 0;
+
    return 0;
 }
 
@@ -3564,17 +4360,23 @@ char *Coi::header(cchar *pname) {
    return data().headers().get((char*)pname);
 }
 
-bool sameDomain(char *psz1in, char *psz2in, int &rdomlen)
+// PROVEN CODE. OLD CRAWL REQUIRES THIS !!!
+bool sameDomainOld(char *psz1in, char *psz2in, int &rdomlen)
 {
    char *psz1 = psz1in;
    char *psz2 = psz2in;
 
-   // http://sub.do.main.thehost.com/whatever1/
-   // http://www.thehost.com/whatever2/
-   if (!strBegins(psz1, "http://")) return 0;
-   if (!strBegins(psz2, "http://")) return 0;
-   psz1 += 7;
-   psz2 += 7;
+   if (strBegins(psz1, "http://"))  psz1 += 7;
+   else
+   if (strBegins(psz1, "https://")) psz1 += 8;
+   else
+      return 0;
+
+   if (strBegins(psz2, "http://"))  psz2 += 7;
+   else
+   if (strBegins(psz2, "https://")) psz2 += 8;
+   else
+      return 0;
 
    // ignore any www.
    if (striBegins(psz1, "www.")) psz1 += 4;
@@ -3595,16 +4397,70 @@ bool sameDomain(char *psz1in, char *psz2in, int &rdomlen)
    if (brc) rdomlen = nlen1;
 
    return brc;
+}
 
-/*
+// TODO: exakte definition was sameDomain eigentlich macht!
+// ACHTUNG was will der aufrufer bei skiplen!
+bool sameDomainNew(char *psz1in, char *psz2in, int &rskiplen1)
+{
+   char *psz1  = psz1in;
+   char *psz2  = psz2in;
+   char *edom1 = 0;
+   char *edom2 = 0;
+   char *psla1 = 0;
+   char *psla2 = 0;
+
+   if (strBegins(psz1, "http://"))  psz1 += 7;
+   else
+   if (strBegins(psz1, "https://")) psz1 += 8;
+   else
+      return 0;
+
+   if (strBegins(psz2, "http://"))  psz2 += 7;
+   else
+   if (strBegins(psz2, "https://")) psz2 += 8;
+   else
+      return 0;
+
+   // ignore any www.
+   if (striBegins(psz1, "www.")) psz1 += 4;
+   if (striBegins(psz2, "www.")) psz2 += 4;
+
+   // isolate main domains from foo.com/ or foo.com:80/
+   for (; *psz1!=0; psz1++) {
+      if (*psz1==':' || *psz1=='/') {
+         if (!edom1) edom1 = psz1-1;
+      }
+      if (*psz1=='/') {
+         if (!psla1) psla1 = psz1;
+      }
+   }
+   for (; *psz2!=0; psz2++) {
+      if (*psz2==':' || *psz2=='/') {
+         if (!edom2) edom2 = psz2-1;
+      }
+      if (*psz2=='/') {
+         if (!psla2) psla2 = psz2;
+      }
+   }
+
+   if (!edom1 || !edom2 || !psla1 || !psla2) {
+      // printf("fail\n");
+      return 0;
+   }
+
+   // set this to last char of domain name
+   psz1 = edom1;
+   psz2 = edom2;
+
    // step 2 dots back, or until /
    int ndots = 2;
    for (; psz1 > psz1in; psz1--) {
       if (*psz1 == '.' && !(--ndots)) break;
       if (*psz1 == '/') break;
    }
-   char *pdom1 = psz1+1;   
-   int  nlen1 = psla1 - pdom1;
+   char *pdom1 = psz1+1;
+   int  nlen1 = edom1 - pdom1;
 
    // same on psz2
    ndots = 2;
@@ -3612,13 +4468,17 @@ bool sameDomain(char *psz1in, char *psz2in, int &rdomlen)
       if (*psz2 == '.' && !(--ndots)) break;
       if (*psz2 == '/') break;
    }
-   char *pdom2 = psz2+1;   
-   int  nlen2 = psla2 - pdom2;
+   char *pdom2 = psz2+1;
+   int  nlen2 = edom2 - pdom2;
 
-   if (nlen1 != nlen2) return 0;
+   if (nlen1 != nlen2)
+      return 0;
 
-   return strncmp(pdom1, pdom2, nlen1) ? 0 : 1;
-*/
+   bool brc = strncmp(pdom1, pdom2, nlen1) ? 0 : 1;
+
+   if (brc) rskiplen1 = (int)((psla1 + 1) - psz1in);
+
+   return brc;
 }
 
 // list of non-traversable binary extensions
@@ -3627,7 +4487,7 @@ cchar *apBinExtList[] = {
    0 // EOD
 };
 
-int Coi::rawLoadDir( )
+int Coi::rawLoadDir(int ilevel)
 {__
    if (data().bloaddirdone) {
       mtklog(("coi::loaddir: done, %d entries", data().elements().numberOfEntries()));
@@ -3640,12 +4500,210 @@ int Coi::rawLoadDir( )
       probeFile();
    #endif // SFKDEEPZIP
 
-
    #ifdef VFILEBASE
    if (isFtp())   return rawLoadFtpDir();
    #endif // VFILEBASE
 
    return 9; // n/a with fsdirs
+}
+
+int Coi::setTypeFromHeaders( )
+{
+   StringMap *pheads = &headers();
+   if (!pheads)
+      return 5;
+
+   char *pctype = pheads->get(str("content-type"));
+
+   if (!pctype)
+      return 5;
+
+   return setTypeFromContentType(pctype);
+}
+
+int Coi::setTypeFromContentType(char *pctype)
+{
+   bClWebText=0;
+   bClWebBinary=0;
+   bClWebPage=0;
+   bClWebJpeg=0;
+   bClWebPNG=0;
+   bClWebImage=0;
+   
+   if (striBegins(pctype, "image/jpeg")) {
+      bClWebImage=1; bClWebJpeg=1;
+      bClWebBinary=1; bClWebText=0;
+      setBinaryFile(1);
+      return 0;
+   }
+   if (striBegins(pctype, "image/png")) {
+      bClWebImage=1; bClWebPNG=1;
+      bClWebBinary=1; bClWebText=0;
+      setBinaryFile(1);
+      return 0;
+   }
+   if (   striBegins(pctype, "image/")
+       || striBegins(pctype, "audio/")
+       || striBegins(pctype, "video/")
+       || striBegins(pctype, "application/x-msdos-program")
+       || striBegins(pctype, "application/pdf")
+       || striBegins(pctype, "application/zip")
+      )
+   {
+      bClWebBinary=1; bClWebText=0;
+      setBinaryFile(1);
+      return 0;
+   }
+   if (   striBegins(pctype, "text/html")
+       || striBegins(pctype, "application/xhtml")
+       || striBegins(pctype, "application/rss+xml")
+      )
+   {
+      bClWebText=1; bClWebPage=1;
+      setBinaryFile(0);
+      return 0;
+   }
+   if (   striBegins(pctype, "text/")
+       || striBegins(pctype, "application/javascript")
+       || striBegins(pctype, "application/x-javascript")
+       || striBegins(pctype, "application/json")
+       || striBegins(pctype, "application/xml")
+      )
+   {
+      bClWebText=1;
+      setBinaryFile(0);
+      return 0;
+   }
+   if (  (strBegins(pctype, "application/") && strstr(pctype, "zip"))
+       || strBegins(pctype, "application/x-tar")
+       || strBegins(pctype, "application/x-compressed")
+      )
+   {
+      setBinaryFile(1); // is binary
+      setArc(1);        // but also an archive
+      return 0;
+   }
+
+   return 5;
+}
+
+// .
+int Coi::preloadFromWeb( )
+{
+   num nMaxSize = cs.maxwebsize;
+
+   if (nMaxSize < 1000000)
+       nMaxSize = 1000000;
+
+   uchar *pLoadBuf  = new uchar[nMaxSize+1000];
+   if (!pLoadBuf)
+      return 9+perr("out of memory");
+
+   int irc = 0;
+
+   int iopenrc=0,iopenrc2=0;
+   if ((iopenrc = open("rb")))
+   {
+      #ifndef SFKWEB
+      return 5;
+      #endif
+   }
+
+   char szCType[100]; mclear(szCType);
+
+   int  iTotalRead  = 0;
+
+   if ((nClHave & COI_HAVE_BINARY) == 0)
+   {
+      mtklog(("read probe"));
+
+      // we have ZERO information. read probe.
+      memset(pLoadBuf, 0, 1024);
+
+      iTotalRead = read(pLoadBuf, 1024);
+
+      if (iTotalRead > 0) {
+         if (fGlblWebDump) {
+            fprintf(fGlblWebDump, "-----probe.beg-----\n");
+            fwrite(pLoadBuf,1,mymin(128,iTotalRead),fGlblWebDump);
+            fprintf(fGlblWebDump, "-----probe.done-----\n");
+            fflush(fGlblWebDump);
+         }
+         pLoadBuf[iTotalRead]='\0';
+         // detect binary by content
+         uchar *p = pLoadBuf;
+         if (memchr(pLoadBuf, 0, iTotalRead)) {
+            // detect image by content
+            if (p[1]=='P' && p[2]=='N' && p[3]=='G') {
+               bClWebImage=1; bClWebPNG=1;
+               bClWebBinary=1; bClWebText=0;
+               setBinaryFile(1);
+            } else if (p[0]==0xFF && p[1]==0xD8) {
+               bClWebImage=1; bClWebJpeg=1;
+               bClWebBinary=1; bClWebText=0;
+               setBinaryFile(1);
+            } else {
+               bClBinary = 1;
+            }
+         } else {
+            bClBinary = 0;
+         }
+      } else {
+         bClBinary = 0;
+      }
+      nClHave |= COI_HAVE_BINARY;
+
+      bClWebBinary = bClBinary;
+      bClWebText   = bClWebBinary ? 0 : 1;
+   }
+
+   // complete loading of object contents
+   int iMaxRead = nMaxSize;
+
+   do
+   {
+      if (nClHave & COI_HAVE_SIZE)
+      {
+         if (getSize() > iMaxRead)
+         {
+            pwarn("file too large: %s (%dm)\n", name(), (int)getSize()/1000000);
+            pinf("use option -weblimit=n to change limit.\n");
+            irc = 5;
+            break;
+         }
+         iMaxRead = getSize();
+      }
+   
+      while (iTotalRead < iMaxRead)
+      {
+         // it may be important to read all in one call
+         int iRemainSpace = iMaxRead - iTotalRead;
+         int iBytes = read(pLoadBuf+iTotalRead, iRemainSpace);
+         if (iBytes <= 0)
+            break;
+         iTotalRead += iBytes;
+      }
+   
+      // store a copy in coi which becomes owner
+      uchar *ptmp = new uchar[iTotalRead+10];
+
+      if (!ptmp)
+         return 9+perr("outofmem");
+
+      memcpy(ptmp, pLoadBuf, iTotalRead);
+      ptmp[iTotalRead] = '\0';
+
+      setContent(ptmp, iTotalRead, nClMTime);
+
+      mtklog(("preload sets CACHED DATA with %d bytes", iTotalRead));
+   }
+   while (0);
+
+   close();
+   
+   delete [] pLoadBuf;
+
+   return irc;
 }
 
 // caller MUST RELEASE COI after use!
@@ -3771,7 +4829,17 @@ int Coi::rawOpenHttpSubFile(cchar *pmode)
    int nrc = phttp->open(name(), pmode, this);
    // may redirect and change current coi's name!
 
-   if (!nrc) data().bfileopen = 1;
+   if (nrc) {
+      if (nrc==11 && !cs.verbose)
+         { }
+      else
+      {
+         if (root(1)) pinf("[nopre] from : %s\n", root());
+         if (ref(1))  pinf("[nopre] ref  : %s\n", ref());
+      }
+   } else {
+      data().bfileopen = 1;
+   }
 
    return nrc;
 }
@@ -3789,7 +4857,7 @@ size_t Coi::rawReadFtpSubFile(void *pbufin, size_t nBufSize)
    int nread = data().pClFtp->readFile((uchar*)pbufin, (int)nBufSize);
    mtklog((" ftp read %s %u done %d", name(), (uint)nBufSize, nread));
 
-   return nread;
+   return (nread >= 0) ? nread : 0;
 }
 
 size_t Coi::rawReadHttpSubFile(void *pbufin, size_t nBufSize) 
@@ -3800,16 +4868,19 @@ size_t Coi::rawReadHttpSubFile(void *pbufin, size_t nBufSize)
    }
 
    int nread = data().pClHttp->read((uchar*)pbufin, (int)nBufSize);
-   mtklog(("http-read %s done=%d max=%d", name(), nread, (int)nBufSize));
+   mtklog(("http-read done=%d buf=%p max=%d", nread, pbufin, (int)nBufSize));
 
-   return nread;
+   return (nread >= 0) ? nread : 0;
 }
 
 void Coi::rawCloseFtpSubFile( ) 
 {
    mtklog(("ftp-close %s", name()));
 
-   if (!data().pClFtp) { perr("ftp not open, cannot close: %s", name()); return; }
+   if (!data().pClFtp) {
+      mtklog(("close.ftp already done: %s",name()));
+      return;
+   }
 
    data().pClFtp->closeFile();
 
@@ -3823,8 +4894,13 @@ void Coi::rawCloseHttpSubFile( )
 {__
    mtklog(("http-close %s", name()));
 
+   if (!hasData()) {
+      mtklog(("close.http already done: %s",name()));
+      return;
+   }
+
    if (!data().pClHttp) {
-      perr("http not open, cannot close: %s", name());
+      mtklog(("close.http already done: %s",name()));
       return; 
    }
 
@@ -3841,178 +4917,241 @@ void Coi::rawCloseHttpSubFile( )
 
 int Coi::prefetch(bool bLoadNonArcBinaries, num nFogSizeLimit, num nHardSizeLimit)
 {
-	// this is only for virtual network files
-	if (!isNet()) return 1;	// ignore
-
-   if (open("rb")) return 9;
-
-   // NO RETURN WITHOUT CLOSE BEGIN
-
-	// -	after coi::open, binary and arc status is known.
-	bool bIsKnownBinary = ((nClHave & COI_HAVE_BINARY) && bClBinary) ? 1 : 0;
-   bool bIsKnownArc    = ((nClHave & COI_HAVE_ARC   ) && bClArc   ) ? 1 : 0;
-
-   if (bIsKnownBinary && !bLoadNonArcBinaries && !bIsKnownArc) 
-   {
-      cchar *pctype = header("content-type"); // or null
-      if (!pctype) pctype = "n/a";
-      close();
-      return 2;   // skip download and caching as it's not text, and no archive
-   }
-
-   num    nalloc = 10000;
-   uchar *pdata  = new uchar[nalloc+100];
-   num    nused  = 0;
-
-   while (1)
-   {
-      num nrem  = nalloc - nused;
-      if (nrem < nalloc / 4) {
-         // expand buffer
-         num nalloc2 = nalloc * 2;
-         uchar *ptmp = new uchar[nalloc2+100];
-         memcpy(ptmp, pdata, nused);
-         // swap old and new
-         delete [] pdata;
-         pdata  = ptmp;
-         nalloc = nalloc2;
-         nrem   = nalloc - nused;
-      }
-      num nread = read(pdata+nused, nrem);
-      if (nread <= 0) break;
-      // else continue til EOD
-      nused += nread;
-   }
-
-   // how much is left empty in read cache?
-   num nrem = nalloc - nused;
-   if (nrem > 1000)
-   {
-      // adapt to the size really used
-      num nalloc2 = nused + 10;
-      uchar *ptmp = new uchar[nalloc2];
-      memcpy(ptmp, pdata, nused);
-      // swap old and new
-      delete [] pdata;
-      pdata  = ptmp;
-      nalloc = nalloc2;
-   }
-
-   // close asap, caller may change our data().src
-   close();
-
-   // NO RETURN WITHOUT CLOSE END
-
-   // result is managed by caller.
-   pdata[nused] = '\0'; // is guaranteed
-
-   // will delete old data, if any:
-   setContent(pdata, nused);
-
-	return 0;
+   return preload("dvw", 0, bLoadNonArcBinaries ? 1 : 2); // dview
 }
 
-int Coi::loadOwnFileRaw(num nmaxsize, uchar **ppout, num &rsize)
+// .
+int Coi::preload(cchar *pszFromInfo, uchar **ppout, num &rsize, int iStopMode)
 {
-   // no provideInput() here, EXCEPT:
-   // - zipSubEntries may call provideInput thru open() on parent
+   int isubrc = preload(pszFromInfo, 0, iStopMode, 1); // internal
+   if (isubrc) return isubrc;
 
-   // load file without any size info
-   if (open("rb")) return 9;
-   
-   num    nalloc = 10000;
-   uchar *pdata  = new uchar[nalloc+100];
-   num    nused  = 0;
-
-   while (1) 
-   {
-      num nrem  = nalloc - nused;
-      if (nrem < nalloc / 4) {
-         // expand buffer
-         num nalloc2 = nalloc * 2;
-         uchar *ptmp = new uchar[nalloc2+100];
-         memcpy(ptmp, pdata, nused);
-         // swap old and new
-         delete [] pdata;
-         pdata  = ptmp;
-         nalloc = nalloc2;
-         nrem   = nalloc - nused;
-      }
-      num nread = read(pdata+nused, nrem);
-      if (nread <= 0) break;
-      // else continue til EOD
-      nused += nread;
-   }
-
-   // how much is left empty in read cache?
-   num nrem = nalloc - nused;
-   if (nrem > 1000) 
-   {
-      // adapt to the size really used
-      num nalloc2 = nused + 10;
-      uchar *ptmp = new uchar[nalloc2];
-      memcpy(ptmp, pdata, nused);
-      // swap old and new
-      delete [] pdata;
-      pdata  = ptmp;
-      nalloc = nalloc2;
-   }
-
-   // close asap, caller may change our data().src
-   close();
-
-   // result is managed by caller.
-   pdata[nused] = '\0'; // is guaranteed
-   *ppout = pdata;
-   rsize  = nused;
+   *ppout = data().src.data;
+   rsize  = data().src.size;
 
    return 0;
 }
 
-// rc  0: ok, really loaded
-// rc >0: not loaded, e.g. because file is too large
-int Coi::provideInput(int nTraceLine, bool bsilent)
-{__
-   if (isNet() && isTravelZip(110,1))
-      {_ } // accept, need to cache whole file
-   else
-   if (isZipSubEntry())
-      {_ } // accept, need to cache sub entry via parent
-   else {
-      mtklog(("coi::provideInput not needed: %s net=%d tz=%d", name(),isNet(),isTravelZip(110,1)));
-_     return 0; // nothing to do
-   }
-
-   // is input already loaded?
+// stopmode 0: load everything
+// stopmode 1: load no binaries except archives
+// stopmode 2: load no binaries
+int Coi::preload(cchar *pszFromInfo, bool bsilent, int iStopMode, bool bfile)
+{
    if (data().src.data)
       return 0; // nothing to do
 
-   mtklog(("coi::provideInput from %d", nTraceLine));
+   if (cs.debug)
+      printf("preload.1: %s %d mode=%d file=%d %s\n", pszFromInfo, bsilent, iStopMode, bfile, name());
 
-   // strictly need to check the size here:
-   num nSize = getSize();
-   if (nSize > nGlblMemLimit) {
-      snprintf(data().szlasterr, sizeof(data().szlasterr)-4,
-         " - content too large (%u mb)", (uint)(nClSize/1000000UL));
-      tellMemLimitInfo(); // just once
+   bool bIsZipTrav = isTravelZip(111,1);
+   bool bIsZipSub  = isZipSubEntry();
+   bool bIsZipAny  = (bIsZipTrav || bIsZipSub);
+
+   if (isNet()) // && bIsZipTrav)
+      {_ } // accept, need to cache whole file
+   else
+   if (bIsZipSub)
+      {_ } // accept, need to cache sub entry via parent
+   else 
+   if (!bfile) {
+      // physical file: no preload
+      return 0;
+   }
+
+   num  nLoadLimit   = nGlblMemLimit;
+   cchar *pszLimitOpt= "-memlimit";
+   num  nAllocSize   = 2000000; // 2 mb
+   bool bStreamLoad  = 1;
+
+   if (isHttp()) {
+      nLoadLimit  = cs.maxwebsize;
+      pszLimitOpt = "-weblimit";
+   }
+
+   int iopenrc=0,iopenrc2=0;
+
+   if ((iopenrc = open("rb")))
+   do
+   {
+      if (isHttp())
+      {
+      }
+
+      // if (!bsilent)
+      //    pwarn("cannot read: %s\n", name());
+
+      return 9;
+   }
+   while (0);
+
+   if (hasSize()) {
+      nAllocSize  = getSize();
+      bStreamLoad = 0;
+      if (cs.debug) printf("preload.2: have=%u size=%d\n",nClHave,(int)nAllocSize);
+   } else {
+      if (cs.debug) printf("preload.2: have=%u alloc=%d\n",nClHave,(int)nAllocSize);
+   }
+
+   if (nAllocSize < 0) {
+      close();
+      return 9;
+   }
+
+   if (nAllocSize > nLoadLimit) {
+      close();
+      if (!bsilent) {
+         pwarn("file too large, skipping: %s\n", name());
+         if (pszLimitOpt)
+            pinf("use option %s to change load limit\n", pszLimitOpt);
+      }
       return 1; // block loading
    }
 
-   int nrc = 0;
+   uchar *pdata  = new uchar[nAllocSize+100];
+   num    nused  = 0;
 
-   mtklog(("loadownraw, unknown size: %s", name()));
-   uchar *pdata = 0;
-   num    nsize = 0;
-   if ((nrc = loadOwnFileRaw(100 * 1000000, &pdata, nsize))) {
-      mtklog(("loadownraw failed, %d", nrc));
-      return 9;   // failed
+   if (!pdata) { // safety
+      close();
+      return 9+perr("out of memory (%d)\n", (int)(nAllocSize/1000000));
    }
 
-   mtklog(("cload ok, %d bytes: %s", (int)nsize, name()));
+   if (   iStopMode > 0
+       && (nClHave & COI_HAVE_BINARY) == 0
+      )
+   {
+      mtklog(("read probe"));
 
-   setContent(pdata, nsize);
+      int nProbeSize = mymin(1024, nAllocSize);
+
+      memset(pdata, 0, nProbeSize);
+
+      nused = read(pdata, nProbeSize);
+
+      if (nused < 0) {
+         close();
+         return 9+perr("cannot read: %s\n", name());
+      }
+
+      pdata[nused]='\0';
+      uchar *p = pdata;
+
+      if (nused>0 && memchr(pdata, 0, nused)) {
+         if (p[1]=='P' && p[2]=='N' && p[3]=='G') {
+            bClWebImage=1; bClWebPNG=1;
+            bClWebBinary=1; bClWebText=0;
+            setBinaryFile(1);
+         } else if (p[0]==0xFF && p[1]==0xD8) {
+            bClWebImage=1; bClWebJpeg=1;
+            bClWebBinary=1; bClWebText=0;
+            setBinaryFile(1);
+         } else {
+            bClBinary = 1;
+         }
+      } else {
+         bClBinary = 0;
+      }
+      nClHave |= COI_HAVE_BINARY;
+
+      bClWebBinary = bClBinary;
+      bClWebText   = bClWebBinary ? 0 : 1;
+   }
+
+	bool bIsKnownBinary = ((nClHave & COI_HAVE_BINARY) && bClBinary) ? 1 : 0;
+   bool bIsKnownArc    = ((nClHave & COI_HAVE_ARC   ) && bClArc   ) ? 1 : 0;
+
+   switch (iStopMode)
+   {
+      case 0: // load everything
+         break;
+
+      case 1: // load no binaries except archives
+		   if (bIsKnownBinary && !bIsKnownArc)
+		   {
+		      if (cs.debug)
+		         printf("preload stop: binary and no archive\n");
+		      close();
+		      return 2; // skip download and caching as it's not text, and no archive
+		   }
+         break;
+
+      case 2: // load no binaries
+         if (bIsKnownBinary)
+         {
+		      if (cs.debug)
+		         printf("preload stop: binary\n");
+		      close();
+		      return 3; // skip download and caching as it's not text, and no archive
+         }
+         break;
+   }
+
+   if (cs.debug) printf("preload.4: probe=%d\n",(int)nused);
+   
+   while (1)
+   {
+      num nrem = nAllocSize - nused;
+
+      if (bStreamLoad)
+      {
+         // expand buffer by next stream data
+         if (nrem < nAllocSize / 4)
+         {
+            num nAllocSize2 = nAllocSize * 2;
+            uchar *ptmp = new uchar[nAllocSize2+100];
+            memcpy(ptmp, pdata, nused);
+            delete [] pdata;
+            pdata  = ptmp;
+
+            nAllocSize = nAllocSize2;
+            nrem       = nAllocSize - nused;
+         }
+      }
+      else if (nused >= nAllocSize)
+      {
+         break;
+      }
+
+      num nread = read(pdata+nused, nrem);
+
+      // if (cs.debug) printf("preload.5: read %d\n",(int)nread);
+
+      if (nread <= 0)
+         break;
+
+      nused += nread;
+   }
+
+   if (bStreamLoad)
+   {
+      // how much is left empty in read cache?
+      num nrem = nAllocSize - nused;
+      if (nrem > 1000)
+      {
+         // adapt to the size really used
+         num nAllocSize2 = nused + 100;
+         uchar *ptmp = new uchar[nAllocSize2];
+         memcpy(ptmp, pdata, nused);
+         delete [] pdata;
+         pdata  = ptmp;
+
+         nAllocSize = nAllocSize2;
+      }
+   }
+
+   close();
+
+   pdata[nused] = '\0'; // is guaranteed
+
+   if (cs.debug) printf("preload.6: data %p used=%d\n",pdata,(int)nused);
+   
+   setContent(pdata, nused, nClMTime);
 
    return 0;
+}
+
+int Coi::provideInput(cchar *pszFromInfo, bool bsilent)
+{
+   return preload(pszFromInfo, bsilent, 1); // provideInput
 }
 
 Coi *Coi::getElementByAbsName(char *pabsname)
@@ -4046,10 +5185,15 @@ bool Coi::isFtp() {
 	return 0;
 }
 
-bool Coi::isHttp() {
+bool Coi::isHttp(char *pszOptURL) {
    #ifdef VFILENET
-	if (nGlblCoiConfig & COI_CAPABILITY_NET)
-	   return strBegins(name(), "http://");
+   char *psz = pszOptURL ? pszOptURL : name();
+	if (nGlblCoiConfig & COI_CAPABILITY_NET) {
+      if (strBegins(psz, "http://"))
+         return 1;
+      if (strBegins(psz, "https://"))
+         return 1;
+   }
    #endif // VFILENET
 	return 0;
 }
@@ -4079,9 +5223,29 @@ bool Coi::rawIsFtpDir()
    return bClDir;
 }
 
+int Coi::readWebHead( )
+{
+   if (!isHttp())
+      return 9;
+
+   if (data().getHttp(name()))
+      return 9;
+
+   HTTPClient *phttp = data().pClHttp;
+
+   if (phttp->getFileHead(name(), this, "head"))
+      return 9+perr("cannot get headers: %s", name());
+
+   return 0;
+}
+
 // TODO: rework error rc handling?
-bool Coi::rawIsHttpDir( ) 
+bool Coi::rawIsHttpDir(int ilevel) 
 {__
+   #ifdef SFKINT
+   pwarn("isdir: wrong http call sequence.\n");
+   #endif
+
    return 0;
 }
 
@@ -10247,7 +11411,25 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile)
          "   // end of sfk script:\n"
          "   +end\n"
          "\n"
+         "sfk label showmany -qtrim\n"
+         "\n"
+         "   // a long command, easily editable, joined by -qtrim.\n"
+         "   // sfk script %s -from showmany /status.xml\n"
+         "   // will load /status.xml from 5 different ip's.\n"
+         "   +run -yes\n"
+         "      \"\n"
+         "         start dview\n"
+         "            http://192.168.1.100%%1\n"
+         "            http://192.168.1.101%%1\n"
+         "            http://192.168.1.102%%1\n"
+         "            http://192.168.1.103%%1\n"
+         "            http://192.168.1.104%%1\n"
+         "      \"\n"
+         "\n"
+         "   +end\n"
+         "\n"
          ":xend\n",
+         pszOutFile ? pszOutFile : "thisfile.bat",
          pszOutFile ? pszOutFile : "thisfile.bat"
          );
          break;
@@ -11267,3 +12449,2829 @@ int UDPCore::recvPing(int i, int *pDelay)
 
 #endif // USE_SFK_BASE
 
+ExtProgram::ExtProgram( )
+{
+   memset(this, 0, sizeof(*this));
+}
+
+#ifdef _WIN32
+int ExtProgram::winFork(char *pszCmd,
+   HANDLE hChildStdOut,
+   HANDLE hChildStdIn,
+   HANDLE hChildStdErr
+ )
+{
+   PROCESS_INFORMATION pi;
+   STARTUPINFO si;
+
+   ZeroMemory(&si,sizeof(STARTUPINFO));
+   si.cb = sizeof(STARTUPINFO);
+   si.dwFlags = STARTF_USESTDHANDLES;
+   si.hStdOutput = hChildStdOut;
+   si.hStdInput  = hChildStdIn;
+   si.hStdError  = hChildStdErr;
+   // si.wShowWindow = SW_HIDE;
+   // dwFlags |= STARTF_USESHOWWINDOW;
+
+   if (!CreateProcess(NULL,pszCmd,NULL,NULL,TRUE,
+                      0, // CREATE_NEW_CONSOLE,
+                      NULL,NULL,&si,&pi))
+      return 9+perr("cannot run: CreateProcess failed%s",winSysError());
+
+   clXPid = pi.hProcess;
+
+   if (!CloseHandle(pi.hThread))
+      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
+
+   return 0;
+}
+#else
+pid_t ExtProgram::mypopen2(char *commandin[], int *infp, int *outfp)
+{
+    int iREAD=0,iWRITE=1;
+    int p_stdin[2], p_stdout[2];
+    pid_t pid;
+
+    const char *pbinary = (const char *)commandin[0];
+    char * const *pargs = (char * const *)commandin;
+
+    if (pipe(p_stdin) != 0 || pipe(p_stdout) != 0)
+        return -1;
+
+    pid = fork();
+
+    if (pid < 0)
+    {
+        return pid;
+    }
+    else if (pid == 0)
+    {
+        close(p_stdin[iWRITE]);
+        dup2(p_stdin[iREAD], iREAD);
+
+        close(p_stdout[iREAD]);
+        dup2(p_stdout[iWRITE], iWRITE);
+
+        execvp(pbinary, pargs);
+
+        exit(1);
+    }
+
+    close(p_stdin[iREAD]);
+    close(p_stdout[iWRITE]);
+
+    if (infp == NULL)
+        close(p_stdin[iWRITE]);
+    else
+        *infp = p_stdin[iWRITE];
+
+    if (outfp == NULL)
+        close(p_stdout[iREAD]);
+    else
+        *outfp = p_stdout[iREAD];
+
+    return pid;
+}
+#endif
+
+int ExtProgram::start(int iTimeout, const char *pszMask, ...)
+{
+   va_list argList;
+   va_start(argList, pszMask);
+   ::vsnprintf(szClXCmdBuf, sizeof(szClXCmdBuf)-10, pszMask, argList);
+   szClXCmdBuf[sizeof(szClXCmdBuf)-10] = '\0';
+
+   mtklog(("%s",szClXCmdBuf));
+
+   clXTimeout = iTimeout;
+   clXRunStart = getCurrentTime();
+
+#ifdef _WIN32
+   SECURITY_ATTRIBUTES sa;
+   sa.nLength= sizeof(SECURITY_ATTRIBUTES);
+   sa.lpSecurityDescriptor = NULL;
+   sa.bInheritHandle = TRUE;
+
+   if (!CreatePipe(&hOutputReadTmp,&hOutputWrite,&sa,0))
+      return 9+perr("cannot run: CreatePipe failed%s",winSysError());
+
+   if (!DuplicateHandle(GetCurrentProcess(),hOutputWrite,
+                        GetCurrentProcess(),&hErrorWrite,0,
+                        TRUE,DUPLICATE_SAME_ACCESS))
+      return 9+perr("cannot run: DuplicateHandle failed%s",winSysError());
+
+   if (!CreatePipe(&hInputRead,&hInputWriteTmp,&sa,0))
+      return 9+perr("cannot run: CreatePipe failed%s",winSysError());
+
+   if (!DuplicateHandle(GetCurrentProcess(),hOutputReadTmp,
+                        GetCurrentProcess(),
+                        &hOutputRead, // Address of new handle.
+                        0,FALSE, // Make it uninheritable.
+                        DUPLICATE_SAME_ACCESS))
+      return 9+perr("cannot run: DuplicateHandle failed%s",winSysError());
+
+   if (!DuplicateHandle(GetCurrentProcess(),hInputWriteTmp,
+                        GetCurrentProcess(),
+                        &hInputWrite, // Address of new handle.
+                        0,FALSE, // Make it uninheritable.
+                        DUPLICATE_SAME_ACCESS))
+      return 9+perr("cannot run: DuplicateHandle failed%s",winSysError());
+
+   if (!CloseHandle(hOutputReadTmp))
+      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
+   if (!CloseHandle(hInputWriteTmp))
+      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
+
+   int lRC = winFork(szClXCmdBuf, hOutputWrite, hInputRead, hErrorWrite);
+
+   if (!CloseHandle(hOutputWrite))
+      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
+   if (!CloseHandle(hInputRead))
+      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
+   if (!CloseHandle(hErrorWrite))
+      return 9+perr("cannot run: CloseHandle failed%s",winSysError());
+#else
+   mclear(szClXCmdBuf);
+
+   int lRC = 0;
+   int iparms = 0;
+
+   char *psz = szClXCmdBuf;
+   while (*psz)
+   {
+      aClXCmdParms[iparms++] = psz;
+
+      while (*psz!=0 && *psz!=' ')
+         psz++;
+
+      if (!*psz)
+         break;
+
+      while (*psz==' ')
+         *psz++ = '\0';
+   }
+   aClXCmdParms[iparms] = 0;
+
+   clXFin = 0;
+   clXPid = mypopen2(aClXCmdParms, 0, &clXFin);
+#endif
+
+   return 0;
+}
+
+int ExtProgram::readFull(uchar *pBuf, int iToRead)
+{
+   int isubrc=0;
+
+   int iTotal=0;
+   int iRemain=iToRead;
+
+   while (iRemain>0)
+   {
+      isubrc = read(pBuf+iTotal,iRemain);
+
+      if (isubrc >= 0) {
+         iTotal += isubrc;
+         iRemain -= isubrc;
+         continue;
+      }
+
+      mtklog(("%d = ext.read",isubrc));
+
+      // case -1 and other
+      return 0;
+   }
+
+   return iTotal;
+}
+
+int ExtProgram::readFull(uchar **ppBuf, int *pBufSize)
+{
+   *ppBuf = 0;
+
+   int   iBufSize = *pBufSize;
+
+   uchar *pBuf = new uchar[iBufSize+100];
+   if (!pBuf)
+      return 9+perr("outofmem %d",iBufSize);
+
+   int isubrc=0;
+
+   int iTotal=0;
+   int iRemain=0;
+   while (1)
+   {
+      iRemain = iBufSize-iTotal;
+
+      if (iRemain<=0) {
+         // buffer overflow
+         isubrc=-9;
+         break;
+      }
+
+      isubrc = read(pBuf+iTotal,iRemain);
+
+      if (isubrc >= 0) {
+         iTotal += isubrc;
+         continue;
+      }
+
+      // case -1 and other
+      break;
+   }
+
+   // require "command completed"
+   if (isubrc == -1)
+   {
+      // todo: adjust buffer
+      *pBufSize = iTotal;
+      *ppBuf    = pBuf;
+      return 0;
+   }
+
+   // otherwise drop buffer
+   delete [] pBuf;
+
+   if (isubrc == -5)
+      return 5;
+
+   return 9;
+}
+
+// .
+char *ExtProgram::readLine( )
+{
+   char *pBuf   = szClXLineBuf;
+   int  nBufMax = sizeof(szClXLineBuf)-10;
+
+   int nCursor = 0;
+   int nRemain = nBufMax;
+   pBuf[0] = '\0';
+
+   while (nRemain > 10)
+   {
+      if (bGlblEscape)
+      {
+         printf("!Curl: Canceling connect due to stop request (2)\n");
+         return 0;
+      }
+
+      int nRead = read((uchar*)pBuf+nCursor, 1);
+
+      if (nRead == 0) // no input yet available
+         { doSleep(20); continue; }
+
+      if (nRead < 0) { // end of stream, or error
+         mtklog(("curl.readline error: %d",nRead));
+         return 0;
+      }
+
+      nCursor += nRead;
+      nRemain -= nRead;
+      pBuf[nCursor] = '\0';
+      if (nCursor >= 2 && !strncmp(pBuf+nCursor-2, "\r\n", 2))
+         break;
+      if (nCursor >= 1 && !strncmp(pBuf+nCursor-1, "\n", 1))
+         break;
+   }
+
+   {
+      char *pcr = strchr(pBuf, '\r'); if (pcr) *pcr = '\0';
+            pcr = strchr(pBuf, '\n'); if (pcr) *pcr = '\0';
+   }
+
+   // printf("< %s\n", pBuf);
+
+   return pBuf;
+}
+
+// 0 : no data yet
+// >0: no. of bytes received
+// -1: command completed
+// -5: timeout
+// -9: other error
+int ExtProgram::read(uchar *pBuf, int iMaxBuf)
+{
+#ifdef _WIN32
+   char szTmpBuf[100];
+
+   DWORD n1=0,nAvail=0,n3=0;
+   BOOL brc = PeekNamedPipe(hOutputRead, szTmpBuf, 10, &n1, &nAvail, &n3);
+
+   if (nAvail < 1)
+   {
+      mtklog(("ext.read.1 %d %d",nAvail,brc));
+
+      if (brc == FALSE && GetLastError() == ERROR_BROKEN_PIPE) {
+         clXPid = 0;
+         return -1;
+      }
+
+      return 0;
+   }
+
+   DWORD nBytesRead = 0;
+
+   if (   !ReadFile(hOutputRead,pBuf,iMaxBuf,&nBytesRead,NULL)
+       || !nBytesRead
+      )
+   {
+      mtklog(("ext.read.2"));
+
+      if (GetLastError() == ERROR_BROKEN_PIPE) {
+         clXPid = 0;
+         return -1;
+      }
+
+      perr("error during run%s",winSysError());
+      return -9;
+   }
+
+   // got further data from child stdout
+   int iread = (int)nBytesRead;
+
+   if (iread > 0)
+   {
+      return iread;
+   }
+
+   perr("no data from pipe: %d",iread);
+
+   stop();
+
+   return -9;
+#else
+   if (getCurrentTime()-clXRunStart >= clXTimeout)
+   {
+      printf("< command timeout, stopping.\n");
+      stop();
+      return -5;
+   }
+
+   fd_set fdr;
+   FD_ZERO(&fdr);
+   FD_SET(clXFin,&fdr);
+   struct timeval tv;
+   tv.tv_sec  = 0;
+   tv.tv_usec = 200*1000;
+
+   int irc = select(clXFin+1,&fdr,NULL,NULL,&tv);
+
+   if (irc == 0)
+   {
+      int nstat=0;
+      pid_t isubrc = waitpid(clXPid,&nstat,WNOHANG);
+      if (isubrc != 0) {
+         if (cs.verbose)
+            printf("< command completed by pid.\n");
+         return -1;
+      }
+   }
+   else
+   if (irc < 0) {
+      printf("error %d\n",irc);
+      stop();
+      return -9;
+   }
+   else
+   {
+      if (FD_ISSET(clXFin,&fdr))
+      {
+         int iread = ::read(clXFin,pBuf,iMaxBuf);
+         // printf("%d = ::read(%d,%d)\n",iread,clXFin,iMaxBuf);
+         if (iread > 0)
+         {
+            return iread;
+         }
+         else
+         {
+            // if (cs.verbose)
+               printf("< command completed by eod.\n");
+            stop();
+            return -1;
+         }
+      }
+   }
+#endif
+
+   return 0;
+}
+
+int ExtProgram::stop()
+{
+#ifdef _WIN32
+   if (hOutputRead && !CloseHandle(hOutputRead))
+      return 9+perr("xrun: CloseHandle failed%s",winSysError());
+   hOutputRead = 0;
+
+   if (hInputWrite && !CloseHandle(hInputWrite))
+      return 9+perr("xrun: CloseHandle failed%s",winSysError());
+   hInputWrite = 0;
+
+   if (clXPid != 0) {
+      if (cs.verbose)
+         printf("[stopping child process.]\n");
+      TerminateProcess(clXPid, 0);
+      clXPid = 0;
+   }
+#else
+   if (clXRunStart == 0)
+      return 0;
+
+   clXRunStart = 0;
+
+   // stop 1. forked proc 2. child of fork
+   kill(clXPid, SIGINT);
+   close(clXFin);
+
+   // must do this otherwise forked process
+   // runs endless as "defunct".
+   int iwaitstat=0;
+   waitpid(clXPid, &iwaitstat, 0);
+#endif
+
+   return 0;
+}
+
+size_t myfread(uchar *pBuf, size_t nBytes, FILE *fin , num nMaxInfo=0, num nCur=0, SFKMD5 *pmd5=0);
+char getYNAchar();
+
+int getPartExtDigits(char *pszPartExt)
+{
+   if (strncmp(pszPartExt, ".part", 5))
+      return 0;
+ 
+   char *psz = pszPartExt + 5;
+   int iDigits = 0;
+   char c=0;
+   while (c = *psz++)
+   {
+      if (!isdigit(c))
+         return 0+perr("non-digit character '%c' is not allowed\n", c);
+      iDigits++;
+   }
+ 
+   return iDigits;
+}
+
+int execJoin(char *pszFirstInput, char *pszDst, bool bTest, char *pszMD5Write)
+{__
+   char szAddInfo[200];
+
+   int nWorkMB = 100;
+   num nWorkBufSize = nWorkMB * 1000000;
+   uchar *pWorkBuf = new uchar[nWorkBufSize+1000];
+   if (!pWorkBuf) return 9+perr("out of memory, cannot allocate working buffer.\n");
+
+   // NO RETURN W/O DELETE FROM HERE
+
+   // x.part1
+   strcopy(szLineBuf, pszFirstInput);
+   char *pszBaseName = szLineBuf;
+   char *pszPartExt  = strrchr(szLineBuf, '.');
+ 
+   int iDigits = getPartExtDigits(pszPartExt);
+   if (!pszPartExt || !iDigits) {
+      delete [] pWorkBuf;
+      return 9+perr("expecting input filename ending like .part1, .part001 etc.\n");
+   }
+
+   // check if first input exists
+   if (!fileExists(szLineBuf))
+      return 9+perr("first input file not found: %s\n", szLineBuf);
+
+   // cut ".part1" in szLineBuf
+   *pszPartExt = '\0';
+
+   // and use this as output filename
+   if (!pszDst)
+      pszDst = szLineBuf;
+
+   FILE *fout = 0;
+
+   if (!bTest)
+   {
+      if (fileExists(pszDst) && !cs.force && !cs.yes)
+         while (1) {
+            printf("%s output file exists, overwrite? (y/n) ",pszDst);
+            fflush(stdout);
+            char nReply = getYNAchar();
+            if (nReply == 'y') break;
+            if (nReply == 'n') { delete [] pWorkBuf; return 5; }
+            // printf("\n");
+         }
+ 
+      fout = fopen(pszDst, "wb");
+      if (!fout) {
+         delete [] pWorkBuf;
+         return 9+perr("cannot write output file: %s\n",pszDst);
+      }
+   }
+
+   num ntotal = 0;
+   SFKMD5 md5;
+
+   int nin = 1;
+   bool bbail = 0;
+   while (!bbail)
+   {
+      sprintf(szLineBuf2, "%s.part%0*d", pszBaseName, iDigits, nin);
+      char *pszSrc = szLineBuf2;
+ 
+      // internal check: first part's name must be the same as input
+      if ((nin == 1) && strcmp(pszSrc, pszFirstInput))
+         perr("int. error while building name: %s\n", pszSrc);
+
+      FILE *fpart = fopen(pszSrc, "rb");
+      if (!fpart)
+         break;   // (probably) all done
+
+      if (cs.debug)
+         info.print("open.read: %s\n", pszSrc);
+
+      nin++;
+
+      while (!bbail)
+      {
+         num nTotalMB = ntotal / 1000000;
+
+         if (pszMD5Write)
+         {
+            // printf("verifying part %d, %s mb done [Esc to skip] \r", nin-1, numtoa(nTotalMB));
+            // fflush(stdout);
+            sprintf(szAddInfo, "%s mb [Esc to skip]", numtoa(nTotalMB));
+            info.setStatus("verfy", pszSrc, szAddInfo);
+            if (userInterrupt(1)) {
+               info.print("verify skipped.\n");
+               fclose(fpart);
+               bbail = 1;
+               break;
+            }
+         }
+         else
+         {
+            // printf("reading part %d, %s mb done \r", nin-1, numtoa(nTotalMB));
+            // fflush(stdout);
+            sprintf(szAddInfo, "%s mb", numtoa(nTotalMB));
+            info.setStatus("read ", pszSrc, szAddInfo);
+         }
+
+         int nread = myfread(pWorkBuf, nWorkBufSize, fpart);
+
+         if (cs.debug)
+            info.print("read.blck: %d maxbuf=%d\n", nread, (int)nWorkBufSize);
+
+         if (nread <= 0)
+            break; // EOD
+
+         if (!bTest)
+         {
+            int nwrite = myfwrite(pWorkBuf, nread, fout);
+
+            if (cs.debug)
+               info.print("writ.blck: %d\n", nwrite);
+
+            if (nwrite != nread) {
+               delete [] pWorkBuf;
+               fclose(fout); fclose(fpart);
+               remove(pszDst); // cleanup incomplete output
+               return 9+esys("fwrite", "failed to write %s   \n", pszDst);
+            }
+         }
+
+         md5.update(pWorkBuf, nread);
+
+         ntotal += nread;
+      }
+
+      if (cs.debug)
+         info.print("clos.read: %s totalDone=%d\n", pszSrc, (int)ntotal);
+
+      fclose(fpart);
+   }
+ 
+   if (!bTest)
+      fclose(fout);
+
+   delete [] pWorkBuf;
+
+   // NO RETURN W/O DELETE UNTIL HERE
+
+   info.clear();
+
+   if (bbail)
+      return 0;
+
+   if (bTest) {
+      if (!pszMD5Write)
+         printf("tested join of %d files, %s total bytes.\n", nin-1, numtoa(ntotal));
+   } else {
+      printf("%s created from %d files, %s total bytes.\n", pszDst, nin-1, numtoa(ntotal));
+   }
+
+   char szMD5Read[100];
+
+   uchar *pmd5 = md5.digest();
+   for (int i=0; i<16; i++)
+      sprintf(&szMD5Read[i*2], "%02x", pmd5[i]);
+   printf("md5 = %s   %s ", szMD5Read, pszMD5Write ? "[verify]" : "");
+
+   if (pszMD5Write) {
+      if (strcmp(pszMD5Write, szMD5Read)) {
+         printf("\n");
+         return 9+perr("checksum mismatch - re-read of output files failed.\n");
+      }
+      else
+         printf("- OK\n");
+   }
+   else
+      printf("\n");
+
+   return 0;
+}
+
+#ifndef USE_SFK_BASE
+
+void ab8ToNum(uchar *pin, num &rn1) {
+    num n1 =  (num)(*(pin+0)) & 0xFFUL;
+    n1 = (n1 << 8) | ((num)(*(pin+1)) & 0xFFUL);
+    n1 = (n1 << 8) | ((num)(*(pin+2)) & 0xFFUL);
+    n1 = (n1 << 8) | ((num)(*(pin+3)) & 0xFFUL);
+    n1 = (n1 << 8) | ((num)(*(pin+4)) & 0xFFUL);
+    n1 = (n1 << 8) | ((num)(*(pin+5)) & 0xFFUL);
+    n1 = (n1 << 8) | ((num)(*(pin+6)) & 0xFFUL);
+    n1 = (n1 << 8) | ((num)(*(pin+7)) & 0xFFUL);
+    rn1 = n1;
+}
+
+uint ab4toulong(uchar *pin) {
+    uint n1 = (uint)(*(pin+0)) & 0xFFUL;
+    n1 = (n1 << 8) | ((uint)(*(pin+1)) & 0xFFUL);
+    n1 = (n1 << 8) | ((uint)(*(pin+2)) & 0xFFUL);
+    n1 = (n1 << 8) | ((uint)(*(pin+3)) & 0xFFUL);
+    return n1;
+}
+
+void ab16ToNum(uchar *pin, num &rn1, num &rn2) {
+    ab8ToNum(pin+0, rn1);
+    ab8ToNum(pin+8, rn2);
+}
+
+void numToAb8(num n1, uchar *pout) {
+   pout[7]  = (uchar)n1;
+   n1 = (n1 >> 8); pout[6] = (uchar)n1;
+   n1 = (n1 >> 8); pout[5] = (uchar)n1;
+   n1 = (n1 >> 8); pout[4] = (uchar)n1;
+   n1 = (n1 >> 8); pout[3] = (uchar)n1;
+   n1 = (n1 >> 8); pout[2] = (uchar)n1;
+   n1 = (n1 >> 8); pout[1] = (uchar)n1;
+   n1 = (n1 >> 8); pout[0] = (uchar)n1;
+}
+
+void ulongtoab4(uint n1, uchar *pout) {
+   pout[3]  = (uchar)n1;
+   n1 = (n1 >> 8); pout[2] = (uchar)n1;
+   n1 = (n1 >> 8); pout[1] = (uchar)n1;
+   n1 = (n1 >> 8); pout[0] = (uchar)n1;
+}
+
+void numToAb16(num n1, num n2, uchar *pout) {
+   numToAb8(n1, pout+0);
+   numToAb8(n2, pout+8);
+}
+
+char *FileMetaDB::pszClFileDBHead = (char*)"SFKSIG10";
+
+FileMetaDB filedb;
+
+FileMetaDB::FileMetaDB()
+{
+   pszClDBPath    = 0;
+   pszClDBFile    = 0;
+   pszClLineBuf   = 0;
+   pszClMetaDir   = 0;
+   nClMode        = 0;
+   nClVerified    = 0;
+   nClVerMissing  = 0;
+   nClVerFailed   = 0;
+}
+
+int FileMetaDB::setMetaDir(char *psz)
+{
+   if (pszClMetaDir) delete [] pszClMetaDir;
+   pszClMetaDir = strdup(psz);
+   return 0;
+}
+
+bool FileMetaDB::isSignatureFile(char *pszBase)
+{
+   if (!pszClLineBuf)
+      if (!(pszClLineBuf = new char[MAX_LINE_LEN+100]))
+         { perr("outofmem.1\n"); return 0; }
+
+   bool bChecked = 0;
+
+   int i=0;
+   for (i=1; i<=3 && !bChecked; i++)
+   {
+      SFKMD5 md5; // re-init per loop
+
+      sprintf(pszClLineBuf, "%s-%02d.dat", pszBase, i);
+
+      FILE *fin = fopen(pszClLineBuf, "rb");
+      if (!fin) return 0;
+ 
+      uchar abin[20];
+      char *pszHead = pszClFileDBHead;
+      int nread = fread(abin, 1, 8, fin);
+      if (nread < 8) { fclose(fin); return 1; } // EOD
+      abin[8] = '\0';
+      if (!strcmp((char*)abin, pszHead))
+         bChecked = 1;
+ 
+      fclose(fin);
+   }
+
+   return bChecked;
+}
+
+int FileMetaDB::indexOf(char *pszInFile)
+{
+   int nEntries = aUnixTime.numberOfEntries();
+   for (int i=0; i<nEntries; i++)
+   {
+      char *pszRefFile = aPath.getEntry(i, __LINE__);
+      if (!strcmp(pszInFile, pszRefFile))
+      {
+         return i;
+      }
+   }
+   return -1;
+}
+
+int FileMetaDB::loadDB(char *pszBase, bool bVerbose)
+{
+   if (pszClDBPath) { delete [] pszClDBPath; pszClDBPath=0; }
+   pszClDBPath = strdup(pszBase);
+
+   if (pszClDBFile) { delete [] pszClDBFile; pszClDBFile=0; }
+   pszClDBFile = new char[strlen(pszClDBPath)+100];
+
+   bool bChecked = 0;
+   int nSigRes  = 0;
+
+   // pass 1: check several sign files until a functional one is found
+   int i=0;
+   for (i=1; i<=3 && !bChecked; i++)
+   {
+      SFKMD5 md5; // re-init per loop
+
+      sprintf(pszClDBFile, "%s-%02d.dat", pszClDBPath, i);
+
+      // if (i > 1)
+      //   pwarn("retrying on signature db: %s\n", pszClDBFile);
+
+      if (fileExists(pszClDBFile))
+      {
+         // printf("load %s\n", pszClDBFile);
+
+         FILE *fin = fopen(pszClDBFile, "rb");
+         if (!fin)
+            nSigRes = 3;
+         else
+         if (!loadHeader(fin, &md5))
+         for (int nrec=1; ;nrec++)
+         {
+            int nrc = loadRecord(fin, &md5, 1); // uses szLineBuf
+            // printf("   rec %d loaded, rc %d\n", nrec, nrc);
+            if (nrc == 1)
+               break; // EOD
+            if (bChecked) {
+               perr("unexpected record data at end of %s\n", pszClDBFile);
+               break;
+            }
+            if (nrc == 2) {
+               if (!(nSigRes = loadCheckEpilogue(fin, &md5)))
+                  bChecked = 1;
+            }
+            if (nrc > 2) {
+               perr("error while reading %s: wrong content format (%d)\n", pszClDBFile, nrc);
+               break;
+            }
+         }
+
+         fclose(fin);
+      } else {
+         nSigRes = 3;
+      }
+
+      if (!bChecked) {
+         if (nSigRes == 3) {
+            if (bVerbose)
+               printf("signature db not found: %s\n", pszClDBFile);
+         }
+         else
+         if (i < 3) {
+            if (nSigRes == 2)
+               pwarn("signature db modified: %s - retrying on copy\n", pszClDBFile);
+            else
+               pwarn("invalid signature db: %s - retrying on copy\n", pszClDBFile);
+         } else {
+            perr("all signature databases unreadable or modified.\n", pszClDBFile);
+         }
+      }
+   }
+
+   // pass 2: load the first functional file
+   if (!bChecked) {
+      return 9; // +perr("cannot find a valid signature database.");
+   }
+   else
+   {
+      // pszClDBFile is still the valid name
+      FILE *fin = fopen(pszClDBFile, "rb");
+      if (!fin) return 9+perr("cannot read: %s\n", pszClDBFile);
+
+      SFKMD5 md5;
+
+      if (!loadHeader(fin, &md5))
+      while (1) {
+         int nrc = loadRecord(fin, &md5, 0); // uses szLineBuf
+         if (nrc == 1)
+            break; // EOD
+         if (nrc == 2) {
+            if (loadCheckEpilogue(fin, &md5))
+               { fclose(fin); return 9+perr("internal #11571940"); }
+         }
+         if (nrc > 2) {
+            perr("error while reading %s: wrong content format\n", pszClDBFile);
+            break;
+         }
+      }
+
+      fclose(fin);
+   }
+
+   return 0;
+}
+
+int FileMetaDB::openUpdate(char *pszBase)
+{__
+   loadDB(pszBase, 0);
+   // ignore rc
+
+   nClMode = 2;
+
+   return 0;
+}
+
+int FileMetaDB::openRead(char *pszBase, bool bVerbose)
+{__
+   if (loadDB(pszBase, bVerbose))
+      return 9;
+
+   nClMode = 1;
+
+   return 0;
+}
+
+int FileMetaDB::verifyFile(char *pszName, char *pszShadow, bool bSilentAttribs)
+{
+   char *relName(char *pszRoot, char *pszAbs);
+   char *pszRelName = pszName;
+
+   if (pszGlblCopySrc)
+      pszRelName = relName(pszGlblCopySrc, pszName);
+
+   int nind = indexOf(pszRelName);
+   if (nind < 0) {
+      nClVerMissing++;
+      return 8;   // not found
+   }
+
+   // get archived metadata
+   num nUnixTime2  = aUnixTime.getEntry(nind, __LINE__);
+   // num nWinTime2   = aWinTime.getEntry(nind, __LINE__);
+   num nContSumLo2 = aContSumLo.getEntry(nind, __LINE__);
+   num nContSumHi2 = aContSumHi.getEntry(nind, __LINE__);
+
+   // build current metadata
+   FileStat ofs;
+   ofs.readFrom(pszName, 0, bSilentAttribs);
+   num nUnixTime = ofs.getUnixTime();
+   // num nWinTime  = ofs.getWinTime();
+   num ncontlo, nconthi;
+   uchar abContSum[20];
+   if (getFileMD5(pszName, abContSum)) {
+      perr("no such file: %s - cannot read checksum\n", pszName);
+      return 9;
+   }
+   ab16ToNum(abContSum, ncontlo, nconthi);
+
+   // let's expect that time is the same, all that matters is
+   // if the content was tampered during transport:
+   if (ncontlo != nContSumLo2 || nconthi != nContSumHi2)
+   {
+      nClVerFailed++;
+
+      if (pszShadow && fileExists(pszShadow))
+      {
+         // try fallback to shadow file
+         if (getFileMD5(pszShadow, abContSum)) {
+            perr("no such file: %s - cannot read shadow file\n", pszShadow);
+            return 9;
+         }
+         ab16ToNum(abContSum, ncontlo, nconthi);
+         if (ncontlo == nContSumLo2 && nconthi == nContSumHi2)
+            return 5;   // fallback to shadow is possible
+      }
+
+      return 9;
+   }
+
+   nClVerified++;
+
+   if (nUnixTime != nUnixTime2)  return 1; // informal
+
+   return 0;
+}
+
+int FileMetaDB::verifyFile(int nind, bool bCleanup)
+{
+   uint currentKBPerSec();
+
+   // if anything fails with this record, skip it on cleanup
+   aFlags.updateEntry(0, nind); // no save by default
+
+   // get archived metadata
+   char *pszRelName = aPath.getEntry(nind, __LINE__);
+   if (!pszRelName) return 9+perr("unexpected filedb entry at record %d\n", nind);
+
+   num nUnixTime2  = aUnixTime.getEntry(nind, __LINE__);
+   // num nWinTime2   = aWinTime.getEntry(nind, __LINE__);
+   num nContSumLo2 = aContSumLo.getEntry(nind, __LINE__);
+   num nContSumHi2 = aContSumHi.getEntry(nind, __LINE__);
+
+   // create absolute filename
+   if (!pszGlblCopySrc) return 9+perr("internal #0605071204");
+   joinPath(szRefNameBuf, sizeof(szRefNameBuf)-10, pszGlblCopySrc, pszRelName);
+   char *pszName = szRefNameBuf;
+
+   joinShadowPath(szRefNameBuf2, sizeof(szRefNameBuf2)-10, pszGlblCopySrc, pszRelName);
+   char *pszShadow = szRefNameBuf2;
+
+   // show detailed info
+   char szAddInfo[200];
+   int nVerOK     = filedb.numberOfVerifies();
+   int nVerFailed = filedb.numberOfVerFailed();
+   if (nVerFailed > 0)
+      sprintf(szAddInfo, "%u files ok, %d failed, %u mb %u kbs", nVerOK, nVerFailed, (uint)(nGlblBytes/1000000UL), currentKBPerSec());
+   else
+      sprintf(szAddInfo, "%u files %u mb %u kbs", nVerOK, (uint)(nGlblBytes/1000000UL), currentKBPerSec());
+   info.setProgress(numberOfFiles(), nind, "files");
+   info.setStatus("verfy", pszName, szAddInfo, eKeepProg);
+
+   // build current metadata
+   FileStat ofs;
+   if (ofs.readFrom(pszName)) {
+      nClVerMissing++;
+      return 9+perr("file not found: %s\n", pszName);
+   }
+   num nUnixTime = ofs.getUnixTime();
+   num nWinTime  = ofs.getWinTime();
+   num ncontlo, nconthi;
+   uchar abContSum[20];
+   if (getFileMD5(pszName, abContSum)) {
+      perr("no such file: %s - cannot read checksum\n", pszName);
+      nClVerMissing++;
+      return 9;
+   }
+   ab16ToNum(abContSum, ncontlo, nconthi);
+
+   // check if the content was tampered during transport:
+   if (ncontlo != nContSumLo2 || nconthi != nContSumHi2)
+   {
+      // primary file content corrupted
+      nClVerFailed++;
+
+      if (bCleanup) {
+         setTextColor(nGlblErrColor);
+         oprintf("DEL: %s - was modified, please resync\n", pszName);
+         if (remove(pszName)) {
+            if (setWriteEnabled(pszName))
+               perr("cannot delete: %s\n", pszName);
+            else
+            if (remove(pszName))
+               perr("cannot delete: %s\n", pszName);
+         }
+         setTextColor(-1);
+         return 9;
+      }
+
+      if (pszShadow && fileExists(pszShadow))
+      {
+         // try fallback to shadow file
+         if (getFileMD5(pszShadow, abContSum)) {
+            perr("content modified  : %s\n", pszName);
+            perr("cannot read shadow: %s\n", pszShadow);
+            return 9;
+         }
+
+         ab16ToNum(abContSum, ncontlo, nconthi);
+
+         if (ncontlo == nContSumLo2 && nconthi == nContSumHi2)
+         {
+            cs.shadowFallbacks++;
+            pwarn("content modified: %s\n", pszName);
+            pwarn("shadow file ok  : %s\n", pszShadow);
+            return 5;   // fallback to shadow is possible
+         }
+
+         perr("content modified: %s\n", pszName);
+         perr("shadow modified : %s\n", pszShadow);
+
+         return 9;
+      }
+
+      perr("content modified: %s\n", pszName);
+
+      return 9;
+   }
+
+   // produce only notic if time mismatches:
+   if (nUnixTime != nUnixTime2)
+   {
+      num nTimeDiff = nUnixTime - nUnixTime2;
+      if (nTimeDiff < -5 || nTimeDiff > 5)
+      {
+         pinf("time difference (%s sec), content ok: %s\n", numtoa(nTimeDiff), pszName);
+         // in case cleanup is done: update with current times
+         aUnixTime.updateEntry(nUnixTime, nind);
+         if (nWinTime != 0)
+            aWinTime.updateEntry(nWinTime, nind);
+      }
+      // else ignore: up to 5 sec time diff happens between file systems
+   }
+
+   nClVerified++;
+
+   // record confirmed, keep it in case of cleanup.
+   aFlags.updateEntry(1, nind);
+
+   return 0;
+}
+
+int FileMetaDB::updateFile(char *pszName, uchar *pmd5cont, bool bJustKeep)
+{
+   // printf("updateFile %s, %02X%02X%02X%02X\n", pszName, *(pmd5cont+0),*(pmd5cont+1),*(pmd5cont+2),*(pmd5cont+3));
+
+   char *relName(char *pszRoot, char *pszAbs);
+
+   // printf("updatefile: %s\n", pszName);
+
+   FileStat ofs;
+   ofs.readFrom(pszName);
+
+   num nUnixTime = ofs.getUnixTime();
+   num nWinTime  = ofs.getWinTime();
+
+   // strip x:\the\foo\bar.txt to the\foo\bar.txt
+   char *pszRelName = relName(pszGlblCopySrc, pszName);
+
+   int nind = indexOf(pszRelName);
+   if (nind >= 0)
+   {
+      // we have this filename in the db.
+      if (bJustKeep) {
+         // unconditionally keep the entry of a non-synced file
+         // e.g. on copy: target is newer than source (no copy)
+         // if (aUnixTime.getEntry(nind, __LINE__) == nUnixTime) {
+         aFlags.updateEntry(1, nind); // store file entry again
+         return 0;
+         // }
+      }
+
+      // update metadata:
+      aUnixTime.updateEntry(nUnixTime, nind);
+      aWinTime.updateEntry(nWinTime, nind);
+
+      // update content checksum
+      num ncontlo, nconthi;
+      uchar abContSum[20];
+      // take supplied content md5, or build now
+      if (pmd5cont != 0)
+         memcpy(abContSum, pmd5cont, 16);
+      else
+         if (getFileMD5(pszName, abContSum)) return 9;
+      ab16ToNum(abContSum, ncontlo, nconthi);
+      aContSumLo.updateEntry(ncontlo, nind);
+      aContSumHi.updateEntry(nconthi, nind);
+
+      // mark this record as updated, for save:
+      aFlags.updateEntry(2, nind);
+   }
+   else
+   {
+      // not yet in the db
+      if (aUnixTime.addEntry(nUnixTime))  return 9;
+      if (aWinTime.addEntry(nWinTime))    return 9;
+
+      // add content checksum
+      num ncontlo, nconthi;
+      uchar abContSum[20];
+      // take supplied content md5, or build now
+      if (pmd5cont != 0)
+         memcpy(abContSum, pmd5cont, 16);
+      else
+         if (getFileMD5(pszName, abContSum)) return 9;
+      ab16ToNum(abContSum, ncontlo, nconthi);
+      if (aContSumLo.addEntry(ncontlo))   return 9;
+      if (aContSumHi.addEntry(nconthi))   return 9;
+
+      if (aFlags.addEntry(2)) return 9;
+
+      // add also path for easier verify syntax
+      if (aPath.addEntry(pszRelName)) return 9;
+   }
+
+   return 0;
+}
+
+int FileMetaDB::removeFile(char *pszName, bool bPrefixLF)
+{
+   char *relName(char *pszRoot, char *pszAbs);
+
+   // strip x:\the\foo\bar.txt to the\foo\bar.txt
+   char *pszRelName = relName(pszGlblCopySrc, pszName);
+
+   int nind = indexOf(pszRelName);
+   if (nind >= 0)
+   {
+      // mark this record as deleted, for save:
+      aFlags.updateEntry(0, nind);
+   }
+   else
+   {
+      if (bPrefixLF) printf("\n");
+      pwarn("cannot remove filename from metadb: %s\n", pszName);
+   }
+
+   return 0;
+}
+
+int FileMetaDB::checkFile(char *pszName)
+{
+   FileStat ofs;
+   if (ofs.readFrom(pszName)) {
+      perr("cannot read file infos: %s\n", pszName);
+      return 5;
+   }
+
+   cs.files++;
+
+   num nUnixTime = ofs.getUnixTime();
+   // num nWinTime  = ofs.getWinTime();
+
+   int nind = indexOf(pszName);
+   if (nind >= 0)
+   {
+      // we have this filename in the db
+      num nUnixTime2  = aUnixTime.getEntry(nind, __LINE__);
+      // num nWinTime2   = aUnixTime.getEntry(nind, __LINE__);
+      num nContSumLo2 = aContSumLo.getEntry(nind, __LINE__);
+      num nContSumHi2 = aContSumHi.getEntry(nind, __LINE__);
+
+      if (nUnixTime2 != nUnixTime) {
+         printf("time: %s\n", pszName);
+         return 0;
+      }
+
+      num ncontlo, nconthi;
+      uchar abContSum[20];
+      if (getFileMD5(pszName, abContSum)) return 9;
+      ab16ToNum(abContSum, ncontlo, nconthi);
+
+      if (ncontlo != nContSumLo2 || nconthi != nContSumHi2) {
+         printf("cont: %s\n", pszName);
+         return 0;
+      }
+   }
+
+   return 0;
+}
+
+int FileMetaDB::updateDir(char *pszName)
+{
+    return 0;
+}
+
+int FileMetaDB::writeRecord(FILE *fout, int nIndex, SFKMD5 *pmd5, bool bIsLastRec)
+{
+   uchar about1[20];
+
+   // since SFKSIG10, first field is uint nmetalen.
+   uint nmetalen = 16+16+2;
+   ulongtoab4(nmetalen, about1);
+   if (myfwrite(about1, 4, fout, 0,0,pmd5) != 4) return 9;
+
+   // - - - meta data block: - - -
+
+   // file times
+   numToAb16(aUnixTime.getEntry(nIndex, __LINE__),
+             aWinTime.getEntry(nIndex, __LINE__) ,
+             about1);
+   if (myfwrite(about1, 16, fout, 0,0,pmd5) != 16) return 9;
+
+   // content checksum
+   numToAb16(aContSumLo.getEntry(nIndex, __LINE__),
+             aContSumHi.getEntry(nIndex, __LINE__),
+             about1);
+   if (myfwrite(about1, 16, fout, 0,0,pmd5) != 16) return 9;
+
+   // update flags
+   uchar abFlags[2];
+   uint nflags = aFlags.getEntry(nIndex, __LINE__);
+   if (bIsLastRec)
+      nflags |= 4;
+   abFlags[0] = (uchar)(nflags >> 8);
+   abFlags[1] = (uchar)(nflags     );
+   if (myfwrite(abFlags, 2, fout, 0,0,pmd5) != 2) return 9;
+
+   // - - - end meta data block - - -
+
+   uchar abPathLen[2];
+   memset(abPathLen, 0, sizeof(abPathLen));
+   if (aPath.isSet(nIndex)) {
+      char *psz  = aPath.getEntry(nIndex, __LINE__);
+      // printf("WRITE %d %s\n", nIndex, psz);
+      uint nlen = strlen(psz);
+      abPathLen[0] = (uchar)(nlen >> 8);
+      abPathLen[1] = (uchar)(nlen     );
+      if (myfwrite(abPathLen,    2, fout, 0,0,pmd5) !=    2) return 9;
+      if (myfwrite((uchar*)psz    , nlen, fout, 0,0,pmd5) != nlen) return 9;
+   } else {
+      // printf("WRITE %d [noname]\n", nIndex);
+      if (myfwrite(abPathLen,    2, fout, 0,0,pmd5) != 2) return 9;
+   }
+
+   // printf(" saved record, %d %d\n", nflags, bIsLastRec);
+
+   return 0;
+}
+
+int FileMetaDB::loadHeader(FILE *fin, SFKMD5 *pmd5)
+{
+   uchar abin[20];
+   char *pszHead = pszClFileDBHead;
+   int nread = myfread(abin, 8, fin, 0,0,pmd5);
+   if (nread < 8) { fclose(fin); return 1; } // EOD
+   abin[8] = '\0';
+   if (strcmp((char*)abin, pszHead))
+      return 9+perr("wrong signature db version: \"%s\"\n", abin);
+
+   return 0;
+}
+
+int FileMetaDB::loadCheckEpilogue(FILE *fin, SFKMD5 *pmd5)
+{
+   uchar abin[20];
+
+   int nread = myfread(abin, 16, fin, 0,0,0);
+   if (nread < 16) {
+      return 1; // EOD
+   }
+
+   uchar *pdig = pmd5->digest();
+   if (memcmp(abin, pdig, 16)) {
+      return 2; // mismatch
+   }
+
+   return 0;
+}
+
+// uses szLineBuf
+int FileMetaDB::loadRecord(FILE *fin, SFKMD5 *pmd5, bool bSim)
+{
+   memset(abClRecBuf, 0, sizeof(abClRecBuf));
+   uchar *abin = abClRecBuf;
+
+   int nread = myfread(abin, 4, fin, 0,0,pmd5);
+   if (nread < 4) return 1; // EOD, read after epilogue
+   uint nmetalen = ab4toulong(abin);
+
+   if (nmetalen > sizeof(abClRecBuf)-10)
+      return 9+perr("metadb: header block too large (%u), cannot load.\n",nmetalen);
+
+   if (nmetalen < 16+16+2)
+      return 9+perr("metadb: header block too small (%u), cannot load.\n",nmetalen);
+
+   // - - - meta data block - - -
+
+   nread = myfread(abin, nmetalen, fin, 0,0,pmd5);
+   if (nread < (int)nmetalen) return 10; // unexpected
+
+   num n1, n2;
+   ab16ToNum(abin+0, n1, n2);
+   if (!bSim) {
+      if (aUnixTime.addEntry(n1)) return 9;
+      if (aWinTime.addEntry(n2))  return 9;
+   }
+
+   ab16ToNum(abin+16, n1, n2);
+   if (!bSim) {
+      if (aContSumLo.addEntry(n1)) return 9;
+      if (aContSumHi.addEntry(n2)) return 9;
+   }
+
+   // read flag value
+   uchar abFlags[2];
+   memcpy(abFlags, abin+32, 2);
+   uint nflags = (((uint)abFlags[0]) << 8) | ((uint)abFlags[1]);
+   if (!bSim) {
+      // filter out flag "4" (last record marker):
+      if (aFlags.addEntry(nflags & (255UL ^ 4))) return 9;
+   }
+
+   // - - - end of meta data block - - -
+
+   // read filename
+   uchar abPathLen[2];
+   nread = myfread(abPathLen, 2, fin, 0,0,pmd5);
+   if (nread < 2) return 12; // unexpected
+   uint nlen = (((uint)abPathLen[0]) << 8) | ((uint)abPathLen[1]);
+   if (nlen > 0) {
+      if (nlen > MAX_LINE_LEN-1) return 13;
+      nread = myfread((uchar*)szLineBuf, nlen, fin, 0,0,pmd5);
+      if (nread < (int)nlen) return 14;
+      szLineBuf[nlen] = '\0';
+      if (!bSim) {
+         aPath.addEntry(szLineBuf);
+      }
+      // printf("LOADED NAME %s\n", szLineBuf);
+   } else {
+      // printf("LOADED NO NAME\n");
+   }
+
+   if (nflags & 4) {
+      // printf("metadb load: lastrec found\n");
+      return 2; // last data record read, md5 follows
+   }
+
+   return 0;
+}
+
+int FileMetaDB::writeEpilogue(FILE *fout, SFKMD5 *pmd5)
+{
+   uchar *pdig = pmd5->digest();
+   if (myfwrite(pdig, 16, fout, 0,0,0) != 16) return 9;
+   return 0;
+}
+
+int FileMetaDB::save(int &rnSignsWritten)
+{__
+   if (!pszClDBPath) return 9+perr("internal #11571945");
+
+   if (pszClDBFile) { delete [] pszClDBFile; pszClDBFile=0; }
+   pszClDBFile = new char[strlen(pszClDBPath)+100];
+
+   int nCopies = 3;
+   int nCopied = 0;
+
+   // write signature db 3 times
+   for (int i=1; i<=nCopies; i++)
+   {
+      sprintf(pszClDBFile, "%s-%02d.dat", pszClDBPath, i);
+ 
+      SFKMD5 md5;
+ 
+      // printf("saveto %s\n", pszClDBFile);
+      FILE *fout = fopen(pszClDBFile, "wb");
+      if (!fout) {
+         perr("cannot write file meta db: %s\n", pszClDBFile);
+         continue; // but retry with next
+      }
+ 
+      char *pszHead = pszClFileDBHead;
+      if (myfwrite((uchar*)pszHead, 8, fout, 0,0,&md5) != 8)
+         {  fclose(fout); continue; }
+ 
+      bool bFailed = 0;
+      bool bDoneLastRec = 0;
+
+      int nEntries = aUnixTime.numberOfEntries();
+
+      // identify last valid record to be saved
+      int ilastval = 0;
+      for (int k=0; k<nEntries; k++) {
+         if (aFlags.getEntry(k, __LINE__) >= 1)
+            ilastval = k;
+      }
+
+      int nWritten = 0;
+      for (int i=0; i<nEntries; i++)
+      {
+         // write only added or updated records
+         if (aFlags.getEntry(i, __LINE__) >= 1) {
+            bool bIsLastRec = (i == ilastval);
+            // printf("   write rec %d last=%d\n",i,bIsLastRec);
+            if (writeRecord(fout, i, &md5, bIsLastRec)) {
+               perr("error while writing file meta db: %s\n", pszClDBFile);
+               bFailed = 1;
+               break;
+            } else {
+               nWritten++;
+               if (bIsLastRec)
+                  bDoneLastRec = 1;
+            }
+         }
+      }
+
+      if (!bDoneLastRec)
+         perr("internal: no lastrec saved %d %d\n",ilastval,nEntries);
+ 
+      if (!bFailed)
+         writeEpilogue(fout, &md5);
+ 
+      fclose(fout);
+
+      if (!bFailed) {
+         rnSignsWritten = nWritten;
+         nCopied++;
+      }
+   }
+
+   if (nCopied <= 0)
+      return 9+perr("failed to write any metadb copy.\n");
+
+   if (nCopied < nCopies)
+      return 5+perr("%d metadb copies written, %d failed.\n", nCopied, (nCopies-nCopied));
+
+   return 0;
+}
+
+void FileMetaDB::reset( )
+{
+   if (pszClDBPath) {
+      delete [] pszClDBPath;
+      pszClDBPath = 0;
+   }
+   if (pszClDBFile) {
+      delete [] pszClDBFile;
+      pszClDBFile = 0;
+   }
+   if (pszClLineBuf) {
+      delete [] pszClLineBuf;
+      pszClLineBuf = 0;
+   }
+   if (pszClMetaDir) {
+      delete [] pszClMetaDir;
+      pszClMetaDir = 0;
+   }
+   aUnixTime.resetEntries();
+   aWinTime.resetEntries();
+   aContSumLo.resetEntries();
+   aContSumHi.resetEntries();
+   aFlags.resetEntries();
+   aPath.resetEntries();
+}
+
+FileVerifier glblVerifier;
+
+FileVerifier::FileVerifier()
+{
+   nClMatched = 0;
+   nClFailed  = 0;
+}
+
+void FileVerifier::reset()
+{
+   aClSumHi.resetEntries();
+   aClSumLo.resetEntries();
+   aClDst.resetEntries();
+}
+
+int FileVerifier::remember(char *pszDst, num nsumhi, num nsumlo)
+{
+   if (aClSumHi.addEntry(nsumhi)) return 9;
+   if (aClSumLo.addEntry(nsumlo)) return 9;
+   if (aClDst.addEntry(pszDst))   return 9;
+   return 0;
+}
+
+int FileVerifier::verify()
+{
+   char szAddInfo[200];
+
+   int lRC = 0;
+
+   int nFiles = totalFiles();
+   for (int i=0; i<nFiles; i++)
+   {
+      if (userInterrupt(1, 1)) // silent, wait for release
+      {
+         info.print("verify stopped by user.\n");
+         bGlblEscape = 0;
+         return 1;
+      }
+
+      // get source file sum
+      num nsrchi = aClSumHi.getEntry(i, __LINE__);
+      num nsrclo = aClSumLo.getEntry(i, __LINE__);
+
+      // build destination sum
+      char *pszDst = aClDst.getEntry(i, __LINE__);
+      info.setProgress(nFiles, i, "files");
+      sprintf(szAddInfo, "file %d/%d", i+1, nFiles);
+      info.setStatus("verfy", pszDst, szAddInfo);
+      uchar abMD5Dst[20];
+      if (getFileMD5NoCache(pszDst, abMD5Dst, 1)) // silent
+      {
+         if (userInterrupt(1, 1)) {
+            pinf("[nopre] verify skipped.\n");
+            lRC = 1;
+            break;
+         }
+         perr("unable to read for verify: %s   \n", pszDst);
+         lRC = 5;
+         nClFailed++;
+         continue;
+      }
+      uchar *pmd5dst = abMD5Dst;
+      num ndstlo=0, ndsthi=0;
+      for (int i=0,b=64-8; i<8; i++) {
+         ndsthi = ndsthi | (((num)pmd5dst[0+i]&0xFF) << b);
+         ndstlo = ndstlo | (((num)pmd5dst[8+i]&0xFF) << b);
+         b -= 8;
+      }
+
+      // compare both
+      if (nsrchi!=ndsthi || nsrclo!=ndstlo) {
+         perr("verify failed, file differs: %s   \n", pszDst);
+         nClFailed++;
+         lRC = 6;
+      } else {
+         // info.setStatus("vryfd", pszDst); // , 0, eNoCycle);
+         // info.printLine(1<<2); // w/o progress
+         nClMatched++;
+      }
+   }
+
+   return lRC;
+}
+
+void printCopyCompleted(char *pszName, uint nflags)
+{
+   info.clear();
+   if (cs.quiet >= 2)
+      return;
+   cchar *pszpre = "";
+   if (nflags & 8) {
+      printx("<warn>##<def>"); pszpre=" ";
+   }
+   switch (nflags & 3) {
+      case 1 : printx("<prefix>]<def>"); pszpre=" "; break;
+      case 3 : printx("<warn>]<def>");   pszpre=" "; break;
+   }
+   if (nflags & 4) {
+      printx("<prefix>><def>"); pszpre=" ";
+   }
+   oprintf("%s%s", pszpre, pszName);
+   if (nflags & 8)
+      printx(" <warn>[sync'ing older file]<def>");
+   printf("\n");
+}
+
+CopyCache glblCopyCache;
+
+CopyCache::CopyCache()
+{
+}
+
+void CopyCache::setBuf(uchar *pBuf, num nBufSize)
+{
+   pClBuf      = pBuf;
+   nClBufSize  = nBufSize;
+   nClUsed     = 0;
+}
+
+int CopyCache::process(char *pszSrcFile, char *pszDstFile, char *pszShDst, uint nflags)
+{
+   if (!pszShDst) pszShDst = str("");
+
+   // may another source file fit into the cache?
+   FileStat ofsrc;
+   if (ofsrc.readFrom(pszSrcFile))
+      return 9+perr("unable to read: %s\n", pszSrcFile);
+   num nSrcSize = ofsrc.getSize();
+   num nRemain  = nClBufSize - nClUsed;
+   if (nRemain < 0) return 9+perr("internal 612112001\n");
+
+   // if not, write all cache contents
+   if (nSrcSize + 1500 > nRemain) {
+      int lRes = flush();
+      if (lRes >= 9)
+         return lRes;
+      setEmpty(); // in case flush was interrupted
+   }
+ 
+   if (nSrcSize + 1500 > nClBufSize)
+      return 1;   // file too large to fit into cache, copy directly
+ 
+   // cache is ready to accept file
+   num nUsedSave = nClUsed;
+
+   // 1. filenames
+   if (putBlock((uchar*)pszSrcFile, strlen(pszSrcFile)+1)) return 9+perr("internal 612112002\n");
+   if (putBlock((uchar*)pszDstFile, strlen(pszDstFile)+1)) return 9+perr("internal 612112009\n");
+   if (putBlock((uchar*)pszShDst  , strlen(pszShDst  )+1)) return 9+perr("internal 612112029\n");
+ 
+   // 2. meta data: filestat and flags
+   int nMetaSize = 0;
+   uchar *pMeta = ofsrc.marshal(nMetaSize);
+   if (putBlock(pMeta, nMetaSize)) return 9+perr("internal 612112006\n");
+
+   uchar abflags[10];
+   ulongtoab4(nflags, abflags);
+   if (putBlock(abflags, 4)) return 9+perr("internal 612112006.2\n");
+
+   // 3. if it's a directory,
+   if (ofsrc.src.bIsDir)
+   {
+      // set zero-sized content, meta data is sufficient
+      uchar *pCur = pClBuf+nClUsed;
+      int nLongSize = 0;
+      memcpy(pCur, &nLongSize, sizeof(int));
+      pCur += sizeof(int);
+      nClUsed += sizeof(int);
+   }
+   else
+   {
+      // else add the file content
+      uchar *pCur = pClBuf+nClUsed;
+      int nLongSize = (int)nSrcSize;
+      memcpy(pCur, &nLongSize, sizeof(int));
+      pCur += sizeof(int);
+      nClUsed += sizeof(int);
+ 
+      info.setStatProg("cache", pszSrcFile, nClBufSize, nUsedSave, "bytes");
+
+      FILE *fin = fopen(pszSrcFile, "rb");
+      if (!fin) {
+         nClUsed = nUsedSave;
+         return 5+perr("cannot open input file %s   \n", pszSrcFile);
+         // non-fatal, proceed copy, but list error count at end.
+      }
+ 
+      size_t nRead = 0;
+      if (cs.sim)
+         nRead = nSrcSize;
+      else
+         nRead = myfread(pCur, (size_t)nSrcSize, fin, nClBufSize, nUsedSave);
+
+      fclose(fin);
+ 
+      if (nRead != nSrcSize) {
+         perr("while reading %s: incomplete data\n", pszSrcFile);
+         // fall back, remove metadata from cache
+         nClUsed = nUsedSave;
+      } else {
+         SFKMD5 md5in;
+         md5in.update(pCur, nSrcSize);
+ 
+         nClUsed += nSrcSize;
+         pCur += nSrcSize;
+ 
+         // 4. md5
+         uchar *pmd5in = md5in.digest();
+
+         // remember source sum in case of late verify:
+         if (cs.verifyLate) {
+            num nsumlo=0, nsumhi=0;
+            for (int i=0,b=64-8; i<8; i++) {
+               nsumhi = nsumhi | (((num)pmd5in[0+i]&0xFF) << b);
+               nsumlo = nsumlo | (((num)pmd5in[8+i]&0xFF) << b);
+               b -= 8;
+            }
+            glblVerifier.remember(pszDstFile, nsumhi, nsumlo);
+         }
+
+         memcpy(pCur, pmd5in, 16);
+
+         // printf("1] %02X%02X%02X%02X %s %p %s\n",pmd5in[0],pmd5in[1],pmd5in[2],pmd5in[3], numtoa(nSrcSize), pCur, pszSrcFile);
+
+         pCur += 16;
+         nClUsed += 16;
+
+         // and also to filedb, if active
+         if (filedb.canUpdate())
+            if (filedb.updateFile(pszSrcFile, pmd5in))
+               return 9;
+      }
+   }
+ 
+   return 0;
+}
+
+int CopyCache::putBlock(uchar *pData, int nDataSize)
+{
+   uchar *pCur = pClBuf+nClUsed;
+   num nRemain = nClBufSize-nClUsed;
+   if (nDataSize > nRemain + 100) return 9;
+   memcpy(pCur, &nDataSize, sizeof(int));
+   memcpy(pCur+sizeof(int), pData, nDataSize);
+   nClUsed += sizeof(int)+nDataSize;
+   return 0;
+}
+
+void CopyCache::setEmpty()
+{
+   nClUsed = 0;
+}
+
+int CopyCache::flush()
+{
+   uchar *pCur = pClBuf;
+   uchar *pMax = pClBuf+nClUsed;
+   while (pCur < pMax)
+   {
+      bool bDoneFile = 0;
+
+      // 1. filenames
+      int nBlockSize = 0;
+      if (pCur >= (pMax - sizeof(int))) return 9+perr("internal #113701\n");
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
+      char *pszSrc = (char*)pCur;
+      pCur += nBlockSize;
+      if (nBlockSize < 0 || pCur >= pMax) return 9+perr("internal #113702\n");
+
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
+      char *pszDst = (char*)pCur;
+      pCur += nBlockSize;
+      if (nBlockSize < 0 || pCur >= pMax) return 9+perr("internal #113703\n");
+
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
+      char *pszShDst = (char*)pCur;
+      pCur += nBlockSize;
+      if (nBlockSize < 0 || pCur >= pMax) return 9+perr("internal #113733\n");
+
+      char *pszTell = chain.usefiles ? pszDst : pszSrc;
+      if (cs.listTargets) pszTell = pszDst;
+
+      // 2. meta data
+      // filestat
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
+      uchar *pMeta = pCur;
+      int nMetaSize = nBlockSize;
+      pCur += nBlockSize;
+      if (nBlockSize < 0 || pCur >= pMax) return 9+perr("internal #113704\n");
+
+      // flags, also prefixed by blocksize (4)
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
+      if (nBlockSize != 4) return 9+perr("internal #113704.2\n");
+      uchar abflags[10];
+      memcpy(abflags, pCur, 4);
+      pCur += 4;
+      uint nflags = ab4toulong(abflags);
+      // bit0: verified by checksum.
+      // bit1: is shadow fallback.
+      // bit2:
+      // bit3: source is older than target (sync)
+
+      // 3. file content
+      memcpy(&nBlockSize, pCur, sizeof(int));
+      pCur += sizeof(int);
+      uchar *pContent = pCur;
+      pCur += nBlockSize;
+      if (nBlockSize < 0 || pCur > pMax) return 9+perr("internal #113705\n");
+
+      FileStat ofsdst;
+      if (ofsdst.setFrom(pMeta, nMetaSize))
+         return 9;
+ 
+      if (ofsdst.src.bIsDir)
+      {
+         // set target dir meta data
+         if (cs.verbose > 2)
+            info.print("[%s : about to copy time]\n", pszDst);
+         if (!cs.sim)
+            if (!ofsdst.writeTo(pszDst, __LINE__)) {
+               cs.dirsCloned++;
+               if (cs.verbose)
+                  info.print("[%s : time copied]\n", pszDst);
+            }
+         // IGNORE rc. error messages are counted.
+         // cs.dirs++;
+      }
+      else
+      if (cs.sim)
+      {
+         // 4. skip md5
+         pCur += 16;
+
+         info.setStatus("", pszTell, "-----", eNoCycle);
+         info.printLine(nGlblCopyStyle);
+         cs.files++;
+      }
+      else
+      {
+         // 4. md5
+         uchar *pmd5in = pCur;
+         pCur += 16;
+
+         for (int ntry=1; ntry<=3; ntry++)
+         {
+            // write target file
+            info.setStatus("write", pszDst, "00");
+ 
+            FILE *fout = myfopen(pszDst, "wb");
+            if (!fout) {
+               perr("cannot open output file %s (rc %d)\n", pszDst, (int)errno);
+               break; // PROCEED with next file. errors are counted.
+            }
+ 
+            num nSize = ofsdst.src.nSize;
+ 
+            size_t nWrite = myfwrite(pContent, nSize, fout, nSize, 0);
+ 
+            myfclose(fout);
+ 
+            if (bGlblEscape) {
+               remove(pszDst);
+               return 9+perr("failed to fully write %s, user interrupt\n", pszDst);
+            }
+            else
+            if (nWrite != nSize)
+               return 9+esys("fwrite", "failed to fully write %s   \n", pszDst);
+               // do NOT proceed, this seems fatal.
+ 
+            // set target meta data
+            if (!ofsdst.writeTo(pszDst, __LINE__))
+               cs.filesCloned++;
+            // IGNORE rc. errors are counted.
+ 
+            if (!cs.sim && cs.verifyEarly)
+            {
+               // run target verify
+               info.setStatus("verfy", pszDst, "00");
+               uchar abmd5[20];
+
+               int nrcsub = getFileMD5NoCache(pszDst, abmd5, 1);
+
+               if (userInterrupt(1))
+               {
+                  info.setAction("stop", pszDst, 0, 4);
+                  info.printLine();
+                  break;
+               }
+               else
+               if (nrcsub == 0)
+               {
+                  if (memcmp(pmd5in, abmd5, 16)) {
+                     if (ntry < 3) {
+                        pwarn("verify failed, file differs: %s - retrying write\n", pszDst);
+                        // fall through, next retry
+                        remove(pszDst);
+                     } else {
+                        perr("verify failed, file differs: %s - giving up\n", pszDst);
+                        remove(pszDst);
+                     }
+                  } else {
+                     // verify succeeded
+                     bDoneFile = 1;
+                     cs.files++;
+                     break;
+                  }
+               }
+            }
+            else
+            {
+               // no verify selected
+               bDoneFile = 1;
+               cs.files++;
+               break;
+            }
+         }  // endfor tries
+
+         // pszShDst must be set, but may be empty
+         if (   filedb.canUpdate() && nGlblCopyShadows && strlen(pszShDst)
+             && (!nGlblShadowSizeLimit || (ofsdst.src.nSize < nGlblShadowSizeLimit))
+            )
+         {
+            // write shadow
+            pszDst = pszShDst;
+
+            info.setStatus("write", pszDst, "00");
+            FILE *fout = myfopen(pszDst, "wb");
+            if (!fout) {
+               perr("cannot open output file %s (rc %d)\n", pszDst, (int)errno);
+            } else {
+               num nSize = ofsdst.src.nSize;
+               size_t nWrite = myfwrite(pContent, nSize, fout, nSize, 0);
+               myfclose(fout);
+               if (bGlblEscape) {
+                  remove(pszDst);
+                  return 9+perr("failed to fully write %s, user interrupt\n", pszDst);
+               }
+               else
+               if (nWrite != nSize)
+                  return 9+esys("fwrite", "failed to fully write %s   \n", pszDst);
+                  // do NOT proceed, this seems fatal.
+
+               // set target meta data
+               ofsdst.writeTo(pszDst, __LINE__);
+               // IGNORE rc. errors are counted.
+               nflags |= 4; // shadow written
+               cs.shadowsWritten++;
+            }
+         }
+
+         // print filename, tell how it was copied
+         if (bDoneFile)
+            printCopyCompleted(pszTell, nflags);
+      }
+   }
+   setEmpty();
+   return 0;
+}
+
+#ifdef _WIN32
+DWORD CALLBACK cbCopyFileProgress(
+   LARGE_INTEGER TotalFileSize,
+   LARGE_INTEGER TotalBytesTransferred,
+   LARGE_INTEGER StreamSize,
+   LARGE_INTEGER StreamBytesTransferred,
+   DWORD dwStreamNumber,
+   DWORD dwCallbackReason,
+   HANDLE hSourceFile,
+   HANDLE hDestinationFile,
+   LPVOID lpData  // optional
+ )
+{
+   if (userInterrupt(1))
+      return 1; // PROGRESS_CANCEL;
+
+   num nTotal =  (((num)TotalFileSize.HighPart) << 32)
+               | (((num)TotalFileSize.LowPart ) <<  0);
+
+   num nDone  =  (((num)TotalBytesTransferred.HighPart) << 32)
+               | (((num)TotalBytesTransferred.LowPart ) <<  0);
+
+   info.setAddInfo("%u / %u mb", (uint)(nDone/1000000UL), (uint)(nTotal/1000000UL));
+   info.setProgress(nTotal, nDone, "bytes");
+
+   return 0; // PROGRESS_CONTINUE;
+}
+
+int copyFileWin(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, uint nflagsin)
+{__
+   char *pszTell = chain.usefiles ? pszDst : pszSrc;
+   if (cs.listTargets) pszTell = pszDst;
+
+   if (cs.sim) {
+      info.setStatus("", pszTell, "-----", eNoCycle);
+      if (!cs.dostat)
+         info.printLine(nGlblCopyStyle);
+      cs.files++;
+      return 0;
+   }
+
+   info.setAction("copy ", pszSrc, "00");
+
+   DWORD nSysFlags = 0;
+
+   // these are yet internal and completely untested
+   if (cs.copyLinks)   nSysFlags |= 0x00000800UL; // COPY_FILE_COPY_SYMLINK;
+   if (cs.copyNoBuf)   nSysFlags |= 0x00001000UL; // COPY_FILE_NO_BUFFERING;
+   if (cs.copyDecrypt) nSysFlags |= 0x00000008UL; // COPY_FILE_ALLOW_DECRYPTED_DESTINATION;
+
+   BOOL bcancel = 0;
+   bool brc = CopyFileExA(pszSrc, pszDst, cbCopyFileProgress, 0, &bcancel, nSysFlags);
+
+   if (!brc) {
+      uint nerr = GetLastError();
+      switch (nerr) {
+         case ERROR_ACCESS_DENIED:
+            perr("copy failed, access denied (rc=%u): %s\n", nerr, pszDst);
+            pinf("make sure you have full access rights. maybe you have to be administrator.\n");
+            break;
+         case ERROR_REQUEST_ABORTED:
+            // the OS cleaned up the target file.
+            pwarn("copy stopped, cleanup done.\n");
+            return 19; // stop all further processing
+         default:
+            perr("copy failed, rc=%u: %s\n", nerr, pszDst);
+            break;
+      }
+   } else {
+      cs.files++;
+      printCopyCompleted(pszTell, nflagsin);
+   }
+
+   return brc ? 0 : 9;
+}
+#endif // _WIN32
+
+int copyFile(char *pszSrc, char *pszDst, char *pszShDst, uchar *pWorkBuf, num nBufSize, uint nflags)
+{__
+   char *pszTell = chain.usefiles ? pszDst : pszSrc;
+   if (cs.listTargets) pszTell = pszDst;
+
+   if (cs.sim) {
+      info.setStatus("", pszTell, "-----", eNoCycle);
+      if (!cs.dostat)
+         info.printLine(nGlblCopyStyle);
+      cs.files++;
+      return 0;
+   }
+
+   int lRC = 0;
+   uchar abMD5Src[20];
+   bool  bmdsrcset = 0;
+   memset(abMD5Src, 0, sizeof(abMD5Src));
+
+   bool bDoneFile = 0;
+
+   // try to copy the file, upto 3 times
+   for (int ntry=1; ntry<=3; ntry++)
+   {
+      info.setAction("read ", pszSrc, "00");
+ 
+      num nFileSize = getFileSize(pszSrc);
+ 
+      FILE *fin = fopen(pszSrc, "rb");
+      if (!fin) return 9+perr("cannot open input file %s   \n", pszSrc);
+ 
+      FILE *fout = myfopen(pszDst, "wb");
+      if (!fout) {
+         fclose(fin);
+         return 9+perr("cannot open output file %s   \n", pszDst);
+      }
+
+      FILE *fsh = 0;
+      if (   filedb.canUpdate() && nGlblCopyShadows && pszShDst
+          && (!nGlblShadowSizeLimit || (nFileSize < nGlblShadowSizeLimit))
+         )
+      {
+         fsh = fopen(pszShDst, "wb");
+         if (!fsh)
+            perr("cannot write shadow file %s   \n", pszShDst);
+            // but continue, w/o shadow
+      }
+ 
+      num nTime1=0, nTime2=0, nReadTime=0, nWriteTime=0;
+      num nReadBytes=0, nWriteBytes=0;
+      uint nkbsread=0, nkbswrite=0;
+      SFKMD5 md5in;
+      int nBlock = 0;
+      while (!userInterrupt())
+      {
+         nTime1 = getCurrentTime();
+         info.setStatus("read ", pszSrc, "00");
+         size_t nRead = 0;
+         if (cs.sim)
+            nRead = nBufSize;
+         else
+            nRead = myfread(pWorkBuf, (size_t)nBufSize, fin, nFileSize, nReadBytes);
+         nTime2 = getCurrentTime();
+         if (nRead <= 0)
+            break; // EOD
+         nReadTime  += (nTime2-nTime1);
+         nReadBytes += nRead;
+ 
+         md5in.update(pWorkBuf, nRead);
+ 
+         nTime1 = getCurrentTime();
+         info.setStatus("write", pszDst, "00");
+         size_t nWrite = myfwrite(pWorkBuf, nRead, fout, nFileSize, nWriteBytes);
+         nTime2 = getCurrentTime();
+         if (nWrite != nRead) {
+            lRC = 9;
+            if (!bGlblEscape)
+               esys("fwrite", "failed to write %s   \n", pszDst);
+            break;
+         }
+         nWriteTime  += (nTime2-nTime1);
+         nWriteBytes += nWrite;
+
+         // extra shadow write
+         if (fsh) {
+            nWrite = myfwrite(pWorkBuf, nRead, fsh, nFileSize, nWriteBytes);
+            if (nWrite != nRead) {
+               // shadow writing fails silently
+               fclose(fsh);
+               remove(pszShDst);
+               fsh = 0;
+               pszShDst = 0;
+            }
+         }
+ 
+         nkbsread  = (nReadBytes  / (nReadTime  ? nReadTime : 1));
+         nkbswrite = (nWriteBytes / (nWriteTime ? nWriteTime : 1));
+ 
+         nBlock++;
+      }
+
+      if (fsh) {
+         fclose(fsh);
+         nflags |= 4; // shadow written
+         cs.shadowsWritten++;
+      }
+      pszShDst = 0; // block 2nd writing of shadow
+ 
+      myfclose(fout);
+      fclose(fin);
+ 
+      if (bGlblEscape) {
+         remove(pszDst);
+         if (cs.verbose)
+            pwarn("copy stopped, cleaning up: %s\n", pszDst);
+         else
+            pwarn("copy stopped, cleanup done.\n");
+         return 19;
+      }
+ 
+      FileStat ofs;
+      if (ofs.readFrom(pszSrc))
+         return 9+perr("failed to read attributes: %s\n", pszSrc);
+      if (ofs.writeTo(pszDst, __LINE__))
+         return 9+perr("failed to write attributes: %s\n", pszDst);
+      else
+         cs.filesCloned++;
+
+      uchar *pmd5in = md5in.digest();
+
+      // remember source sum in case of late verify:
+      if (cs.verifyLate) {
+         num nsumlo=0, nsumhi=0;
+         for (int i=0,b=64-8; i<8; i++) {
+            nsumhi = nsumhi | (((num)pmd5in[0+i]&0xFF) << b);
+            nsumlo = nsumlo | (((num)pmd5in[8+i]&0xFF) << b);
+            b -= 8;
+         }
+         glblVerifier.remember(pszDst, nsumhi, nsumlo);
+      }
+
+      // remember src file md5 beyond this scope
+      memcpy(abMD5Src, pmd5in, 16);
+      bmdsrcset = 1;
+
+      if (!cs.sim && cs.verifyEarly)
+      {
+         info.setAction("verfy", pszTell, "00");
+ 
+         // run target verify
+         uchar abmd5[20];
+         int nrcsub = getFileMD5NoCache(pszDst, abmd5, 1);
+ 
+         if (userInterrupt(1))
+         {
+            info.setAction("stop ", pszDst, 0, 4);
+            info.printLine();
+            break;
+         }
+         else
+         if (nrcsub == 0)
+         {
+            if (memcmp(pmd5in, abmd5, 16)) {
+               if (ntry < 3) {
+                  pwarn("verify failed, file differs: %s - retrying write\n", pszDst);
+                  // fall through, next retry
+                  remove(pszDst);
+               } else {
+                  perr("verify failed, file differs: %s - giving up\n", pszDst);
+                  remove(pszDst);
+               }
+            } else {
+               // verify succeeded
+               bDoneFile = 1;
+               cs.files++;
+               break;
+            }
+         }
+      }
+      else
+      {
+         // no verify selected
+         bDoneFile = 1;
+         cs.files++;
+         break;
+      }
+   }  // endfor tries
+
+   if (bDoneFile)
+      printCopyCompleted(pszTell, nflags);
+
+   if (lRC == 0) {
+      if (!bmdsrcset) return 9+perr("internal #0505071820");
+      filedb.updateFile(pszSrc, abMD5Src);
+   }
+
+   return lRC;
+}
+
+int execDirCopy(char *pszSrc, FileList &oDirFiles)
+{__
+   // copy metadata of directory
+   char *pszDstRaw = pszGlblCopyDst;
+
+   // expect Src to contain a RELATIVE path, e.g.
+   //    data\tmp1.txt  data\sub\tmp2.txt
+   // strip the original base path, if any
+   char *pszRelSrc = relName(pszGlblCopySrc, pszSrc);
+
+   cs.dirsScanned++;
+   sprintf(szLineBuf, "%u files %u dirs", cs.filesScanned, cs.dirsScanned);
+   if (strlen(szLineBuf) > 20)
+      info.setAddInfoWidth(strlen(szLineBuf));
+   info.setStatus("scan ", pszRelSrc, szLineBuf);
+
+   // build full target name: d:/tmp/subdir
+   joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszDstRaw, pszRelSrc);
+   // strip trailing / if any
+   int nRefLen = strlen(szRefNameBuf);
+   if ((nRefLen > 0) && (szRefNameBuf[nRefLen-1] == glblPathChar))
+      szRefNameBuf[nRefLen-1] = '\0';
+
+   // in case we have to copy EMPTY target directories:
+   // if (createSubDirTree(szRefNameBuf, ""))
+   //   return 9;
+
+   // execFileCopy has created dir tree on demand,
+   // so all dirs must exist, IF files have been copied.
+   if (!isDir(szRefNameBuf)) {
+      if (cs.verbose)
+         info.print("%s : skip, no files copied.\n",szRefNameBuf);
+      return 0; // no files have been copied in that dir.
+   }
+
+   char szReason[50];
+   szReason[0] = '\0';
+
+   // check if we really need to copy attributes
+
+   // win: don't try to clone x: to y: etc.
+   #ifdef _WIN32
+   if (endsWithColon(pszSrc)) return 0;
+   if (endsWithColon(szRefNameBuf)) return 0;
+   #endif
+
+   // BEWARE OF MIXUP:
+   //    sfk list -sincedir foo bar
+   //       means for the user: FOO (szRefNameBuf) is the SOURCE.
+   // NO problem here, as in
+   //    sfk copy foo bar
+   //       the provided pszSrc in here IS actually the SOURCE.
+
+   FileStat ofsSrc;
+   FileStat ofsDst;
+   if (ofsSrc.readFrom(pszSrc)) {
+      perr("cannot read dir time: %s\n", pszSrc);
+      return 9;
+   }
+
+   char *pszTell = pszSrc;
+   if (cs.listTargets) pszTell = szRefNameBuf;
+
+   // checked isDir(szRefNameBuf) above
+   if (!ofsDst.readFrom(szRefNameBuf))
+   {
+      // copy the directory timestamp or not? during filecopy,
+      // we may have created the dir on demand. in this case,
+      // copy the dir timestamp unconditionally. ELSE copy it only
+      // if the src is newer than the target.
+      bool bOnlyOnNewSrc = 1;
+      // this check is not at all beautiful, but it works
+      // without restructuring the whole tree processing.
+      #ifdef SFK_CCDIRTIME
+      int ipos = glblCreatedDirs.find(szRefNameBuf);
+      if (ipos >= 0) {
+         // the dir was recently created: ignore its new timestamp
+         glblCreatedDirs.removeEntry(ipos);
+         bOnlyOnNewSrc = 0;
+      }
+      #endif
+      int ndif = ofsSrc.differs(ofsDst, bOnlyOnNewSrc);
+      if (!ndif) {
+         if (cs.verbose > 1)
+            info.print("%s : no time / attrib change\n", szRefNameBuf);
+         return 0;   // skip
+      }
+      if (ndif >= 7 && ndif <= 10 && cs.nodirtime != 0) {
+         if (cs.verbose > 1)
+            info.print("%s : ignore time difference (%d)\n", szRefNameBuf, ndif);
+         return 0;   // skip
+      }
+      if (cs.verbose > 0)
+         info.print("%s : copying attribs, ndif %d\n", szRefNameBuf, ndif);
+      // sprintf(szReason, "%d", ndif);
+   }
+
+   bool bDone = 0;
+   if (bGlblUseCopyCache) {
+      int lRes = glblCopyCache.process(pszSrc, szRefNameBuf, 0, 0);
+      if (lRes == 0)
+         bDone = 1;
+   }
+
+   if (!bDone)
+   {
+      if (cs.sim) {
+         cs.dirsCloned++;
+      } else {
+         if (cloneAttributes(pszSrc, szRefNameBuf, __LINE__))
+            return 1; // error, but skip and continue
+         cs.dirsCloned++;
+      }
+
+      setTextColor(nGlblTimeColor);
+      info.setStatus("", pszTell, "copy time", eNoCycle);
+      info.printLine(nGlblCopyStyle);
+      setTextColor(-1);
+   }
+
+   return 0;
+}
+
+// USES:
+//    szAttrBuf, szRefNameBuf, szLineBuf1/2 (indirectly)
+int execFileCopy(Coi *pcoi)
+{__
+   char *pszSrc      = pcoi->name();
+   char *pszOptRoot  = pcoi->root(1); // null if not set
+
+   cs.filesScanned++;
+
+   // with input chaining, glblCopySrc will not be set.
+   char *pszSrcRaw = pszGlblCopySrc;
+   if (chain.usefiles) {
+      if (cs.rootrelname)
+         pszSrcRaw = pszOptRoot; // user selected relative names
+      else {
+         // autodetect: include source root into target name?
+         if (cs.rootabsname || (pszOptRoot && !isAbsolutePath(pszOptRoot)))
+            // source root is NOT absolute, or -abs specified: take it
+            pszSrcRaw = str("");
+         else
+            // source root IS absolute (e.g. C:\\) so strip it
+            pszSrcRaw = pszOptRoot; // if null, produces error below
+      }
+   }
+   if (!pszSrcRaw) return 9+perr("copy: missing source root dir. file=%s",pszSrc);
+
+   // expect Dst to be a directory, e.g.
+   //    x:    x:/   x:/tmp   x:/tmp/
+   char *pszDstRaw = pszGlblCopyDst;
+
+   // expect Src to contain a RELATIVE path, e.g.
+   //    data\tmp1.txt  data\sub\tmp2.txt
+   // strip the original base path, if any
+   char *pszRelSrc = relName(pszSrcRaw, pszSrc);
+ 
+   // build full target name: d:/tmp/subdir/thefile.txt
+   // sprintf(szRefNameBuf, "%s%c%s", pszDstRaw, glblPathChar, pszRelSrc);
+   joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszDstRaw, pszRelSrc);
+
+   if (cs.debug)
+      printf("copy.check %s => %s [root=%s]\n",pszSrc,szRefNameBuf,pszSrcRaw);
+
+   char *pszShSrc = 0, *pszShDst = 0;
+   if (filedb.canRead()) {
+      // create source shadow path
+      if (!joinShadowPath(szRefNameBuf2, sizeof(szRefNameBuf2), pszSrcRaw, pszRelSrc))
+         pszShSrc = szRefNameBuf2;
+   } else {
+      // create dest shadow path
+      if (!joinShadowPath(szRefNameBuf2, sizeof(szRefNameBuf2), pszDstRaw, pszRelSrc))
+         pszShDst = szRefNameBuf2;
+   }
+ 
+   // prepare target directory(s), if any. first we need the full path,
+   strcopy(szAttrBuf, szRefNameBuf);
+   char *psz1 = strrchr(szAttrBuf, glblPathChar);
+   #ifdef _WIN32
+   if (!psz1) {
+      // c:thefile.txt -> c:
+      if ( (strlen(szAttrBuf) >= 2) && (szAttrBuf[1] == ':' ) )
+         psz1 = &szAttrBuf[2];
+   }
+   #endif
+   if (!psz1) return 9+perr("unexpected target name format: %s\n",szAttrBuf);
+   *psz1 = '\0';
+   // to check if it exists or not,
+   if (!cs.sim && !isDir(szAttrBuf)) {
+      // then we need to isolate the relative target dir path,
+      sprintf(szAttrBuf, "%c%s", glblPathChar, pszRelSrc);
+      psz1 = strrchr(szAttrBuf, glblPathChar);
+      if (!psz1) return 9+perr("unexpected target name format: %s\n",szAttrBuf);
+      *psz1 = '\0';
+      // to allow better processing in createSubDirTree.
+      if (createSubDirTree(pszDstRaw, szAttrBuf, pszSrcRaw))
+         return 9;
+   }
+   // else we have some path like c:thefile.txt - no directories to create.
+
+   // same for dest. shadow, if any
+   if (filedb.canUpdate() && nGlblCopyShadows && pszShDst)
+   {
+      strcopy(szAttrBuf, pszShDst);
+      char *psz1 = strrchr(szAttrBuf, glblPathChar);
+      #ifdef _WIN2
+      if (!psz1) {
+         // c:thefile.txt -> c:
+         if ( (strlen(szAttrBuf) >= 2) && (szAttrBuf[1] == ':' ) )
+            psz1 = &szAttrBuf[2];
+      }
+      #endif
+      if (!psz1) return 9+perr("unexpected target name format: %s\n",szAttrBuf);
+      *psz1 = '\0';
+      // to check if it exists or not,
+      if (!cs.sim && !isDir(szAttrBuf)) {
+         // then we need to isolate the relative target dir path,
+         sprintf(szAttrBuf, "%czz-shadow-01%s%s", glblPathChar, glblPathStr, pszRelSrc);
+         psz1 = strrchr(szAttrBuf, glblPathChar);
+         if (!psz1) return 9+perr("unexpected target name format: %s\n",szAttrBuf);
+         *psz1 = '\0';
+         // to allow better processing in createSubDirTree.
+         if (createSubDirTree(pszDstRaw, szAttrBuf, pszSrcRaw))
+            return 9;
+      }
+   }
+ 
+   return execFileCopySub(pszSrc, szRefNameBuf, pszShSrc, pszShDst);
+}
+
+// does NOT create target subdirs. this is expected to be done by caller.
+int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc, char *pszShDst)
+{__
+   mtklog(("fcopysub: %s -> %s",pszSrc,pszDst));
+
+   char szReason[50];
+   szReason[0] = '\0';
+
+   // if we tell the filename, do we take src or dst file?
+   char *pszTell = chain.usefiles ? pszDst : pszSrc;
+   if (cs.listTargets) pszTell = pszDst;
+ 
+   // check if we really need to copy
+
+   // BEWARE OF MIXUP:
+   //    sfk list -sincedir foo bar
+   //       means for the user: FOO (szRefNameBuf) is the SOURCE.
+   // NO problem here, because with
+   //    sfk copy foo bar
+   //       the pszSrc provided in here REALLY is the SOURCE.
+
+   bool  bJustCopyTime = 0;
+   bool  bSrcIsOlder = 0;
+   uint nflags = 0;
+
+   FileStat ofsSrc;
+   FileStat ofsDst;
+   bool  bSrcUnreadable = 0;
+   if (ofsSrc.readFrom(pszSrc)) {
+      // filename exists in source, but file is unreadable:
+      mtklog(("copy: src unreadable"));
+      if (filedb.canRead() && pszShSrc) {
+         // proceed, as we may use the shadow
+         bSrcUnreadable = 1; // but don't issue same error twice
+      } else {
+         // printf("fatal, %d %p\n", filedb.canRead(), pszShSrc);
+         return 9;
+      }
+   }
+   num nFileSize = ofsSrc.getSize();
+   if (fileExists(pszDst))
+   {
+      if (!ofsDst.readFrom(pszDst))
+      {
+         bool bSameIOS = cs.syncOlder ? 0 : 1;  // same if older src?
+         int ndif = ofsSrc.differs(ofsDst, bSameIOS, &bSrcIsOlder);
+         if (bSrcIsOlder) nflags |= (1<<3);
+         if (!ndif && !bGlblIgnoreTime) {
+            // only with copy, NOT with sync it may happen
+            // that src is OLDER than target, skipping copy.
+            // with sync, different times ALWAYS lead to copy.
+            if (cs.syncFiles && bSrcIsOlder && !cs.noinfo) {
+               if (bSrcIsOlder < 2) {
+                  info.setStatus("skip", pszTell, "source is older");
+                  info.printLine(1<<2);
+               }
+               // else dst jump, don't even tell notice
+            }
+            else
+            if (cs.verbose)
+               info.print("no diff, skip: %s\n", pszTell);
+            if (filedb.canUpdate())
+               filedb.updateFile(pszSrc, 0, true); // true:JustConfirm
+            return 0;   // skip
+         }
+         // differs by timestamp (src is newer). but does it really mean
+         // we have to copy the whole content?
+         if (ofsSrc.getSize() == ofsDst.getSize()) {
+            // compare file content
+            uchar abMD5Src[20];
+            if (equalFileContent(pszSrc, pszDst, abMD5Src)) {
+               if (bGlblIgnoreTime) {
+                  if (filedb.canUpdate())
+                     filedb.updateFile(pszSrc, abMD5Src);
+                  return 0; // same content, skip
+               }
+               bJustCopyTime = 1;
+            }
+            else
+            if (!ndif && bGlblIgnoreTime) {
+               int ndif2 = ofsSrc.differs(ofsDst, 0); // NOT same if older src
+               if (!ndif2 && cs.sim) {
+                  // critical: have file with same size and time, but dif. content
+                  // this can be reached only through -ignoretime deep verify.
+                  // if in simulation, create warning-like special listing
+                  pwarn("same time/size, but content diff: %s\n", pszDst);
+                  // indicates corrupted file - no filedb update here.
+                  cs.files++;
+                  return 0;
+               }
+            }
+            if (cs.verbose)
+               info.print("[%s : differs, rc %d%s]\n", pszDst, ndif,
+                  bJustCopyTime ? ", same content":", diff. content");
+         } else {
+            if (cs.verbose)
+               info.print("[%s : differs, rc %d]\n", pszDst, ndif);
+         }
+         // sprintf(szReason, "%d", ndif);
+      }
+   }
+
+   if (bJustCopyTime)
+   {
+      // this flag says that both files exist with same content.
+      if (cs.sim) {
+         cs.filesCloned++;
+      } else {
+         // copy timestamp and attributes, but not the content.
+         if (ofsSrc.writeTo(pszDst, __LINE__))
+            return 1; // error, skip but continue
+         cs.filesCloned++;
+      }
+
+      setTextColor(nGlblTimeColor);
+      info.setStatus("", pszTell, "copy time", eNoCycle);
+      info.printLine(nGlblCopyStyle);
+      setTextColor(-1);
+
+      // remember src and dst for verify pass
+      // glblVerifier.remember(pszSrc, pszDst);
+   }
+   else
+   {
+      // prepare copy of file
+      if (filedb.canRead()) {
+         // try to check source file if it's still intact
+         int nvrc = filedb.verifyFile(pszSrc, pszShSrc, bSrcUnreadable);
+         if (nvrc >= 9)
+            return 0+perr("check failed: %s - content changed, skipping copy\n", pszSrc);
+         else
+         if (nvrc == 8)
+            return 0+perr("%s - not found in metadb, skipping copy\n", pszSrc);
+         else
+         if (nvrc == 5) {
+            pwarn("master file modified, using shadow: %s\n", pszShSrc);
+            pszSrc = pszShSrc;
+            cs.shadowFallbacks++;
+            nflags |= 3; // with checksum, but shadow
+         }
+         else
+         if (nvrc > 5) {
+            // unexpected, issue general message
+            return 0+perr("check failed: %s - skipping copy (%d)\n", pszSrc, nvrc);
+         } else {
+            // rc < 5 is just informal, e.g. time difference
+            nflags |= 1; // checksum verified
+         }
+      }
+
+      // copy the actual file
+      bool bDone = 0;
+      if (!cs.sim && bGlblUseCopyCache) {
+         int lRes = glblCopyCache.process(pszSrc, pszDst, pszShDst, nflags);
+         if (lRes == 0)
+            bDone = 1;
+         if (lRes >= 9)
+            return lRes; // fatal error
+      }
+ 
+      if (!bDone)
+      {
+         int iSubRC = 0;
+         #ifdef _WIN32
+         if (!nGlblCopyShadows) {
+            if (iSubRC = copyFileWin(pszSrc, pszDst, pszShDst, pGlblWorkBuf, nGlblWorkBufSize, nflags))
+               return iSubRC;
+         }
+         else
+         #endif
+         if (iSubRC = copyFile(pszSrc, pszDst, pszShDst, pGlblWorkBuf, nGlblWorkBufSize, nflags))
+            return iSubRC;
+      }
+
+      // count direct file size
+      nGlblBytes += nFileSize;
+
+      // count shadow size, if any
+      if (   nGlblCopyShadows
+          && (!nGlblShadowSizeLimit || (nFileSize < nGlblShadowSizeLimit))
+         )
+      {
+         nGlblBytes += nFileSize;
+         cs.shadowsWritten++;
+      }
+   }
+ 
+   return 0;
+}
+
+// USES:
+//    szAttrBuf, szRefNameBuf, szLineBuf1/2 (indirectly)
+int execFileCleanup(char *pszSrc)
+{__
+   cs.filesScanned++;
+
+   // expect Dst to be a directory, e.g.
+   //    x:    x:/   x:/tmp   x:/tmp/
+   char *pszDstRaw = pszGlblCopyDst;
+
+   // expect Src to contain a RELATIVE path, e.g.
+   //    data\tmp1.txt  data\sub\tmp2.txt
+   // strip the original base path, if any
+   char *pszRelSrc = relName(pszGlblCopySrc, pszSrc);
+ 
+   // build full target name: d:/tmp/subdir/thefile.txt
+   joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszDstRaw, pszRelSrc);
+ 
+   // REORDER: currently, pszSrc is the TARGET file
+   char *pszDst = pszSrc;
+   pszSrc = szRefNameBuf;
+   // NOW, pszSrc is the copy src, pszDst is the cleanup candidate.
+
+   bool b1 = (bool)fileExists(pszSrc);
+   bool b2 = (bool)fileExists(pszDst);
+
+   if (!b1 && b2)
+   {
+      // old trash file, or backsync candidate?
+      num nFileAge = getFileAge(pszDst);
+      int nAgeDays = nFileAge / (24 * 3600);
+
+      if (!cs.delStaleFiles && (nAgeDays < nGlblActiveFileAgeLimit))
+      {
+         int nRemain = nGlblActiveFileAgeLimit - nAgeDays;
+         if (nRemain < 6)
+            setTextColor(nGlblErrColor);
+         else
+            setTextColor(nGlblWarnColor);
+         if (cs.verbose)
+            info.print("stale: %s / %s - %d days until deletion\n",pszDst,pszSrc,nRemain);
+         else
+            info.print("stale: %s - %d days until deletion\n",pszDst,nRemain);
+         setTextColor(-1);
+         cs.filesStale++;
+      }
+      else
+      {
+         setTextColor(nGlblWarnColor);
+         if (cs.verbose)
+            info.print("DEL: %s / %s",pszDst,pszSrc);
+         else
+            info.print("DEL: %s",pszDst);
+         setTextColor(-1);
+ 
+         // NO LINEFEED FROM HERE
+         if (!cs.sim && cs.yes)
+         {
+            // delete primary stale file
+            if (!canWriteFile(pszDst, 0))
+               setWriteEnabled(pszDst);
+            if (remove(pszDst)) {
+               printf("\n");
+               perr("failed to delete: %s", pszDst);
+            } else {
+               cs.filesDeleted++;
+               if (filedb.canUpdate()) {
+                  // remove file from filedb
+                  filedb.removeFile(pszDst, 1);
+               }
+            }
+            // delete shadow, if any
+            if (nGlblCopyShadows && cs.skipOwnMetaDir && (strlen(filedb.metaDir()) > 0))
+            {
+               char *pszMeta = filedb.metaDir();
+               if (!strstr(pszMeta, "zz-shadow-")) {
+                  printf("\n"); perr("wrong metadb name: %s", pszMeta);
+               } else {
+                  joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszMeta, pszRelSrc);
+                  char *pszShadow = szRefNameBuf;
+                  if (fileExists(pszShadow)) {
+                     if (!canWriteFile(pszShadow, 0))
+                        setWriteEnabled(pszShadow);
+                     if (remove(pszShadow)) {
+                        printf("\n");
+                        perr("failed to delete: %s", pszShadow);
+                     } else {
+                        printx("<time> +shadow<def>");
+                     }
+                  }
+               }
+            }
+         } else {
+            cs.filesDeleted++;
+         }
+         // NO LINEFEED UNTIL HERE
+
+         printf("\n");
+      }
+   }
+   else
+   if (b1 && b2)
+   {
+      // list touched files
+      FileStat ofsSrc;
+      FileStat ofsDst;
+      if (ofsSrc.readFrom(pszDst))  // SWAPPED
+         return 9;
+      if (!ofsDst.readFrom(pszSrc)) {  // SWAPPED
+         int ndif = ofsSrc.differs(ofsDst, 1); // same if older src
+         if (!ndif) {
+            if (cs.verbose)
+               info.print("no diff, skip: %s\n", pszSrc);
+            return 0;   // skip
+         }
+         if (cs.verbose)
+            info.print("[%s : differs, rc %d]\n", pszDst, ndif);
+         // the target file was changed after copy
+         cs.filesNewerInDst++;
+         if (bGlblShowSyncDiff)
+            info.print("DIF: %s   (%s)\n",pszDst,ofsSrc.diffReason(ndif));
+      }
+   }
+ 
+   return 0;
+}
+
+int execDirCleanup(char *pszSrc, FileList &oDirFiles)
+{__
+   // copy metadata of directory
+   char *pszDstRaw = pszGlblCopyDst;
+
+   // expect Src to contain a RELATIVE path, e.g.
+   //    data\tmp1.txt  data\sub\tmp2.txt
+   // strip the original base path, if any
+   char *pszRelSrc = relName(pszGlblCopySrc, pszSrc);
+
+   cs.dirsScanned++;
+   sprintf(szLineBuf, "%u files %u dirs", cs.filesScanned, cs.dirsScanned);
+   if (strlen(szLineBuf) > 20)
+      info.setAddInfoWidth(strlen(szLineBuf));
+   info.setStatus("scan ", pszRelSrc, szLineBuf);
+
+   // build full target name: d:/tmp/subdir
+   joinPath(szRefNameBuf, sizeof(szRefNameBuf), pszDstRaw, pszRelSrc);
+
+   // strip trailing / if any
+   int nRefLen = strlen(szRefNameBuf);
+   if ((nRefLen > 0) && (szRefNameBuf[nRefLen-1] == glblPathChar))
+      szRefNameBuf[nRefLen-1] = '\0';
+
+   // REORDER: currently, pszSrc is the TARGET dir
+   char *pszDst = pszSrc;
+   pszSrc = szRefNameBuf;
+   // NOW, pszSrc is the copy src, pszDst is the cleanup candidate.
+
+   if (!isDir(pszSrc) && isDir(pszDst))
+   {
+      bool isEmptyDir(char *pszIn);
+      if (isEmptyDir(pszDst))
+      {
+         setTextColor(nGlblWarnColor);
+         info.print("DEL: %s\n", pszDst);
+         setTextColor(-1);
+         if (!cs.sim && cs.yes) {
+            int nrc = rmdir(pszDst);
+            if (nrc)
+               perr("failed to delete: %s\n", pszDst);
+            else
+               cs.dirsDeleted++;
+         } else {
+            cs.dirsDeleted++;
+         }
+      }
+   }
+
+   return 0;
+}
+
+#endif // USE_SFK_BASE

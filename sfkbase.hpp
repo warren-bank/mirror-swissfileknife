@@ -91,6 +91,9 @@
   #include <pwd.h>
   #include <ifaddrs.h>
   #include <fcntl.h>
+  #ifndef MAC_OS_X
+   #include <wait.h>
+  #endif
   #ifndef  _S_IFDIR
    #define _S_IFDIR 0040000 // = 0x4000
   #endif
@@ -168,7 +171,7 @@ extern const char *glblAddWildCard ;
 extern const char *glblDotSlash    ;
 extern       char  glblNotChar     ;
 extern       char  glblRunChar     ;
-extern const char *glblLineEnd     ;
+extern       char  glblWildChar    ;
 
 #ifdef _WIN32
  #define SFK_FILT_NOT1 "-!"
@@ -176,18 +179,12 @@ extern const char *glblLineEnd     ;
  #define SFK_FILT_NOT3 "-le!"
  #define EXE_EXT ".exe"
  #define SFK_SETENV_CMD "set"
-extern const char *glblWildStr     ;
-extern const char  glblWildChar    ;
-extern const char *glblWildInfoStr ;
 #else
  #define SFK_FILT_NOT1 "-:"
  #define SFK_FILT_NOT2 "-ls:"
  #define SFK_FILT_NOT3 "-le:"
  #define EXE_EXT ""
  #define SFK_SETENV_CMD "export"
-extern char  glblWildStr[10];       // "+";
-extern char  glblWildChar;          // '+';
-extern char  glblWildInfoStr[20];   // "+ or \\*";
 #endif
 
 #define mymin(a,b) ((a<b)?(a):(b))
@@ -260,6 +257,7 @@ extern int shrinkFormTextBlock(char *psz, int &rLen, bool bstrict, bool xchars=0
 #ifndef SFKNOVFILE
  #define VFILEBASE
  #define VFILENET
+ // #define USE_WEBCONCACHE
 #endif // SFKNOVFILE
 
 #define WITH_CASE_XNN
@@ -736,6 +734,7 @@ public:
 
    #ifdef VFILEBASE
    char  *orgName( );      // same as name() except on redirects
+   bool   wasRedirected( );
    #endif // VFILEBASE
 
    int  status   ( );
@@ -749,7 +748,7 @@ public:
    bool hasName  ( );
 
    void  setIsDir    (bool bYesNo); // sets anydir status
-   bool  isAnyDir    ( );
+   bool  isAnyDir    (int ilevel=0);
    bool  isTravelDir ( );
    bool  isDirLink   ( );
 
@@ -797,7 +796,7 @@ public:
 
    // data I/O functions:
    bool   isFileOpen ( );
-   int   open       (cchar *pmode); // like fopen, but RC 0 == OK
+   int    open       (cchar *pmode); // like fopen, but RC 0 == OK
    // supported pmodes: "rb", "r", "r+b", "wb"
    // with "r", reading stops as soon as binary is detected.
    size_t read       (void *pbuf, size_t nbufsize);
@@ -830,7 +829,7 @@ public:
    int   renameto   (char *pszDst);
 
    // directory and archive processing:
-   int   openDir     ( );  // prep for nextEntry()
+   int   openDir     (int ilevel=0);  // prep for nextEntry()
    Coi   *nextEntry  ( );  // result owned by CALLER.
    void   closeDir   ( );  // required after processing.
    bool   isDirOpen  ( );
@@ -844,12 +843,12 @@ public:
 
    #ifdef VFILEBASE
 
-   int   rawLoadDir ( );
+   int   rawLoadDir (int ilevel=0);
    Coi   *getElementByAbsName (char *pabs); // result is NOT locked
 
    bool  isNet    ( );  // ftp OR http
    bool  isFtp    ( );
-   bool  isHttp   ( );
+   bool  isHttp   (char *pszOptURL=0);
 
    // if it's zip, http or ftp, then it's virtual
    bool  isVirtual(bool bWithRootZips=0);
@@ -898,7 +897,7 @@ public:
    #endif
 
    // if status()==0, can call this:
-   int  readStat        ( );
+   int  readStat        (char cFromInfo);
    
    int  getOpenElapsedTime  ( );  // elapsed msec since open(), or 0
 
@@ -924,8 +923,11 @@ public:
 
    #ifdef VFILEBASE
 
-   int   provideInput  (int nTraceLine, bool bsilent=0);
+   int   preload       (cchar *pszFromInfo, bool bsilent, int iStopMode, bool bfile=0);
+   int   preload       (cchar *pszFromInfo, uchar **ppout, num &rsize, int iStopMode);
+   int   provideInput  (cchar *pszFromInfo, bool bsilent=0);
    int   loadOwnFileRaw(num nmaxsize, uchar **ppout, num &rsize);
+   int   preloadFromWeb( );
 
    // ftp folders and files
    bool   rawIsFtpDir    ( );
@@ -939,11 +941,11 @@ public:
    void   rawCloseFtpSubFile  ( );
 
    // http pages and files
-   bool   rawIsHttpDir     ( );
+   int    readWebHead      ( );
+   bool   rawIsHttpDir     (int ilevel);
    //     rawLoadDir       ( )  // is generic
    Coi   *rawNextHttpEntry ( );
    void   rawCloseHttpDir  ( ); 
-   int    rawLoadHttpDir   ( );
    bool   isHttpDirByName  (char *psz);
 
    int   rawOpenHttpSubFile  (cchar *pmode);
@@ -981,6 +983,16 @@ public:
    bool  bClSetWriteCloseTime;
    // after close(), set file time using MTime and/or CTime
    uint  nClAttr;    // file attributes
+
+   // simplified infos for http cois
+   int   setTypeFromHeaders      ( );
+   int   setTypeFromContentType  (char *pctype);
+   bool  bClWebText;
+   bool  bClWebBinary;
+   bool  bClWebPage;
+   bool  bClWebJpeg;
+   bool  bClWebPNG;
+   bool  bClWebImage;
 
    // ON EXTENSIONS ABOVE, ADAPT COI::COPY, Coi::fillFrom!
    // also check FileStat::readFrom, writeTo
@@ -1262,6 +1274,7 @@ public:
    void addAfter     (ListEntry *after, ListEntry *toadd);
    void remove       (ListEntry *entry);
    void reset        ( );
+   int  size         ( );
 
 private:
    ListEntry *pClFirst;
@@ -1705,11 +1718,64 @@ public:
    num  maxscan;           // (x)replace
    bool nodump;            // udpdump -forward
    bool prefix;            // udpcast -prefix
-   int  maxwait;           // network
+   int  maxwebwait;        // network
+   int  maxftpwait;        // network
    bool upath;             // run
+   char *puser;
+   char *ppass;
+   bool errtotext;
+   bool trimscript;
+   char mlquotes;          // multi line quotes format
+   int  headers;           // print web headers
+   num  maxwebsize;        // web download limit
+   bool execweb;
+   int  maxlines;          // max lines to read
+   int  taillines;         // lines from eof
 };
 
-extern struct CommandStats cs;
+// extern struct CommandStats gs;
+// extern struct CommandStats cs;
+
+enum eWalkTreeFuncs {
+   eFunc_MD5Write = 1,
+   eFunc_JamFile  = 2,  // fixed value
+   eFunc_CallBack = 3,  // fixed value
+   eFunc_Detab       ,
+   eFunc_Entab       ,
+   eFunc_JamIndex    ,
+   eFunc_SnapAdd     ,
+   eFunc_FileStat    ,
+   eFunc_FileTime    ,
+   eFunc_Touch       ,
+   eFunc_Find        ,
+   eFunc_Mirror      ,  // deprecated
+   eFunc_Run         ,
+   eFunc_FormConv    ,
+   eFunc_Inst        ,
+   eFunc_RefColSrc   ,  // collect reflist sources
+   eFunc_RefColDst   ,  // collect reflist targets
+   eFunc_Deblank     ,
+   eFunc_FTPList     ,
+   eFunc_FTPNList    ,
+   eFunc_FTPLocList  ,
+   eFunc_Hexdump     ,
+   eFunc_Copy        ,
+   eFunc_Cleanup     ,
+   eFunc_AliasList   ,
+   eFunc_ReplaceFix  ,
+   eFunc_ReplaceVar  ,
+   eFunc_MetaUpd     ,
+   eFunc_MetaCheck   ,
+   eFunc_Scantab     ,
+   eFunc_Filter      ,
+   eFunc_Delete      ,
+   eFunc_DupScan     ,
+   eFunc_Version     ,
+   eFunc_Media       ,
+   eFunc_XHexDemo    ,
+   eFunc_Rename      ,
+   eFunc_GetPic
+};
 
 // temporary file class, REMOVING THE FILE IN DESTRUCTOR.
 class SFTmpFile
@@ -1874,6 +1940,9 @@ public:
    StringPipe *indata;  // text and attributes
    StringPipe *outdata; // text and attributes
    StringPipe *storedata;
+   bool        storetextdone;
+   StringPipe *perlinein;
+   StringPipe *perlineout;
 
    bool  text2files;
    bool  files2text;
@@ -1888,6 +1957,8 @@ public:
 
    int  addLine(char *pszText, char *pszAttr, bool bSplitByLF=0);
    int  addToCurLine(char *pszWords, char *pszAttr, bool bNewLine=0);
+   int  addStreamAsLines(int iCmd, char *pData, int iData);
+   int  addBlockAsLines(char *pData, int iData);
 
    int  addFile(Coi &ocoi); // is COPIED
    int  numberOfInFiles() { return infiles->numberOfEntries(); }
@@ -1945,16 +2016,179 @@ bool matchesCurrentRoot(char *pszDir);
 int matchesFileMask (char *pszFile, char *pszInfoAbsName=0);
 extern bool bGlblNoRootDirFiles;
 int saveFile(char *pszName, uchar *pData, int iSize, const char *pszMode="wb");
+int execFileCopySub(char *pszSrc, char *pszDst, char *pszShSrc=0, char *pszShDst=0);
+int joinShadowPath(char *pszDst, int nMaxDst, char *pszSrc1, char *pszSrc2);
+int createSubDirTree(char *pszDstRoot, char *pszDirTree, char *pszRefRoot);
 
 #ifdef _WIN32
+char *winSysError();
 int makeWinFileTime(num nsrctime, FILETIME &rdsttime, num nSrcNanoSec=0);
 #endif
 
+class ExtProgram // call external program
+{
+public:
+      ExtProgram  ( );
+
+   int   start (int iTimeout, const char *pszMask, ...);
+
+   int   stop  ( );
+
+   int   readFull (uchar *pBuf, int iToRead);
+
+   int   readFull (uchar **ppBuf, int *pBufSize);
+   // this will (temporarily) alloc *pBufSize.
+   // RC 0: OK *pBufSize contains data size
+   // RC 5: timeout
+   // RC 9: error
+
+   char *readLine ( );
+
+   // internal
+   int   read  (uchar *pBuf, int iMaxBuf);
+   // RC >0: bytes read
+   // RC  0: no data yet
+   // RC -1: completed
+   // RC -5: timeout
+   // RC -9: other error
+
+#ifdef _WIN32
+int winFork(char *pszCmd,HANDLE hChildStdOut,HANDLE hChildStdIn,HANDLE hChildStdErr);
+HANDLE hOutputReadTmp,hOutputRead,hOutputWrite;
+HANDLE hInputWriteTmp,hInputRead,hInputWrite;
+HANDLE hErrorWrite;
+HANDLE clXPid;
+#else
+pid_t mypopen2(char *commandin[], int *infp, int *outfp);
+pid_t clXPid;
+int   clXFin;
+#endif
+
+int   clXTimeout;
+num   clXRunStart;
+char  szClXCmdBuf    [1000+20];
+char  szClXDataBuf   [4000+20];
+char  szClXLineBuf   [1000+20];
+char *aClXCmdParms   [100];
+};
+
+int sfksetvar(char *pname, uchar *pdata, int idata);
+uchar *sfkgetvar(char *pname, int *plen);
+uchar *sfkgetvar(int i, char **ppname, int *plen);
+void sfkfreevars();
+bool isHttpURL(char *psz);
+extern KeyMap glblSFKVar;
+
 #ifndef USE_SFK_BASE
+
  #if defined(WINFULL) && defined(_MSC_VER)
   #define SFK_MEMTRACE
  #endif
+
+class FileMetaDB
+{
+public:
+   FileMetaDB  ( );
+
+   bool  canRead     ( ) { return nClMode == 1; }
+   bool  canUpdate   ( ) { return nClMode == 2; }
+
+   int  openUpdate  (char *pszFilename);
+   int  openRead    (char *pszBaseName, bool bVerbose); // zz-sign w/o .dat
+   int  updateFile  (char *pszName, uchar *pmd5cont = 0, bool bJustKeep=false);
+   int  removeFile  (char *pszName, bool bPrefixLF = 0);
+   int  updateDir   (char *pszName);
+   int  save        (int &rnSignsWritten);
+   void  reset       ( );
+   int  checkFile   (char *pszName);
+   int  numberOfFiles  ( ) { return aUnixTime.numberOfEntries(); }
+
+   int  getFileFlags   (int nIndex) { return aFlags.getEntry(nIndex, __LINE__); }
+
+   int  verifyFile  (char *pszFilename, char *pszShFile=0, bool bSilentAttribs=0);
+   int  verifyFile  (int nIndex, bool bCleanup);
+   // 0:ok 1:notfound 9:file_differs_inconsistently
+
+   int  numberOfVerifies  ( ) { return nClVerified; }
+   int  numberOfVerMissing( ) { return nClVerMissing; }
+   int  numberOfVerFailed ( ) { return nClVerFailed; }
+   bool  anyEvents         ( ) { return nClVerified || nClVerMissing || nClVerFailed; }
+   char *filename          ( ) { return pszClDBFile; }
+   int  setMetaDir        (char *psz);
+   char  *metaDir          ( ) { return pszClMetaDir; }
+   bool  isSignatureFile   (char *pszFile);
+
+private:
+   int  indexOf     (char *pszFile);
+   int  writeRecord (FILE *fout, int nIndex, SFKMD5 *pmd5, bool bIsLastRec);
+   int  writeEpilogue     (FILE *fout, SFKMD5 *pmd5);
+   int  loadDB      (char *pszBasePath, bool bVerbose);
+   int  loadRecord  (FILE *fin, SFKMD5 *pmd5, bool bSim); // uses szLineBuf
+   int  loadHeader  (FILE *fin, SFKMD5 *pmd5);
+   int  loadCheckEpilogue (FILE *fin, SFKMD5 *pmd5);
+
+   static char *pszClFileDBHead;
+
+   char     *pszClDBPath;
+   char     *pszClDBFile;
+   char     *pszClLineBuf;
+   char     *pszClMetaDir;
+   int     nClMode;
+   int     nClVerified;
+   int     nClVerMissing;
+   int     nClVerFailed;
+   NumTable  aUnixTime;
+   NumTable  aWinTime;
+   NumTable  aContSumLo;
+   NumTable  aContSumHi;
+   LongTable aFlags;
+   StringTable aPath;
+
+   uchar     abClRecBuf[1024];
+};
+
+extern FileMetaDB filedb;
+
+class FileVerifier
+{
+public:
+   FileVerifier   ( );
+   int  remember (char *pszDstName, num nsumhi, num nsumlo);
+   int  verify   ( );
+   void  reset    ( );
+   int  matchedFiles( ) { return nClMatched; }
+   int  failedFiles ( ) { return nClFailed; }
+   int  totalFiles  ( ) { return aClDst.numberOfEntries(); }
+private:
+   NumTable    aClSumHi;
+   NumTable    aClSumLo;
+   StringTable aClDst;
+   int  nClMatched;
+   int  nClFailed;
+};
+
+extern FileVerifier glblVerifier;
+
+class CopyCache
+{
+public:
+   CopyCache      ( );
+   void setBuf    (uchar *pBuf, num nBufSize);
+   int process   (char *pszSrcFile, char *pszDstFile, char *pszShDst, uint nflags);
+   int flush     ( );
+   void setEmpty  ( );
+private:
+   int putBlock  (uchar *pData, int nDataSize);
+   uchar *pClBuf;
+   num   nClBufSize;
+   num   nClUsed;
+   char  szTmpBuf[MAX_LINE_LEN+10];
+};
+
+extern CopyCache glblCopyCache;
+
 #endif
+
 extern void sfkmem_checklist(const char *pszCheckPoint);
 
 #endif // _SFKBASE_HPP_

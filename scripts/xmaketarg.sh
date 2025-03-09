@@ -1,6 +1,8 @@
 #!/bin/bash
 #
-# XMakeTarg - instant command line FTP Server for targets.
+# XMakeTarg 0.5 - Cross network make of projects.
+# Target server script.
+# 
 # Receive binary file updates, instantly, without
 # complex user configuration or certificate setup.
 # requires:
@@ -10,8 +12,8 @@
 #     then  mv sfkarm sfk; chmod +x sfk
 # Store and edit this using UNIX LINE ENDINGS (LF only).
 
-# === server parameters ===
+# === set file transfer password ===
 export SFK_FTP_PW=mybinpw456
 
-# === 1. run build server for one user ===
-sfk sftserv -rw -run -port=2201
+# === run file receive server on default port 2121 ===
+sfk sftserv -rw

@@ -1,6 +1,8 @@
 #!/bin/bash
 #
-# XMakeRem 0.3 - remote compile script for linux servers.
+# XMakeRem 0.5 - Cross network make of projects.
+# Compile command script.
+# 
 # Compile on build server, send error output to your PC,
 # forward compiled binaries to target device.
 #

@@ -1,6 +1,11 @@
 
 #ifdef VFILEBASE
 
+#ifdef WITH_SSL
+ #include <openssl/ssl.h>
+ #include <openssl/err.h>
+#endif // WITH_SSL
+
 #ifdef USE_DCACHE
 
 // area one, ordered by namesum
@@ -26,7 +31,7 @@ public:
       CoiMap   ( );
      ~CoiMap   ( );
 
-   void  reset (bool bWithDiskCache=0);
+   void  reset (bool bWithDiskCache, const char *pszFromInfo);
    // expects: all coi entries have zero references.
    // if not, errors are dumped.
    // deletes all coi entries.
@@ -108,11 +113,11 @@ public:
    
    int  send     (uchar *pBlock, uint nLen);
 
-   char *readLine (char *poptbuf=0, uint noptmaxbuf=0);
+   char *readLine (char *poptbuf=0, uint noptmaxbuf=0, bool braw=0);
    // read()'s char by char until CRLF is reached.
    // returns supplied buffer, or NULL on EOD/close.
    // if no buffer is supplied, provides internal buffer.
-   // returned lines are stripped from CRLF.
+   // returned lines are stripped from CRLF except if braw.
    // SHARE: may share buffer with putf.
 
    // raw text I/O, sends all CRLF as supplied by caller:
@@ -139,6 +144,7 @@ public:
 
    int   nClTraceLine;
    num   nClStartTime;
+   int   iClMaxWait;
 
 friend class TCPCore;
 };
@@ -147,7 +153,7 @@ friend class TCPCore;
 class TCPCore
 {
 public:
-      TCPCore  (char *pszID);
+      TCPCore  (char *pszID, char cProtocol);
      ~TCPCore  ( );
 
    char  *getID   ( );
@@ -204,8 +210,8 @@ public:
    bool  verbose     ( );
 
    // reference counting:
-   int  incref   ( );  // increment refcnt
-   int  decref   ( );  // decrement refcnt
+   int  incref   (cchar *pTraceFrom);  // increment refcnt
+   int  decref   (cchar *pTraceFrom);  // decrement refcnt
    int  refcnt   ( );  // current no. of refs
 
    // close all open connections:
@@ -214,7 +220,7 @@ public:
    // set basic proxy infos, may be used by derived classes only.
    static int    setProxy (char *phost, int nport);
 
-protected:
+// protected:
    int  checksys ( );
    void  wipe     ( );
    int  addCon   (TCPCon *pcon);   // add to fdset
@@ -229,7 +235,9 @@ protected:
    fd_set  clReadSet; // all sockets pending accept and read
    fd_set  clSetCopy;
    bool    bClVerbose;
-   int    nClRefs;
+   int     nClRefs;
+   int     iClMaxWait;
+   char    cClProtocol;
 
    static  char szClProxyHost[100];
    static  int  nClProxyPort;
@@ -348,6 +356,8 @@ private:
 friend class Coi;
 };
 
+class ExtProgram;
+
 class HTTPClient : public TCPCore
 {
 public:
@@ -379,10 +389,6 @@ public:
    //       file and dir entries will be filled therein.
    // returned CoiTable is always managed by caller.
 
-   int  loadFile (char *purl, num nMaxSize, uchar **ppout, num &routlen);
-   // returned pout is managed by caller.
-   // returned pout is zero terminated.
-
    int  sendReq  (cchar *pcmd, char *pfile, char *phost, int nport);
    // requires an open connection
 
@@ -390,25 +396,29 @@ public:
    // returned object is managed by TPCCore.
    // same as connect() but with optional proxy handling.
 
+   int  iClWebRC;
+
 private:
+   bool  haveConnection ( );
    void  wipe     ( );
 
-   int  readraw  (uchar *pbuf, int nbufsize);
+   int  readraw      (uchar *pbuf, int nbufsize);
+   int  readrawfull  (uchar *pbuf, uint nbufsize);
    // read block without any chunk handling.
 
-   int  splitURL (char *purl);
+   int  splitURL  (char *purl);
    char *curhost  ( );  // from spliturl
    char *curpath  ( );  // from spliturl
 
-   int  joinURL  (char *pabs, char *pref);
+   int  joinURL   (char *pabs, char *pref);
    char *curjoin  ( );  // from joinurl
 
    int  splitHeader (char *phead);
    char *curname  ( );  // of header entry
    char *curval   ( );  // of header entry
 
-   int  sendLine (char *pline);
-   char *readLine ( );
+   int  sendLine  (char *pline);
+   char *readLine (bool braw=0);
 
    int  rawReadHeaders (int &rwebrc, char *purlinfo, Coi *pOptCoi=0); // , StringMap *pheads=0);
    // returns sfk rc, 0 (OK) ... 9 (fatal error)
@@ -418,13 +428,15 @@ private:
 
    TCPCon   *pClCurCon; // current i/o connection
 
-   char      aClURLBuf[300];  // current hostname, path
+   char      aClURLBuf[500];  // current hostname, path
    char     *pClCurPath;      // within URLBuf
 
    char      aClHeadBuf[200]; // current header line
    char     *pClCurVal;       // within HeadBuf
 
-   char      aClJoinBuf[300]; // join: recombined url
+   char      aClJoinBuf[500]; // join: recombined url
+
+   char      aClIOBuf[4096];
 
    // Header-Free Servers: first reply line cache
    char     *pszClLineCache;  // only for first line
@@ -442,6 +454,13 @@ private:
    // if set, no connections are possible:
    bool      bClNoCon;
 
+   bool      bClSSL;
+
+   #ifdef WITH_SSL
+   SSL_CTX *pClSSLContext;
+   SSL     *pClSSLSocket;
+   #endif // WITH_SSL
+
 friend class Coi;
 };
 
@@ -454,20 +473,24 @@ public:
       // creates clients on demand. returned clients
       // - are still MANAGED BY THE CACHE
       // - must be released after use
+      #ifdef USE_WEBCONCACHE
       HTTPClient  *allocHttpClient(char *pBaseURL);
+      #endif
       FTPClient   *allocFtpClient (char *pBaseURL);
       // returns NULL if no locked con is available
 
       // must be called after temporary use,
       // e.g. download of a single web file:
+      #ifdef USE_WEBCONCACHE
       int  releaseClient (HTTPClient *p);
+      #endif
       int  releaseClient (FTPClient  *p);
 
       void  closeConnections  ( );
-      void  reset ( );
+      void  reset (bool bfinal, const char *pszFromInfo);
 
 private:
-      void  closeAndDelete(void *praw);
+      int   closeAndDelete(void *praw);
       // caller MUST remove() manually after that!
 
       int  forceCacheLimit( );

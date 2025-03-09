@@ -1,6 +1,8 @@
 #!/bin/bash
 #
-# XMakeServ - remote instant command line FTP Server.
+# XMakeServ 0.5 - Cross network make of projects.
+# Compile server script.
+# 
 # Receive files, and run commands. Running commands
 # always requires a password given by client.
 # requires:
