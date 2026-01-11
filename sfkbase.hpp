@@ -337,7 +337,7 @@ extern int fileExists(char *pszFileName, bool bOrDir=0);
 
 #define strcopy(dst,src) mystrcopy(dst,src,sizeof(dst)-10)
 char *myvtext        (const char *pszFormat, ...);
-void  mystrcopy      (char *pszDst, cchar *pszSrc, int nMaxDst);
+void  mystrcopy      (void *pszDst, cchar *pszSrc, int nMaxDst);
 char *mystrstri      (char *phay, cchar *ppat);
 int  mystrstrip      (char *pszHayStack, cchar *pszNeedle, int *lpAtPosition);
 char *mystrrstr      (char *psrc, cchar *ppat);
@@ -677,7 +677,7 @@ public:
 #else
 struct SFKFindData
 {
-   char *name;
+   char  name[SFK_MAX_PATH+10]; // sfk2003 i/o *name
    int   attrib;
    num   time_write;
    num   time_create;

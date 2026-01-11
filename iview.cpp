@@ -1,13 +1,13 @@
 
-#define VER_NUM1 "1.2.0"
-#define VER_NUM2 "120"
-#define META_VERSION 120
+#define VER_NUM1 "1.2.1"
+#define VER_NUM2 "121"
+#define META_VERSION 121
 
 /*
    Easy Image Viewer (iview)
    =========================
  
-   (w) 2024 by J Thumm, www.stahlworks.com
+   (w) 2024-2025 by J Thumm, www.stahlworks.com
 
    compile with vc 14:
       cl /Feiview.exe -DSFKPIC -DSFKMINCORE -I. iview.cpp sfk.cpp sfkext.cpp sfkpic.cpp iviewres.res kernel32.lib user32.lib gdi32.lib shell32.lib comdlg32.lib advapi32.lib /link /SUBSYSTEM:WINDOWS
@@ -16,6 +16,9 @@
       imgconv iviewres.bmp iviewres.ico
       (imagemagick, from 24 bit bmp)
       rc iviewres.rc
+
+   1.2.1 11.04.24
+      -  add: keys 5,6,7 now also move a .txt file parallel to the .png, if present
 
    1.2.0 19.10.24
       -  released as part of the sfk project on sourceforge
@@ -34,6 +37,7 @@
 #define _WIN32_IE 0x600
 
 #include "sfkbase.hpp"
+#include "sfkext.hpp"
 #include "sfkint.hpp"
 
 #include <shobjidl.h> 
@@ -56,7 +60,6 @@ typedef unsigned char uint8_t;
 typedef unsigned int  pixel_t;
 typedef int inc;
 
-int bverb = 0;
 num tGlblStart = 0;
 
 int iInfoFontHeight = 24;
@@ -102,6 +105,7 @@ char *absPath(char *pszFile)
    joinPath(szPath, sizeof(szPath)-10, szGlblOwnDir, pszFile);
    return szPath;
 }
+
 
 #define __
 
@@ -290,6 +294,7 @@ HCURSOR glblNormCursor = 0;
 
 #undef _mkdir
 
+#ifndef RFS_LIB
 static int existsFile(char *pszName, int bOrDir=0)
 {
    DWORD nAttrib = GetFileAttributes(pszName);
@@ -302,6 +307,7 @@ static int existsFile(char *pszName, int bOrDir=0)
 
    return 1;
 }
+#endif
 
 char *strend(char *psz, int n)
 {
@@ -361,6 +367,15 @@ int copyFileFlat(char *psrc, char *pdst, int iquiet=0)
       remove(pdst);
  
    return nrc;
+}
+
+int loadToBuffer(char *pszFile, char *pBuffer, int iMaxSize)
+{
+   FILE *fin=fopen(pszFile,"rb");
+   if (!fin) return 0;
+   int iread = fread(pBuffer,1,iMaxSize,fin);
+   fclose(fin);
+   return iread;
 }
 
 ulong myulfromucle(uchar *p)
@@ -630,11 +645,17 @@ void
 pixel_t
       getwinpix         (int xc,int yc);
 
+void  cacheNextFile     ( ),
+      runThread         ( );
+bool  checkCacheFile    (char *pname);
+
 LRESULT process   (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 int      clmixer;
 int      clverbose;
 int      clpendingkey;
+
+int      clthreadstate;
 
 // realm-independent display
 HWND     clwin;
@@ -690,10 +711,20 @@ char     folder[SFK_MAX_PATH+10];
 ViewPic  afile[MAX_FILES+10];
 int      nfile;
 
+uint32_t acached[MAX_FILES+10];
+int      ncached=0;
+
 SFKPic    src_mempic;
 SFKPic    dst_mempic;
 char      szTextTag[4096];
 char      szTextCopy[4096];
+char      szGlblID[100];
+
+char      szGlblMid[100];
+char      szGlblCid[100];
+char      szGlblPid[100];
+char      szGlblEid[100];
+char      szGlblOid[100];
 
 int       clanimprog, clhotshotinfo, clmobilex;
 
@@ -793,6 +824,8 @@ enum UIFlags {
    UINextLine           = (1U << 14),
    UIMultiLineText      = (1U << 15),
    UILowCol             = (1U << 16),
+   UIColGreen           = (1U << 17),
+   UIColOrange          = (1U << 18),
 };
 
 // user interface
@@ -818,6 +851,7 @@ void      clearscreen (HDC hdc);
 int       getuielem     (int x, int y);
 int       processUIElem (int x, int y, int ieventflags);
 int       processKey    (int c, int iFlags=0);
+int       commit        ( );
 void      stopAutoReload(int iFrom, int iInfo=0);
 void      handleTimer   (ulong nid);
 void      checkDisplayUpdates ( );
@@ -857,6 +891,7 @@ char      szClAlertText[200];
 };
 
 View gview;
+HANDLE gthread=0;
 
 View::View( )
 {
@@ -877,6 +912,44 @@ View::View( )
    clcurrealm = 0;
    clwithsub = 1;
    clremembered = -1;
+}
+
+class AutoThreadLock
+{
+public:
+      AutoThreadLock ( );
+     ~AutoThreadLock ( );
+
+   int clrestore;
+};
+
+AutoThreadLock::AutoThreadLock( )
+{
+   if (!gview.clthreadstate)
+      return;
+
+   // if thread is caching a file, we wait up to 3 sec
+   int istep=0;
+   for (; gview.clthreadstate==4 && istep<60; istep++)
+      doSleep(50);
+   if (istep >= 60)
+      dvlog("mxtmo1 %d/%d", gview.clthreadstate, 1);
+
+   // tell cache thread to wait
+   gview.clthreadstate = 2;
+   // wait for confirmation
+   for (istep=0; gview.clthreadstate==2 && istep<20; istep++)
+      doSleep(50);
+   if (istep >= 20)
+      dvlog("mxtmo2 %d/%d", gview.clthreadstate, 1);
+}
+
+AutoThreadLock::~AutoThreadLock( )
+{
+   if (!gview.clthreadstate)
+      return;
+
+   gview.clthreadstate = 1;
 }
 
 int View::err(cchar *pszFormat, ...)
@@ -1020,7 +1093,7 @@ int View::provideMetaDir( )
          "Writing not possible", MB_OK);
       return 9;
    }
-   if (isDir(clmetadir))
+   if (haveMetaDir())
       return 0;
    #ifndef USE_MEM_FS
    int irc = 0;
@@ -1035,7 +1108,7 @@ int View::provideMetaDir( )
       return 5;
    }
    #endif
-   if (_mkdir(clmetadir)) {
+   if (sfkmkdir(clmetadir)) {
       MessageBox(0, "cannot create folder", "error", MB_OK);
       clmixer = 0;
       return 10;
@@ -1235,17 +1308,21 @@ void View::makeui( )
    int iSessionMin = iSessionSec/60;
 
    char szNow[100]; szNow[0]='\0';
+   char szExt[100]; szExt[0]='\0';
+
+
    num nnow = time(0);
    struct tm *pnow = localtime(&nnow);
    if (pnow)
       strftime(szNow, sizeof(szNow)-10, "%H:%M", pnow);
 
    if (iSessionHou > 0)
-      addui(" ", 100, 20, vtext(" %s %02d:%02d",szNow,iSessionHou,iSessionMin), UILowCol|UIJustText|UINextLine);
+      addui(" ", 100, 20, vtext(" %s %02d:%02d%s",szNow,iSessionHou,iSessionMin,szExt), UILowCol|UIJustText|UINextLine);
    else if (iSessionMin > 0)
-      addui(" ", 100, 20, vtext(" %s %dm",szNow,iSessionMin), UILowCol|UIJustText|UINextLine);
+      addui(" ", 100, 20, vtext(" %s %dm%s",szNow,iSessionMin,szExt), UILowCol|UIJustText|UINextLine);
    else
-      addui(" ", 100, 20, vtext(" %s",szNow), UILowCol|UIJustText|UINextLine);
+      addui(" ", 100, 20, vtext(" %s%s",szNow,szExt), UILowCol|UIJustText|UINextLine);
+
 
    strcopy(szTextCopy,szTextTag);
    char *pstart = szTextCopy;
@@ -1262,29 +1339,64 @@ void View::makeui( )
    if (pszSubStr)
       pszSubStr += strlen(", Variation seed strength: ");
 
-   char *pszID = strstr(pstart, " id=");
-   if (pszID)
-      pszID += strlen(" id=");
+   int isteps=0,ihisteps=0;
+   char *psteps=strstr(pstart, "\nSteps: ");
+   if (psteps) isteps = atoi(psteps+strlen("\nSteps: "));
+   psteps=strstr(pstart, ", Hires steps: ");
+   if (psteps) ihisteps = atoi(psteps+strlen(", Hires steps: "));
+
+   char *pszID = 0;
+   char *ptmp=0;
+   
+   if (szGlblID[0])
+      pszID = szGlblID;
+   else {
+      pszID = strstr(pstart, " id=");
+      if (pszID) {
+         // we are in szTextCopy and can change that.
+         // pszID is last of patterns so we can start editing.
+         pszID += strlen(" id=");
+         ptmp=pszID; while (*ptmp!=0 && (isalnum(*ptmp)!=0 || *ptmp=='/')) ptmp++; *ptmp='\0';
+      }
+   }
 
    addui(" ", 100, 20, "", UILowCol|UIJustText|UINextLine);
 
-   char *ptmp=0;
    if (pszID) {
-      ptmp=pszID; while (*ptmp!=0 && (isalnum(*ptmp)!=0 || *ptmp=='/')) ptmp++; *ptmp='\0';
       addui(" ", 100, 20, vtext(" id %s",pszID), UILowCol|UIJustText|UINextLine);
+      addui(" ", 100, 20, "", UILowCol|UIJustText|UINextLine);
+   }
+   if (szGlblMid[0]) {
+      addui(" ", 100, 20, vtext(" mo %s",szGlblMid), UILowCol|UIJustText|UINextLine);
+      if (szGlblCid[0])
+         addui(" ", 100, 20, vtext(" ch %s",szGlblCid), UILowCol|UIJustText|UINextLine);
+      if (szGlblPid[0])
+         addui(" ", 100, 20, vtext(" ps %s",szGlblPid), UILowCol|UIJustText|UINextLine);
+      if (szGlblOid[0])
+         addui(" ", 100, 20, vtext(" or %s",szGlblOid), UILowCol|UIJustText|UINextLine);
+      if (szGlblEid[0])
+         addui(" ", 100, 20, vtext(" ev %s",szGlblEid), UILowCol|UIJustText|UINextLine);
       addui(" ", 100, 20, "", UILowCol|UIJustText|UINextLine);
    }
    if (pszSeed) {
       ptmp=pszSeed; while (*ptmp!=0 && *ptmp!=',') ptmp++; *ptmp='\0';
-      addui(" ", 100, 20, vtext(" sd %s",pszSeed), UILowCol|UIJustText|UINextLine);
+      int icol=UILowCol;
+      addui(" ", 100, 20, vtext(" sd %s",pszSeed), icol|UIJustText|UINextLine);
    }
    if (pszSubSeed) {
       ptmp=pszSubSeed; while (*ptmp!=0 && *ptmp!=',') ptmp++; *ptmp='\0';
-      addui(" ", 100, 20, vtext(" su %s",pszSubSeed), UILowCol|UIJustText|UINextLine);
+      int icol=UILowCol;
+      addui(" ", 100, 20, vtext(" su %s",pszSubSeed), icol|UIJustText|UINextLine);
    }
    if (pszSubStr) {
       ptmp=pszSubStr; while (*ptmp!=0 && *ptmp!=',') ptmp++; *ptmp='\0';
       addui(" ", 100, 20, vtext(" st %s",pszSubStr), UILowCol|UIJustText|UINextLine);
+   }
+   if (isteps) {
+      addui(" ", 100, 20, "", UILowCol|UIJustText|UINextLine);
+      addui(" ", 100, 20, vtext(" bs %d",isteps), UILowCol|UIJustText|UINextLine);
+      if (ihisteps)
+         addui(" ", 100, 20, vtext(" hs %d",ihisteps), UILowCol|UIJustText|UINextLine);
    }
 
 
@@ -1309,10 +1421,12 @@ bool View::currentPicIsPartOfList(int ilist)
 
    memset(szGlblListBuf,0,sizeof(szGlblListBuf));
 
-   FILE *fin=fopen(plname,"rb");
-   if (!fin) return false;
-   fread(szGlblListBuf,1,sizeof(szGlblListBuf)-10,fin);
-   fclose(fin);
+   // FILE *fin=fopen(plname,"rb");
+   // if (!fin) return false;
+   // fread(szGlblListBuf,1,sizeof(szGlblListBuf)-10,fin);
+   // fclose(fin);
+   int iread=loadToBuffer(plname,szGlblListBuf,sizeof(szGlblListBuf)-10);
+   szGlblListBuf[iread]='\0';
 
    if (!strstr(szGlblListBuf, pszPic))
       return false;   
@@ -1414,10 +1528,14 @@ void View::drawui(HDC hdc)
       if (tclick != 0 && getCurrentTime()-tclick<500)
          hinnerrim = hinneractive;
 
+      uint icol=0x999999UL;
       bool btext = (iflags & UIJustText) ? 1: 0;
       bool blowcol = (iflags & UILowCol) ? 1: 0;
       int bordx = (iflags & UIJustText) ? 0 : 2;
       int bordy = (iflags & UIJustText) ? 0 : 2;
+
+      if (iflags & UIColGreen) icol=0x00ff00UL;
+      if (iflags & UIColOrange) icol=0x50e0ffUL;
 
       SetBkMode(hdc, TRANSPARENT);
 
@@ -1432,7 +1550,7 @@ void View::drawui(HDC hdc)
          if (blowcol)
             SetTextColor(hdc, 0x666666UL);
          else
-            SetTextColor(hdc, 0x999999UL);
+            SetTextColor(hdc, icol);
          orect.left = aelem[i].x+bordx+1;
          orect.top = aelem[i].y+bordy+1;
          orect.right = aelem[i].x+aelem[i].w-bordx*2;
@@ -1778,8 +1896,6 @@ int View::processUIElem (int x, int y, int ieventflags)
    bool bshift = (ieventflags & 4) ? 1 : 0;
    bool bctrl  = (ieventflags & 8) ? 1 : 0;
 
-   int iupdate = 0;
-
    pelem->tclickstart = getCurrentTime();
 
    processKey(pelem->id,2); // from ui
@@ -1797,14 +1913,15 @@ char *View::getOutputPath(cchar *pszOutFolder)
    char *pdst = afile[isrc].name;
    if (!pdst)
       return 0;
- 
-   joinPath(exportpath, sizeof(exportpath)-10, folder, (char*)pszOutFolder);
 
    // always init target relname with curname
    char *prel = strrchr(pdst, '\\');
    if (prel) prel++;
    else prel = pdst;
    strcopy(exportname, prel);
+
+
+   joinPath(exportpath, sizeof(exportpath)-10, folder, (char*)pszOutFolder);
 
    joinPath(exportfullname, sizeof(exportfullname)-10, exportpath, exportname);
 
@@ -1821,6 +1938,10 @@ char *View::getOutputPath(cchar *pszOutFolder)
 
 void View::moveImageTo(cchar *pfolder)
 {__
+
+   char szNameBuf1[SFK_MAX_PATH+10];
+   char szNameBuf2[SFK_MAX_PATH+10];
+
    int isrc = cur.curfile;
 
    if (clremembered>=0)
@@ -1857,7 +1978,24 @@ void View::moveImageTo(cchar *pfolder)
    if (existsFile(pdst))
       remove(pdst);
 
+
    int isubrc = rename(psrc,pdst);
+
+   /*
+      dump\foo.png -> dump\zz-output\5\foo.png
+      dump\foo.txt -> dump\zz-output\5\foo.txt
+   */
+   strcopy(szNameBuf1, psrc);
+   strcopy(szNameBuf2, pdst);
+   char *pdot1=strrchr(szNameBuf1,'.');
+   char *pdot2=strrchr(szNameBuf2,'.');
+   if (pdot1 && pdot2 && !strcmp(pdot1,".png") && !strcmp(pdot2,".png"))
+   {
+      strcpy(pdot1,".txt");
+      strcpy(pdot2,".txt");
+      if (existsFile(szNameBuf1))
+         rename(szNameBuf1,szNameBuf2);
+   }
 
    if (isubrc)
       err("move failed, rc=%d: %s", isubrc, pdst);
@@ -2120,6 +2258,12 @@ int View::loadpic(char *pszFile, cchar *pszReason, bool bNoMetaLoad, int ipicrot
    cur.alphamode = 0;
 
    szTextTag[0] = '\0';
+   szGlblID[0] = '\0';
+   szGlblMid[0] = '\0';
+   szGlblCid[0] = '\0';
+   szGlblPid[0] = '\0';
+   szGlblEid[0] = '\0';
+   szGlblOid[0] = '\0';
 
    if (!pszFile)
    {
@@ -2167,7 +2311,7 @@ int View::loadpic(char *pszFile, cchar *pszReason, bool bNoMetaLoad, int ipicrot
    }
 
    // msg("loadpic #%d / %d : %s\n",cur.curfile,nfile,pszFile?pszFile:"<null>");
-   // printf("loadpic #%d / %d : %s\n",cur.curfile,nfile,pszFile?pszFile:"<null>"); fflush(stdout); // °°
+   // printf("loadpic #%d / %d : %s\n",cur.curfile,nfile,pszFile?pszFile:"<null>"); fflush(stdout);
 
    num tstart = getCurrentTime();
 
@@ -2183,12 +2327,13 @@ int View::loadpic(char *pszFile, cchar *pszReason, bool bNoMetaLoad, int ipicrot
 
    // cur.loadrc = dst_mempic.load(pszFile);
    char *pszToLoad = szFastFile[0] ? szFastFile : pszFile;
-   uchar *pPack = 0, *pPack2 = 0;
-   num    nPack = 0, nPack2 = 0;
+   uchar *pPack = 0, *pPack2 = 0, *pPack3 = 0;
+   num    nPack = 0, nPack2 = 0, nPack3 = 0;
    if (!(pPack = loadBinaryFlex(pszToLoad, nPack)))
       return 9;
 
    // no return without delete begin
+
 
    cur.loadrc = dst_mempic.load(pPack, nPack);
 
@@ -2343,6 +2488,96 @@ int View::loadpic(char *pszFile, cchar *pszReason, bool bNoMetaLoad, int ipicrot
       }
    }
 
+   if (szTextTag[0])
+   do
+   {
+      char *pszID = strstr(szTextTag, " id=");
+      if (!pszID) break;
+      pszID += strlen(" id=");
+      int i=0;
+      for (i=0; i+10<sizeof(szGlblID); i++) {
+         char c=pszID[i];
+         if (!c) break;
+         if (isalnum(c) || c=='/') {
+            szGlblID[i]=c;
+            continue;
+         }
+         break;
+      }
+      szGlblID[i]='\0';
+      if (!szGlblID[0]) break;
+
+      // best1\12345.jpg
+      // -> best1\idnum.stxt
+      strcopy(szFile2, pszFile);
+      char *psla=strrchr(szFile2, '\\');
+      if (!psla) break;
+      int ilen=psla-szFile2;
+      snprintf(szFile3,SFK_MAX_PATH, "%.*s\\%s.stxt", (int)ilen,szFile2,szGlblID);
+      if (!existsFile(szFile3)) break;
+      if (!(pPack3 = loadBinaryFlex(szFile3, nPack3)))
+         break;
+      strncpy(szTextTag, (char*)pPack3, sizeof(szTextTag)-10);
+      szTextTag[sizeof(szTextTag)-10]='\0';
+   }
+   while (0);
+
+   if (szTextTag[0])
+   {
+      char *pmid=strstr(szTextTag," mid=");
+      if (pmid) {
+         char *p1=pmid+5;
+         char *p2=p1;
+         while (*p2 && isalnum(*p2)) p2++;
+         int ilen=p2-p1;
+         if (ilen+10<sizeof(szGlblMid)) {
+            memcpy(szGlblMid,p1,ilen);
+            szGlblMid[ilen]='\0';
+         }
+      }
+      if ((pmid=strstr(szTextTag," cid="))) {
+         char *p1=pmid+5;
+         char *p2=p1;
+         while (*p2 && isalnum(*p2)) p2++;
+         int ilen=p2-p1;
+         if (ilen+10<sizeof(szGlblMid)) {
+            memcpy(szGlblCid,p1,ilen);
+            szGlblCid[ilen]='\0';
+         }
+      }
+      if ((pmid=strstr(szTextTag," eid="))) {
+         char *p1=pmid+5;
+         char *p2=p1;
+         while (*p2 && isalnum(*p2)) p2++;
+         int ilen=p2-p1;
+         if (ilen+10<sizeof(szGlblMid)) {
+            memcpy(szGlblEid,p1,ilen);
+            szGlblEid[ilen]='\0';
+         }
+      }
+      if ((pmid=strstr(szTextTag," oid="))) {
+         char *p1=pmid+5;
+         char *p2=p1;
+         while (*p2 && isalnum(*p2)) p2++;
+         int ilen=p2-p1;
+         if (ilen+10<sizeof(szGlblMid)) {
+            memcpy(szGlblOid,p1,ilen);
+            szGlblOid[ilen]='\0';
+         }
+      }
+      if ((pmid=strstr(szTextTag," pid="))) {
+         char *p1=pmid+5;
+         char *p2=p1;
+         while (*p2 && isalnum(*p2)) p2++;
+         int ilen=p2-p1;
+         if (ilen+10<sizeof(szGlblMid)) {
+            memcpy(szGlblPid,p1,ilen);
+            szGlblPid[ilen]='\0';
+         }
+      }
+   }
+   while (0);
+
    checkEscape(); // loadpic
 
    // rotate due to live parm from cursor up/down
@@ -2387,6 +2622,7 @@ int View::loadpic(char *pszFile, cchar *pszReason, bool bNoMetaLoad, int ipicrot
    delete [] pPack;
    
    if (pPack2) delete [] pPack2;
+   if (pPack3) delete [] pPack3;
 
    return cur.loadrc;
 }
@@ -2688,7 +2924,7 @@ void View::draw( )
       strcopy(szBuf, szTextTag);
 
       int nlines = 0;
-      int imaxlinelen = 140;
+      int imaxlinelen = 160;
       char *psz=szBuf,*pspc=0;
       int icur=0,ispc=0;
       for (; *psz; psz++)
@@ -2709,7 +2945,7 @@ void View::draw( )
             icur=0; ispc=0; pspc=0;
             nlines++;
             orect.top -= iFontHeight;
-            if (nlines >= 10) {
+            if (nlines >= 12) {
                *psz='\0';
                break;
             }
@@ -3027,6 +3263,121 @@ void View::setdstdir(char *psz)
       msg("meta dir: %s", clmetadir);
 }
 
+// uint sfkPackSum(uchar *buf, uint len, uint crc)
+
+// within thread
+bool View::checkCacheFile(char *pname)
+{
+   uint nsum=sfkPackSum((uchar*)pname,strlen(pname),0);
+   int i=0,ifree=-1;
+   for (;i<MAX_FILES;i++)
+   {
+      if (acached[i]==0) {
+         ifree=i;
+         break;
+      }
+      if (acached[i]==nsum)
+         break;
+   }
+   if (ifree>=0)
+   {
+      // not yet cached
+      // dvlog("cache #%d %08x %s\n",i,nsum,pname);
+      acached[i]=nsum;
+      ncached=i+1;
+      num nsize=0;
+      uchar *p=loadBinaryFlex(pname,nsize);
+      if (p) delete [] p;
+      return 1;
+   }
+   return 0;
+}
+
+void View::cacheNextFile()
+{
+   int icur=cur.curfile;
+   int idist=0;
+   for (;icur>=0; icur--)
+   {
+      char *pname=afile[icur].name;
+      if (!pname)
+         continue;
+      if (idist++ > 30)
+         break;
+      #ifdef RFS_LIB
+      if (!strncmp(pname, "\\\\", 2))
+         continue;
+      #endif
+      if (checkCacheFile(pname))
+         break;
+   }
+   icur=cur.curfile;
+   idist=0;
+   for (;icur<nfile; icur++)
+   {
+      char *pname=afile[icur].name;
+      if (!pname)
+         continue;
+      if (idist++ > 30)
+         break;
+      #ifdef RFS_LIB
+      if (!strncmp(pname, "\\\\", 2))
+         continue;
+      #endif
+      if (checkCacheFile(pname))
+         break;
+   }
+}
+
+void View::runThread()
+{
+   // image precaching is yet internal,
+   // as it may not be fully stable.
+
+   memset(acached, 0, sizeof(acached));
+
+   clthreadstate = 1;
+
+   while (1)
+   {
+      if (clthreadstate >= 2)
+      {
+         // confirm wait request
+         if (clthreadstate==2)
+            clthreadstate=3;
+
+         doSleep(50);
+
+         continue;
+      }
+
+      clthreadstate = 4;
+
+      if (nfile > 0)
+         cacheNextFile();
+
+      // main thread may have overwritten
+      if (clthreadstate == 4)
+         clthreadstate = 1;
+
+      doSleep(50);      
+   }
+}
+
+DWORD WINAPI MyRunViewThread(LPVOID lpParam)
+{
+   gview.runThread();
+   return 0;
+}
+
+int runViewThread()
+{
+   gthread = CreateThread(NULL, 0, MyRunViewThread, 0, 0, 0);
+   if (gthread == NULL)
+      return 9;
+   return 0;
+}
+
 int View::scandir(char *pszdir, int ilevel)
 {__
    char szDirPat[510];
@@ -3034,6 +3385,10 @@ int View::scandir(char *pszdir, int ilevel)
 
    char szPicnamer[510];
    memset(szPicnamer,0,sizeof(szPicnamer));
+
+   #ifdef WITH_THREAD
+   AutoThreadLock olock;
+   #endif
 
    // if (ilevel==0 && bverb) printf("scandir realm=%d\n",clcurrealm);
 
@@ -3053,6 +3408,7 @@ int View::scandir(char *pszdir, int ilevel)
       nfile = 0;
       cur.clRecentRandIndex = 0;
    }
+
 
    snprintf(szDirPat, 500, "%s\\*", pszdir);
 
@@ -3783,11 +4139,14 @@ void View::addToImageList(char *prelname)
 
    memset(szGlblListBuf,0,sizeof(szGlblListBuf));
 
-   FILE *fin=fopen(plname,"rb");
-   if (fin) {
-      fread(szGlblListBuf,1,sizeof(szGlblListBuf)-10,fin);
-      fclose(fin);
-   }
+   // FILE *fin=fopen(plname,"rb");
+   // if (fin) {
+   //    fread(szGlblListBuf,1,sizeof(szGlblListBuf)-10,fin);
+   //    fclose(fin);
+   // }
+   int iread=loadToBuffer(plname,szGlblListBuf,sizeof(szGlblListBuf)-10);
+   szGlblListBuf[iread]='\0';
+
    char *pname=afile[cur.curfile].name;
    int ipos=strlen(szGlblListBuf);
    int ilen=strlen(pname);
@@ -3840,6 +4199,12 @@ void View::stopAutoReload(int iFrom, int iInfo)
       clautoreload=0;
       KillTimer(clwin, DVTIMER_AUTORELOAD);
    }
+}
+
+int View::commit()
+{
+
+   return 0;
 }
 
 int View::processKey(int c, int iFlags)
@@ -3993,11 +4358,12 @@ int View::processKey(int c, int iFlags)
          iupdate=1;
          break;
 
-      case '5': moveImageTo("zz-output\\5"); iupdate=1; break;
-      case '6': moveImageTo("zz-output\\6"); iupdate=1; break;
-      case '7': moveImageTo("zz-output\\7"); iupdate=1; break;
-      case '8': moveImageTo("zz-output\\8"); iupdate=1; break;
-      case '9': moveImageTo("zz-output\\9"); iupdate=1; break;
+      case '5': commit(); moveImageTo("zz-output\\5"); iupdate=1; break;
+      case '6': commit(); moveImageTo("zz-output\\6"); iupdate=1; break;
+      case '7': commit(); moveImageTo("zz-output\\7"); iupdate=1; break;
+      case '8': commit(); moveImageTo("zz-output\\8"); iupdate=1; break;
+      case '9': commit(); moveImageTo("zz-output\\9"); iupdate=1; break;
+
 
       case ' ': // random jump to a pic
       case '1': // random jump to a pic
@@ -4124,9 +4490,9 @@ int View::processKey(int c, int iFlags)
          iupdate=1;
          break;
 
-      case 'v': addToImageList((char*)aGlblImageList[0]); break;
-      case 'b': addToImageList((char*)aGlblImageList[1]); break;
-      case 'n': addToImageList((char*)aGlblImageList[2]); break;
+      case 'v': commit(); addToImageList((char*)aGlblImageList[0]); break;
+      case 'b': commit(); addToImageList((char*)aGlblImageList[1]); break;
+      case 'n': commit(); addToImageList((char*)aGlblImageList[2]); break;
 
       // case 's':
       //    cur.savepos = cur.curfile;
@@ -4412,6 +4778,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
    if ((nsubrc = OleInitialize(0)) != S_OK)
       mbox("OleInitialize failed", nsubrc);
 
+
    tGlblStart = getCurrentTime();
 
    // read defaults from environment
@@ -4566,6 +4933,10 @@ int APIENTRY WinMain(HINSTANCE hInstance,
    {
       gview.changeToFolder(".");
    }
+
+   #ifdef WITH_THREAD
+   runViewThread();
+   #endif
 
    gview.update();
 

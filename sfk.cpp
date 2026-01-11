@@ -74,11 +74,11 @@
 #ifdef SMALLINTRO
  #define SFK_INFO    "StahlWorks Technologies, www.stahlworks.com"
 #else
- #define SFK_INFO    "(w) by J Thumm 2006-2024, swissfileknife.sourceforge.net"
+ #define SFK_INFO    "(w) by J Thumm 2006-2025, swissfileknife.sourceforge.net"
 #endif
 
 #define SFK_VERSION  "2.0.0" // ver_ and check the _PRE definition
-#define SFK_FIXPACK  "2"
+#define SFK_FIXPACK  "3"
 #define SFK_PREVER   ""
 
 #ifdef SFK64
@@ -1550,7 +1550,9 @@ char *myvtext(const char *pszFormat, ...)
 // AND adds a zero terminator at pszDst (within nMaxDst range!).
 // to use this like strncpy, always add +1 to nMaxDst.
 // NOTE: if nMaxDst == 0, NO zero terminator is added.
-void mystrcopy(char *pszDst, cchar *pszSrc, int nMaxDst) {
+void mystrcopy(void *pszDstIn, cchar *pszSrc, int nMaxDst) 
+{
+   char *pszDst = (char*)pszDstIn;
    if (nMaxDst < 2) {
       if (nMaxDst >= 1)
          pszDst[0] = '\0';
@@ -4223,7 +4225,8 @@ bool isEmptyDir(char *pszIn)
          break; // while
 
       memset(&myfdat, 0, sizeof(myfdat));
-      myfdat.name   = e->d_name;
+      // myfdat.name   = e->d_name;
+      strcopy(myfdat.name, e->d_name); // sfk2003
       myfdat.attrib = 0;
 
    #endif // _WIN32
@@ -12340,7 +12343,8 @@ Coi *Coi::rawNextEntry( )
       if (e == NULL)
          return 0; // no further entries
  
-      myfdat.name    = e->d_name;
+      // myfdat.name    = e->d_name;
+      strcopy(myfdat.name, e->d_name); // sfk2003
       myfdat.attrib  = 0;
 
       #ifdef SOLARIS
@@ -16921,7 +16925,8 @@ bool setGeneralOption(char *argv[], int argc, int &iOpt, bool bGlobal=0, bool bJ
       bGlblIgnoreTime = 1;
       return true;
    }
-   if (!strcmp(psz1, "-ignore3600")) {
+   if (!strcmp(psz1, "-ignorehour") // sfk2003
+       || !strcmp(psz1, "-ignore3600")) {
       bGlblIgnore3600 = 1;
       return true;
    }
@@ -30041,7 +30046,7 @@ int execReplace2
    }
 
    // prepare keeptime for all possible targets
-   if (cs.keeptime) {
+   if (cs.keeptime) { // replace
       pcoi->setKeepTime(pcoi);
       if (pOutCoi)
          pOutCoi->setKeepTime(pcoi);
@@ -46408,7 +46413,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       ifhelp (nparm < 1)
       #ifndef SFKPRO
       printx(
-         "Copyright (c) 2024 by Stahlworks Technologies, www.stahlworks.com.\n"
+         "Copyright (c) 2025 by Stahlworks Technologies, www.stahlworks.com.\n"
          "All rights reserved.\n"
          "\n"
          "Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n"
@@ -51978,11 +51983,13 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              // "   -mem=mb       during read, data is cached in memory to reduce head movements\n"
              // "                 on HD. the buffer size (default=100mb) can be changed here.\n"
                 "   -ltarg        always list target filenames (instead of source filenames).\n"
-                "   -flat[=c]     do not create sub folders in output, but copy all into the\n"
+                );
+         printx("   -flat[=c]     do not create sub folders in output, but copy all into the\n"
                 "                 same single output dir, with long flat names joining path\n"
                 "                 parts by '-' or a given character c.\n"
                 "   -flat2        like -flat but without path parts. there is no check\n"
                 "                 for redundant output names.\n"
+                "   -ignorehour   ignore full hour file time differences (for DST jumps).\n"
                 );
          if (bext)
          printx("   -deep         verify content of files with same time and size. this takes\n"
@@ -56719,9 +56726,11 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
          }
       }
 
-      if (cs.sim && bReWrite) {
+      if (cs.sim && bReWrite)
          printx("$[add -yes to really write changes.]\n");
-      }
+
+      if (cs.yes && !bReWrite)
+         pwarn("-yes without -write has no effect.\n");
 
       // cleanup
       SFK_CLEANUP_XED;
@@ -57711,6 +57720,16 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      rc=0 : ok got text\n"
              "      rc=1 : no text available\n"
              "      rc=2 : failed to open clipboard\n"
+             "\n"
+             "   $about character encoding\n"
+             "      this command reads text from the clipboard in Ansi encoding.\n"
+             "      when using just #sfk fromclip<def> the text is printed without\n"
+             "      any OEM conversion, displaying accents or umlauts wrong.\n"
+             "      it is done so as people may also use #sfk fromclip >out.txt<def>\n"
+             "      in which case it should not be converted, but sfk cannot\n"
+             "      detect if the output is redirected to file.\n"
+             "      use #sfk fromclip +toterm<def> if you want accent characters\n"
+             "      printed correctly to terminal.\n"
              "\n"
              "   $aliases\n"
              "      #sfk lclip<def>      same as #sfk fromclip -ltrim<def>\n"
@@ -60939,6 +60958,8 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
              "      #sfk -var setvar -spat a=foo\\qbar\n"
              "       #+getvar a +xed \"/[start][3 chars]//\" +setvar a +getvar\n"
              "         drop first 3 chars of 'a' safely, even with quotes.\n"
+             "      #sfk echo 0x12340000 +hextobin +setvar a +getvar\n"
+             "         put four binary bytes into a, including null bytes.\n"
              );
       ehelp;
 
@@ -61341,21 +61362,26 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       ifhelp (nparm < 1)
       printx("<help>$sfk incvar name [value]\n"
              "\n"
-             "   increment a variable containing a number by one.\n"
+             "   increment a variable containing a number,\n"
+             "   by one or a given value.\n"
              "\n");
       printx("   $aliases\n"
              "      #sfk decvar<def>  decrement a variable\n"
              "\n");
       printx("   $examples\n"
              "      #sfk setvar a=1 +incvar a +getvar a\n"
-             "         tells \"2\".\n");
+             "         tells \"2\".\n"
+             "      #sfk setvar a=11 +decvar a 10 +getvar a\n"
+             "         tells \"1\".\n"
+             );
       ehelp;
 
       sfkarg;
 
       char *pszName = 0;
       char *pszValue = 0;
-      num ndelta = strcmp(pszCmd, "decvar") ? 1 : -1;
+      num nsig = strcmp(pszCmd, "decvar") ? 1 : -1;
+      num ndelta = nsig;
 
       int iChainNext = 0;
       for (; iDir<argc; iDir++)
@@ -61387,7 +61413,7 @@ int submain(int argc, char *argv[], char *penv[], char *pszCmd, int iDir, bool &
       if (!pszName)
          return 9+perr("missing variable name");
 
-      if (pszValue) ndelta = myatonum(pszValue);
+      if (pszValue) ndelta = nsig * myatonum(pszValue);
 
       char *ptext = (char*)sfkgetvar(pszName, 0);
       if (!ptext)

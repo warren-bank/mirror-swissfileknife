@@ -2972,21 +2972,19 @@ int HTTPClient::splitURL(char *purl)
    strcopy(aClURLBuf, psz1);
    char *pdst = aClURLBuf;
 
-   // then null the first "/" or ":"
+   // then null the first "/" or ":" or "?"
    char *psla = pdst;
-   while (*psla != 0 && *psla != '/' && *psla != ':')
-      psla++;
+   while (*psla && (*psla != '/' && *psla != ':' && *psla != '?')) psla++;
    if (*psla == ':') {
       // isolate embedded port number
       *psla++ = '\0';
       char *pport = psla;
-      while (*psla && *psla != '/') psla++;
+      while (*psla && (*psla != '/' && *psla != '?')) psla++;
       if (*psla) *psla++ = '\0';
-      nClPort = atol(pport);
+      nClPort = atoi(pport);
    } else {
       // no embedded port number
-      if (*psla)
-         *psla++ = '\0';
+      if (*psla) *psla++ = '\0';
    }
 
    // anything after "/" is the relative path
@@ -4071,16 +4069,16 @@ int FTPClient::splitURL(char *purl)
    strcopy(aClURLBuf, psz1);
    char *pdst = aClURLBuf;
 
-   // then null the first "/" or ":"
+   // then null the first "/" or ":" or "?"
    char *psla = pdst;
-   while (*psla && (*psla != '/' && *psla != ':')) psla++;
+   while (*psla && (*psla != '/' && *psla != ':' && *psla != '?')) psla++;
    if (*psla == ':') {
       // isolate embedded port number
       *psla++ = '\0';
       char *pport = psla;
-      while (*psla && *psla != '/') psla++;
+      while (*psla && (*psla != '/' && *psla != '?')) psla++;
       if (*psla) *psla++ = '\0';
-      nClPort = atol(pport);
+      nClPort = atoi(pport);
    } else {
       // no embedded port number
       if (*psla) *psla++ = '\0';
@@ -14566,7 +14564,7 @@ class SFKSound
 public:
    SFKSound ( );
 
-   int setFrom(uchar *pdata, int nsize, char *pname);
+   int setFrom(uchar *pdata, int nsize, char *pname, bool bverbose=0);
        // caller owns memory
 
    int setOffsetAndCut(int iOffFrames, int iCutFrames);
@@ -14586,6 +14584,7 @@ uchar *pmax;
 char   chunkid[20];
 uint   chunksize;
 uint   riffChunkSize;
+uint  *riffChunkSizePtr;
 uint   fmtChunkSize;
 uint   dataChunkSize;
 uint  *dataChunkSizePtr;
@@ -14629,7 +14628,7 @@ uint SFKSound::getsize() {
    return (int)n;
 }
 
-int SFKSound::setFrom(uchar *pdata, int nsize, char *pname)
+int SFKSound::setFrom(uchar *pdata, int nsize, char *pname, bool bverbose)
 {
    rawptr=pdata;
    rawlen=nsize;   
@@ -14637,7 +14636,7 @@ int SFKSound::setFrom(uchar *pdata, int nsize, char *pname)
    pcur=rawptr;
    pmax=pcur+rawlen;
 
-   if (cs.verbose) {
+   if (bverbose) {
       printf("%s\n   total file size: %d\n", pname, nsize);
    }
 
@@ -14645,8 +14644,9 @@ int SFKSound::setFrom(uchar *pdata, int nsize, char *pname)
       printf("no valid wav file: %s\n",pname);
       return 10;
    }
+   riffChunkSizePtr=(uint*)pcur;
    riffChunkSize=getsize();
-   if (cs.verbose)
+   if (bverbose)
       printf("   riff chunk size: %u (-%d)\n", riffChunkSize, (int)(nsize-riffChunkSize));
    if (strcmp(getid(), "WAVE")) {
       printf("no valid wav file: %s\n",pname);
@@ -14657,7 +14657,7 @@ int SFKSound::setFrom(uchar *pdata, int nsize, char *pname)
       getid();
       if (!strcmp(chunkid, "fmt ")) {
          fmtChunkSize=getsize();
-         if (cs.verbose)
+         if (bverbose)
             printf("   fmt chunk size : %u\n", fmtChunkSize);
          if (fmtChunkSize<sizeof(WAVFmtHeader)) {
             printf("invalid format chunk size %d: %s\n",fmtChunkSize,pname);
@@ -14671,7 +14671,7 @@ int SFKSound::setFrom(uchar *pdata, int nsize, char *pname)
       }
       if (strcmp(chunkid, "data")) {
          uint iskipsize=getsize();
-         if (cs.verbose)
+         if (bverbose)
             printf("   skipping '%s' with %u bytes\n", chunkid, iskipsize);
          pcur+=iskipsize;
          continue;
@@ -14681,7 +14681,7 @@ int SFKSound::setFrom(uchar *pdata, int nsize, char *pname)
       dataChunkSize=getsize();
       dataptr=pcur;
       datalen=dataChunkSize;
-      if (cs.verbose) {
+      if (bverbose) {
          uint ndataoff = (uint)(pcur-rawptr);
          uint nremain  = rawlen-ndataoff;
          printf("   pcm data size  : %u (offset=%u)\n", datalen, (uint)(pcur-rawptr));
@@ -14762,7 +14762,7 @@ int execPlay(Coi *pin, char *pszOutFile, char **argx, int icmd, int ncmd)
       bmustwrite = 1;
 
    SFKSound snd;
-   if (snd.setFrom(pdata, (int)nsize, pin->name()))
+   if (snd.setFrom(pdata, (int)nsize, pin->name(), cs.verbose))
       return 9;
 
    if (snd.fmt.bitsPerSample != 16) {
@@ -14973,6 +14973,7 @@ int execPlay(Coi *pin, char *pszOutFile, char **argx, int icmd, int ncmd)
       uchar *pnew=new uchar[nsize*ioutfactor];
       if (!pnew) return 9+perr("outofmem");
       memcpy(pnew,pdata,nsize);
+
       SFKSound onew;
       onew.setFrom(pnew,nsize*3,pin->name());
    
@@ -15027,6 +15028,12 @@ int execPlay(Coi *pin, char *pszOutFile, char **argx, int icmd, int ncmd)
          int nnewdata = idonesamp*2;
          uchar *pnewdataend = onew.dataptr+nnewdata;
          int nnewsize = pnewdataend - onew.rawptr;
+         int inewriffsize = nnewsize-8;
+         *onew.riffChunkSizePtr = inewriffsize;
+         if (cs.verbose) {
+            SFKSound otmp;
+            otmp.setFrom(pnew,nnewsize,pszOutFile,1); // just to show infos
+         }
          if (cs.yes) {
             printf("write %1.3f sec (%d bytes): %s\n",ddonesec,idonesamp*2,pszOutFile);
             saveFile(pszOutFile, pnew, nnewsize);
@@ -21000,6 +21007,131 @@ void printSamp(int nlang, char *pszOutFile, char *pszClassName, int bWriteFile, 
          );
          break;
 
+      // sfk load sfksamp.py +toclip +clipsrc +toclip
+      case 30:
+      chain.print(
+         "import sys\n"
+         "import os\n"
+         "\n"
+         "def perr(message):\n"
+         "    sys.stderr.write(message + \"\\n\")\n"
+         "    return 9\n"
+         "\n"
+         "def main():\n"
+         "    if len(sys.argv) < 3:\n"
+         "        print(f\"usage: {sys.argv[0]} infile outfile\")\n"
+         "        return 0\n"
+         "    \n"
+         "    psz_in_file = sys.argv[1]\n"
+         "    psz_out_file = sys.argv[2]\n"
+         "    \n"
+         "    if not os.path.exists(psz_in_file):\n"
+         "        return perr(f\"cannot read {psz_in_file}\")\n"
+         "    \n"
+         "    with open(psz_in_file, \"rb\") as fin, open(psz_out_file, \"wb\") as fout:\n"
+         "        for line in fin:\n"
+         "            line = line.rstrip(b\"\\r\\n\")\n"
+         "            print(f'line: \"{line.decode(errors=\"ignore\")}\"')\n"
+         "            fout.write(line + b\"\\n\")\n"
+         "    \n"
+         "    return 0\n"
+         "\n"
+         "if __name__ == \"__main__\":\n"
+         "    sys.exit(main())\n"
+         );
+         break;
+
+      // sfk load sfksampapp.cpp +toclip +clipsrc +toclip
+      case 31:
+      chain.print(
+         "/*\n"
+         "   simple sfk app example, free for any use.\n"
+         "\n"
+         "   cl -DSFKMAXCORE tmp.cpp sfk.cpp sfkext.cpp sfkpack.cpp kernel32.lib user32.lib gdi32.lib ws2_32.lib advapi32.lib shell32.lib\n"
+         "   g++ -DSFKMAXCORE tmp.cpp sfk.cpp sfkext.cpp sfkpack.cpp -lkernel32 -luser32 -lgdi32 -lws2_32 -ladvapi32 -lshell32\n"
+         "\n"
+         "   beware that the simplified semantics may not fit into larger projects.\n"
+         "*/\n"
+         "\n"
+         "#include \"sfkbase.hpp\"\n"
+         "#include \"sfkext.hpp\"\n"
+         "\n"
+         "/*\n"
+         "   provides:\n"
+         "      int perr(const char *pszFormat, ...)\n"
+         "      char *myvtext(const char *pszFormat, ...)\n"
+         "      char *numtoa(num n)\n"
+         "      num atonum(char *psz)\n"
+         "      num getCurrentTime()\n"
+         "      void doSleep(int nmsec)\n"
+         "      int mystricmp(char *psz1, cchar *psz2)\n"
+         "      int mystrnicmp(char *psz1, cchar *psz2, int nLen)\n"
+         "      bool strBegins(char *pszStr, cchar *pszPat)\n"
+         "      bool striBegins(char *pszStr, cchar *pszPat)\n"
+         "      bool strEnds(char *pszStr, cchar *pszPat)\n"
+         "      bool striEnds(char *pszStr, cchar *pszPat)\n"
+         "      char *mystrstri(char *phay, cchar *ppat)\n"
+         "      num getFileSize(char *pszName)\n"
+         "      char *loadFile(char *pszFile, num *pOptOutSize=0)\n"
+         "      int saveFile(char *pszName, uchar *pData, int iSize, const char *pszMode)\n"
+         "      int existsFile(char *pszName, bool bOrDir)\n"
+         "      char *dataAsHex(void *pAnyData, int iDataSize)\n"
+         "      char *dataAsTrace(void *pAnyData, int iDataSize)\n"
+         "*/\n"
+         "\n"
+         "// load a text or binary file, and save it to a new file.\n"
+         "int main(int argc, char *argv[])\n"
+         "{\n"
+         "   char *pszInFile=0,*pszOutFile=0;\n"
+         "\n"
+         "   int iarg = 1;\n"
+         "   for (;iarg<argc;iarg++) {\n"
+         "      char *parg = argv[iarg];\n"
+         "      if (!strcmp(parg,\"-?\") || !strcmp(parg,\"-h\")\n"
+         "          || !strcmp(parg,\"-help\")) {\n"
+         "         printf(\"usage: %%s infile outfile\\n\", argv[0]);\n"
+         "         return 0;\n"
+         "      }\n"
+         "      if (!pszInFile)\n"
+         "         { pszInFile = parg; continue; }\n"
+         "      if (!pszOutFile)\n"
+         "         { pszOutFile = parg; continue; }\n"
+         "      return 9+perr(\"unexpected: %%s\\n\", parg);\n"
+         "   }\n"
+         "\n"
+         "   if (!pszOutFile)\n"
+         "      return 9+perr(\"specify input and output filename.\\n\");\n"
+         "\n"
+         "   num nsize = 0;\n"
+         "   uchar *pdata = loadBinaryFile(pszInFile, nsize);\n"
+         "   if (!pdata)\n"
+         "      return 9+perr(\"cannot load: %%s\\n\", pszInFile);\n"
+         "\n"
+         "   char *pcur = (char*)pdata;\n"
+         "   char *pmax = pcur+nsize;\n"
+         "   while (pcur < pmax)\n"
+         "   {\n"
+         "      char *pnext = pcur;\n"
+         "      while (*pnext != 0 && *pnext != '\\r' && *pnext != '\\n')\n"
+         "         pnext++;\n"
+         "      int ilen = pnext-pcur;\n"
+         "      printf(\"line: \\\"%%.*s\\\"\\n\", ilen, pcur);\n"
+         "      while (*pnext != 0 && (*pnext == '\\r' || *pnext == '\\n'))\n"
+         "         pnext++;\n"
+         "      pcur = pnext;\n"
+         "   }\n"
+         "\n"
+         "   if (saveFile(pszOutFile, pdata, nsize))\n"
+         "      return 9+perr(\"cannot write: %%s\\n\", pszOutFile);\n"
+         "\n"
+         "   delete [] pdata;\n"
+         "\n"
+         "   return 0;\n"
+         "}\n"
+         "\n"
+         );
+         break;
+
       case 11:
       chain.print(
          "<html>\n"
@@ -22207,6 +22339,8 @@ printx("   $see also\n"
        "      #sfk view<def>      GUI tool to search text as you type\n"
        "      #sfk replace<def>   replace fixed    text with high performance\n"
        "      #sfk xreplace<def>  replace wildcard text in   text/binary files\n"
+       "      #sfk setbytes<def>  change byte sequences at absolute position\n"
+       "      #sfk partcopy<def>  copy, split and join parts of files\n"
        "%s",
        bNoBlankLine ? "" : "\n"
        );
@@ -23387,6 +23521,10 @@ void printHelpText(cchar *pszSub, bool bhelp, int bext)
           // "                   not work if multiple ISO characters (accents) appear grouped.\n"
              );
       printx("      -tolower     or -toupper convers a-z to lower- or uppercase.\n"
+             #ifdef _WIN32
+             "      -ansitodos   convert Ansi to OEM codepage, for filenames from clipboard\n"
+             "                   written to an >out.txt in the Windows cmd.exe environment.\n"
+             #endif
              /*
              "      -decode:hex      decode hex data like 666f6f as foo\n"
              "      -decode:_hex     decode prefixed hex like _66_6f_6f as foo\n"
@@ -29801,7 +29939,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       if (fout) {
          fclose(fout);
-         if (cs.keeptime)
+         if (cs.keeptime) // copypart
             ofsInOut.writeTo(pszDst, __LINE__);
       }
       fclose(fin);
@@ -30037,6 +30175,9 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
          }
       }
 
+      FileStat ofs;
+      ofs.readFrom(pszDst);
+
       FILE *fout = 0;
       if (!cs.sim) {
          fout = fopen(pszDst, "r+b");
@@ -30084,6 +30225,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
 
       if (fout) {
          fclose(fout);
+         if (cs.keeptime) // setbytes
+            ofs.writeTo(pszDst, __LINE__);
       }
 
       if (!lRC && !cs.quiet) {
@@ -37792,6 +37935,286 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
       bDone = 1;
    }
 
+   bool bgetvarlines=0;
+   if (!strcmp(pszCmd, "getlines")        // sfk2003 internal
+       || !strcmp(pszCmd, "getvarlines")  // sfk2003 internal
+      )
+   {
+      bgetvarlines = strstr(pszCmd,"var")?1:0;
+
+      ifhelp (nparm < 1)
+      if (bgetvarlines)
+      printx("<help>$sfk ... +getvarlines varname options\n"
+             "\n"
+             "   get line(s) from a variable.\n"
+             "\n"
+             "   $options\n"
+             "      -first=n     get first n lines from variable\n"
+             "      -last=n      get last  n lines from variable\n"
+             "      -random=n    get n random lines from variable text\n"
+             "      -cut         keep only remaining lines in variable\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk getvar<def>   get all text of a variable\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk load in.txt +setvar a +getvarlines a -rand=5 -cut\n"
+             "       #+setvar b +tell \"--- remain ---\" +getvar a\n"
+             "       #+tell \"--- got ---\" +getvar b\n"
+             "         get 5 random lines from in.txt\n"
+             );
+      else
+      printx("<help>$sfk getlines infile options\n"
+             "\n"
+             "   get line(s) from a file.\n"
+             "\n"
+             "   $options\n"
+             "      -first=n     get first n lines from file\n"
+             "      -last=n      get last  n lines from file\n"
+             "      -random=n    get n random lines from file text\n"
+             "      -cut         rewrite file, with remaining lines only\n"
+             "\n"
+             "   $see also\n"
+             "      #sfk getvarlines<def>    get lines of a variable\n"
+             "      #sfk tail<def>           get last lines of a file\n"
+             "\n"
+             "   $examples\n"
+             "      #sfk getlines in.txt -rand=5\n"
+             "         get 5 random lines from in.txt\n"
+             "\n"
+             );
+      ehelp;
+
+      sfkarg;
+
+      bool bvar = bgetvarlines;
+
+      char *pname=0;
+
+      int imode=0;
+      int ntoget=0;
+      bool bcut=0;
+
+      unsigned nSeed = (unsigned)time(NULL);
+      bool bForceSeed = 0;
+
+      int iChainNext = 0;
+      for (; iDir<argc; iDir++)
+      {
+         char *pszArg  = argx[iDir];
+         char *pszParm = 0;
+         if (haveParmOption(argx, argc, iDir, "-seed", &pszParm)) {
+            if (!pszParm) return 9;
+            nSeed = (unsigned)atol(pszParm);
+            bForceSeed = 1;
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-random", &pszParm)) {
+            if (!pszParm) return 9;
+            imode = 1;
+            ntoget = atoi(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-rand", &pszParm)) {
+            if (!pszParm) return 9;
+            imode = 1;
+            ntoget = atoi(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-first", &pszParm)) {
+            if (!pszParm) return 9;
+            imode = 2;
+            ntoget = atoi(pszParm);
+            continue;
+         }
+         if (haveParmOption(argx, argc, iDir, "-last", &pszParm)) {
+            if (!pszParm) return 9;
+            imode = 3;
+            ntoget = atoi(pszParm);
+            continue;
+         }
+         if (!strcmp(pszArg, "-cut") || !strcmp(pszArg, "-write"))
+            { bcut = 1; continue; }
+         if (sfkisopt(pszArg)) {
+            if (isDirParm(pszArg))
+               break; // fall through
+            if (setGeneralOption(argx, argc, iDir))
+               continue;
+            else
+               return 9+perr("unknown option: %s\n", pszArg);
+         }
+         if (isChainStart(pszCmd, argx, argc, iDir, &iChainNext))
+            break;
+         // process non-option keywords:
+         if (!pname) {
+            pname = pszArg;
+            continue;
+         }
+         return 9+perr("unexpected: %s\n", pszArg);
+      }
+
+      if (!imode)
+         return 9+perr("missing mode\n");
+
+      if (!pname)
+         return 9+perr("missing %s name\n",bvar?"variable":"input file");
+
+      num    ndata = 0;
+      uchar *pdata = 0;
+
+      if (bvar) {
+         int isize = 0;
+         pdata = sfkgetvar(pname, &isize);
+         if (!pdata)
+            return 9+perr("undefined variable: %s\n", pname);
+         ndata = isize;
+      } else {
+         pdata = loadBinaryFile(pname, ndata);
+         if (!pdata)
+            return 9+perr("cannot load: %s\n", pname);
+      }
+
+      // remainder storage
+      uchar *prem = 0;
+      char *pdstcur=0,*pdstmax=0;
+      if (bcut) {
+         prem = new uchar[ndata+10];
+         if (!prem)
+            return 9+perr("outofmem\n");
+         pdstcur = (char*)prem;
+         pdstmax = pdstcur+ndata;
+      }
+
+      if (bGlblRandSeeded==0 || bForceSeed==1) {
+         bGlblRandSeeded = 1;
+         srand(nSeed); // getvarlines
+      }
+
+      char *pcur = (char*)pdata;
+      char *pmax = pcur + ndata;
+      char *peol=0, *pnex=0;
+      int nlines=0,ilen=0,ilen2=0,itrunc=0;
+
+      for (; pcur<pmax; pcur++)
+         if (*pcur=='\n')
+            nlines++;
+
+      char *atoget = new char[nlines+10];
+      if (!atoget)
+         return 9+perr("outofmem\n");
+      memset(atoget,0,nlines+10);
+
+      switch (imode)
+      {
+         case 1: // rand
+            for (int i=0;i<ntoget;i++) {
+               for (int itry=0;itry<10;itry++) {
+                  int r = (rand()<<15) ^ rand();
+                  int k = r % nlines;
+                  if (atoget[k])
+                     continue;
+                  // printf("pick1 %d / %d\n",k,nlines);
+                  atoget[k]=1;
+                  break;
+               }
+            }
+            break;
+
+         case 2: // first
+            ntoget = mymin(ntoget,nlines);
+            memset(atoget,1,ntoget);
+            break;
+
+         case 3: // last
+            ntoget = mymin(ntoget,nlines);
+            memset(atoget+nlines-ntoget,1,ntoget);
+            break;
+      }
+
+      int iline=0;
+      pcur = (char*)pdata;
+      while (*pcur!=0 && pcur<pmax)
+      {
+         peol=pcur;
+         while (*peol && peol<pmax && *peol!='\r' && *peol!='\n') peol++;
+         ilen = peol - pcur;
+         if (*peol && peol<pmax && *peol=='\r') peol++;
+         if (*peol && peol<pmax && *peol=='\n') peol++;
+         ilen2 = peol - pcur;
+
+         if (atoget[iline])
+         {
+            if (chain.coldata) {
+               if (chain.colbinary) {
+                  if (chain.addBinary((uchar*)pcur, ilen2))
+                     return 9;
+               } else {
+                  if (ilen>MAX_LINE_LEN)
+                     {ilen = MAX_LINE_LEN; itrunc++; }
+                  memcpy(szLineBuf,pcur,ilen);
+                  szLineBuf[ilen]='\0';
+                  if (chain.addBlockAsLines(szLineBuf, ilen))
+                     return 9;
+               }
+            }
+            else if (chain.colfiles) {
+               if (ilen>MAX_LINE_LEN)
+                  {ilen = MAX_LINE_LEN; itrunc++; }
+               memcpy(szLineBuf,pcur,ilen);
+               szLineBuf[ilen]='\0';
+               Coi ocoi(szLineBuf, 0);
+               if (chain.addFile(ocoi)) // is copied
+                  return 9+perr("out of memory");
+            } else {
+               printf("%.*s\n", (int)ilen, pcur);
+            }
+         }
+         else if (bcut && pdstcur+ilen2<pdstmax)
+         {
+            memcpy(pdstcur,pcur,ilen2);
+            pdstcur += ilen2;
+         }
+
+         iline++;
+         pcur = peol;
+      }
+
+      if (bcut) 
+      {
+         if (bvar) {
+            sfksetvar(pname, (uchar*)prem, pdstcur-(char*)prem);
+            // this is zero terminated internally
+         } else {
+            num nrem = pdstcur-(char*)prem;
+            if (cs.yes)
+               saveFile(pname, (uchar*)prem, nrem, "wb");
+            else {
+               printx("$[would write: %s]\n",pname);
+               printx("$[add -yes to really write changes.]\n");
+            }
+         }
+         delete [] prem;
+      }
+
+      delete [] atoget;
+
+      if (!bvar)
+         delete [] pdata;
+
+      if (itrunc)
+         pwarn("%d lines were too long and got truncated\n",itrunc);
+
+      if (iChainNext) {
+         if (chain.coldata) {
+            STEP_CHAIN(iChainNext, 1);
+         } else {
+            STEP_CHAIN(iChainNext, 0);
+         }
+      }
+
+      bDone = 1;
+   }
+
    #ifdef SFKPIC
    if (!strcmp(pszCmd, "pic")
        || !strcmp(pszCmd, "fpic")
@@ -43974,10 +44397,12 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "      javagui      create a simple java gui application\n"
              "      c            create a simple c source code template\n"
              "      cpp          same as the c source code template\n"
+             "      sfkapp       simple command line app using sfklib\n"
              "      cppnetlog    how to send UDP network text in C++\n"
              "      javanetlog   how to send UDP network text in Java\n"
              "      php          create command line php code for text I/O\n"
              "      phpimg       create php example for image processing\n"
+             "      python       a python script for text line I/O\n"
          //  "      sfkcmdphp    mixture of windows .bat, sfk and php,\n"
          //  "                   to list pixel sizes of images in a dir.\n"
              "\n"
@@ -44046,6 +44471,10 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "\n"
              "      #sfk samp cpp tmp.cpp\n"
              "         same as the 'c' code example.\n"
+             "\n"
+             "      #sfk samp sfkapp tmp.cpp\n"
+             "         basic c/c++ command line app using sfklib functions\n"
+             "         to load and save data, search strings etc.\n"
              "\n");
       ehelp;
 
@@ -44095,6 +44524,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             if (!strcmp(pszkey, "java"))      nlang =  1; else
             if (!strcmp(pszkey, "c"))         nlang =  2; else
             if (!strcmp(pszkey, "cpp"))       nlang =  2; else
+            if (!strcmp(pszkey, "sfkapp"))    nlang = 31; else
             if (!strcmp(pszkey, "cmd"))       nlang =  3; else // allow path begin
             if (!strcmp(pszkey, "bash"))      nlang =  4; else
             if (!strcmp(pszkey, "sfk"))       nlang =  5; else
@@ -44104,6 +44534,8 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
             if (!strcmp(pszkey, "javaimg"))   nlang =  8; else
             if (!strcmp(pszkey, "php"))       nlang =  9; else
             if (!strcmp(pszkey, "phpimg"))    nlang = 10; else
+            if (!strcmp(pszkey, "python"))    nlang = 30; else
+            if (!strcmp(pszkey, "py"))        nlang = 30; else
             if (!strcmp(pszkey, "html"))      nlang = 11; else
             if (!strcmp(pszkey, "sfkcmdphp")) nlang = 12; else
             if (!strcmp(pszkey, "javahex"))   nlang = 13; else
@@ -47822,7 +48254,7 @@ int extmain(int argc, char *argv[], char *penv[], char *pszCmd, int &iDir,
              "         normalize wav files from mydir to folder out\n"
              "      #sfk sel mydir .wav +fplay -norm -to out<sla><run>base.wav\n"
              "         same as above, in two steps\n"
-             "      #sfk play in.wav -split 130 -get 1 2 3 2 3 -norm\n"
+             "      #sfk play in.wav split 130 get 1 2 3 2 3 -norm\n"
              "         split a 130 bpm music file into parts,\n"
              "         remix parts 1 2 3 2 3 and normalize volume.\n"
              "         plays a preview on windows.\n"

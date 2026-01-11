@@ -151,12 +151,7 @@ MTKMain::MTKMain()
    ncurthridx = 0;
    nlockmode = 0;
 
-   #ifdef MTK_TRACE_FULL_RING
-   nringx = 0xFF;
-   #else
    nringx = 0;
-   #endif
-
    ntermx = 0;
    nfilex = 0;
 
@@ -192,7 +187,7 @@ MTKMain::MTKMain()
             if (strchr(pszFilename, '\"') || strchr(pszFilename, '\''))
                fprintf(stderr, "... make sure that MTK_TRACE contains no \"\" or '' quotes.\n");
          } else {
-            printf("MTKTrace: writing log output into %s\n", pszFilename);
+            printf("MTKTrace: writing log output into %s (flush=%u)\n", pszFilename, bflushlog);
             fflush(stdout);
             setFileTrace("twex,"); // may be overwritten by "file:" below
          }

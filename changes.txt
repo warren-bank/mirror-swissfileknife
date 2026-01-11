@@ -1,5 +1,29 @@
 
    2.0.0
+   Revision 3:
+   -  rel: 11.04.2025, Bugfix Update
+   -  fix: linux deployment: the .tar.gz now contains
+           a ChangeLog which is a renamed changes.txt
+   -  fix: sfk web: handling of urls like foo.com?parm
+   -  fix: sfk decvar: did not work with given value.
+   -  add: windows: filter option -ansitodos which is
+           sometimes needed for filenames
+   -  add: sfk samp: simple python example
+   -  add: sfk copy/sync: option -ignorehour
+   -  add: sfk samp: sfkapp, a simple c/c++ app
+           using sfklib functions
+   -  chg: sfk xed: now warns on -yes without -write
+   -  doc: sfk fromclip: added infos about character
+           conversion on output to terminal.
+   -  doc: sfk rep: added reference to setbytes, partcopy
+   -  doc: sfk setvar: example how to put a binary value
+           into a variable, including null bytes
+   -  chg: source: SFKFindData.name under linux is now 
+           a char array, just as under windows.
+           if your code uses SFKFindData, make sure
+           it does no new/delete on the .name field.
+   -  chg: source: sfkpack.cpp: dropped "register"
+           keyword for more c++ compatibility.
    Revision 2:
    -  rel: 26.10.2024, Bugfix Update
    -  fix: sfk echo -lines w1 w2 w3 +filt -join +toterm
@@ -53,6 +77,10 @@
    -  chg: sfk wget: no longer tries caching to memory.
    -  doc: sfk help var: rework of text.
    internal:
+   Revision 3:
+   -  add: sfk getlines, getvarlines
+   -  fix: sfk play ... split write correct riff chunk size
+   Initial Release:
    -  add: sfk sel mydir .txt +passto extprog
    -  add: type filelist.txt | sfk list -size -ilist
    -  add: generic -todir outdir option

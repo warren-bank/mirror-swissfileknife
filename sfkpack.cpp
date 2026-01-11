@@ -54,6 +54,7 @@ typedef unsigned int u4;
 #define UNZ_BUFSIZE (256*1024)
 #define NOCRYPT
 #define NOBYFOUR
+#define register
 #ifdef _WIN32
 extern "C" {
    int _fseeki64(FILE *stream, __int64 offset, int origin);
