@@ -3,3 +3,5 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 *.sh  text eol=lf
+
+data.txt text eol=lf

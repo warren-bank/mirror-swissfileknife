@@ -105,3 +105,4 @@ wget --no-check-certificate -nv -nc -O "data/sfk1982.zip" "https://master.dl.sou
 wget --no-check-certificate -nv -nc -O "data/sfk1990.zip" "https://master.dl.sourceforge.net/project/swissfileknife/1-swissfileknife/1.9.9.0/sfk199.zip?viasf=1"
 wget --no-check-certificate -nv -nc -O "data/sfk2000.zip" "https://master.dl.sourceforge.net/project/swissfileknife/1-swissfileknife/2.0.0.0/sfk200.zip?viasf=1"
 wget --no-check-certificate -nv -nc -O "data/sfk2002.zip" "https://master.dl.sourceforge.net/project/swissfileknife/1-swissfileknife/2.0.0.2/sfk200.zip?viasf=1"
+wget --no-check-certificate -nv -nc -O "data/sfk2003.zip" "https://master.dl.sourceforge.net/project/swissfileknife/1-swissfileknife/2.0.0.3/sfk200.zip?viasf=1"
